@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Requêtes avancées : agrégats, groupBy, whereHas",
+  subtitle: "Compter, moyenner, regrouper — et filtrer les parents d'après leurs enfants.",
+  theory: `
+<h3>1. Les agrégats directs : count, sum, avg, min, max</h3>
+<p>Le tableau de bord du gérant ne veut pas des lignes, il veut des <strong>chiffres</strong>. Un <strong>agrégat</strong> est un calcul qui résume plusieurs lignes en une seule valeur (analogie : au lieu de lire toutes les factures, tu lis le total en bas de la pile). Les cinq agrégats du cours SQL existent en méthodes terminales — MySQL calcule, PHP reçoit un scalaire (un seul nombre) :</p>
+<pre class="pseudo">Jeu::count();                              // SELECT COUNT(*) FROM jeux : nombre total de jeux
+Jeu::where('stock', '&gt;', 0)-&gt;count();      // même comptage, filtré (jeux disponibles)
+Jeu::sum('stock');                         // SELECT SUM(stock) : total d'exemplaires
+Jeu::max('prix_location');                 // SELECT MAX(prix_location) : le jeu le plus cher
+Avis::where('jeu_id', 3)-&gt;avg('note');     // SELECT AVG(note) WHERE jeu_id = 3 : note moyenne du jeu 3</pre>
+<p>Nuance capitale, déjà croisée à la leçon 5 : <em>Jeu::count()</em> fait un COUNT(*) côté SQL ; <em>Jeu::all()-&gt;count()</em> charge TOUTE la table pour compter en PHP. Même résultat, coût sans commune mesure.</p>
+
+<h3>2. Les agrégats de relation : withCount, withAvg, withSum</h3>
+<p>« La note moyenne de CHAQUE jeu » : un agrégat par ligne parente. La famille withCount (leçon 12) a des cousins :</p>
+<pre class="pseudo">$jeux = Jeu::withCount('avis')             // ajoute un COUNT des avis par jeu
+    -&gt;withAvg('avis', 'note')               // ajoute la moyenne des notes par jeu
+    -&gt;get();                                // un seul SELECT pour tout calculer
+
+echo $jeux[0]-&gt;avis_count;       // 27 : attribut ajouté par withCount (relation + _count)
+echo $jeux[0]-&gt;avis_avg_note;    // 4.3 : attribut ajouté par withAvg (relation + _avg_ + colonne)
+
+// Le classement des jeux les plus loués :
+Jeu::withCount('locations')-&gt;orderByDesc('locations_count')-&gt;take(5)-&gt;get();   // top 5 par nb de locations</pre>
+<p>Tout se passe en sous-requêtes dans UN seul SELECT : pas de N+1, et l'attribut calculé est triable comme une vraie colonne. Chez Django, c'est annotate(Count(...), Avg(...)) ; chez JPA/EF Core, une projection d'agrégats en JPQL/LINQ.</p>
+
+<h3>3. whereHas : filtrer les parents par leurs enfants</h3>
+<p>« Les jeux qui ont au moins un avis » : le filtre porte sur la table jeux, mais la condition vit dans la table avis. C'est le rôle de <strong>has</strong> et <strong>whereHas</strong> (analogie : « donne-moi les jeux tels qu'il existe au moins un avis à leur sujet ») :</p>
+<pre class="pseudo">Jeu::has('avis')-&gt;get();                   // jeux ayant AU MOINS un avis (WHERE EXISTS)
+Jeu::has('locations', '&gt;=', 10)-&gt;get();    // jeux loués au moins 10 fois
+
+// Avec une condition sur les enfants :
+Jeu::whereHas('avis', function ($query) {  // jeux dont il existe un avis tel que…
+    $query-&gt;where('note', 5);              // …la note vaut 5
+})-&gt;get();                                 // au moins un avis 5 étoiles
+
+// Et l'inverse :
+Jeu::doesntHave('locations')-&gt;get();       // jeux JAMAIS loués (NOT EXISTS)
+Membre::whereDoesntHave('locations')-&gt;get();   // membres sans aucune location (inactifs)</pre>
+<p>En coulisses : un <strong>WHERE EXISTS (sous-requête corrélée)</strong>, exactement la construction vue au cours SQL. whereHas filtre les parents mais ne charge PAS les enfants — combine-le avec with() si tu veux aussi les afficher.</p>
+
+<h3>4. groupBy : la synthèse par groupe</h3>
+<p>« Le nombre de locations par mois » : un GROUP BY, comme au Niveau 4. En Eloquent, un groupBy s'accompagne presque toujours d'une expression calculée dans le SELECT :</p>
+<pre class="pseudo">$stats = Location::selectRaw('jeu_id, COUNT(*) AS nb')   // SELECT calculé : jeu_id + nombre de lignes
+    -&gt;groupBy('jeu_id')                                  // regroupe par jeu (selectRaw : leçon 15)
+    -&gt;having('nb', '&gt;=', 5)                               // ne garde que les groupes de 5 locations ou plus
+    -&gt;orderByDesc('nb')                                  // du plus loué au moins loué
+    -&gt;get();                                             // exécute la requête
+
+foreach ($stats as $ligne) {               // parcourt chaque ligne de synthèse
+    echo $ligne-&gt;jeu_id . ' : ' . $ligne-&gt;nb . ' locations';   // affiche jeu + nombre de locations
+}</pre>
+<p>Rappels SQL intacts : <strong>having</strong> filtre APRÈS le regroupement (where filtre avant), et toute colonne du SELECT doit être agrégée ou groupée. Souvent, withCount rend le même service en plus simple quand le « groupe » est un modèle parent.</p>
+
+<h3>5. Choisir la bonne arme</h3>
+<pre class="pseudo">Besoin                                   → Outil
+Combien de jeux disponibles ?            → where(...)-&gt;count()
+Note moyenne d'UN jeu ?                  → $jeu-&gt;avis()-&gt;avg('note')
+Note moyenne de CHAQUE jeu ?             → withAvg('avis', 'note')
+Top 5 des jeux les plus loués ?          → withCount + orderByDesc
+Jeux avec au moins un avis 5★ ?          → whereHas('avis', closure)
+Membres sans aucune location ?           → whereDoesntHave('locations')
+Locations par mois / par ville ?         → groupBy + expression calculée</pre>
+<p><em>Mêmes familles ailleurs : annotate/aggregate chez Django, GroupBy et Any() en LINQ chez EF Core, JPQL avec EXISTS et GROUP BY chez Hibernate.</em></p>
+<div class="warn">Le N+1 a un cousin sournois : l'agrégat en boucle. Un $jeu-&gt;avis-&gt;count() (sans parenthèses sur avis) dans un foreach charge TOUS les avis de chaque jeu juste pour les compter — et $jeu-&gt;avis()-&gt;count() en boucle fait une requête COUNT par jeu. Dans les deux cas : withCount sur la requête d'origine, une seule requête pour tout le monde.</div>
+<div class="tip">Écris d'abord la requête SQL de tête, comme au Niveau 4 : « SELECT …, COUNT(*) … GROUP BY … HAVING … » ou « WHERE EXISTS (…) ». Puis traduis : GROUP BY → groupBy, HAVING → having, EXISTS corrélé → whereHas. Si une fonction SQL manque à l'appel (DATEDIFF, YEAR…), c'est la leçon 15 qui prend le relais.</div>`,
+  exercises: [
+    { type: "qcm", q: "Jeu::count() exécute…", opts: ["SELECT * puis un comptage PHP", "SELECT COUNT(*) FROM jeux : MySQL compte, PHP reçoit un nombre", "Une requête par jeu", "Un GROUP BY"], a: 1, exp: "L'agrégat part en SQL ; seul le scalaire voyage." },
+    { type: "qcm", q: "La différence entre Jeu::count() et Jeu::all()->count() :", opts: ["Aucune", "La première compte en SQL, la seconde charge toute la table pour compter en PHP", "La seconde est plus précise", "La première arrondit"], a: 1, exp: "Même résultat, coût sans commune mesure — le réflexe « côté SQL » de la leçon 5." },
+    { type: "input", q: "Quelle méthode calcule la moyenne d'une colonne côté SQL (ex : la note des avis) ?", a: ["avg", "avg()", "->avg()"], ph: "nom de la méthode…", exp: "Avis::where('jeu_id', 3)->avg('note') : le AVG du cours SQL." },
+    { type: "qcm", q: "Le total d'exemplaires en stock, tous jeux confondus :", opts: ["Jeu::sum('stock')", "Jeu::count('stock')", "Jeu::max('stock')", "Jeu::all()->stock"], a: 0, exp: "sum('stock') → SELECT SUM(stock) FROM jeux." },
+    { type: "qcm", q: "La note moyenne de CHAQUE jeu, sans N+1 :", opts: ["avg('note') dans un foreach", "Jeu::withAvg('avis', 'note')->get()", "Avis::avg('note')", "groupBy sans select"], a: 1, exp: "withAvg ajoute une sous-requête par jeu dans UN seul SELECT : $jeu->avis_avg_note." },
+    { type: "input", q: "Quel attribut Jeu::withAvg('avis', 'note') ajoute-t-il à chaque jeu ?", a: ["avis_avg_note", "avis_avg_note ", "->avis_avg_note"], ph: "nom de l'attribut…", exp: "relation + _avg_ + colonne : avis_avg_note (comme avis_count pour withCount)." },
+    { type: "qcm", q: "Le top 5 des jeux les plus loués :", opts: ["Jeu::withCount('locations')->orderByDesc('locations_count')->take(5)->get()", "Location::take(5)", "Jeu::orderBy('locations')", "Jeu::max('locations')"], a: 0, exp: "L'attribut calculé locations_count est triable comme une vraie colonne." },
+    { type: "qcm", q: "« Les jeux qui ont AU MOINS un avis » :", opts: ["Jeu::where('avis', '>', 0)", "Jeu::has('avis')->get()", "Avis::all()", "Jeu::with('avis')"], a: 1, exp: "has filtre les parents sur l'existence d'enfants — WHERE EXISTS en coulisses." },
+    { type: "qcm", q: "« Les jeux ayant au moins un avis 5 étoiles » :", opts: ["Jeu::whereHas('avis', function ($q) { $q->where('note', 5); })->get()", "Jeu::where('avis.note', 5)", "Jeu::withCount('avis')", "Avis::where('note', 5)"], a: 0, exp: "whereHas = has + condition sur les enfants, via une sous-requête corrélée." },
+    { type: "vf", q: "whereHas('avis', …) charge les avis en mémoire en plus de filtrer les jeux.", a: false, exp: "Il FILTRE seulement (EXISTS) ; pour afficher les avis, ajoute un with('avis')." },
+    { type: "input", q: "Quelle méthode trouve les membres qui n'ont AUCUNE location ?", a: ["whereDoesntHave", "doesntHave", "wheredoesnthave"], ph: "Membre::…('locations')", exp: "whereDoesntHave (ou doesntHave sans condition) : l'inverse de whereHas." },
+    { type: "qcm", q: "Dans un groupBy, la clause qui filtre APRÈS le regroupement :", opts: ["where", "having", "orderBy", "limit"], a: 1, exp: "having('nb', '>=', 5) — where filtre les lignes avant, having les groupes après, comme au Niveau 4." },
+    { type: "qcm", q: "Le SQL généré par whereHas ressemble à…", opts: ["Un simple WHERE", "Un WHERE EXISTS avec une sous-requête corrélée", "Un UNION", "Un DELETE"], a: 1, exp: "Exactement la construction EXISTS du cours SQL, écrite pour toi." },
+    { type: "vf", q: "Un $jeu->avis()->count() placé dans un foreach sur 300 jeux exécute 300 requêtes COUNT.", a: true, exp: "L'agrégat en boucle = le cousin du N+1 ; withCount sur la requête d'origine règle tout en une." },
+    { type: "qcm", q: "L'équivalent de withCount/withAvg chez l'ORM Django :", opts: ["annotate(Count(...), Avg(...))", "Include()", "JOIN FETCH", "raw()"], a: 0, exp: "annotate chez Django ; projections d'agrégats en LINQ/JPQL chez EF Core et JPA." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau de bord du gérant",
+    intro: `<p>Le gérant veut cinq chiffres sur un écran : jeux disponibles, meilleure note, top locations, membres inactifs, catégories bien fournies. Chaque indicateur a son arme.</p>`,
+    questions: [
+      { type: "qcm", q: "Le nombre de jeux disponibles :", opts: ["Jeu::all()->count()", "Jeu::where('stock', '>', 0)->count()", "Jeu::sum('stock')", "count(Jeu::class)"], a: 1, exp: "Un where puis un COUNT côté SQL : un seul scalaire voyage." },
+      { type: "qcm", q: "Classer les jeux par note moyenne décroissante :", opts: ["Jeu::withAvg('avis', 'note')->orderByDesc('avis_avg_note')->get()", "Avis::avg('note')", "Jeu::orderBy('note')", "Jeu::has('avis')"], a: 0, exp: "withAvg crée l'attribut, orderByDesc le trie — un seul SELECT." },
+      { type: "input", q: "Quelle méthode filtre les jeux ayant au moins un avis répondant à une condition ?", a: ["whereHas", "wherehas", "whereHas()"], ph: "nom de la méthode…", exp: "whereHas('avis', closure) : l'EXISTS corrélé prêt à l'emploi." },
+      { type: "vf", q: "Pour « les catégories comptant au moins 3 jeux », has('jeux', '>=', 3) convient.", a: true, exp: "has accepte un opérateur et un seuil : Categorie::has('jeux', '>=', 3)->get()." },
+      { type: "qcm", q: "Le nombre de locations par jeu_id avec seuil, en une requête groupée :", opts: ["Location::selectRaw('jeu_id, COUNT(*) AS nb')->groupBy('jeu_id')->having('nb', '>=', 5)->get()", "Location::count()->groupBy()", "Location::having('nb')", "Jeu::groupBy('locations')"], a: 0, exp: "SELECT calculé + groupBy + having : la traduction directe du GROUP BY du Niveau 4." }
+    ],
+    solution: `<pre class="pseudo">AGRÉGATS DIRECTS   count / sum / avg / min / max   → un scalaire, calculé par MySQL
+PAR PARENT         withCount('avis')               → avis_count
+                   withAvg('avis', 'note')         → avis_avg_note (triable !)
+EXISTENCE          has / whereHas / doesntHave / whereDoesntHave
+                   → WHERE EXISTS corrélé, ne charge PAS les enfants
+GROUPES            selectRaw(...) + groupBy + having (filtre post-groupe)
+
+Piège : l'agrégat en boucle (COUNT par tour) = cousin du N+1 → withCount
+Ailleurs : annotate (Django) · GroupBy/Any (LINQ) · JPQL EXISTS (JPA)</pre>
+<p>Un dernier verrou saute la prochaine fois : quand l'agrégat exige une fonction SQL que l'ORM n'expose pas (DATEDIFF, YEAR…), il faut ouvrir la porte du SQL brut — proprement. Leçon 15 : DB::raw et selectRaw.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l14", title: "Cinq indicateurs, cinq armes", level: 3,
+    statement: "Le tableau de bord du gérant de la Ludothèque affiche cinq indicateurs : (1) le nombre de jeux disponibles, (2) la note moyenne de chaque jeu du catalogue, (3) le top 5 des jeux les plus loués, (4) la liste des membres inscrits depuis plus de six mois sans aucune location, (5) le nombre de locations par jeu, limité aux jeux loués au moins 5 fois. Pour chaque indicateur, choisis l'outil (agrégat direct, withCount/withAvg, whereHas/whereDoesntHave, groupBy), écris la requête complète, et justifie en une phrase pourquoi les autres outils étaient moins bons (coût, N+1, lisibilité).",
+    hints: [
+      "Demande-toi d'abord : le résultat est-il UN chiffre (agrégat direct), un chiffre PAR parent (withX), un FILTRE sur les parents (whereHas), ou une table de synthèse (groupBy) ?",
+      "Pour (4), deux conditions se combinent : une sur la colonne created_at du membre, une sur l'ABSENCE d'enfants — where + whereDoesntHave.",
+      "Pour (3) et (5), compare withCount + orderByDesc et groupBy + having : lequel retourne des modèles Jeu complets, lequel des lignes de synthèse ?"
+    ],
+    solution: "(1) UN chiffre → agrégat direct :\n    Jeu::where('stock', '>', 0)->count();\n    (all()->count() chargerait toute la table pour rien)\n\n(2) Un chiffre PAR jeu → agrégat de relation :\n    Jeu::withAvg('avis', 'note')->get();   // $jeu->avis_avg_note\n    (avg() dans un foreach = une requête par jeu, cousin du N+1)\n\n(3) Filtre + tri sur un compte par parent → withCount :\n    Jeu::withCount('locations')\n        ->orderByDesc('locations_count')->take(5)->get();\n    (retourne des modèles Jeu complets, directement affichables ;\n     un groupBy sur locations ne donnerait que des ids)\n\n(4) Filtre sur les parents par ABSENCE d'enfants :\n    Membre::where('created_at', '<', now()->subMonths(6))\n        ->whereDoesntHave('locations')->get();\n    (NOT EXISTS corrélé ; impossible avec un simple where)\n\n(5) Table de synthèse avec seuil post-groupe → groupBy + having :\n    Location::selectRaw('jeu_id, COUNT(*) AS nb')\n        ->groupBy('jeu_id')->having('nb', '>=', 5)\n        ->orderByDesc('nb')->get();\n    (ici on veut des LIGNES DE STATS, pas des modèles ; le having\n     filtre après regroupement, ce que where ne sait pas faire)\n\nGrille : un chiffre → agrégat ; un chiffre par parent → withX ;\nfiltrer les parents → (where)Has/DoesntHave ; synthèse → groupBy.",
+    note: "Cette grille de décision est celle de tous les tableaux de bord que tu construiras au Niveau 6 — et elle se transpose mot pour mot : annotate/aggregate/Exists chez Django, GroupBy/Any/Count en LINQ, JPQL avec EXISTS et GROUP BY chez Hibernate. Le gérant ne verra que cinq chiffres ; toi, tu sauras que chacun a coûté exactement une requête." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

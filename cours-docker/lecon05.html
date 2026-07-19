@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Écrire un Dockerfile",
+  subtitle: "La recette de notre image, instruction par instruction.",
+  theory: `
+<h3>1. Le Dockerfile</h3>
+<p>Le <strong>Dockerfile</strong> (avec un D majuscule, sans extension) est un simple fichier texte, placé à la racine du projet, qui décrit <strong>comment construire l'image</strong> — c'est la recette écrite, étape par étape. Chaque ligne est une <strong>instruction</strong> (un ordre en MAJUSCULES) et chaque instruction crée une nouvelle <strong>couche</strong> dans l'image (souviens-toi du mille-feuille de la leçon 4).</p>
+
+<h3>2. Les instructions essentielles</h3>
+<p>Voici les instructions de base. <code>FROM</code> choisit l'<strong>image de base</strong> (le point de départ) ; <code>WORKDIR</code> fixe le dossier courant ; <code>COPY</code> copie des fichiers depuis ta machine vers l'image ; <code>RUN</code> exécute une commande pendant la construction ; <code>ENV</code> définit une variable ; <code>EXPOSE</code> documente un port ; <code>CMD</code> indique la commande à lancer au démarrage.</p>
+<pre class="pseudo">FROM python:3.14-slim        # image de BASE : le point de départ (toujours la 1re instruction)
+WORKDIR /app                 # définit /app comme dossier de travail (le crée s'il n'existe pas) ; les instructions suivantes s'y placent
+COPY requirements.txt .      # copie le fichier des dépendances de l'HÔTE vers l'image (le '.' = dossier courant, ici /app)
+RUN pip install --no-cache-dir -r requirements.txt   # exécute pip AU MOMENT DU BUILD ; --no-cache-dir évite de garder le cache pip (image plus légère)
+COPY . .                     # copie tout le reste du projet (le code) de l'hôte vers /app
+ENV DJANGO_DEBUG=0           # définit une variable d'environnement par DÉFAUT (surchargée au run avec -e)
+EXPOSE 8000                  # DOCUMENTE que le conteneur écoute sur le port 8000 (ne publie rien à lui seul)
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # commande de DÉMARRAGE : lance le serveur gunicorn quand le conteneur naît</pre>
+
+<h3>3. RUN vs CMD : le build et le run</h3>
+<p>La confusion la plus fréquente du débutant : quand chaque chose s'exécute-t-elle ? <code>RUN</code> tourne <strong>pendant la construction</strong> de l'image (une fois, et son résultat est figé) ; <code>CMD</code> ne tourne qu'<strong>au démarrage du conteneur</strong> (à chaque lancement).</p>
+<pre class="pseudo">RUN  : exécuté PENDANT le build -> son résultat est figé dans une couche (ex. pip install : fait une seule fois)
+CMD  : la commande de DÉMARRAGE du CONTENEUR (un seul CMD compte ; remplaçable au lancement :
+       docker run image python manage.py migrate   # la commande donnée au run REMPLACE le CMD par défaut)</pre>
+
+<h3>4. La forme exec</h3>
+<p>Le <code>CMD</code> s'écrit de deux manières. La <strong>forme exec</strong> (un tableau entre crochets, comme du JSON) lance directement le programme ; la <strong>forme shell</strong> passe par un shell intermédiaire (<code>sh -c</code>). Rappel de la leçon 3 : le <strong>PID 1</strong> est le processus principal du conteneur, celui qui reçoit les <strong>signaux</strong> (SIGTERM à l'arrêt).</p>
+<pre class="pseudo">CMD ["gunicorn", "--bind", "0.0.0.0:8000", "..."]   # forme EXEC (tableau JSON) : gunicorn devient PID 1 directement -> reçoit bien les signaux
+CMD gunicorn --bind ...                             # forme SHELL : lancée via 'sh -c ...' ; c'est le shell qui est PID 1, pas gunicorn</pre>
+<p>La forme <strong>exec</strong> lance le processus en PID 1 sans shell intermédiaire : il reçoit correctement les signaux, donc <code>docker stop</code> l'arrête proprement (SIGTERM bien transmis).</p>
+
+<h3>5. Pourquoi 0.0.0.0 et pas localhost ?</h3>
+<p>Un piège classique de réseau. À l'intérieur du conteneur, <code>localhost</code> (ou <code>127.0.0.1</code>) désigne le conteneur lui-même, pas ta machine. <code>0.0.0.0</code> signifie « écouter sur toutes les interfaces réseau » du conteneur — c'est ce qu'il faut pour être joignable de l'extérieur.</p>
+<div class="warn">Dans le conteneur, <code>localhost</code> = le conteneur lui-même. Un serveur bindé sur 127.0.0.1 est <strong>injoignable depuis l'extérieur</strong>, même avec <code>-p</code>. On écoute sur <code>0.0.0.0</code> (toutes les interfaces du conteneur) — le pare-feu, c'est la publication de ports qui le joue.</div>
+<div class="tip"><code>EXPOSE</code> ne publie rien : c'est de la documentation (quel port le conteneur écoute). La publication réelle reste <code>-p 8000:8000</code> au run. Deux choses différentes, souvent confondues.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le Dockerfile décrit…", opts: ["Comment lancer Docker", "Comment construire l'image", "Le réseau", "Les volumes"], a: 1, exp: "La recette." },
+    { type: "qcm", q: "La première instruction est toujours…", opts: ["RUN", "FROM (l'image de base)", "CMD", "COPY"], a: 1, exp: "On part de quelque part." },
+    { type: "qcm", q: "WORKDIR /app…", opts: ["Supprime /app", "Définit le dossier de travail (créé si absent)", "Copie /app", "Expose /app"], a: 1, exp: "Les instructions suivantes s'y exécutent." },
+    { type: "qcm", q: "COPY copie…", opts: ["De l'image vers l'hôte", "De l'hôte (contexte de build) vers l'image", "Entre conteneurs", "Depuis Docker Hub"], a: 1, exp: "Sens unique au build." },
+    { type: "qcm", q: "RUN s'exécute…", opts: ["Au démarrage du conteneur", "Pendant le build (résultat figé en couche)", "Jamais", "Sur l'hôte"], a: 1, exp: "pip install au build." },
+    { type: "qcm", q: "CMD définit…", opts: ["Une couche", "La commande de démarrage du conteneur", "Le port", "Le nom"], a: 1, exp: "Remplaçable au run." },
+    { type: "qcm", q: "docker run image python manage.py migrate…", opts: ["Échoue", "Remplace le CMD pour ce conteneur", "Modifie l'image", "Supprime CMD"], a: 1, exp: "La commande du run l'emporte." },
+    { type: "vf", q: "Un Dockerfile peut avoir plusieurs CMD effectifs.", a: false, exp: "Seul le dernier compte." },
+    { type: "qcm", q: "La forme exec CMD [\"gunicorn\", ...] est préférée car…", opts: ["Plus jolie", "Le processus en PID 1 reçoit correctement les signaux", "Plus courte", "Obligatoire"], a: 1, exp: "docker stop propre." },
+    { type: "qcm", q: "Dans le conteneur, localhost désigne…", opts: ["L'hôte", "Le conteneur lui-même", "Docker Hub", "Le routeur"], a: 1, exp: "Piège classique." },
+    { type: "qcm", q: "Un serveur bindé sur 127.0.0.1 dans le conteneur est…", opts: ["Joignable avec -p", "Injoignable de l'extérieur, même avec -p", "Plus rapide", "Sécurisé et joignable"], a: 1, exp: "D'où 0.0.0.0." },
+    { type: "qcm", q: "EXPOSE 8000…", opts: ["Publie le port", "Documente le port écouté (rien de plus)", "Ouvre le pare-feu", "Bloque le port"], a: 1, exp: "La publication reste -p." },
+    { type: "qcm", q: "ENV DJANGO_DEBUG=0 définit…", opts: ["Une valeur par défaut, surchargeable au run (-e)", "Un secret sûr", "Une couche réseau", "Un volume"], a: 0, exp: "Défaut ≠ config finale." },
+    { type: "vf", q: "Chaque instruction du Dockerfile crée une couche.", a: true, exp: "D'où l'importance de l'ordre (leçon 6)." },
+    { type: "qcm", q: "--no-cache-dir dans pip install…", opts: ["Désactive le cache Docker", "Évite d'embarquer le cache pip dans la couche", "Accélère pip", "Est obligatoire"], a: 1, exp: "Image plus légère." }
+  ],
+  final: {
+    title: "Exercice final — Le premier Dockerfile de la Ludothèque",
+    intro: `<p>On écrit la recette complète.</p>`,
+    questions: [
+      { type: "qcm", q: "L'image de base :", opts: ["FROM python:3.14-slim", "FROM ubuntu", "FROM mysql", "FROM scratch sans réfléchir"], a: 0, exp: "Choisie leçon 4." },
+      { type: "qcm", q: "L'ordre des COPY :", opts: ["requirements.txt d'abord, le code ensuite", "tout d'un coup", "le code d'abord", "peu importe"], a: 0, exp: "Le cache — détaillé demain." },
+      { type: "qcm", q: "L'installation des dépendances :", opts: ["RUN pip install --no-cache-dir -r requirements.txt", "CMD pip install", "à la main après run", "ENV pip"], a: 0, exp: "Au build, figée." },
+      { type: "qcm", q: "Le démarrage :", opts: ["CMD [\"gunicorn\", \"ludotheque.wsgi:application\", \"--bind\", \"0.0.0.0:8000\"]", "CMD runserver 127.0.0.1", "RUN gunicorn", "EXPOSE gunicorn"], a: 0, exp: "Forme exec, 0.0.0.0." },
+      { type: "vf", q: "EXPOSE 8000 suffit à rendre l'app joignable depuis l'hôte.", a: false, exp: "Il faudra -p 8000:8000." }
+    ],
+    solution: `<pre class="pseudo">FROM python:3.14-slim        # image de base : le point de départ
+WORKDIR /app                 # dossier de travail dans l'image
+COPY requirements.txt .      # les dépendances D'ABORD (pour le cache, leçon 6)
+RUN pip install --no-cache-dir -r requirements.txt   # les installer au build, sans garder le cache pip
+COPY . .                     # le code du projet ENSUITE
+EXPOSE 8000                  # documente le port écouté
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # démarrage : gunicorn en forme exec, sur 0.0.0.0 (joignable)</pre>
+<p>La recette est écrite. Demain : la construire, la cacher, l'alléger.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile…",
+  items: [
+  { id: "docker-l5", title: "Le Dockerfile adapté à ta pile", level: 3,
+    statement: "Écris le Dockerfile de la Ludothèque pour la pile Python/Django (base slim, WORKDIR, dépendances puis code, EXPOSE, CMD gunicorn en forme exec), en commentant CHAQUE instruction : ce qu'elle fait, quand elle s'exécute (build ou run) et pourquoi elle est à cette place. Bonus : indique en commentaire ce qui changerait pour ta pile du Niveau 6 (Java/Spring, C#/ASP.NET ou PHP/Laravel).",
+    hints: [
+      "Chaque commentaire : # <quoi> — <build ou run> — <pourquoi ici>.",
+      "Java : FROM eclipse-temurin:25-jre + COPY target/app.jar ; C# : mcr.microsoft.com/dotnet/aspnet:10.0.",
+      "Le CMD est le seul à s'exécuter au RUN ; tout le reste fige des couches au BUILD."
+    ],
+    solution: "# L'image de base : Python 3.14 exact, Debian minimale — BUILD\nFROM python:3.14-slim\n\n# Dossier de travail : toutes les instructions suivantes s'y font — BUILD\nWORKDIR /app\n\n# Les dépendances D'ABORD : cette couche ne sera reconstruite\n# que si requirements.txt change (cache, leçon 6) — BUILD\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n\n# Le code ENSUITE : il change tout le temps, sa couche est\n# invalidée souvent — mais pas celle des dépendances — BUILD\nCOPY . .\n\n# Documentation : le conteneur écoute sur 8000 — (métadonnée)\nEXPOSE 8000\n\n# La commande de démarrage, forme exec (signaux propres),\n# bindée sur 0.0.0.0 (joignable via -p) — RUN (du conteneur)\nCMD [\"gunicorn\", \"ludotheque.wsgi:application\", \"--bind\", \"0.0.0.0:8000\"]\n\n# --- Autres piles du Niveau 6 ---\n# Java  : FROM eclipse-temurin:25-jre ; COPY target/ludotheque.jar app.jar\n#         CMD [\"java\", \"-jar\", \"app.jar\"]\n# C#    : FROM mcr.microsoft.com/dotnet/aspnet:10.0 ; COPY publish/ .\n#         CMD [\"dotnet\", \"Ludotheque.dll\"]\n# PHP   : FROM php:8.5-fpm + composer install (+ nginx en 2e conteneur)",
+    note: "Comprendre QUAND chaque instruction s'exécute est la clé : RUN fige au build (résultat dans l'image), CMD ne vit qu'au démarrage du conteneur. Les variantes par pile montrent que la structure est universelle — base épinglée, dépendances, code, commande — seuls les noms changent." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

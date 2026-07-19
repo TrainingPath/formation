@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie (Spring Security)",
+  subtitle: "Les bons réflexes de sécurité dès le premier compte, pas en fin de parcours.",
+  theory: `
+<h3>1. Les trois rôles</h3>
+<p>Avant tout, un mot sur l'outil du jour. <strong>Spring Security</strong> est le « service de sécurité » du framework Spring : un ensemble de briques toutes prêtes qui décident qui a le droit d'entrer et qui a le droit de faire quoi — comme le gardiennage d'un immeuble, avec ses badges, ses portes et son registre. On ne réécrit pas ces mécanismes, on les branche et on les règle.</p>
+<p>La Ludothèque a trois <strong>rôles</strong>. Un rôle est une étiquette décrivant ce qu'un utilisateur a le droit de faire, comme les badges « visiteur », « employé » et « directeur » d'une entreprise : <strong>CLIENT</strong>, <strong>VENDEUR</strong>, <strong>ADMIN</strong>. On les <strong>modélise en base</strong> — c'est-à-dire qu'on les range dans la <strong>base de données</strong>, le grand classeur où le programme conserve durablement ses informations — via une table utilisateur reliée à ses rôles. Au moment de la connexion, un <code>UserDetailsService</code> (l'objet qui, à partir d'un email, va chercher le mot de passe et les rôles de la personne) les charge depuis cette base.</p>
+<p>Une <strong>entité</strong> est une classe dont chaque objet correspond à une ligne d'une table : ici, un <code>Utilisateur</code> = une ligne de la table des utilisateurs. Les mots précédés d'un <code>@</code> sont des <strong>annotations</strong> : des étiquettes collées sur le code pour lui donner un comportement automatique, comme un tampon « FRAGILE » sur un colis.</p>
+<pre class="pseudo">@Entity public class Utilisateur {                              // @Entity : cette classe EST une table en base ; chaque objet = une ligne
+    @Id @GeneratedValue(strategy = IDENTITY) private Long id;   // @Id : la cle primaire (identifiant unique) ; IDENTITY : la base l'attribue seule (1, 2, 3…)
+    @Column(unique = true, nullable = false) private String email;   // colonne email : unique (pas deux comptes pareils) et obligatoire (jamais vide)
+    @Column(nullable = false) private String motDePasseHache;   // JAMAIS en clair : on ne stocke que l'empreinte, pas le vrai mot de passe
+    @ElementCollection(fetch = EAGER) private Set<String> roles;  // la liste des roles (ROLE_CLIENT…), chargee EN MEME TEMPS que l'utilisateur (EAGER)
+}</pre>
+
+<h3>2. Le hachage du mot de passe</h3>
+<p><strong>Hacher</strong> un mot de passe, c'est le passer dans une moulinette <em>à sens unique</em> qui produit une empreinte illisible : impossible de remonter de l'empreinte au mot de passe, comme on ne reconstitue pas une pomme à partir de la compote. Un <code>PasswordEncoder</code> est l'objet qui fabrique cette empreinte puis vérifie une saisie. <strong>BCrypt</strong> est un algorithme de hachage rendu <em>volontairement lent</em> : imperceptible pour qui se connecte une fois, cette lenteur ruine les attaques par <strong>force brute</strong> (essayer des millions de mots de passe à la chaîne).</p>
+<pre class="pseudo">@Bean PasswordEncoder encoder() { return new BCryptPasswordEncoder(12); }   // @Bean : objet fabrique et gere par Spring, reutilisable partout ; BCrypt de cout 12
+// (ou Argon2PasswordEncoder) — jamais de MD5/SHA1, jamais de clair          // MD5/SHA1 sont trop rapides donc cassables ; stocker en clair est interdit
+String hache = encoder.encode(motDePasseClair);   // encode() : fabrique l'empreinte a l'INSCRIPTION (c'est elle qu'on range en base)
+encoder.matches(saisi, hache);                    // matches() : a la CONNEXION, compare la saisie a l'empreinte stockee (renvoie vrai/faux)</pre>
+<p>Le <code>12</code> est le <strong>facteur de coût</strong> : chaque unité double le travail à fournir, un curseur qu'on augmente au fil des années à mesure que les machines accélèrent. BCrypt ajoute aussi tout seul un <strong>sel</strong> — une petite valeur aléatoire mélangée au mot de passe avant hachage — pour que deux personnes au même mot de passe obtiennent des empreintes différentes.</p>
+
+<h3>3. La chaîne de sécurité</h3>
+<p>La <strong>chaîne de sécurité</strong> (<code>SecurityFilterChain</code>) est la suite de filtres que chaque requête traverse avant d'atteindre l'application, comme les portiques successifs à l'entrée d'un aéroport. C'est là qu'on déclare quelles adresses (URL) sont ouvertes à tous et lesquelles exigent d'être connecté. Une <strong>requête</strong> est une demande qu'un navigateur envoie au serveur (« montre-moi le catalogue »).</p>
+<pre class="pseudo">@Configuration @EnableMethodSecurity                            // @Configuration : classe de reglages ; @EnableMethodSecurity : autorise les verrous par methode (@PreAuthorize, lecon 10)
+public class SecuriteConfig {
+    @Bean SecurityFilterChain chaine(HttpSecurity http) throws Exception {   // http = l'objet ou l'on decrit toutes les regles de securite
+        http.authorizeHttpRequests(a -> a                        // on commence a definir QUI a le droit d'acceder a QUOI
+                .requestMatchers("/", "/catalogue", "/api/jeux").permitAll()   // ces adresses publiques : permitAll = accessibles SANS etre connecte
+                .anyRequest().authenticated())                   // toutes les AUTRES adresses : authenticated = reservees aux personnes connectees
+            .formLogin(Customizer.withDefaults())                // active le formulaire de connexion standard fourni par Spring
+            .logout(Customizer.withDefaults());                  // active la deconnexion standard (le bouton « se deconnecter »)
+        return http.build();                                     // build() : assemble toutes ces regles en une chaine prete a l'emploi
+    }
+}</pre>
+
+<h3>4. Durcir les cookies de session</h3>
+<p>Une <strong>session</strong> est la mémoire qu'un serveur garde d'un visiteur connecté, comme le vestiaire qui vous remet un jeton après avoir pris votre manteau. Ce jeton est un <strong>cookie</strong> : un petit fichier que le navigateur renvoie à chaque requête pour prouver « c'est toujours moi ». Comme ce cookie vaut votre identité, on le <strong>durcit</strong> (on le rend dur à voler). <strong>XSS</strong> (injection d'un script dans une page) et <strong>CSRF</strong> (requête forgée à votre insu) sont deux attaques classiques ; <strong>HTTPS</strong> est la version chiffrée du web, qui empêche d'espionner ce qui circule.</p>
+<pre class="pseudo"># application.yml                                                # fichier de configuration (format YAML : des cles imbriquees par l'indentation)
+server:                                                          # reglages du serveur web
+  servlet:                                                       # de la couche servlet (le moteur qui traite les requetes)
+    session:                                                     # de la gestion des sessions
+      cookie:                                                    # et precisement du cookie qui identifie la session
+        http-only: true      # inaccessible au JavaScript (anti-vol par XSS)
+        secure: true         # transmis uniquement en HTTPS
+        same-site: lax       # anti-CSRF de base</pre>
+
+<h3>5. Politique de mot de passe</h3>
+<p>Le <strong>NIST</strong> (l'institut américain des standards) recommande de privilégier la <strong>longueur</strong> d'un mot de passe plutôt que la complexité artificielle (les fameux « au moins un chiffre et un caractère spécial », qui poussent surtout aux mots de passe faciles à deviner). On refuse aussi ceux qui figurent dans les <em>listes de mots de passe courants</em> déjà connues des attaquants.</p>
+<pre class="pseudo">// à l'inscription : longueur >= 12, refus des mots de passe courants (listes connues)
+// NIST : privilégier la LONGUEUR à la complexité artificielle
+if (mdp.length() < 12 || motsDePasseCourants.contains(mdp))   // SI le mot de passe fait moins de 12 caracteres OU figure dans la liste des courants…
+    throw new MotDePasseFaibleException();                    // …on rejette l'inscription en levant une exception « mot de passe trop faible »</pre>
+<div class="warn">Au Niveau 6, la sécurité des sessions arrivait en fin de parcours et le hachage était bricolé. Ici, dès le premier utilisateur : BCrypt (facteur de coût 12), politique NIST, cookies durcis. Sécuriser au moment où l'on crée la fonctionnalité coûte quelques lignes ; le faire après coup coûte un audit.</div>
+<div class="tip">Spring Security fournit gratuitement l'essentiel (formulaire de login, protection CSRF, gestion de session). Notre travail : brancher les utilisateurs, choisir un bon encodeur, durcir les cookies. Le « par conception » n'est pas plus de code — c'est le bon réflexe au bon moment.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le mot de passe est stocké…", opts: ["En clair", "Haché (BCrypt/Argon2)", "En base64", "Chiffré réversible"], a: 1, exp: "Jamais récupérable en clair." },
+    { type: "qcm", q: "Les trois rôles sont…", opts: ["Admin, root, user", "CLIENT, VENDEUR, ADMIN", "Lecteur, écrivain", "Aucun"], a: 1, exp: "Profils métier." },
+    { type: "qcm", q: "BCryptPasswordEncoder(12) : le 12 est…", opts: ["La longueur", "Le facteur de coût (lenteur volontaire)", "Le nombre de rôles", "Rien"], a: 1, exp: "Ralentit le brute-force." },
+    { type: "qcm", q: "encoder.matches sert à…", opts: ["Hacher", "Vérifier un mot de passe à la connexion", "Chiffrer", "Générer un sel"], a: 1, exp: "Comparaison sûre." },
+    { type: "qcm", q: "http-only sur le cookie…", opts: ["Le rend lisible en JS", "L'empêche d'être lu par JavaScript (anti-XSS)", "Le chiffre", "L'accélère"], a: 1, exp: "Vol de session bloqué." },
+    { type: "qcm", q: "secure sur le cookie…", opts: ["Le transmet en HTTP", "Le transmet uniquement en HTTPS", "Rien", "Le supprime"], a: 1, exp: "Pas d'interception en clair." },
+    { type: "qcm", q: "same-site=lax offre…", opts: ["Une protection CSRF de base", "Rien", "Du chiffrement", "Un cache"], a: 0, exp: "Défense en profondeur." },
+    { type: "qcm", q: "La politique NIST privilégie…", opts: ["La complexité artificielle", "La longueur du mot de passe", "Le changement mensuel", "Les caractères spéciaux imposés"], a: 1, exp: "Longueur >= 12." },
+    { type: "qcm", q: "On refuse à l'inscription…", opts: ["Tout", "Les mots de passe courants (listes connues)", "Les emails", "Les majuscules"], a: 1, exp: "Anti-mot de passe faible." },
+    { type: "qcm", q: "@EnableMethodSecurity prépare…", opts: ["Le CSS", "L'autorisation par méthode (@PreAuthorize, leçon 10)", "La base", "Le cache"], a: 1, exp: "Prochaine étape." },
+    { type: "vf", q: "Sécuriser dès la création coûte moins cher que rétrofiter.", a: true, exp: "Par conception." },
+    { type: "qcm", q: "Spring Security fournit gratuitement…", opts: ["Rien", "Login, CSRF, gestion de session", "Le métier", "La base"], a: 1, exp: "On branche, on durcit." },
+    { type: "qcm", q: "MD5/SHA1 pour un mot de passe :", opts: ["Recommandés", "À proscrire (trop rapides, cassés)", "Obligatoires", "Idéaux"], a: 1, exp: "BCrypt/Argon2." },
+    { type: "qcm", q: "Les rôles sont chargés via…", opts: ["Un fichier texte", "Un UserDetailsService (depuis la base)", "L'URL", "Le cookie"], a: 1, exp: "Source fiable." },
+    { type: "vf", q: "Un cookie http-only ne peut pas être volé par un script XSS.", a: true, exp: "Inaccessible au JS." }
+  ],
+  final: {
+    title: "Exercice final — L'authentification durcie",
+    intro: `<p>Comptes + hachage + cookies + politique.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mot de passe :", opts: ["haché BCrypt(12)", "en clair", "en base64", "en MD5"], a: 0, exp: "Non réversible, lent." },
+      { type: "qcm", q: "Les cookies de session :", opts: ["http-only + secure + same-site", "aucun réglage", "lisibles en JS", "en HTTP"], a: 0, exp: "Durcis." },
+      { type: "qcm", q: "La politique de mot de passe :", opts: ["longueur >= 12 + refus des courants", "8 caractères max", "aucune", "1 chiffre"], a: 0, exp: "NIST." },
+      { type: "qcm", q: "L'autorisation par méthode s'active avec :", opts: ["@EnableMethodSecurity", "@Entity", "@Bean", "rien"], a: 0, exp: "Prépare la leçon 10." },
+      { type: "vf", q: "Ces réflexes sont posés dès le premier compte, pas en fin de parcours.", a: true, exp: "Par conception." }
+    ],
+    solution: `<pre class="pseudo">@Bean PasswordEncoder encoder(){ return new BCryptPasswordEncoder(12); }   // l'encodeur BCrypt (cout 12) qui hache et verifie les mots de passe
+@Bean SecurityFilterChain chaine(HttpSecurity http){                        // la chaine de filtres que traverse chaque requete
+  http.authorizeHttpRequests(a -> a                                         // on definit qui accede a quoi
+       .requestMatchers("/","/catalogue","/api/jeux").permitAll()           // adresses publiques : accessibles sans etre connecte
+       .anyRequest().authenticated())                                       // tout le reste : reserve aux personnes connectees
+      .formLogin(withDefaults()); return http.build();                      // active le login standard, puis assemble la chaine
+}
+# cookies : http-only + secure + same-site=lax                             # les trois reglages qui durcissent le cookie de session
+# inscription : encode(mdp) ; refus si length<12 ou mdp courant            # on hache le mot de passe et on applique la politique NIST</pre>
+<p>L'auth est durcie. Demain : l'autorisation par rôle ET par ressource (anti-IDOR).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta configuration de sécurité…",
+  items: [
+  { id: "proj6java-l9", title: "L'authentification durcie dès le premier compte", level: 2,
+    statement: "Écris la config Spring Security (SecurityFilterChain, PasswordEncoder BCrypt(12)), l'entité Utilisateur (email unique, mot de passe haché, rôles), le durcissement des cookies (application.yml) et le contrôle de politique à l'inscription. Explique en 2-3 lignes pourquoi hacher (et pas chiffrer) et pourquoi durcir dès maintenant.",
+    hints: [
+      "PasswordEncoder = BCryptPasswordEncoder(12) ; encode() à l'inscription, matches() à la connexion.",
+      "cookies : http-only + secure + same-site=lax (application.yml).",
+      "Politique NIST : longueur >= 12, refus des mots de passe courants."
+    ],
+    solution: "@Entity\npublic class Utilisateur {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;\n    @Column(unique = true, nullable = false) private String email;\n    @Column(nullable = false) private String motDePasseHache;      // jamais en clair\n    @ElementCollection(fetch = FetchType.EAGER) private Set<String> roles;\n}\n\n@Configuration\n@EnableMethodSecurity\npublic class SecuriteConfig {\n    @Bean PasswordEncoder encoder() { return new BCryptPasswordEncoder(12); }\n\n    @Bean SecurityFilterChain chaine(HttpSecurity http) throws Exception {\n        http.authorizeHttpRequests(a -> a\n                .requestMatchers(\"/\", \"/catalogue\", \"/api/jeux\").permitAll()\n                .anyRequest().authenticated())\n            .formLogin(Customizer.withDefaults())\n            .logout(Customizer.withDefaults());\n        return http.build();\n    }\n}\n\n@Service\npublic class InscriptionService {\n    private final UtilisateurRepository repo;\n    private final PasswordEncoder encoder;\n    private final Set<String> motsDePasseCourants;   // charges depuis une liste connue\n\n    public Utilisateur inscrire(String email, String mdp) {\n        if (repo.existsByEmail(email)) throw new CompteExistantException();\n        if (mdp.length() < 12 || motsDePasseCourants.contains(mdp))\n            throw new MotDePasseFaibleException();\n        Utilisateur u = new Utilisateur();\n        u.setEmail(email);\n        u.setMotDePasseHache(encoder.encode(mdp));   // HACHE, sale, lent\n        u.setRoles(Set.of(\"ROLE_CLIENT\"));\n        return repo.save(u);\n    }\n}\n\n# application.yml\nserver:\n  servlet:\n    session:\n      cookie: { http-only: true, secure: true, same-site: lax }\n\n// POURQUOI HACHER (PAS CHIFFRER), POURQUOI MAINTENANT\n// Hacher = transformation a SENS UNIQUE : meme la base volee, les mots de passe\n// ne se retrouvent pas. Chiffrer serait reversible (avec la cle) -- inutile ici,\n// on n'a jamais besoin de relire le mot de passe, seulement de le VERIFIER.\n// BCrypt est volontairement lent (cout 12) pour ruiner le brute-force. Et on\n// durcit DES le premier compte : rajouter http-only/secure/BCrypt apres coup,\n// c'est un audit et une migration de tous les mots de passe existants.",
+    note: "La distinction hacher / chiffrer est fondamentale et souvent confondue : on ne chiffre jamais un mot de passe, on le hache — car on n'a jamais besoin de le relire, seulement de vérifier une saisie. BCrypt intègre le sel et un coût réglable qui rend le brute-force impraticable. Poser ces réflexes dès le premier compte, plutôt qu'en fin de projet, est l'incarnation même du « secure by design »." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

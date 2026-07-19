@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Secrets et configuration : hors du code, rotation",
+  subtitle: "Ce qui protège tout le reste ne doit vivre nulle part dans le code.",
+  theory: `
+<h3>1. La règle, déjà croisée trois fois</h3>
+<p>Un <strong>secret</strong>, en sécurité, est une information confidentielle qui sert de clé à d'autres protections : le mot de passe de la base de données, une <strong>clé API</strong> (un jeton qui autorise ton programme à utiliser un service extérieur, comme un service de paiement), ou une <strong>clé de signature</strong> (qui garantit qu'un jeton n'a pas été falsifié). S'il fuit, tout le reste s'effondre — d'où sa place à part. La règle « un secret ne vit jamais dans le code » revient dans trois contextes déjà rencontrés :</p>
+<pre class="pseudo">Capstone : settings.py lit os.environ          # os.environ = les variables d'environnement du systeme (config hors code)
+Docker   : --env-file, jamais dans l'image      # on injecte les secrets au demarrage, pas dans l'image (cours Docker)
+CI/CD    : secrets.*, jamais dans le YAML        # la CI a un coffre a secrets ; le fichier YAML, lui, reste lisible (leçon 13)
+-> Securite : un seul principe, applique partout et audite.   # la meme regle a chaque etage</pre>
+<p>Une <strong>variable d'environnement</strong> est une valeur fournie au programme par le système au moment où il démarre, en dehors du code (<code>os.environ</code> est la façon dont Python les lit). <strong>Docker</strong> emballe une application dans une « image » (un paquet figé, prêt à lancer) ; <strong>YAML</strong> est un format de fichier texte servant à décrire des configurations, notamment pour la <strong>CI/CD</strong> (l'usine automatisée qui teste et déploie le code).</p>
+
+<h3>2. Où un secret ne va JAMAIS</h3>
+<pre class="pseudo">✘ dans le code source (ni en dur, ni "temporairement")   # "en dur" = ecrit directement dans le code
+✘ dans Git (l'historique n'oublie rien)                  # meme supprime, il reste dans les versions passees
+✘ dans une image Docker (une couche = pour toujours)     # chaque etape d'une image est archivee definitivement
+✘ dans les logs (leçon 13)                               # les journaux sont souvent lus par beaucoup de monde
+✘ dans un ticket, un chat, un email                      # ces canaux ne sont pas des coffres-forts
+✔ variable d'environnement / gestionnaire de secrets     # Vault, secrets GitHub, KMS : des coffres prevus pour ca</pre>
+<p><strong>Git</strong> est l'outil qui garde l'historique complet des versions du code ; un <strong>log</strong> (journal) est le fichier où le programme note ce qu'il fait. Un <strong>gestionnaire de secrets</strong> (Vault, KMS, secrets GitHub) est un coffre-fort logiciel conçu pour ranger les secrets et n'en donner l'accès qu'aux programmes autorisés.</p>
+
+<h3>3. L'historique Git : le piège récurrent</h3>
+<p>Erreur classique du débutant : commiter un secret, s'en apercevoir, puis le supprimer au commit suivant en croyant le problème réglé. Git conserve TOUTES les versions passées : le secret reste consultable dans l'historique, et le dépôt a peut-être déjà été copié ailleurs. Un <strong>scanner</strong> parcourt tout cet historique à la recherche de secrets.</p>
+<pre class="pseudo"># "Je l'ai supprime au commit suivant" -> FAUX : il reste dans l'historique,
+# et le depot a pu etre clone (copie) ailleurs. Il faut scanner TOUT l'historique :
+$ gitleaks detect --source .        # gitleaks = outil qui cherche des motifs de secrets (autres : trufflehog, git-secrets)
+# -> trouve : cle Stripe en dur dans le commit a1b2c3d (il y a 8 mois)</pre>
+
+<h3>4. La rotation d'un secret exposé (dans l'ORDRE)</h3>
+<p>La <strong>rotation</strong>, c'est remplacer un secret par un nouveau. <strong>Révoquer</strong> = déclarer l'ancien invalide chez le fournisseur. L'ordre compte : on coupe l'accès de l'ancien AVANT tout le reste.</p>
+<pre class="pseudo">1. REVOQUER la cle exposee chez le fournisseur   # immediat — chaque minute compte : l'ancienne cle ne marche plus
+2. GENERER une nouvelle cle                       # on cree un remplacant tout neuf
+3. La poser dans le gestionnaire de secrets / l'environnement   # le service utilise desormais la nouvelle
+4. VERIFIER que le service repart                 # s'assurer que rien n'est casse par le changement
+5. Auditer l'usage frauduleux eventuel pendant l'exposition   # regarder si l'ancienne cle a ete abusee
+-> un secret expose est GRILLE : on le remplace, on ne le "cache" pas.   # le cacher ne le protege pas</pre>
+
+<h3>5. La prévention automatique</h3>
+<p>Un <strong>hook pre-commit</strong> est un petit programme que Git lance automatiquement juste avant d'enregistrer un commit ; on s'en sert pour refuser tout commit qui contiendrait un secret.</p>
+<pre class="pseudo">- hook pre-commit (gitleaks) : refuse un commit contenant un motif de secret   # barriere AVANT que le secret entre
+- scan en CI (leçon 17 de ce cours) : bloque le merge (la fusion du code)      # deuxieme filet, cote serveur
+- .gitignore + .dockerignore : .env* exclus (rappels)                          # empeche d'ajouter les fichiers .env par erreur
+- revue de code : un secret en dur ne passe pas la PR                          # un humain relit avant de fusionner (PR = pull request)</pre>
+<div class="warn">Réécrire l'historique Git pour effacer un secret (git-filter-repo) est lourd, casse les clones existants, et <strong>ne suffit pas</strong> si le dépôt a déjà été copié. La rotation est la seule réponse fiable — réécrire l'historique est un nettoyage secondaire, jamais la parade principale.</div>
+<div class="tip">Le hook pre-commit qui bloque les secrets AVANT qu'ils entrent est l'investissement le plus rentable de la sécurité opérationnelle : quelques minutes d'installation contre des heures de rotation d'urgence évitées.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un secret protège…", opts: ["Rien", "Tout le reste : s'il fuit, les autres défenses tombent", "Seulement la base", "Le CSS"], a: 1, exp: "D'où sa place à part." },
+    { type: "qcm", q: "Le principe des secrets est déjà vu dans…", opts: ["Aucun cours", "Capstone (os.environ), Docker (--env-file), CI/CD (secrets.*)", "Le seul cours sécurité", "Merise"], a: 1, exp: "Un principe, trois étages." },
+    { type: "qcm", q: "Un secret ne va jamais…", opts: ["En variable d'environnement", "Dans le code, Git, l'image, les logs", "Dans un gestionnaire de secrets", "Dans le KMS"], a: 1, exp: "Les endroits interdits." },
+    { type: "qcm", q: "« Je l'ai supprimé au commit suivant » …", opts: ["Suffit", "Est faux : l'historique le garde, le dépôt a pu être cloné", "Chiffre", "Résout tout"], a: 1, exp: "Le piège récurrent." },
+    { type: "qcm", q: "Scanner l'historique Git :", opts: ["gitleaks / trufflehog / git-secrets", "grep du dernier commit seul", "ls", "docker ps"], a: 0, exp: "TOUT l'historique." },
+    { type: "qcm", q: "La première action face à un secret exposé :", opts: ["Enquêter", "Révoquer la clé (immédiat)", "Réécrire l'historique", "Attendre"], a: 1, exp: "Rotation d'abord." },
+    { type: "qcm", q: "Après révocation, on…", opts: ["Ne fait rien", "Génère une nouvelle clé, la pose, vérifie, audite l'usage", "Supprime le dépôt", "Change de fournisseur"], a: 1, exp: "La procédure complète." },
+    { type: "qcm", q: "Un secret exposé est…", opts: ["Récupérable", "Grillé : on le remplace, on ne le cache pas", "Toujours sûr", "Chiffré"], a: 1, exp: "Rotation obligatoire." },
+    { type: "qcm", q: "Le hook pre-commit gitleaks…", opts: ["Déploie", "Refuse un commit contenant un motif de secret", "Chiffre les commits", "Ralentit Git"], a: 1, exp: "Prévention à la source." },
+    { type: "qcm", q: "Le scan de secrets en CI…", opts: ["Est inutile", "Bloque le merge si un secret est détecté", "Accélère", "Chiffre"], a: 1, exp: "Deuxième filet (leçon 17)." },
+    { type: "vf", q: "Réécrire l'historique Git suffit à sécuriser un secret déjà cloné.", a: false, exp: "La rotation est la vraie parade." },
+    { type: "qcm", q: "Où vivent les secrets de production ?", opts: ["Dans appsettings/settings commités", "Gestionnaire de secrets / variables d'environnement", "Dans le README", "En dur"], a: 1, exp: "Vault, secrets GitHub, KMS." },
+    { type: "qcm", q: "L'investissement le plus rentable :", opts: ["Un antivirus", "Le hook pre-commit qui bloque les secrets avant qu'ils entrent", "Un WAF", "Plus de RAM"], a: 1, exp: "Quelques minutes contre des heures de crise." },
+    { type: "qcm", q: ".env* dans .gitignore ET .dockerignore…", opts: ["Est redondant", "Exclut les secrets de Git ET des images", "Chiffre", "Ralentit"], a: 1, exp: "Rappels Docker/CI." },
+    { type: "vf", q: "Un secret dans une couche d'image Docker y reste même supprimé plus tard.", a: true, exp: "Les couches n'oublient rien (Docker l.6)." }
+  ],
+  final: {
+    title: "Exercice final — Le secret retrouvé dans l'historique",
+    intro: `<p>Un scan révèle une clé d'API en dur dans un ancien commit.</p>`,
+    questions: [
+      { type: "qcm", q: "L'outil qui l'a trouvée :", opts: ["gitleaks (scan de tout l'historique)", "ls", "docker ps", "un test unitaire"], a: 0, exp: "Scan de secrets." },
+      { type: "qcm", q: "Action n°1 :", opts: ["Révoquer la clé chez le fournisseur", "réécrire l'historique", "supprimer le commit", "rien"], a: 0, exp: "Immédiat." },
+      { type: "qcm", q: "Puis :", opts: ["Générer + poser la nouvelle clé, vérifier, auditer l'usage", "attendre", "changer de dépôt", "un email"], a: 0, exp: "La suite ordonnée." },
+      { type: "qcm", q: "Prévention :", opts: ["Hook pre-commit + scan en CI", "la vigilance seule", "un WAF", "rien"], a: 0, exp: "Automatiser." },
+      { type: "vf", q: "Un secret exposé se remplace, il ne se cache pas.", a: true, exp: "Grillé = rotation." }
+    ],
+    solution: `<pre class="pseudo">$ gitleaks detect --source .        # scan de tout l'historique -> cle en dur trouvee dans le commit a1b2c3d
+
+# Rotation (dans l'ordre)
+# 1. revoquer la cle chez le fournisseur (immediat)             # l'ancienne cle cesse de fonctionner
+# 2. generer une nouvelle cle                                    # son remplacant
+# 3. la poser dans le gestionnaire de secrets / l'environnement  # le service utilise la nouvelle
+# 4. verifier que le service repart                              # rien de casse
+# 5. auditer l'usage frauduleux pendant l'exposition             # verifier les abus eventuels
+
+# Prevention
+#  hook pre-commit gitleaks + job "securite" en CI (leçon 17)    # bloquer avant ET pendant l'integration
+#  .env* dans .gitignore et .dockerignore                        # ne jamais versionner ni embarquer les .env</pre>
+<p>Les secrets sont hors de portée. Demain : chiffrer le transport — HTTPS.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta gestion des secrets…",
+  items: [
+  { id: "secu-l8", title: "La politique de secrets", level: 3,
+    statement: "Rédige la politique de gestion des secrets de la Ludothèque (12-16 lignes) : l'inventaire des secrets du projet (base, clé de signature, clé de paiement, jeton de registre...), où chacun vit (jamais le code), la procédure de rotation en 5 étapes, la prévention automatique (pre-commit + CI), et la règle « exposé = grillé ». Cite les cours Docker et CI/CD.",
+    hints: [
+      "Inventaire : liste chaque secret et son emplacement (variable d'env, gestionnaire).",
+      "Rotation : révoquer → générer → poser → vérifier → auditer.",
+      "Prévention : gitleaks en pre-commit ET en CI ; .env* exclus partout."
+    ],
+    solution: "POLITIQUE DE SECRETS — La Ludothèque\n\nINVENTAIRE (chaque secret, son emplacement)\n- Mot de passe MySQL       -> variable d'env / .env.prod (chmod 600, Docker l.10)\n- SECRET_KEY (signatures)  -> variable d'environnement\n- Clé de paiement (Stripe) -> gestionnaire de secrets (Vault/KMS)\n- Jeton de registre, clé SSH de déploiement -> secrets GitHub (CI/CD l.13)\nAucun de ces secrets n'apparaît dans le code, Git, les images ou les logs.\n\nROTATION D'UN SECRET EXPOSÉ (ordre strict)\n1. Révoquer chez le fournisseur (immédiat)\n2. Générer une nouvelle valeur\n3. La poser dans le gestionnaire / l'environnement\n4. Vérifier que le service repart\n5. Auditer l'usage pendant la fenêtre d'exposition (logs, l.13)\nRègle : un secret exposé est GRILLÉ. On le remplace, jamais on ne le cache.\n\nPRÉVENTION AUTOMATIQUE\n- Hook pre-commit gitleaks : bloque un secret AVANT le commit\n- Job \"securite\" en CI (leçon 17) : gitleaks sur tout l'historique -> merge bloqué\n- .gitignore + .dockerignore : .env* exclus (rappels capstone/Docker)\n- Revue de PR : un secret en dur ne passe pas\n\nROTATION PROGRAMMÉE : les secrets à longue vie sont tournés périodiquement,\npas seulement après incident.",
+    note: "La rotation programmée (dernier point) distingue les équipes matures : on ne tourne pas les secrets seulement APRÈS une fuite, mais régulièrement, pour limiter la valeur d'un secret qui aurait fuité sans qu'on le sache. La politique réunit les trois cours précédents sous un seul principe — le code est public, les secrets sont dehors, et un outil vérifie qu'on ne se trompe pas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Du MCD Merise aux entités EF Core (migrations)",
+  subtitle: "Traduire le modèle conçu en Merise en un schéma SQL Server versionné.",
+  theory: `
+<h3>1. L'approche « code first »</h3>
+<p>Rappel : une <strong>entité</strong> est la fiche descriptive d'une chose du monde réel (un jeu, une catégorie). L'approche « <strong>code first</strong> » (« le code d'abord ») consiste à écrire d'abord ces fiches en C#, puis à laisser l'ordinateur en déduire la base de données. Le mouvement inverse serait le « MCD Merise » sur papier : le <strong>MCD</strong> (Modèle Conceptuel de Données) est le schéma dessiné à la main qui liste les données et leurs liens.</p>
+<p>Avec EF Core, on écrit les <strong>entités C#</strong>, puis les <strong>migrations</strong> génèrent le <strong>schéma</strong> SQL Server (le schéma = le plan des tables et colonnes de la base, comme le plan des rayons d'un entrepôt). Une <strong>migration</strong> est un fichier de code qui décrit un changement de structure ; elle est <strong>versionnée dans Git</strong> (Git = le carnet d'historique qui garde toutes les versions du projet) et appliquée par une simple commande. Résultat : n'importe qui peut recréer exactement la même base — elle devient reproductible.</p>
+
+<h3>2. L'entité Jeu</h3>
+<p>Voici la fiche d'un jeu. Chaque ligne est une <strong>propriété</strong> (une caractéristique de l'objet) ; <code>{ get; set; }</code> autorise à la lire (<em>get</em>) et à la modifier (<em>set</em>), comme une case qu'on peut consulter ou remplir :</p>
+<pre class="pseudo">public class Jeu {                            // définit l'entité "Jeu" : le modèle d'une fiche de jeu
+    public int Id { get; set; }              // Id : identifiant unique (clé primaire) de chaque jeu
+    public string Titre { get; set; } = "";  // Titre du jeu (texte), initialisé à la chaîne vide par défaut
+    public decimal PrixAchat { get; set; }   // prix d'achat (decimal = nombre exact, adapté à l'argent)
+    public decimal PrixLocation { get; set; }// prix de location
+    public int StockVente { get; set; }      // nombre d'exemplaires disponibles à la vente
+    public int StockLocation { get; set; }   // nombre d'exemplaires disponibles à la location
+    public int CategorieId { get; set; }       // clé étrangère
+    public Categorie? Categorie { get; set; }   // navigation
+    public int? FournisseurId { get; set; }     // optionnel
+}</pre>
+<p>La <strong>clé primaire</strong> est le numéro unique qui identifie chaque fiche sans ambiguïté (comme un numéro de sécurité sociale) : par convention EF Core, la propriété nommée <code>Id</code> joue ce rôle. Une <strong>clé étrangère</strong> est un numéro qui pointe vers la fiche d'une autre table : <code>CategorieId</code> contient le numéro de la catégorie du jeu, comme une étiquette « appartient au rayon n°… ». La propriété de <strong>navigation</strong> <code>Categorie</code> permet, elle, d'accéder directement à l'objet Catégorie complet. Le point d'interrogation <code>?</code> (comme dans <code>Categorie?</code> ou <code>int?</code>) signifie « peut être absent / vide » : on dit <strong>nullable</strong>.</p>
+
+<h3>3. Le DbContext</h3>
+<p>Le <strong>DbContext</strong> est la classe qui représente toute la base côté code : c'est le catalogue central de nos tables.</p>
+<pre class="pseudo">public class AppDbContext : DbContext {                              // notre contexte hérite de DbContext (fourni par EF Core)
+    public AppDbContext(DbContextOptions&lt;AppDbContext&gt; o) : base(o) {}  // reçoit sa configuration et la transmet à la classe mère
+    public DbSet&lt;Jeu&gt; Jeux =&gt; Set&lt;Jeu&gt;();                          // expose la table des jeux
+    public DbSet&lt;Categorie&gt; Categories =&gt; Set&lt;Categorie&gt;();          // expose la table des catégories
+}</pre>
+<p><code>: DbContext</code> veut dire « hérite de DbContext » : notre classe récupère gratuitement tout le savoir-faire d'EF Core, comme un apprenti reprend le métier de son maître. Chaque <code>DbSet</code> expose une <strong>table</strong> (un tableau de fiches) que l'on pourra <strong>interroger</strong> (lui poser des questions : quels jeux coûtent moins de 20 € ?).</p>
+
+<h3>4. Créer et appliquer une migration</h3>
+<p>Deux commandes suffisent (le « # » n'est pas tapé, c'est mon explication) :</p>
+<pre class="pseudo">dotnet ef migrations add Init      # génère une migration nommée "Init" en comparant les entités à la base actuelle
+dotnet ef database update          # exécute cette migration : crée/modifie réellement les tables dans SQL Server</pre>
+<div class="warn">On ne modifie jamais une migration déjà appliquée et partagée : on en crée une nouvelle (<code>migrations add</code>). C'est comme un journal comptable : on ne rature pas une écriture passée, on en ajoute une qui corrige. Ainsi la base reste cohérente entre développeurs et environnements.</div>
+
+<h3>5. Types et conventions</h3>
+<p>EF Core traduit automatiquement chaque type C# en un type de colonne SQL Server (à gauche le type du code, à droite le type dans la base) :</p>
+<pre class="pseudo">decimal   → DECIMAL (prix : jamais double)
+int       → INT
+string    → NVARCHAR
+DateTime  → DATETIME2
+int?      → colonne nullable</pre>
+<div class="tip">EF Core déduit le schéma des types et conventions C# (principe « la convention plutôt que la configuration » : on suit des règles de nommage et tout se met en place). Pour un contrôle fin (précision décimale, longueur maximale), on utilise <code>OnModelCreating</code> (une méthode où l'on précise les détails) ou des <strong>attributs</strong> (de petites étiquettes posées au-dessus d'une propriété). Les entités reflètent le MCD Merise : deux stocks, un fournisseur relié au jeu — c'est le pont entre la conception sur papier et le code.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "L'approche d'EF Core ici :", opts: ["Database first", "Code first (entités → migrations → schéma)", "No schema", "SQL manuel seulement"], a: 1, exp: "Code first." },
+    { type: "qcm", q: "Une migration est…", opts: ["Un test", "Du code versionné décrivant le schéma, appliqué par commande", "Un contrôleur", "Un DTO"], a: 1, exp: "Schéma reproductible." },
+    { type: "qcm", q: "La clé primaire par convention :", opts: ["Key", "Id", "Pk", "Primary"], a: 1, exp: "Id (ou <Entité>Id)." },
+    { type: "qcm", q: "La clé étrangère vers Categorie :", opts: ["CategorieId + navigation Categorie", "un string", "rien", "un DTO"], a: 0, exp: "FK + navigation." },
+    { type: "qcm", q: "Exposer une table :", opts: ["public DbSet<Jeu> Jeux", "List<Jeu>", "new Table()", "SqlTable"], a: 0, exp: "DbSet." },
+    { type: "qcm", q: "Créer une migration :", opts: ["dotnet ef migrations add Init", "migrate:fresh", "npm migrate", "new migration"], a: 0, exp: "ef migrations add." },
+    { type: "qcm", q: "Appliquer le schéma :", opts: ["dotnet ef database update", "dotnet run", "composer db", "npm db"], a: 0, exp: "database update." },
+    { type: "qcm", q: "Modifier une migration déjà appliquée…", opts: ["Est recommandé", "Est interdit : on en crée une nouvelle", "Accélère", "Efface la base"], a: 1, exp: "Migrations figées." },
+    { type: "qcm", q: "Le type d'un prix :", opts: ["double", "decimal", "float", "int"], a: 1, exp: "DECIMAL exact." },
+    { type: "qcm", q: "Une propriété int? donne…", opts: ["Une clé", "Une colonne nullable", "Un index", "Une erreur"], a: 1, exp: "Nullable." },
+    { type: "vf", q: "EF Core déduit le schéma des types et conventions C#.", a: true, exp: "Convention over configuration." },
+    { type: "qcm", q: "Jeu a deux clés étrangères vers…", opts: ["Client et Vendeur", "Categorie et Fournisseur", "Louer et Acheter", "aucune"], a: 1, exp: "Catégorie et fournisseur." },
+    { type: "vf", q: "Les migrations rendent la base reproductible entre machines.", a: true, exp: "Versionnées." },
+    { type: "qcm", q: "Pour un contrôle fin du schéma :", opts: ["OnModelCreating ou des attributs", "rien", "le CSS", "un test"], a: 0, exp: "Fluent API / attributs." },
+    { type: "qcm", q: "string devient en base…", opts: ["INT", "NVARCHAR", "DECIMAL", "BIT"], a: 1, exp: "Texte Unicode." }
+  ],
+  final: {
+    title: "Exercice final — La première migration",
+    intro: `<p>On crée le schéma initial de la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "La clé primaire de Jeu :", opts: ["public int Id { get; set; }", "public Key Id", "int Pk", "string Id obligatoire"], a: 0, exp: "Id." },
+      { type: "qcm", q: "Le prix de location :", opts: ["public decimal PrixLocation", "public double Prix", "public float Prix", "public string Prix"], a: 0, exp: "decimal." },
+      { type: "qcm", q: "Exposer la table Jeux :", opts: ["public DbSet<Jeu> Jeux => Set<Jeu>()", "List<Jeu>", "new Table()", "rien"], a: 0, exp: "DbSet." },
+      { type: "qcm", q: "Générer puis appliquer :", opts: ["ef migrations add Init ; ef database update", "migrate:fresh", "npm build", "rien"], a: 0, exp: "Deux commandes EF." },
+      { type: "vf", q: "On ajoute une nouvelle migration plutôt que de modifier une migration appliquée.", a: true, exp: "Migrations figées." }
+    ],
+    solution: `<pre class="pseudo">public class Jeu {                         // entité Jeu : le modèle d'une fiche de jeu
+    public int Id { get; set; }           // clé primaire (identifiant unique)
+    public string Titre { get; set; } = ""; // titre du jeu (texte)
+    public decimal PrixLocation { get; set; } // prix de location (nombre exact)
+    public int StockVente { get; set; }   // stock disponible à la vente
+    public int StockLocation { get; set; } // stock disponible à la location
+    public int CategorieId { get; set; }  // clé étrangère vers la catégorie
+    public Categorie? Categorie { get; set; } // navigation vers l'objet Categorie
+}
+// AppDbContext
+public DbSet&lt;Jeu&gt; Jeux =&gt; Set&lt;Jeu&gt;();  // expose la table des jeux
+
+// dotnet ef migrations add Init          // génère la migration à partir des entités
+// dotnet ef database update              // applique le schéma à SQL Server</pre>
+<p>Le schéma est versionné et reproductible. Demain : compléter les entités du catalogue.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton entité et ton DbContext…",
+  items: [
+  { id: "projcsharp-l3", title: "L'entité Location", level: 3,
+    statement: "Écris l'entité Location (Id, ClientId string, JeuId int, DateDebut DateTime, NbJours int, Rendue bool) avec les propriétés de navigation vers le jeu, et ajoute son DbSet à AppDbContext. Indique les commandes de migration.",
+    hints: [
+      "public class Location { public int Id; public string ClientId; public int JeuId; ... }",
+      "Propriété de navigation : public Jeu? Jeu { get; set; }",
+      "DbSet<Location> Locations => Set<Location>(); puis ef migrations add Locations."
+    ],
+    solution: "public class Location {                       // entite Location : une location de jeu\n    public int Id { get; set; }              // cle primaire (identifiant unique)\n    public string ClientId { get; set; } = \"\";  // cle etrangere vers le client (texte)\n    public int JeuId { get; set; }           // cle etrangere vers le jeu loue\n    public Jeu? Jeu { get; set; }            // navigation : acces a l'objet Jeu\n    public DateTime DateDebut { get; set; }  // date de debut de la location\n    public int NbJours { get; set; }         // duree en nombre de jours\n    public bool Rendue { get; set; }         // vrai/faux : le jeu a-t-il ete rendu ?\n}\n\n// AppDbContext\npublic DbSet<Location> Locations => Set<Location>();   // expose la table des locations\n\n// dotnet ef migrations add Locations       // genere la migration ajoutant la table\n// dotnet ef database update                // applique la migration a SQL Server",
+    note: "La table Locations relie un client (ClientId, issu d'Identity) à un jeu (JeuId) par une clé étrangère, avec la durée et un indicateur de retour. La propriété de navigation Jeu permet à EF Core de charger la relation. Une nouvelle migration ajoute la table sans toucher aux précédentes." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

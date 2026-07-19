@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'API REST (Laravel) et le job de tests au vert",
+  subtitle: "On ouvre le catalogue en API — et l'usine de tests devient complète.",
+  theory: `
+<h3>1. Une API Resource, pas le modèle brut</h3>
+<p>Une <strong>API REST</strong> est une porte d'entrée standardisée par laquelle d'autres programmes demandent ou envoient des données via des URL, en recevant du <strong>JSON</strong>. Une <strong>API Resource</strong> (classe <code>JsonResource</code>) est un <em>traducteur de sortie</em> : sa méthode <code>toArray()</code> choisit exactement quels champs du modèle deviennent visibles dans la réponse. On ne renvoie jamais le modèle brut, pour ne pas divulguer de données internes et pour garder le <em>contrat</em> d'API indépendant de la structure de la base.</p>
+<pre class="pseudo">// app/Http/Resources/JeuResource.php
+class JeuResource extends JsonResource {          // "traducteur de sortie" : décide ce que l'API renvoie
+    public function toArray($request): array {    // construit le tableau JSON à partir du jeu ($this)
+        return [
+            'id' => $this->id,                    // on expose l'identifiant
+            'titre' => $this->titre,              // et le titre
+            'prix_location' => $this->prix_location,   // et le prix de location
+            'louable' => $this->est_louable,      // et la règle calculée "louable" (accesseur)
+        ];                                        // tout le reste (champs internes) reste caché
+    }
+}</pre>
+<p>On n'expose <strong>jamais</strong> le modèle Eloquent directement (<code>toJson()</code>) : la Resource choisit ce qui sort (pas de champ interne, pas de relation lourde) et découple le contrat d'API du schéma.</p>
+
+<h3>2. La route</h3>
+<p>Le fichier <code>routes/api.php</code> déclare les routes de l'API. <code>Route::get('/jeux', …)</code> répond aux demandes de <em>lecture</em> (GET) sur <code>/api/jeux</code>. <code>Jeu::with('categorie')</code> charge d'avance la catégorie de chaque jeu (voir le N+1 ci-dessous), <code>orderBy('titre')</code> trie par titre, <code>get()</code> exécute la requête, et <code>JeuResource::collection(…)</code> emballe la liste au format JSON standardisé (sous une clé <code>data</code>).</p>
+<pre class="pseudo">// routes/api.php
+Route::get('/jeux', function () {                 // GET /api/jeux : lister le catalogue
+    return JeuResource::collection(               // emballe la liste au format JSON standard (clé "data")
+        Jeu::with('categorie')->orderBy('titre')->get()   // charge les jeux + leur catégorie (with = anti-N+1), triés par titre
+    );
+});</pre>
+
+<h3>3. Éviter le N+1 dès l'API</h3>
+<p>Le <strong>problème N+1</strong> est un piège de performance classique : pour afficher N jeux avec leur catégorie, un code naïf fait 1 requête pour les jeux, puis 1 requête par jeu pour aller chercher sa catégorie — soit N+1 requêtes qui écroulent la base. L'<strong>eager loading</strong> (« chargement anticipé », via <code>with('categorie')</code>) récupère toutes les catégories d'un coup : 2 requêtes au total, quel que soit N.</p>
+<pre class="pseudo">// SANS with('categorie') : 1 requête pour les jeux + 1 par jeu pour sa catégorie
+//   = N+1 requêtes. Avec with() : 2 requêtes au total (eager loading).</pre>
+
+<h3>4. Le test fonctionnel</h3>
+<p>Un <strong>test fonctionnel</strong> vérifie le comportement <em>de bout en bout</em> : il appelle une vraie URL et inspecte la réponse. <code>getJson('/api/jeux')</code> simule une requête HTTP GET. <code>assertOk()</code> exige un code 200 (succès), et <code>assertJsonStructure([...])</code> vérifie que le JSON renvoyé a bien la forme attendue (les bonnes clés), sans se soucier des valeurs exactes.</p>
+<pre class="pseudo">class JeuApiTest extends TestCase {
+    use RefreshDatabase;                          // base propre et migrée avant le test
+    public function test_liste_les_jeux(): void { // teste que l'API liste bien les jeux
+        Jeu::factory()->count(3)->create();       // enregistre 3 jeux de test
+        $this->getJson('/api/jeux')               // appelle l'URL de l'API en GET
+            ->assertOk()                          // vérifie un code HTTP 200 (succès)
+            ->assertJsonStructure(['data' => [['id','titre','prix_location','louable']]]);   // vérifie la FORME du JSON (les bonnes clés)
+    }
+}</pre>
+
+<h3>5. Le job de tests complet, avec MySQL</h3>
+<p>Dans la CI, un <strong>job</strong> peut démarrer des <strong>services</strong> annexes le temps de ses tests : ici un conteneur <code>mysql:8.4</code> jetable. Les <code>options: --health-cmd…</code> jouent le même rôle que le healthcheck vu en leçon 2 : attendre que MySQL soit réellement prêt. La variable <code>DB_HOST: 127.0.0.1</code> dit à Laravel de se connecter à ce MySQL local du runner. <strong>SQLite</strong> — une petite base de données rangée dans un simple fichier — serait plus rapide, mais elle n'obéit pas aux mêmes règles que MySQL : tester contre le vrai moteur évite le « vert en CI, rouge en prod ».</p>
+<pre class="pseudo"># ci.yml
+  tests:                          # un job nommé "tests"
+    runs-on: ubuntu-latest        # machine Linux neuve
+    services:                     # conteneurs annexes démarrés pour ce job
+      mysql:                      # un service MySQL jetable
+        image: mysql:8.4          # image MySQL 8.4
+        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }   # base et mot de passe root de test
+        ports: ["3306:3306"]      # expose le port MySQL au runner
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-retries=10   # attend que MySQL soit PRÊT
+    steps:                        # étapes du job
+      - uses: actions/checkout@v4         # récupérer le code
+      - uses: shivammathur/setup-php@v2   # installer PHP + Composer
+        with: { php-version: "8.5", tools: composer }   # PHP 8.5, outil composer
+      - run: composer install --no-interaction          # installer les dépendances
+      - run: php artisan test               # lancer tous les tests
+        env: { DB_HOST: 127.0.0.1, DB_DATABASE: ludotheque }   # pointer Laravel vers le MySQL local du runner</pre>
+<div class="warn">Le service MySQL de la CI (cours CI/CD leçon 10) rejoue les migrations sur une base neuve à chaque commit (RefreshDatabase) : les tests s'exécutent contre le vrai moteur, pas SQLite qui divergerait. La base est jetable, recréée à chaque exécution.</div>
+<div class="tip"><strong>Fin de semaine 1.</strong> L'usine est complète AVANT que l'application ne soit finie : modèles, service et API existent, chacun sous tests, et le pipeline (Pint + tests avec MySQL) tourne au vert à chaque commit. On peut désormais empiler le métier en confiance — chaque ajout naîtra testé et surveillé.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'API renvoie…", opts: ["Le modèle Eloquent brut (toJson)", "Une API Resource choisie", "Le schéma SQL", "Rien"], a: 1, exp: "Découplage contrat/schéma." },
+    { type: "qcm", q: "with('categorie') évite…", opts: ["La compilation", "Le problème N+1", "Le CSS", "Le test"], a: 1, exp: "Eager loading." },
+    { type: "qcm", q: "Exposer le modèle directement risque…", opts: ["Rien", "De fuiter des champs internes / relations lourdes", "D'accélérer", "De chiffrer"], a: 1, exp: "La Resource protège." },
+    { type: "qcm", q: "Le test d'API utilise…", opts: ["curl à la main", "getJson (test HTTP)", "La prod", "Un mock total"], a: 1, exp: "Test fonctionnel." },
+    { type: "qcm", q: "assertJsonStructure vérifie…", opts: ["Le CSS", "La forme du JSON renvoyé", "La base", "Le port"], a: 1, exp: "Contrat d'API testé." },
+    { type: "qcm", q: "Le job tests CI a un service…", opts: ["Redis", "mysql:8.4", "Nginx", "Aucun"], a: 1, exp: "Vrai moteur pour l'intégration." },
+    { type: "qcm", q: "La base de la CI est…", opts: ["La prod", "Jetable, recréée à chaque exécution", "Permanente", "Manuelle"], a: 1, exp: "RefreshDatabase." },
+    { type: "qcm", q: "La collection de Resources encapsule…", opts: ["Le SQL", "La liste sous une clé 'data'", "Le rôle", "Le cache"], a: 1, exp: "Format standard Laravel." },
+    { type: "qcm", q: "Tester contre MySQL plutôt que SQLite…", opts: ["Est plus lent sans intérêt", "Évite le 'vert en CI, rouge en prod'", "Est interdit", "Chiffre"], a: 1, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "En fin de semaine 1, l'usine est…", opts: ["Inexistante", "Complète avant que l'app soit finie", "En prod", "Optionnelle"], a: 1, exp: "Outillage d'abord." },
+    { type: "vf", q: "with() charge la relation en une requête au lieu de N.", a: true, exp: "Anti-N+1." },
+    { type: "qcm", q: "Route::get('/jeux') répond à…", opts: ["POST", "GET (lecture)", "DELETE", "Rien"], a: 1, exp: "Lister le catalogue." },
+    { type: "qcm", q: "Le pipeline de fin de semaine 1 fait…", opts: ["Rien", "Pint + tests avec MySQL", "Déploie en prod", "Un email"], a: 1, exp: "Vert à chaque commit." },
+    { type: "qcm", q: "DB_HOST en CI pointe vers…", opts: ["La prod", "Le service mysql du job (127.0.0.1)", "Rien", "SQLite"], a: 1, exp: "Base jetable du runner." },
+    { type: "vf", q: "Chaque nouvel ajout métier naîtra désormais testé et surveillé.", a: true, exp: "L'usine est prête." }
+  ],
+  final: {
+    title: "Exercice final — L'API et l'usine au vert",
+    intro: `<p>API + Resource + test + job MySQL.</p>`,
+    questions: [
+      { type: "qcm", q: "L'API expose :", opts: ["une API Resource", "le modèle Eloquent brut", "le SQL", "rien"], a: 0, exp: "Contrat découplé." },
+      { type: "qcm", q: "Le N+1 est évité par :", opts: ["with('categorie') (eager loading)", "plus de RAM", "un cache manuel", "la chance"], a: 0, exp: "2 requêtes." },
+      { type: "qcm", q: "Le test d'API utilise :", opts: ["getJson", "un navigateur", "la prod", "un mock total"], a: 0, exp: "Test HTTP." },
+      { type: "qcm", q: "Le job de tests CI a :", opts: ["un service mysql:8.4 jetable", "la base de prod", "aucune base", "SQLite uniquement"], a: 0, exp: "Vrai moteur." },
+      { type: "vf", q: "Fin de semaine 1 : l'usine tourne avant que l'app soit finie.", a: true, exp: "Outillage d'abord." }
+    ],
+    solution: `<pre class="pseudo">class JeuResource extends JsonResource {                     // traducteur de sortie de l'API
+  public function toArray($r): array {                       // choisit les champs exposés
+    return ['id'=>$this->id, 'titre'=>$this->titre,          // id + titre
+            'prix_location'=>$this->prix_location, 'louable'=>$this->est_louable];   // prix + règle "louable"
+  }
+}
+// routes/api.php
+Route::get('/jeux', fn() =>                                  // GET /api/jeux
+  JeuResource::collection(Jeu::with('categorie')->orderBy('titre')->get()));   // liste triée, catégorie préchargée (anti-N+1)
+
+# ci.yml job tests : service mysql:8.4 + php artisan test (DB_HOST=127.0.0.1)</pre>
+<p>Semaine 1 bouclée : usine complète, au vert. Demain : valider les entrées et refuser proprement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton API et son job de tests…",
+  items: [
+  { id: "proj6php-l7", title: "L'API REST + le job de tests MySQL", level: 2,
+    statement: "Écris la JeuResource, la route GET /api/jeux (with('categorie') anti-N+1), un test getJson, et le job 'tests' de ci.yml avec un service mysql:8.4. Explique en 2-3 lignes pourquoi on n'expose pas le modèle brut et pourquoi la CI utilise un vrai MySQL plutôt que SQLite.",
+    hints: [
+      "JeuResource::toArray() : choisir ce qui sort, pas de champ interne.",
+      "Jeu::with('categorie') pour éviter le N+1.",
+      "ci.yml : services.mysql avec health-cmd ; DB_HOST=127.0.0.1."
+    ],
+    solution: "// app/Http/Resources/JeuResource.php\nclass JeuResource extends JsonResource {          // traducteur de sortie : choisit ce que l'API renvoie\n    public function toArray($request): array {    // construit le tableau JSON depuis le jeu ($this)\n        return [\n            'id' => $this->id,                    // identifiant\n            'titre' => $this->titre,              // titre\n            'prix_location' => $this->prix_location,   // prix de location\n            'louable' => $this->est_louable,      // regle calculee \"louable\"\n        ];\n    }\n}\n\n// routes/api.php\nRoute::get('/jeux', fn() =>                        // GET /api/jeux : lister le catalogue\n    JeuResource::collection(Jeu::with('categorie')->orderBy('titre')->get()));   // liste triee, categorie prechargee (anti-N+1)\n\n// tests/Feature/JeuApiTest.php\nuse RefreshDatabase;                               // base propre et migree avant le test\npublic function test_liste_les_jeux(): void {      // teste la liste des jeux\n    Jeu::factory()->count(3)->create();            // enregistre 3 jeux\n    $this->getJson('/api/jeux')                    // appelle l'API en GET\n        ->assertOk()                               // code 200 attendu\n        ->assertJsonStructure(['data' => [['id','titre','prix_location','louable']]]);   // forme du JSON verifiee\n}\n\n# ci.yml\n  tests:                              # job \"tests\"\n    runs-on: ubuntu-latest            # machine Linux neuve\n    services:                         # conteneurs annexes du job\n      mysql:                          # service MySQL jetable\n        image: mysql:8.4              # image MySQL 8.4\n        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }   # base + mot de passe root de test\n        ports: [\"3306:3306\"]          # expose le port MySQL\n        options: --health-cmd=\"mysqladmin ping\" --health-interval=5s --health-retries=10   # attend que MySQL soit PRET\n    steps:                            # etapes\n      - uses: actions/checkout@v4           # recuperer le code\n      - uses: shivammathur/setup-php@v2     # installer PHP + Composer\n        with: { php-version: \"8.5\", tools: composer }   # PHP 8.5, composer\n      - run: composer install --no-interaction          # installer les dependances\n      - run: php artisan test               # lancer les tests\n        env: { DB_HOST: 127.0.0.1, DB_DATABASE: ludotheque }   # pointer vers le MySQL local du runner\n\n// POURQUOI PAS LE MODELE BRUT, POURQUOI UN VRAI MYSQL\n// On n'expose pas le modele Eloquent : toJson() sortirait TOUS les attributs\n// (dont des champs internes, des timestamps, voire des relations chargees) et\n// figerait le contrat d'API sur le schema. La Resource choisit explicitement ce\n// qui sort -- contrat stable, independant de la base.\n// Et la CI utilise un vrai MySQL (pas SQLite) car SQLite accepte du SQL que MySQL\n// refuse (et inversement, ex. contraintes, types) : tester contre le moteur reel\n// evite le 'vert en CI, rouge en prod'.",
+    note: "Cette leçon boucle la semaine 1 : l'infrastructure de qualité (Compose, migrations, CI, tests unitaires ET fonctionnels avec MySQL) est complète avant que le métier ne le soit. La Resource et le with() sont deux réflexes — découplage et performance — posés dès la première API, pas rétrofités. À partir de la semaine 2, chaque brique métier viendra se couler dans cette usine déjà verte." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

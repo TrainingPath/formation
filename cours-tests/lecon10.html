@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Mocker les dépendances : l'horloge, le réseau, la base",
+  subtitle: "unittest.mock et patch : remplacer le monde réel, une ligne à la fois.",
+  theory: `
+<h3>1. unittest.mock : Mock(), return_value, side_effect</h3>
+<p>Python fournit en standard le module <code>unittest.mock</code>. Un <code>Mock()</code> est un objet caméléon : il accepte n'importe quel attribut, n'importe quel appel, et enregistre tout. Deux réglages essentiels : <code>return_value</code> fixe la réponse, <code>side_effect</code> fait lever une exception (ou déroule une séquence de réponses).</p>
+<pre class="pseudo">from unittest.mock import Mock            # importe l'outil Mock (fourni de base par Python)
+
+api = Mock()                              # cree un faux objet "api" : il accepte tout appel et note tout
+api.cotation.return_value = 40.00         # réponse fixe
+api.cotation("Catan")                     # → 40.00
+
+api.cotation.side_effect = TimeoutError   # simuler une panne réseau
+api.cotation("Catan")                     # → lève TimeoutError</pre>
+<p>Avec ça, plus besoin d'écrire chaque stub à la main comme à la leçon 9. Mockito (Java) écrit la même idée <code>when(api.cotation("Catan")).thenReturn(40.0)</code> ; Moq (C#) dit <code>Setup(...).Returns(...)</code>.</p>
+
+<h3>2. patch : remplacer temporairement — au bon endroit</h3>
+<p><code>patch</code> remplace un objet <strong>le temps du test</strong>, puis remet l'original. Deux formes : le <strong>décorateur</strong> (une étiquette commençant par <code>@</code> que l'on colle juste au-dessus d'une fonction pour lui ajouter un comportement) ou le bloc <code>with</code> (qui délimite une zone « surveillée »).</p>
+<pre class="pseudo">from unittest.mock import patch       # importe patch, l'outil qui remplace un objet temporairement
+
+@patch("ludo.tarifs.date")            # forme décorateur
+def test_frais(mock_date):            # patch injecte la doublure comme parametre "mock_date"
+    ...                               # (corps du test, non montre ici)
+
+def test_frais_bis():                 # deuxieme facon d'ecrire la meme chose
+    with patch("ludo.tarifs.date") as mock_date:   # forme with
+        ...                           # (corps du test : la doublure "mock_date" n'existe que dans ce bloc)</pre>
+<p>LA règle qui piège tout le monde : on patche l'objet <strong>là où il est UTILISÉ</strong>, pas là où il est défini. Si <code>ludo/tarifs.py</code> fait <code>from datetime import date</code>, alors ce module possède sa propre référence <code>date</code> : c'est <code>ludo.tarifs.date</code> qu'il faut patcher. Patcher <code>datetime.date</code> ne changerait rien pour lui.</p>
+
+<h3>3. Mocker l'horloge</h3>
+<p><code>frais_de_retard</code> dépend de <code>date.today()</code> : sans mock, le test donnerait un résultat différent chaque jour. On fige la date, et le test devient <strong>reproductible</strong>.</p>
+<pre class="pseudo"># ludo/tarifs.py
+from datetime import date                          # importe l'outil "date" (dates du calendrier)
+def frais_de_retard(date_retour_prevue):           # fonction : calcule les frais selon la date prevue du retour
+    retard = (date.today() - date_retour_prevue).days   # nombre de jours entre aujourd'hui et la date prevue
+    return max(retard, 0) * 0.50                    # max(...,0) evite un retard negatif ; 0,50 euro par jour
+
+# tests/test_tarifs.py
+@patch("ludo.tarifs.date")                          # on remplace "date" DANS le module tarifs (la ou il est utilise)
+def test_frais_trois_jours_de_retard(mock_date):    # la doublure de date arrive dans "mock_date"
+    mock_date.today.return_value = date(2026, 7, 9) # on FIGE aujourd'hui au 9 juillet 2026 pour le test
+    assert frais_de_retard(date(2026, 7, 6)) == 1.50  # retour prevu le 6 -> 3 jours -> 3 x 0,50 = 1,50 attendu</pre>
+
+<h3>4. Mocker le réseau</h3>
+<p>Même stratégie pour l'API de cotation des jeux : on patche <code>requests.get</code> <strong>vu depuis le module qui l'utilise</strong>, et on prépare la réponse <strong>JSON</strong> (un format texte standard pour échanger des données entre programmes, écrit sous forme de couples « nom : valeur »).</p>
+<pre class="pseudo"># ludo/cotation.py utilise requests.get(...)
+@patch("ludo.cotation.requests.get")                # on remplace requests.get vu par le module cotation
+def test_cotation_catan(mock_get):                  # la doublure du reseau arrive dans "mock_get"
+    mock_get.return_value.json.return_value = {"prix": 40.00}  # on prepare la reponse : .json() renverra ce dictionnaire
+    assert cotation("Catan") == 40.00               # on verifie que la fonction lit bien 40,00 dans cette reponse
+
+@patch("ludo.cotation.requests.get")                # meme remplacement pour le second test
+def test_cotation_api_en_panne(mock_get):           # ici on simule une API en panne
+    mock_get.side_effect = TimeoutError             # tout appel a requests.get levera TimeoutError (delai depasse)
+    with pytest.raises(CotationIndisponible):       # on EXIGE que la fonction transforme cette panne en CotationIndisponible
+        cotation("Catan")                           # l'appel qui doit declencher l'exception attendue</pre>
+<p>Bonus énorme : on teste aussi <strong>la panne</strong> — impossible à déclencher à la demande avec la vraie API.</p>
+
+<h3>5. Vérifier les appels, et l'alternative monkeypatch</h3>
+<p>Un mock enregistre tout : on peut donc vérifier <strong>comment</strong> il a été appelé. <code>assert_called_once_with</code> échoue si l'appel manque, est en double, ou a les mauvais arguments. Côté pytest, la fixture <code>monkeypatch</code> offre une alternative simple à patch :</p>
+<pre class="pseudo">mock_get.assert_called_once_with("https://api.cotation.example/jeux/Catan", timeout=5)  # verifie l'appel : UNE fois, avec cette URL et timeout=5
+
+def test_frais_avec_monkeypatch(monkeypatch):            # monkeypatch = fixture pytest recue en parametre
+    monkeypatch.setattr("ludo.tarifs.date", DateFigee)   # remis en place tout seul
+    assert frais_de_retard(date(2026, 7, 6)) == 1.50     # meme verification que plus haut : 3 jours -> 1,50</pre>
+<div class="warn">Le piège no 1 reste le <strong>chemin de patch</strong> : patcher <code>datetime.date</code> alors que le module testé a déjà importé <code>date</code> chez lui ne fait <strong>rien</strong>. Symptôme classique : « mon mock n'est jamais appelé ». Réflexe : patcher <code>ludo.tarifs.date</code>, le nom vu par le code testé.</div>
+<div class="tip">Relis chaque patch en te demandant : « quel nom le module testé utilise-t-il pour cette dépendance ? ». C'est ce nom-là, préfixé du module, qu'il faut donner à patch.</div>`,
+  exercises: [
+    { type: "qcm", q: "return_value sert à…", opts: ["Définir la réponse fixe renvoyée par le mock", "Lever une exception", "Compter les tests", "Mesurer la couverture"], a: 0, exp: "api.cotation.return_value = 40.00 → l'appel renvoie 40.00." },
+    { type: "qcm", q: "side_effect = TimeoutError permet de…", opts: ["Ralentir le test", "Simuler une panne : l'appel lève l'exception", "Ignorer le test", "Doubler la valeur de retour"], a: 1, exp: "Idéal pour tester les chemins d'erreur, indéclenchables avec la vraie API." },
+    { type: "qcm", q: "patch remplace un objet…", opts: ["Définitivement", "Temporairement, le temps du test, puis remet l'original", "Dans tout le projet, pour toujours", "Uniquement en production"], a: 1, exp: "C'est un remplacement propre et réversible." },
+    { type: "qcm", q: "LA règle du chemin de patch :", opts: ["Patcher là où l'objet est défini", "Patcher au hasard jusqu'à ce que ça marche", "Patcher là où l'objet est UTILISÉ (ex. ludo.tarifs.date)", "Patcher uniquement dans conftest.py"], a: 2, exp: "Le module testé a sa propre référence : c'est elle qu'on remplace." },
+    { type: "qcm", q: "Pourquoi mocker date.today() dans frais_de_retard ?", opts: ["Pour accélérer MySQL", "Parce que pytest l'exige", "Pour la beauté du code", "Pour rendre le test reproductible quel que soit le jour d'exécution"], a: 3, exp: "Sans ça, le résultat changerait chaque nuit à minuit." },
+    { type: "qcm", q: "Pour tester cotation() sans internet, on patche…", opts: ["ludo.cotation.requests.get", "le navigateur", "MySQL", "le fichier hosts"], a: 0, exp: "requests.get vu depuis le module qui l'utilise." },
+    { type: "qcm", q: "mock_get.assert_called_once_with(url) vérifie…", opts: ["La valeur de retour", "Que le mock a été appelé exactement une fois, avec ces arguments", "La couverture du fichier", "Le temps d'exécution"], a: 1, exp: "Appel manquant, en double ou mal argumenté → le test échoue." },
+    { type: "qcm", q: "L'alternative pytest à patch s'appelle…", opts: ["pytest.mock", "fixturepatch", "monkeypatch", "autopatch"], a: 2, exp: "Une fixture qui annule ses remplacements toute seule." },
+    { type: "qcm", q: "patch s'utilise…", opts: ["En décorateur ou en bloc with", "Seulement en décorateur", "Seulement en with", "Dans le HTML"], a: 0, exp: "Deux formes, même effet : remplacement temporaire." },
+    { type: "qcm", q: "L'équivalent Mockito de return_value :", opts: ["verify()", "when(...).thenReturn(...)", "expect()", "mockReturn()"], a: 1, exp: "Et Moq (C#) écrit Setup(...).Returns(...)." },
+    { type: "vf", q: "Patcher datetime.date à sa source suffit toujours, même si le module testé a déjà importé date chez lui.", a: false, exp: "C'est LE piège : le module garde sa propre référence, ton mock n'est jamais vu." },
+    { type: "vf", q: "Avec l'horloge mockée, le test des frais de retard donne le même résultat tous les jours.", a: true, exp: "Reproductible : la date est figée dans le test." },
+    { type: "vf", q: "Moq (C#) exprime la même idée avec Setup(...).Returns(...).", a: true, exp: "Mêmes concepts que unittest.mock, autre syntaxe." },
+    { type: "input", q: "L'attribut de Mock qui fait lever une exception à l'appel :", a: ["side_effect", "side effect"], ph: "un attribut…", exp: "side_effect = TimeoutError → l'appel lève l'exception." },
+    { type: "input", q: "La fixture pytest qui remplace temporairement un attribut :", a: ["monkeypatch"], ph: "une fixture…", exp: "monkeypatch.setattr(...), défait automatiquement après le test." }
+  ],
+  final: {
+    title: "Exercice final — Patcher sans se tromper",
+    intro: `<p>ludo/tarifs.py fait « from datetime import date » et ludo/cotation.py appelle requests.get. À toi de jouer.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour figer la date dans frais_de_retard, la cible correcte de patch est…", opts: ["datetime.date", "ludo.tarifs.date", "tarifs.datetime", "date.today"], a: 1, exp: "Là où l'objet est utilisé : le module tarifs a sa propre référence date." },
+      { type: "qcm", q: "Pour simuler une API qui renvoie un JSON :", opts: ["mock_get.return_value.json.return_value = {\"prix\": 40.00}", "print(mock_get)", "time.sleep(2)", "os.system(\"curl\")"], a: 0, exp: "La réponse de requests.get a une méthode json() : on chaîne les return_value." },
+      { type: "vf", q: "Un test qui dépend de la date réelle du jour peut passer aujourd'hui et échouer demain.", a: true, exp: "Non répétable : c'est exactement ce que le mock de l'horloge corrige." },
+      { type: "qcm", q: "La méthode qui vérifie un appel unique avec les bons arguments :", opts: ["assert_any_call", "called_once", "assert_called_once_with", "verify_once"], a: 2, exp: "Elle échoue si l'appel manque, se répète ou change d'arguments." },
+      { type: "input", q: "L'outil de unittest.mock (décorateur ou with) qui remplace temporairement un objet :", a: ["patch", "@patch", "mock.patch"], ph: "un nom…", exp: "patch remplace, le test tourne, l'original revient." }
+    ],
+    solution: `<pre class="pseudo">Mock()        : objet caméléon qui enregistre tout
+return_value  : réponse fixe        side_effect : exception ou séquence
+patch         : remplacement temporaire (décorateur ou with)
+RÈGLE D'OR    : patcher là où l'objet est UTILISÉ → ludo.tarifs.date
+Horloge       : mock_date.today.return_value = date(2026, 7, 9)
+Réseau        : patch de ludo.cotation.requests.get + json.return_value
+Vérifier      : assert_called_once_with(...)   Alternative : monkeypatch</pre>
+<p>Tu sais maintenant isoler n'importe quelle unité. Et si on écrivait le test AVANT le code ? Prochaine leçon : TDD — red, green, refactor.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l10", title: "Le plan de mock de la Ludothèque", level: 2,
+    statement: "Deux fonctions de la Ludothèque à tester sans toucher au monde réel : 1) frais_de_retard(date_retour_prevue) dans ludo/tarifs.py, qui fait « from datetime import date » et utilise date.today() ; 2) cotation(nom) dans ludo/cotation.py, qui appelle requests.get vers l'API externe de cotation. Rédige un plan de test complet : pour chaque fonction, indique la cible EXACTE du patch, la valeur mockée choisie, les cas testés (au moins un cas nominal et un cas limite ou de panne), et ce que tu vérifies (valeur de retour, exception, appel effectué).",
+    hints: [
+      "La cible du patch se lit dans le module TESTÉ : quel nom tarifs.py et cotation.py utilisent-ils ?",
+      "Pour l'horloge, choisis une date figée et calcule les frais attendus à la main avant d'écrire l'assert.",
+      "Pour le réseau, pense aux deux faces : la réponse JSON normale (return_value) et la panne (side_effect)."
+    ],
+    solution: "Fonction        | Cible du patch              | Valeur mockée\n----------------+-----------------------------+---------------------------\nfrais_de_retard | ludo.tarifs.date            | today() → date(2026, 7, 9)\ncotation        | ludo.cotation.requests.get  | json() → {« prix » : 40.00}\n                |                             | ou side_effect = TimeoutError\n\nCas testés — frais_de_retard (horloge figée au 9 juillet 2026) :\n1. retour prévu le 6 juillet → 3 jours de retard → assert == 1.50\n2. retour prévu le 9 juillet → 0 jour → assert == 0\n3. retour prévu le 12 juillet (en avance) → assert == 0, jamais négatif\n\nCas testés — cotation :\n1. nominal : JSON {« prix » : 40.00} → assert cotation(« Catan ») == 40.00\n   + mock_get.assert_called_once_with(url attendue, timeout=5)\n2. panne : side_effect = TimeoutError → pytest.raises(CotationIndisponible)\n\nPourquoi ces cibles : chaque module a importé SA référence ;\npatcher datetime.date ou requests.get à la source ne serait jamais vu.",
+    note: "Ce plan écrit avant le code est déjà un pas vers le TDD de la leçon suivante. Il te resservira au capstone Ludothèque, et dans le cours CI/CD : des tests sans réseau ni horloge réelle sont les seuls qui tournent de façon fiable sur un runner d'intégration continue." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

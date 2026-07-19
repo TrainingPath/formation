@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Charger les relations : Include et ThenInclude",
+  subtitle: "Tes navigations sont configurées — encore faut-il demander à EF Core de les remplir.",
+  theory: `
+<h3>1. Le rappel qui fâche : rien ne se charge tout seul</h3>
+<p>Leçon 9, tu l'as constaté : après ctx.Jeux.First(...), la collection jeu.Locations est vide et la navigation location.Jeu est <strong>null</strong>. EF Core applique par défaut le <strong>chargement hâtif explicite</strong> : une requête ne ramène QUE l'entité demandée, jamais ses relations. C'est un choix assumé — chaque donnée chargée doit être demandée noir sur blanc dans le code, comme si tu devais cocher précisément ce que tu veux ramener du supermarché.</p>
+<pre class="pseudo">var location = ctx.Locations.First(l =&gt; l.Id == 3);   // charge SEULEMENT la location 3 (aucune relation)
+Console.WriteLine(location.Jeu.Titre);                // on tente de lire le jeu… qui n'a jamais été chargé
+// 💥 NullReferenceException : la navigation Jeu n'a jamais été chargée</pre>
+<p>Trois stratégies existent chez les ORM : <strong>eager loading</strong> (« chargement hâtif » : charger avec la requête — Include), <strong>explicit loading</strong> (« chargement explicite » : charger après coup, à la demande), <strong>lazy loading</strong> (« chargement paresseux » : charger automatiquement au premier accès). EF Core te met l'eager en avant ; on voit pourquoi à la fin.</p>
+
+<h3>2. Include : la relation embarque dans la requête</h3>
+<p><strong>Include</strong> déclare : « ramène aussi cette navigation ». EF Core traduit par une <strong>jointure</strong> (le fait de coller deux tables ligne à ligne selon une clé — le LEFT/INNER JOIN que tu écrivais au Niveau 4) et matérialise les deux entités, correctement reliées, en un seul aller-retour.</p>
+<pre class="pseudo">var location = ctx.Locations                          // on part de la table Locations
+    .Include(l =&gt; l.Jeu)                              // …ramène AUSSI le Jeu lié (une jointure)
+    .Include(l =&gt; l.Membre)                           // …et le Membre lié (une autre jointure)
+    .First(l =&gt; l.Id == 3);                           // récupère la location 3, jeu et membre inclus
+
+Console.WriteLine(location.Jeu.Titre + " loué par " + location.Membre.Pseudo);  // navigations remplies : aucun crash
+
+-- SQL généré (l'esprit) :
+SELECT l.*, j.*, m.*                                  -- ramène les colonnes des trois tables
+FROM Locations AS l                                   -- table principale : Locations (alias l)
+INNER JOIN Jeux AS j ON l.JeuId = j.Id                -- jointure vers le jeu via la clé étrangère JeuId
+INNER JOIN Membres AS m ON l.MembreId = m.Id          -- jointure vers le membre via MembreId
+WHERE l.Id = 3                                        -- on ne garde que la location 3</pre>
+<p>Include fonctionne aussi pour les collections : ctx.Jeux.Include(j =&gt; j.Avis) remplit la liste d'avis de chaque jeu ramené. Un Include par navigation de premier niveau, autant que nécessaire.</p>
+
+<h3>3. ThenInclude : descendre d'un étage</h3>
+<p>Et pour la page « fiche membre » qui affiche ses locations <em>avec le titre du jeu</em> de chacune ? Deux niveaux : Membre → Locations → Jeu. Include t'amène au premier étage, <strong>ThenInclude</strong> continue depuis la navigation précédente (comme monter d'un étage supplémentaire dans un escalier).</p>
+<pre class="pseudo">var membre = ctx.Membres                              // on part de la table Membres
+    .Include(m =&gt; m.Locations)          // niveau 1 : la collection   // ramène les locations du membre
+        .ThenInclude(l =&gt; l.Jeu)        // niveau 2 : le jeu de CHAQUE location   // puis le jeu de chacune
+    .First(m =&gt; m.Id == 7);             // récupère le membre 7 avec ses locations et leurs jeux
+
+foreach (var loc in membre.Locations)                 // parcourt chaque location du membre
+    Console.WriteLine(loc.Jeu.Titre + " le " + loc.DateDebut.ToShortDateString());  // titre du jeu + date (déjà chargés)</pre>
+<p>Après un ThenInclude sur une collection, la lambda travaille sur <strong>l'élément</strong> (une Location), pas sur la liste — l'IntelliSense te guide. Et pour deux branches distinctes (les locations ET les avis du membre), on repart de la racine avec un nouvel Include : chaque chaîne Include/ThenInclude décrit UN chemin.</p>
+
+<h3>4. Les filtered includes : n'embarquer qu'une partie de la collection</h3>
+<p>La fiche d'un jeu affiche « les 5 derniers avis positifs » — pas les 400. Depuis EF Core 5, l'Include accepte un sous-ensemble d'opérateurs directement sur la collection : <strong>Where, OrderBy/OrderByDescending, Skip, Take</strong>. On parle de <strong>filtered include</strong> (« inclusion filtrée »).</p>
+<pre class="pseudo">var jeu = ctx.Jeux                                    // on part de la table Jeux
+    .Include(j =&gt; j.Avis                              // ramène les avis du jeu, mais filtrés :
+        .Where(a =&gt; a.Note &gt;= 4)                      // …seulement les notes supérieures ou égales à 4…
+        .OrderByDescending(a =&gt; a.DatePublication)    // …triés du plus récent au plus ancien…
+        .Take(5))                                     // …et limités aux 5 premiers
+    .First(j =&gt; j.Id == 5);                           // récupère le jeu 5 avec ces avis-là
+// jeu.Avis contient AU PLUS 5 avis : les meilleurs, les plus récents</pre>
+<p>Attention à la lecture : la collection chargée ne reflète plus « tous les avis » mais « les avis filtrés » — quiconque relit jeu.Avis ensuite doit le savoir.</p>
+
+<h3>5. Explicit loading, lazy loading… et la troisième voie</h3>
+<p>Le <strong>chargement explicite</strong> remplit une navigation <em>après coup</em> : ctx.Entry(jeu).Collection(j =&gt; j.Avis).LoadAsync() — utile quand le besoin n'apparaît que dans certaines branches du code. Le <strong>lazy loading</strong> (paquet Microsoft.EntityFrameworkCore.Proxies, UseLazyLoadingProxies, navigations <em>virtual</em>) charge tout seul au premier accès : confortable… et dangereux — chaque accès dans une boucle déclenche une requête invisible, le fameux N+1 qu'on dissèque à la leçon 18. C'est le défaut historique d'Hibernate (LAZY par défaut) ; Eloquent charge en lazy sauf with(), Django déclenche des requêtes au premier accès sauf select_related/prefetch_related. Enfin, garde en tête la <strong>troisième voie</strong> : quand tu ne fais qu'<em>afficher</em>, une projection Select (leçon 13-14) ramène les colonnes utiles sans charger aucune entité — souvent mieux qu'un Include.</p>
+<pre class="pseudo">// Explicit loading : après coup, à la demande
+var jeu = ctx.Jeux.First(j =&gt; j.Id == 5);             // charge le jeu seul (sans ses avis)
+await ctx.Entry(jeu).Collection(j =&gt; j.Avis).LoadAsync();   // SELECT ciblé   // charge la collection Avis maintenant, sur demande
+
+// Projection : souvent la vraie bonne réponse pour l'affichage
+var fiche = ctx.Jeux                                  // on part de la table Jeux
+    .Where(j =&gt; j.Id == 5)                            // filtre sur le jeu 5
+    .Select(j =&gt; new { j.Titre, NbAvis = j.Avis.Count })   // ne ramène que le titre + le nombre d'avis (objet anonyme)
+    .First();   // aucun Include : EF génère le sous-SELECT qu'il faut</pre>
+<div class="warn">Une navigation non incluse vaut <strong>null</strong> (référence) ou <strong>reste vide</strong> (collection) : le premier symptôme est une NullReferenceException en production ou une page qui affiche zéro partout. Avant tout foreach sur une navigation, demande-toi : « quelle requête l'a chargée ? » — si la réponse n'est pas dans la même méthode, méfiance.</div>
+<div class="tip">Réflexe LogTo/ToQueryString : après chaque Include, lis le SQL. Un Include = un JOIN visible ; plusieurs Include de collections = des résultats qui enflent (l'explosion cartésienne de la leçon 19, qu'AsSplitQuery désamorcera). Voir le SQL, c'est choisir en connaissance de cause.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans Include, la navigation location.Jeu après un First vaut…", opts: ["Un objet Jeu complet", "null : rien n'est chargé automatiquement", "Un proxy qui chargera plus tard", "Une exception à la requête"], a: 1, exp: "EF Core ne charge que l'entité demandée ; l'accès à la navigation non chargée donne null → NullReferenceException." },
+    { type: "input", q: "Quelle méthode demande à EF Core de charger une navigation avec la requête ?", a: ["Include", "Include()"], ph: "Nom de la méthode…", exp: "Include(l =&gt; l.Jeu) : la relation embarque dans le même aller-retour SQL." },
+    { type: "qcm", q: "Include(l =&gt; l.Jeu) se traduit en SQL par…", opts: ["Deux requêtes séparées systématiquement", "Une jointure entre Locations et Jeux", "Un curseur", "Un déclencheur"], a: 1, exp: "Le JOIN du Niveau 4, généré pour toi : une requête, deux entités matérialisées et reliées." },
+    { type: "qcm", q: "Pour charger les locations d'un membre ET le jeu de chaque location :", opts: ["Include(m =&gt; m.Locations).Include(l =&gt; l.Jeu)", "Include(m =&gt; m.Locations).ThenInclude(l =&gt; l.Jeu)", "Include(m =&gt; m.Locations.Jeu)", "ThenInclude seul"], a: 1, exp: "ThenInclude continue depuis la navigation précédente : Membre → Locations → Jeu." },
+    { type: "qcm", q: "Après Include sur la collection Locations, la lambda du ThenInclude reçoit…", opts: ["La List&lt;Location&gt; entière", "Une Location (l'élément de la collection)", "Le Membre", "Le DbContext"], a: 1, exp: "On descend au niveau de l'élément : ThenInclude(l =&gt; l.Jeu) — l'IntelliSense suit." },
+    { type: "qcm", q: "Charger les locations ET les avis d'un jeu (deux branches distinctes) :", opts: ["Include(j =&gt; j.Locations).ThenInclude(j =&gt; j.Avis)", "Deux Include depuis la racine : Include(j =&gt; j.Locations).Include(j =&gt; j.Avis)", "Un seul Include suffit pour tout", "Impossible en une requête"], a: 1, exp: "Chaque chaîne Include/ThenInclude décrit UN chemin ; les branches parallèles repartent de la racine." },
+    { type: "vf", q: "Include fonctionne aussi bien sur une navigation de référence (l.Jeu) que sur une collection (j.Avis).", a: true, exp: "Référence ou collection, même mot-clé : la différence est dans le SQL généré et le volume ramené." },
+    { type: "qcm", q: "Un filtered include permet d'écrire…", opts: ["Include(j =&gt; j.Avis.Where(a =&gt; a.Note &gt;= 4).Take(5))", "Include(j =&gt; j.Avis).Where(a =&gt; a.Note &gt;= 4)", "Where(j =&gt; j.Avis.Note &gt;= 4)", "Include(a =&gt; a.Note &gt;= 4)"], a: 0, exp: "Where, OrderBy, Skip, Take s'appliquent DANS l'Include, sur la collection (EF Core 5+)." },
+    { type: "vf", q: "Après un filtered include (Take(5)), jeu.Avis contient quand même tous les avis de la base.", a: false, exp: "La collection ne contient QUE le sous-ensemble filtré : quiconque la relit ensuite doit le savoir." },
+    { type: "qcm", q: "Le chargement explicite d'une collection déjà oubliée s'écrit…", opts: ["ctx.Entry(jeu).Collection(j =&gt; j.Avis).LoadAsync()", "jeu.Avis.Load()", "ctx.Include(jeu.Avis)", "ctx.Jeux.Attach(jeu)"], a: 0, exp: "Entry + Collection + Load : un SELECT ciblé, après coup — pratique dans les branches conditionnelles." },
+    { type: "qcm", q: "Le lazy loading dans EF Core nécessite…", opts: ["Rien : il est actif par défaut", "Le paquet Proxies, UseLazyLoadingProxies et des navigations virtual", "SQL Server 2022", "Un index unique"], a: 1, exp: "Il faut l'activer volontairement — EF Core ne le met pas en avant, contrairement à Hibernate (LAZY par défaut)." },
+    { type: "qcm", q: "Le danger principal du lazy loading :", opts: ["Il empêche SaveChanges", "Des requêtes invisibles à chaque accès — le N+1 dans les boucles", "Il casse les migrations", "Il désactive LogTo"], a: 1, exp: "Un foreach sur 200 locations avec accès à loc.Jeu = 200 requêtes silencieuses (leçon 18)." },
+    { type: "input", q: "Quelle stratégie ramène uniquement les colonnes utiles à l'affichage, sans charger d'entités ni Include ?", a: ["projection", "la projection", "Select", "une projection"], ph: "Un mot…", exp: "La projection Select : new { j.Titre, NbAvis = j.Avis.Count } — souvent la meilleure option en lecture." },
+    { type: "vf", q: "Dans une projection Select, on peut utiliser j.Avis.Count sans aucun Include.", a: true, exp: "EF Core traduit en sous-requête SQL : la projection décrit les données voulues, pas les entités à charger." },
+    { type: "qcm", q: "L'équivalent Django du chargement hâtif d'une navigation de référence :", opts: ["select_related", "raw()", "values_list", "annotate"], a: 0, exp: "select_related (JOIN) / prefetch_related (collections) ; JOIN FETCH chez JPA, with() chez Eloquent." }
+  ],
+  final: {
+    title: "Exercice final — La fiche membre complète",
+    intro: `<p>La page « fiche membre » affiche le pseudo, les locations en cours avec le titre de chaque jeu, et les 3 derniers avis rédigés. Construisons la requête sans rien oublier.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour les locations avec leur jeu, la chaîne correcte est…", opts: ["Include(m =&gt; m.Locations).ThenInclude(l =&gt; l.Jeu)", "ThenInclude(m =&gt; m.Locations.Jeu)", "Include(m =&gt; m.Locations.Select(l =&gt; l.Jeu))", "Where(m =&gt; m.Locations.Jeu != null)"], a: 0, exp: "Deux niveaux : Include pour la collection, ThenInclude pour la navigation de chaque élément." },
+      { type: "qcm", q: "Les « 3 derniers avis » s'obtiennent avec…", opts: ["Include(m =&gt; m.Avis.OrderByDescending(a =&gt; a.DatePublication).Take(3))", "Include(m =&gt; m.Avis).Take(3)", "Take(3) sur la requête racine", "Un second DbContext"], a: 0, exp: "Filtered include : le tri et le Take s'appliquent à la collection, pas aux membres." },
+      { type: "vf", q: "Le Take(3) placé sur la requête racine (ctx.Membres.Take(3)) aurait le même effet que dans l'Include.", a: false, exp: "Sur la racine, il limiterait le nombre de MEMBRES ramenés — pas le nombre d'avis par membre." },
+      { type: "qcm", q: "Sans le ThenInclude, l'affichage de loc.Jeu.Titre provoquerait…", opts: ["Un titre vide mais pas d'erreur", "Une NullReferenceException : la navigation Jeu est null", "Un chargement automatique", "Une erreur SQL"], a: 1, exp: "Navigation de référence non chargée = null : le crash classique de la page détail." },
+      { type: "qcm", q: "Si la page ne fait qu'AFFICHER ces données, l'alternative souvent plus efficace est…", opts: ["Le lazy loading", "Une projection Select vers un DTO (pseudo, titres, avis)", "Un Include de plus", "ExecuteUpdate"], a: 1, exp: "Pas d'entités à suivre, seulement des colonnes utiles : la projection gagne en lecture pure (leçons 13-14)." }
+    ],
+    solution: `<pre class="pseudo">var membre = ctx.Membres
+    .Include(m =&gt; m.Locations)              // branche 1, niveau 1
+        .ThenInclude(l =&gt; l.Jeu)            //           niveau 2
+    .Include(m =&gt; m.Avis                    // branche 2 (repart de la racine)
+        .OrderByDescending(a =&gt; a.DatePublication)
+        .Take(3))                            // filtered include
+    .First(m =&gt; m.Id == 7);
+
+Stratégies : eager (Include/ThenInclude) — le défaut sain
+             explicit (Entry...Load) — après coup, cas conditionnels
+             lazy (Proxies + virtual) — requêtes cachées, N+1 (leçon 18)
+             projection Select — la 3e voie pour l'affichage pur
+Ailleurs   : JOIN FETCH (JPA), with() (Eloquent),
+             select_related / prefetch_related (Django)</pre>
+<p>Tu sais charger tes graphes d'objets. Il est temps de muscler les requêtes elles-mêmes : leçon 13, <strong>LINQ to Entities</strong> — Where, OrderBy, Select, et le SQL qu'ils deviennent.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l12", title: "Include, explicit, lazy ou projection : le comparatif", level: 2,
+    statement: "Quatre écrans de la Ludothèque à servir : (1) la fiche jeu (titre + 5 derniers avis + pseudo de chaque auteur) ; (2) un export CSV nocturne de toutes les locations avec titre du jeu et email du membre ; (3) une commande d'administration qui charge un membre et, SEULEMENT si son compte est suspect, examine ses locations ; (4) une liste déroulante contenant juste les titres des jeux disponibles. Pour chaque écran, choisis la stratégie de chargement (Include/ThenInclude, filtered include, explicit loading, projection Select) et justifie par le volume transféré, le nombre de requêtes et l'usage des données. Indique aussi pour lequel de ces écrans le lazy loading serait le plus catastrophique, et pourquoi.",
+    hints: [
+      "Écran par écran : les données servent-elles à MODIFIER des entités (il faut le tracker) ou juste à AFFICHER (projection possible) ?",
+      "L'écran 3 a un besoin CONDITIONNEL : charger les locations d'office serait du gâchis — quelle stratégie charge « après coup » ?",
+      "Pour le lazy loading catastrophique : cherche l'écran qui boucle sur le plus grand nombre d'entités avec accès aux navigations."
+    ],
+    solution: "(1) Fiche jeu → Include + filtered include + ThenInclude.\n  ctx.Jeux.Include(j => j.Avis.OrderByDescending(a => a.DatePublication).Take(5))\n          .ThenInclude(a => a.Membre)\n          .First(j => j.Id == id);\nVolume maîtrisé (5 avis max), une requête, entités complètes acceptables\npour une page détail. Une projection ferait aussi l'affaire.\n\n(2) Export CSV nocturne → PROJECTION Select, sans hésiter.\n  ctx.Locations.Select(l => new { l.DateDebut, Titre = l.Jeu.Titre,\n                                   Email = l.Membre.Email }).ToList();\nDes milliers de lignes en lecture pure : charger des entités complètes\net les suivre au tracker serait un gâchis massif. La projection ne\nramène que 3 colonnes, EF génère les JOIN tout seul.\n\n(3) Commande admin conditionnelle → EXPLICIT LOADING.\n  var membre = ctx.Membres.First(m => m.Id == id);\n  if (Suspect(membre))\n      ctx.Entry(membre).Collection(m => m.Locations).Load();\nLe chargement n'a lieu QUE dans la branche suspecte : un Include\nsystématique paierait le JOIN pour tous les membres innocents.\n\n(4) Liste déroulante → PROJECTION minimale.\n  ctx.Jeux.Where(j => j.EstDisponible).Select(j => j.Titre).ToList();\nUne colonne, zéro navigation, zéro Include : le SELECT le plus maigre.\n\nLazy loading catastrophique : l'écran (2). Une boucle sur 10 000 locations\navec accès à l.Jeu.Titre puis l.Membre.Email déclencherait jusqu'à\n20 001 requêtes (1 + N + N) : le N+1 dans toute sa splendeur — la nuit,\npersonne ne regarde les logs, et l'export passerait de secondes en heures.",
+    note: "Cette grille (afficher → projeter, modifier → Include, conditionnel → explicit, jamais → lazy en boucle) est transversale : Hibernate (JOIN FETCH contre LAZY), Eloquent (with() contre accès pivot), Django (select_related/prefetch_related contre accès naïf). La leçon 18 mettra des chiffres sur ce que tu viens d'argumenter — garde cet exercice sous le coude, il y répondra en écho." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

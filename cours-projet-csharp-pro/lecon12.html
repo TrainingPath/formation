@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Acheter un jeu : prix figé et couverture (coverlet)",
+  subtitle: "Une facture ne change pas — et la qualité devient un cliquet.",
+  theory: `
+<h3>1. Acheter, sur l'autre stock</h3>
+<p>Un jeu a <strong>deux</strong> réserves distinctes : le <code>StockLocation</code> (exemplaires à louer) et le <code>StockVente</code> (exemplaires à vendre pour de bon). Acheter, c'est comme louer, mais on agit sur le stock de vente. On retrouve les mêmes outils qu'à la leçon précédente : une <strong>transaction</strong> (« tout ou rien »), un <strong>verrou</strong> (loquet qui met les autres clients en file d'attente) et <code>async</code>/<code>await</code> (attendre la base sans bloquer les autres internautes).</p>
+<pre class="pseudo">public async Task&lt;Achat&gt; AcheterAsync(string clientId, long jeuId) {   // méthode « acheter » : reçoit le client et le jeu
+    await using var tx = await _db.Database.BeginTransactionAsync();   // ouvre la transaction (tout ou rien) ; refermée automatiquement à la fin
+    var jeu = await _db.Jeux.FromSqlInterpolated(                      // va chercher la fiche du jeu dans la base…
+        $"SELECT * FROM Jeux WHERE Id = {jeuId} FOR UPDATE").SingleAsync();   // …FOR UPDATE = verrou anti-course ; SingleAsync = on attend UNE fiche
+    if (jeu.StockVente &lt;= 0) throw new StockInsuffisantException("Plus de stock de vente");   // stock de vente épuisé ? on refuse (exception)
+    jeu.StockVente--;                                                 // sinon : on retire 1 au stock de VENTE (pas celui de location)
+    var achat = new Achat { ClientId = clientId, JeuId = jeu.Id, Montant = jeu.PrixAchat }; // FIGÉ : on COPIE le prix du jour dans la fiche d'achat
+    _db.Achats.Add(achat);                                            // on ajoute la fiche d'achat à la liste à enregistrer
+    await _db.SaveChangesAsync(); await tx.CommitAsync();             // on écrit les changements, puis on VALIDE : tout devient définitif
+    return achat;                                                     // on renvoie l'achat créé
+}                                                                     // fin de la méthode
+</pre>
+
+<h3>2. Le prix est copié, pas référencé</h3>
+<p>Le point clé est la ligne <code>Montant = jeu.PrixAchat</code>. <strong>Copier</strong> une valeur, c'est en prendre une photo : la fiche d'achat garde le prix tel qu'il était à l'instant T. <strong>Référencer</strong>, au contraire, serait pointer en permanence vers le prix du catalogue, qui peut changer. Une facture est un <strong>fait historique</strong> : une fois émise, elle ne doit plus jamais bouger — comme un ticket de caisse déjà imprimé.</p>
+<pre class="pseudo">// Montant = jeu.PrixAchat  ->  on COPIE la valeur du prix AU MOMENT de l'achat
+// Si demain le vendeur change PrixAchat dans le catalogue, les factures déjà
+// émises NE bougent PAS (une facture est un fait historique, immuable)</pre>
+
+<h3>3. Le test qui prouve le figeage</h3>
+<p>Comment être <em>sûr</em> que le prix est bien figé ? On l'éprouve : on achète, puis on modifie le prix du catalogue <strong>après coup</strong>, et on vérifie que le montant de l'achat n'a pas bougé. Le suffixe <code>m</code> dans <code>99m</code> indique un nombre <strong>décimal</strong> (type <code>decimal</code>), précis à l'unité près, celui qu'on utilise pour l'argent afin d'éviter les arrondis douteux.</p>
+<pre class="pseudo">[Fact] public async Task Prix_fige() {                    // test automatique : « le prix est bien figé »
+    var prixInitial = jeu.PrixAchat;                      // on note le prix AVANT l'achat
+    var achat = await _service.AcheterAsync(client.Id, jeu.Id);   // le client achète : le montant est copié à cet instant
+    jeu.PrixAchat = 99m; await _db.SaveChangesAsync();    // on change le prix du catalogue APRÈS l'achat (99m = 99, décimal monétaire)
+    (await _db.Achats.FindAsync(achat.Id)).Montant.Should().Be(prixInitial);   // on relit l'achat : son montant DOIT être resté le prix initial
+}                                                         // fin du test
+</pre>
+
+<h3>4. La couverture entre dans la CI (coverlet)</h3>
+<p>La <strong>couverture de tests</strong> (en anglais <em>code coverage</em>) mesure quel pourcentage des lignes de code est réellement exécuté par les tests — comme vérifier quelle proportion d'une maison a été inspectée. <code>coverlet</code> est l'outil qui la calcule, et la <strong>CI</strong> est l'usine automatique qui relance tests et mesures à chaque envoi de code. Un <strong>seuil</strong> (par ex. 80 %) est une barre minimale : en dessous, le contrôle échoue.</p>
+<pre class="pseudo"># ci.yml
+- run: dotnet test --collect:"XPlat Code Coverage"        # lance les tests ET mesure la couverture (coverlet)
+# coverlet + un seuil : /p:Threshold=80 /p:ThresholdType=line (échoue sous 80 %)
+# ou ReportGenerator + une porte de couverture</pre>
+
+<h3>5. Le cliquet anti-recul</h3>
+<div class="warn">On règle le seuil au niveau <strong>actuel</strong>, puis on le remonte au fil des progrès — jamais on ne le baisse (cf. cours CI/CD leçon 11). La couverture devient un <strong>cliquet</strong> (comme la roue crantée d'un cric de voiture, qui ne redescend pas toute seule) : elle ne peut plus reculer sans faire échouer le build. La qualité n'est plus une intention, c'est une propriété du pipeline.</div>
+<div class="tip">Attention : 80 % de couverture ne veut pas dire « 80 % correct » — un test peut exécuter une ligne sans rien vérifier. La couverture repère le code <strong>jamais testé</strong> (une alarme utile), pas la qualité des <strong>assertions</strong> (les vérifications réelles). On l'utilise comme garde-fou, pas comme objectif en soi.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter agit sur…", opts: ["StockLocation", "StockVente", "les deux", "aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Le Montant de l'achat…", opts: ["Référence le prix courant", "Copie PrixAchat au moment de l'achat (figé)", "Est nul", "Change chaque jour"], a: 1, exp: "Facture = fait historique." },
+    { type: "qcm", q: "Si le prix change après l'achat…", opts: ["Les factures passées changent", "Les factures passées ne bougent pas", "Erreur", "Remboursement auto"], a: 1, exp: "Figé." },
+    { type: "qcm", q: "Le test du figeage change le prix…", opts: ["Avant l'achat", "Après l'achat, puis vérifie le montant inchangé", "Jamais", "En prod"], a: 1, exp: "Preuve du figeage." },
+    { type: "qcm", q: "coverlet mesure…", opts: ["La vitesse", "La couverture de tests", "La sécurité", "Le style"], a: 1, exp: "XPlat Code Coverage." },
+    { type: "qcm", q: "Le seuil de couverture est un…", opts: ["Objectif décoratif", "Cliquet (ne recule jamais)", "Maximum", "Hasard"], a: 1, exp: "Anti-recul." },
+    { type: "qcm", q: "On règle le seuil…", opts: ["À 100 % d'emblée", "Au niveau actuel, puis on remonte", "À 0", "Au hasard"], a: 1, exp: "Progressif." },
+    { type: "qcm", q: "80 % de couverture signifie…", opts: ["80 % correct", "80 % des lignes exécutées (pas forcément vérifiées)", "Zéro bug", "Parfait"], a: 1, exp: "Attention au sens." },
+    { type: "qcm", q: "La couverture repère surtout…", opts: ["Les bugs", "Le code JAMAIS testé", "Le style", "Les secrets"], a: 1, exp: "Alarme utile." },
+    { type: "qcm", q: "Threshold=80 dans la CI…", opts: ["Déploie", "Fait échouer le build sous le seuil", "Ignore", "Chiffre"], a: 1, exp: "Barrière." },
+    { type: "vf", q: "Une facture est un fait historique, donc immuable.", a: true, exp: "Prix figé." },
+    { type: "qcm", q: "Acheter est aussi…", opts: ["Non transactionnel", "Transaction + verrou (comme louer)", "Un GET", "Sans test"], a: 1, exp: "Même rigueur." },
+    { type: "qcm", q: "Copier le prix plutôt que le référencer évite…", opts: ["Rien", "Que modifier le catalogue réécrive l'historique", "Un index", "Un cache"], a: 1, exp: "Intégrité comptable." },
+    { type: "qcm", q: "Le cliquet garantit que la couverture…", opts: ["Monte ou stagne, jamais ne baisse", "Baisse librement", "Reste à 0", "N'existe pas"], a: 0, exp: "Qualité durable." },
+    { type: "vf", q: "Un test peut exécuter une ligne sans rien vérifier.", a: true, exp: "D'où : couverture ≠ qualité." }
+  ],
+  final: {
+    title: "Exercice final — Prix figé et cliquet de couverture",
+    intro: `<p>Achat immuable + coverlet en CI.</p>`,
+    questions: [
+      { type: "qcm", q: "Le Montant de l'achat :", opts: ["copie PrixAchat (figé)", "référence le prix courant", "est nul", "change chaque jour"], a: 0, exp: "Fait historique." },
+      { type: "qcm", q: "Le test le prouve en :", opts: ["changeant le prix APRÈS et vérifiant le montant inchangé", "ne testant rien", "un screenshot", "un log"], a: 0, exp: "Figeage vérifié." },
+      { type: "qcm", q: "coverlet sert de :", opts: ["cliquet (seuil qui ne recule pas)", "linter", "déployeur", "chiffreur"], a: 0, exp: "Anti-recul." },
+      { type: "qcm", q: "80 % de couverture veut dire :", opts: ["80 % des lignes exécutées", "80 % correct", "zéro bug", "parfait"], a: 0, exp: "Prudence." },
+      { type: "vf", q: "On remonte le seuil au fil des progrès, jamais on ne le baisse.", a: true, exp: "Cliquet." }
+    ],
+    solution: `<pre class="pseudo">public async Task<Achat> AcheterAsync(string clientId, long jeuId) {  // méthode « acheter » : client + jeu
+  await using var tx = await _db.Database.BeginTransactionAsync();   // transaction (tout ou rien)
+  var jeu = await _db.Jeux.FromSqlInterpolated($"...WHERE Id={jeuId} FOR UPDATE").SingleAsync();   // fiche du jeu + verrou FOR UPDATE
+  if (jeu.StockVente <= 0) throw new StockInsuffisantException(...);   // stock de vente épuisé ? on refuse (exception)
+  jeu.StockVente--;                                                 // on retire 1 au stock de vente
+  _db.Achats.Add(new Achat { ClientId=clientId, JeuId=jeu.Id, Montant=jeu.PrixAchat }); // FIGÉ : on copie le prix du jour
+  await _db.SaveChangesAsync(); await tx.CommitAsync();             // on enregistre puis on valide (définitif)
+}                                                                   // fin de la méthode
+// test : acheter -> PrixAchat=99m -> Montant inchangé   (le prix change après, la facture ne bouge pas)
+# ci.yml : dotnet test --collect:"XPlat Code Coverage" + seuil 80 %   (mesure la couverture, échoue sous 80 %)</pre>
+<p>L'achat est immuable et la qualité verrouillée. Demain : le frontend Razor, échappé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton achat figé et la couverture…",
+  items: [
+  { id: "proj6cs-l12", title: "Achat à prix figé + cliquet de couverture", level: 3,
+    statement: "Écris le service AcheterAsync (transaction, StockVente, Montant = PrixAchat figé), le test qui prouve le figeage (changer le prix APRÈS l'achat), et la config de couverture en CI (coverlet + seuil). Explique en 3-4 lignes pourquoi copier le prix et ce que la couverture prouve — et ne prouve pas.",
+    hints: [
+      "Montant = jeu.PrixAchat COPIÉ ; test : jeu.PrixAchat = 99m après, Montant->FindAsync inchangé.",
+      "dotnet test --collect:\"XPlat Code Coverage\" + /p:Threshold=80 (coverlet).",
+      "Couverture = code exécuté, pas code vérifié : un garde-fou, pas un objectif."
+    ],
+    solution: "public async Task<Achat> AcheterAsync(string clientId, long jeuId) {\n    await using var tx = await _db.Database.BeginTransactionAsync();\n    var jeu = await _db.Jeux.FromSqlInterpolated(\n        $\"SELECT * FROM Jeux WHERE Id = {jeuId} FOR UPDATE\").SingleAsync();\n    if (jeu.StockVente <= 0) throw new StockInsuffisantException(\"Plus de stock de vente\");\n    jeu.StockVente--;\n    var achat = new Achat { ClientId = clientId, JeuId = jeu.Id, Montant = jeu.PrixAchat }; // FIGE\n    _db.Achats.Add(achat);\n    await _db.SaveChangesAsync(); await tx.CommitAsync();\n    return achat;\n}\n\n[Fact] public async Task Prix_fige() {\n    var prixInitial = _jeu.PrixAchat;\n    var achat = await _service.AcheterAsync(_client.Id, _jeu.Id);\n    _jeu.PrixAchat = 99m; await _db.SaveChangesAsync();          // change APRES\n    (await _db.Achats.FindAsync(achat.Id))!.Montant.Should().Be(prixInitial);\n}\n\n# ci.yml\n- run: dotnet test --collect:\"XPlat Code Coverage\" -- /p:Threshold=80 /p:ThresholdType=line\n\n// POURQUOI COPIER LE PRIX, CE QUE LA COUVERTURE (NE) PROUVE (PAS)\n// Copier : une facture est un FAIT DATE. Si Achat referencait le prix courant du\n// jeu, changer le catalogue reecrirait tout l'historique comptable -- faux et\n// potentiellement illegal. On copie donc la valeur au moment de l'achat (figee).\n// Couverture : 80% signifie que 80% des lignes sont EXECUTEES par un test, pas\n// qu'elles sont bien VERIFIEES (un test sans assertion couvre sans prouver). Elle\n// repere le code jamais teste (alarme utile) ; le cliquet empeche qu'on regresse.\n// Mais la vraie qualite vient des assertions, pas du pourcentage.",
+    note: "Le prix figé est une règle d'intégrité comptable universelle : une facture, un reçu, un contrat sont des faits historiques qu'aucune modification ultérieure du catalogue ne doit altérer. Le cliquet de couverture (coverlet + seuil) illustre une philosophie de la qualité automatisée : on ne vise pas la perfection d'un coup, on empêche seulement la régression, en remontant le seuil pas à pas — à condition de se rappeler que la couverture mesure l'exécution, pas la pertinence des vérifications." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'API REST (DRF) et le job de tests au vert",
+  subtitle: "Ouvrir le catalogue, et compléter la CI avec un vrai MySQL.",
+  theory: `
+<h3>1. L'API en lecture (DRF)</h3>
+<p>Une <strong>API</strong> (« interface de programmation ») est une porte d'entrée par laquelle d'autres programmes — une application mobile, un autre site — dialoguent avec le nôtre, sans passer par les pages HTML. Une API <strong>REST</strong> expose des <em>ressources</em> (ici les jeux) à des adresses (URL) et renvoie des données en <strong>JSON</strong> (un format texte structuré, lisible par une machine). <strong>DRF</strong> (Django REST Framework) est la boîte à outils qui construit ce genre d'API. Deux pièces la composent : le <strong>serializer</strong>, qui joue le rôle de <strong>DTO</strong> (« objet de transfert de données ») en choisissant précisément quels champs sortent, et le <strong>viewset</strong>, qui relie une URL à un modèle.</p>
+<pre class="pseudo">class JeuSerializer(serializers.ModelSerializer):          # le DTO : choisit ce qui sort de l'API
+    categorie = serializers.CharField(source="categorie.nom")   # exposer le NOM de la categorie (pas son id)
+    est_louable = serializers.BooleanField(read_only=True)   # inclure la propriete calculee, en lecture seule
+    class Meta:   # options du serializer
+        model = Jeu   # le modele source des donnees
+        fields = ["id", "titre", "prix_location", "est_louable", "categorie"]   # LISTE EXPLICITE des champs publies (les stocks restent caches)
+
+class JeuViewSet(viewsets.ReadOnlyModelViewSet):   # un viewset en LECTURE seule (liste + detail, aucune ecriture)
+    queryset = Jeu.objects.select_related("categorie").order_by("titre")  # anti-N+1 : joint la categorie en une seule requete, trie par titre
+    serializer_class = JeuSerializer   # indique quel serializer formate la sortie</pre>
+<p>Le serializer <strong>ne publie pas</strong> les stocks internes ni le fournisseur : seuls les champs listés dans <code>fields</code> sortent. <code>select_related("categorie")</code> évite le <strong>N+1</strong> — ce piège où afficher N jeux déclencherait 1 requête pour la liste puis 1 requête par jeu pour sa catégorie (soit N+1 au total) ; ici, une seule requête avec jointure suffit (sécurité performance intégrée).</p>
+
+<h3>2. Le test d'intégration</h3>
+<pre class="pseudo">class ApiTests(TestCase):   # test d'integration : traverse tout le pipeline HTTP
+    def test_catalogue_json(self):   # verifie que /api/jeux/ repond correctement
+        reponse = self.client.get("/api/jeux/")   # le client de test simule un GET sur l'URL de l'API
+        self.assertEqual(reponse.status_code, 200)   # 200 = succes HTTP
+        self.assertEqual(reponse["Content-Type"], "application/json")   # la reponse est bien du JSON</pre>
+<p>Un <strong>test d'intégration</strong> ne teste pas une fonction isolée mais toute la chaîne (URL → vue → serializer → base). Le <strong>client de test</strong> (<code>self.client</code>) simule un navigateur : il envoie une requête et on inspecte la réponse (son <em>status code</em>, son type de contenu).</p>
+
+<h3>3. Le job de tests complet, avec MySQL</h3>
+<pre class="pseudo"># ci.yml   # (suite du fichier de pipeline) — on ajoute un 2e job
+  tests:   # un job nomme « tests »
+    runs-on: ubuntu-latest   # sur un runner Linux neuf
+    services:   # conteneurs annexes lances a cote du job (comme avec Compose)
+      mysql:   # un service base de donnees pour les tests
+        image: mysql:8.4   # meme version majeure/mineure que la prod
+        env: { MYSQL_DATABASE: ludotheque, MYSQL_USER: ludo_app,   # base et utilisateur crees au demarrage…
+               MYSQL_PASSWORD: ci-secret, MYSQL_ROOT_PASSWORD: ci-root }   # …mots de passe JETABLES (uniquement pour la CI)
+        ports: ["3306:3306"]   # publier le port 3306 du service vers le runner
+        options: >-   # options du conteneur (le >- ecrit la valeur sur plusieurs lignes)
+          --health-cmd="mysqladmin ping -h localhost"   # sonde : MySQL repond-il ?
+          --health-interval=5s --health-retries=10   # tester toutes les 5 s, malade apres 10 echecs
+    steps:   # les etapes du job
+      - uses: actions/checkout@v4   # recuperer le code
+      - uses: actions/setup-python@v5   # installer Python
+        with: { python-version: "3.14", cache: "pip" }   # version 3.14, cache pip
+      - run: pip install -r requirements.txt   # installer les dependances
+      - run: python manage.py test   # lancer TOUTE la suite de tests
+        env: { DJANGO_SECRET_KEY: cle-de-ci, DB_HOST: 127.0.0.1, DB_PASSWORD: ci-secret }   # config de test : base joignable sur 127.0.0.1</pre>
+<p>Le « service » MySQL de la CI est un conteneur éphémère — le cours Docker réutilisé. Les tests (rapides + intégration) tournent désormais à chaque commit sur une vraie base.</p>
+
+<h3>4. Le graphe du pipeline</h3>
+<pre class="pseudo">push / PR
+   ├─ verifier (check + ruff)   ┐ en parallèle
+   └─ tests (avec MySQL)        ┘
+→ verrouillés dans la protection de branche : rouge = pas de merge.</pre>
+
+<h3>5. Bilan de la semaine 1</h3>
+<div class="warn">L'usine est complète <strong>avant</strong> que l'application ne le soit : modèles, services et API existent, chacun sous tests, et le pipeline (check + lint + tests MySQL) tourne au vert à chaque commit. On peut désormais empiler le métier en confiance — chaque ajout naîtra testé et surveillé.</div>
+<div class="tip">La CI grandira encore : couverture (l.12), scan de secrets (l.14), build + scan d'image (l.17-18). Chaque brique s'ajoute quand elle devient pertinente, jamais « au cas où ». Le pipeline reste minimal et rapide à chaque étape.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le serializer DRF joue le rôle…", opts: ["Du modèle", "Du DTO : choisit ce qui sort", "De la base", "Du routeur"], a: 1, exp: "Frontière de l'API." },
+    { type: "qcm", q: "Les stocks internes dans le JSON…", opts: ["Sont publiés", "Ne le sont pas (fields explicites)", "Sont chiffrés", "Sont obligatoires"], a: 1, exp: "Choix maîtrisé." },
+    { type: "qcm", q: "select_related(\"categorie\") évite…", opts: ["Le tri", "Le N+1 (JOIN unique)", "Le CSRF", "Le cache"], a: 1, exp: "Perf intégrée." },
+    { type: "qcm", q: "Le test d'intégration utilise…", opts: ["self.client (client de test)", "curl obligatoire", "un mock", "rien"], a: 0, exp: "Traverse le vrai pipeline." },
+    { type: "qcm", q: "Le MySQL de la CI est…", opts: ["La prod", "Un service : conteneur éphémère avec healthcheck", "SQLite caché", "Aucun"], a: 1, exp: "Cours Docker en CI." },
+    { type: "qcm", q: "Depuis les steps, le service est joignable sur…", opts: ["localhost du conteneur MySQL", "127.0.0.1:3306 (port publié)", "bdd:3306", "la prod"], a: 1, exp: "D'où DB_HOST=127.0.0.1." },
+    { type: "qcm", q: "manage.py test en CI…", opts: ["Utilise la prod", "Crée une base de test, migre, teste, détruit", "Saute les migrations", "Ne teste rien"], a: 1, exp: "Sur base neuve." },
+    { type: "qcm", q: "verifier et tests, sans needs entre eux…", opts: ["En série", "En parallèle (pipeline rapide)", "Sur la prod", "Jamais"], a: 1, exp: "Verdict plus vite." },
+    { type: "qcm", q: "Un job rouge…", opts: ["Se merge quand même", "Bloque le merge (protection de branche)", "Accélère", "Chiffre"], a: 1, exp: "main toujours verte." },
+    { type: "qcm", q: "ReadOnlyModelViewSet fournit…", opts: ["Le CRUD complet", "Liste + détail en lecture seule", "Rien", "Un DELETE"], a: 1, exp: "Personne n'écrit par là." },
+    { type: "vf", q: "Le pipeline exécute désormais les tests sur une vraie base à chaque commit.", a: true, exp: "Service MySQL." },
+    { type: "qcm", q: "ci-secret du MySQL de CI…", opts: ["Est un secret de prod", "Est jetable (ne protège rien de réel)", "Est chiffré", "Est la prod"], a: 1, exp: "Éphémère." },
+    { type: "qcm", q: "À la fin de la semaine 1, l'application est…", opts: ["Finie", "Pas finie, mais l'usine (CI) est complète", "Déployée", "Sécurisée à 100 %"], a: 1, exp: "L'usine avant l'app." },
+    { type: "qcm", q: "La CI s'enrichira ensuite de…", opts: ["Rien", "Couverture, scan secrets, build+scan image", "Moins de jobs", "Un WAF"], a: 1, exp: "Chaque brique en temps voulu." },
+    { type: "vf", q: "Chaque nouvelle fonctionnalité naîtra désormais testée et surveillée.", a: true, exp: "L'usine tourne au vert." }
+  ],
+  final: {
+    title: "Exercice final — L'API et la CI complète",
+    intro: `<p>On ouvre le catalogue et on branche le job de tests avec MySQL.</p>`,
+    questions: [
+      { type: "qcm", q: "Le serializer liste :", opts: ["Explicitement id, titre, prix_location, est_louable, categorie", "__all__", "les stocks", "rien"], a: 0, exp: "Sortie maîtrisée." },
+      { type: "qcm", q: "Le queryset inclut :", opts: ["select_related(\"categorie\")", "un for", "N requêtes", "un cache"], a: 0, exp: "Anti-N+1." },
+      { type: "qcm", q: "Le job tests déclare :", opts: ["un service mysql:8.4 avec healthcheck", "rien", "la prod", "SQLite"], a: 0, exp: "Vraie base éphémère." },
+      { type: "qcm", q: "L'étape de test reçoit :", opts: ["DB_HOST=127.0.0.1, DB_PASSWORD=ci-secret", "les secrets de prod", "rien", "un .env commité"], a: 0, exp: "Config de CI." },
+      { type: "vf", q: "L'usine est complète avant que l'application ne soit finie.", a: true, exp: "Le principe du Niveau 8." }
+    ],
+    solution: `<pre class="pseudo">class JeuViewSet(viewsets.ReadOnlyModelViewSet):   # API en lecture seule sur les jeux
+    queryset = Jeu.objects.select_related("categorie").order_by("titre")   # anti-N+1, trie par titre
+    serializer_class = JeuSerializer   # serializer qui formate la sortie
+
+# ci.yml — job tests
+  tests:   # le 2e job du pipeline
+    services:   # conteneurs annexes
+      mysql: { image: mysql:8.4, env: {...}, ports: ["3306:3306"],   # vraie base MySQL 8.4, port publie…
+               options: --health-cmd="mysqladmin ping -h localhost" ... }   # …avec sonde de sante
+    steps: [ checkout, setup-python, "pip install -r requirements.txt",   # preparer l'environnement…
+             "python manage.py test" (env DB_HOST=127.0.0.1, DB_PASSWORD=ci-secret) ]   # …puis lancer les tests sur la base</pre>
+<p>Fin de la semaine 1 : l'usine tourne au vert. Lundi : le métier, sécurisé et testé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton API et ton job de tests…",
+  items: [
+  { id: "proj6py-l7", title: "Le job de tests complet", level: 3,
+    statement: "Écris le job « tests » complet de ci.yml (service mysql:8.4 avec healthcheck, setup-python, install, manage.py test avec les bonnes variables d'environnement) et le test d'intégration de l'API. Explique pourquoi la version Python et l'image MySQL doivent correspondre à celles de production, et pourquoi ci-secret peut vivre dans le YAML.",
+    hints: [
+      "Le service mysql doit avoir les mêmes MAJEURE.MINEURE que la prod (8.4).",
+      "DB_HOST: 127.0.0.1 car le service est publié sur le runner (ports: 3306:3306).",
+      "ci-secret est jetable : le service MySQL est détruit après le run, il ne protège rien."
+    ],
+    solution: "# ci.yml — job tests\n  tests:   # un job nomme « tests »\n    runs-on: ubuntu-latest   # runner Linux neuf\n    services:   # conteneurs annexes lances a cote du job\n      mysql:   # un service base de donnees\n        image: mysql:8.4              # MÊME version majeure/mineure que la prod\n        env:   # variables passees a MySQL\n          MYSQL_DATABASE: ludotheque   # base creee au demarrage\n          MYSQL_USER: ludo_app   # utilisateur applicatif\n          MYSQL_PASSWORD: ci-secret    # jetable : service détruit après le run\n          MYSQL_ROOT_PASSWORD: ci-root   # mot de passe admin, jetable aussi\n        ports: [\"3306:3306\"]           # publié vers le runner -> DB_HOST=127.0.0.1\n        options: >-   # options du conteneur (>- : valeur multi-lignes)\n          --health-cmd=\"mysqladmin ping -h localhost\"   # sonde : MySQL repond-il ?\n          --health-interval=5s --health-timeout=3s --health-retries=10   # rythme et seuils de la sonde\n    steps:   # les etapes du job\n      - uses: actions/checkout@v4   # recuperer le code\n      - uses: actions/setup-python@v5   # installer Python\n        with: { python-version: \"3.14\", cache: \"pip\" }  # même Python que l'image\n      - run: pip install -r requirements.txt   # installer les dependances\n      - run: python manage.py test   # lancer toute la suite de tests\n        env:   # variables de la commande de test\n          DJANGO_SECRET_KEY: cle-de-ci   # cle jetable de CI\n          DB_HOST: 127.0.0.1   # base joignable sur le port publie du runner\n          DB_PASSWORD: ci-secret   # meme mot de passe jetable que le service\n\n# test d'intégration (catalogue/tests.py)\nclass ApiTests(TestCase):   # test qui traverse tout le pipeline HTTP\n    def test_catalogue_json(self):   # /api/jeux/ doit repondre du JSON\n        r = self.client.get(\"/api/jeux/\")   # GET simule par le client de test\n        self.assertEqual(r.status_code, 200)   # 200 = succes\n        self.assertEqual(r[\"Content-Type\"], \"application/json\")   # reponse bien au format JSON\n\n# Pourquoi la PARITÉ des versions :\n# tester avec Python 3.14 + MySQL 8.4 et déployer autre chose ne prouverait\n# rien — un comportement (fonction dépréciée, dialecte SQL) peut différer.\n# La CI doit reproduire l'environnement de prod pour que « vert » veuille dire\n# « marchera en prod ». ci-secret, lui, est jetable : le conteneur MySQL de CI\n# est éphémère et ne contient que des données de test.",
+    note: "La parité des versions entre CI et production est ce qui donne un sens au « vert » : sans elle, le pipeline teste un environnement fictif. C'est aussi pourquoi le service MySQL de CI est mysql:8.4 (pas latest) — reproductible et identique à la prod. La distinction entre secret jetable (ci-secret) et vrai secret (leçon 14) reste nette : on ne les traite jamais pareil." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

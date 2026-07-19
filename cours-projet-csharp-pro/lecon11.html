@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Louer un jeu : transaction et test d'intégration",
+  subtitle: "Le cœur métier, écrit atomique et verrouillé — et prouvé de bout en bout.",
+  theory: `
+<h3>1. Quelques mots à définir d'abord</h3>
+<p>Une <strong>base de données</strong> est un grand classeur électronique où le programme range ses informations (les jeux, les clients, les locations) dans des tableaux appelés <strong>tables</strong> ; chaque ligne d'une table est une fiche. <strong>Écrire</strong> dans la base, c'est modifier ce classeur : ajouter une fiche ou changer un nombre. Le <strong>stock</strong> est simplement le nombre d'exemplaires encore disponibles.</p>
+<p>Louer un jeu demande <strong>deux</strong> écritures : créer la fiche de location, ET diminuer le stock de 1. Ces deux gestes doivent réussir <strong>ensemble ou pas du tout</strong> — exactement comme un virement bancaire où l'argent doit à la fois quitter un compte ET arriver sur l'autre ; s'arrêter à moitié serait une catastrophe. Ce « tout ou rien » s'appelle une <strong>transaction</strong>.</p>
+<p>Autre danger : si deux clients cliquent « Louer » au même instant sur le <strong>dernier</strong> exemplaire, il ne faut pas qu'ils le louent tous les deux. Ce problème s'appelle une <em>course au stock</em> (ou <em>survente</em>) : comme deux personnes qui tendent la main vers le même dernier gâteau au même moment.</p>
+
+<h3>2. La transaction et le « verrou »</h3>
+<p>Voici le cœur du métier. Avant de lire le code, définissons ses mots. Une <strong>méthode</strong> est une recette d'instructions portant un nom, qu'on peut déclencher quand on veut. Les mots <code>async</code> et <code>await</code> gèrent l'<strong>attente sans blocage</strong> : <code>await</code> veut dire « attends que ce travail long (parler à la base) finisse, mais pendant ce temps l'ordinateur peut servir d'autres clients » — comme un serveur de restaurant qui lance une commande en cuisine puis va s'occuper d'une autre table au lieu de rester planté devant le four. <code>Task&lt;Location&gt;</code> est la « promesse » d'un résultat futur (ici une location). <code>SQL</code> est la langue qu'on parle à la base de données pour lui demander des choses. Un <strong>verrou</strong> est comme le loquet d'une cabine d'essayage : tant qu'une personne est dedans, les autres attendent leur tour.</p>
+<pre class="pseudo">public async Task&lt;Location&gt; LouerAsync(string clientId, long jeuId, int nbJours = 7) {  // méthode « louer » : reçoit le client, le jeu, et la durée (7 jours par défaut)
+    await using var tx = await _db.Database.BeginTransactionAsync();   // ouvre la transaction (le « tout ou rien ») ; elle se refermera toute seule à la fin
+    var jeu = await _db.Jeux.FromSqlInterpolated(                      // va chercher la fiche du jeu dans la base de données…
+        $"SELECT * FROM Jeux WHERE Id = {jeuId} FOR UPDATE").SingleAsync();   // …FOR UPDATE pose le verrou ; SingleAsync = on attend exactement UNE fiche
+    if (jeu.StockLocation &lt;= 0)                                       // SI le stock de location est à 0 (ou moins)…
+        throw new StockInsuffisantException("Plus de stock de location");   // …on déclenche une erreur (exception) : on refuse et on arrête tout
+    jeu.StockLocation--;                                              // sinon : on retire 1 au stock (le -- enlève 1)
+    var loc = new Location { ClientId = clientId, JeuId = jeu.Id, NbJours = nbJours };   // on prépare la fiche de location
+    _db.Locations.Add(loc);                                           // on ajoute cette fiche à la liste des locations à enregistrer
+    await _db.SaveChangesAsync();                                     // on écrit VRAIMENT les deux changements (stock diminué + location créée)
+    await tx.CommitAsync();                                           // on VALIDE la transaction : à cet instant seulement, tout devient définitif
+    return loc;                                                       // on renvoie la location créée
+}                                                                     // fin de la méthode
+</pre>
+<p><code>var</code> demande à l'ordinateur de <strong>deviner le type tout seul</strong> (ici : une transaction, un jeu, une location). Une <strong>exception</strong> est une alarme : quand on écrit <code>throw</code> (« lancer »), le programme s'interrompt immédiatement et remonte l'erreur — donc <code>tx.CommitAsync()</code> n'est jamais atteint, et rien n'est enregistré. C'est <code>FOR UPDATE</code> qui rend l'opération sûre à plusieurs : le second client qui veut le dernier exemplaire <strong>attend</strong> la fin de la transaction du premier, relit alors un stock à 0, et se voit refuser — pas de survente. Enfin <code>FromSqlInterpolated</code> glisse la valeur <code>{jeuId}</code> comme un <strong>paramètre</strong> (une case à part) et non en la collant dans le texte : cela empêche l'<em>injection SQL</em> (une attaque où un pirate ferait exécuter ses propres ordres via le champ).</p>
+
+<h3>3. L'action protégée (le bouton « Louer »)</h3>
+<p>Une <strong>action</strong> est le bout de programme qui répond quand l'internaute clique quelque part sur le site. <code>POST</code> et <code>GET</code> sont deux façons pour le navigateur d'envoyer une demande : <code>GET</code> sert à <em>lire</em> une page (on peut la recharger, la mettre en favori), tandis que <code>POST</code> sert à <em>faire une action</em> qui change quelque chose. Le <strong>CSRF</strong> est un piège où un site malveillant fait cliquer votre navigateur à votre insu ; le <em>jeton anti-CSRF</em> est un mot de passe caché dans le formulaire qui prouve que la demande vient bien de votre page.</p>
+<pre class="pseudo">[Authorize]                                  // il faut être connecté pour utiliser cette action
+[HttpPost, ValidateAntiForgeryToken]         // action déclenchée par l'envoi d'un formulaire (POST) + jeton anti-CSRF
+public async Task&lt;IActionResult&gt; Louer(long id) {   // l'action « Louer » reçoit l'identifiant (id) du jeu à louer
+    await _service.LouerAsync(_userManager.GetUserId(User), id);   // on appelle le service ; GetUserId(User) = l'identifiant du client connecté
+    return RedirectToAction("MesLocations");   // on renvoie l'internaute vers sa page « Mes locations » (Post-Redirect-Get)
+}                                            // fin de l'action
+</pre>
+<p><code>[Authorize]</code>, <code>[HttpPost, ValidateAntiForgeryToken]</code> sont des <strong>attributs</strong> : des étiquettes posées au-dessus de la méthode pour dire au framework comment la traiter (ici : réservée aux connectés, en POST, protégée). <code>RedirectToAction</code> renvoie l'internaute vers une autre page : ce détour s'appelle <strong>Post-Redirect-Get</strong> et évite qu'un rafraîchissement de page ne reloue le jeu une deuxième fois par erreur.</p>
+
+<h3>4. Le test d'intégration (la preuve)</h3>
+<p>Un <strong>test</strong> est un petit programme qui vérifie automatiquement qu'un autre programme fait bien ce qu'il promet — comme un contrôle qualité en usine. Un test <strong>d'intégration</strong> vérifie toute la chaîne branchée ensemble (le service ET la vraie base de données), et non une pièce isolée.</p>
+<pre class="pseudo">[Fact] public async Task Louer_decremente_le_stock() {   // [Fact] = un test automatique ; son nom décrit ce qu'il contrôle
+    await _service.LouerAsync(client.Id, jeu.Id);         // on loue une fois (le stock de départ vaut 3)
+    (await _db.Jeux.FindAsync(jeu.Id)).StockLocation.Should().Be(2);   // on RELIT le jeu et on exige que le stock soit tombé à 2
+}                                                         // fin du 1er test
+[Fact] public async Task Stock_nul_refuse_sans_location_fantome() {   // 2e test : le cas du stock épuisé
+    jeu.StockLocation = 0; await _db.SaveChangesAsync();  // on force le stock à 0 et on l'enregistre
+    var act = async () =&gt; await _service.LouerAsync(client.Id, jeu.Id);   // on prépare (sans encore l'exécuter) l'appel qui DOIT échouer
+    await act.Should().ThrowAsync&lt;StockInsuffisantException&gt;();   // on exige que cet appel lève bien l'exception « stock insuffisant »
+    (await _db.Locations.CountAsync()).Should().Be(0);   // et on vérifie qu'AUCUNE location fantôme n'a été créée
+}                                                         // fin du 2e test
+</pre>
+<p><code>.Should().Be(2)</code> se lit « devrait valoir 2 » : c'est l'<strong>assertion</strong>, la promesse que le test vérifie ; si le résultat diffère, le test échoue et signale le bug. <code>CountAsync()</code> compte les fiches ; exiger <code>Be(0)</code> prouve qu'un refus ne laisse aucune trace.</p>
+
+<h3>5. POST, jamais GET</h3>
+<div class="warn">Écrire (louer, acheter) se fait toujours en <strong>POST</strong> avec <code>[ValidateAntiForgeryToken]</code>, jamais en GET : un GET est rejouable, indexable par les moteurs de recherche, et préchargé par le navigateur — un simple lien qui louerait tout seul serait un désastre. Le Post-Redirect-Get évite en plus la double soumission au rafraîchissement.</div>
+<div class="tip">Le test d'intégration traverse toute la chaîne (transaction → base, ou HTTP → action → service → transaction). Écrit en même temps que la fonctionnalité, il tourne en <strong>CI</strong> (l'usine automatique qui revérifie tout à chaque envoi de code) sur un vrai MySQL : la règle métier la plus précieuse du projet est verrouillée dès sa naissance — impossible de la casser sans faire virer un contrôle au rouge.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["Une écriture", "Deux écritures atomiques (location + stock)", "Une lecture", "Rien"], a: 1, exp: "Ensemble ou pas du tout." },
+    { type: "qcm", q: "BeginTransactionAsync garantit…", opts: ["La vitesse", "Tout ou rien (pas de commit si exception)", "Le CSS", "Le cache"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "FOR UPDATE pose…", opts: ["Un cache", "Un verrou SQL (pessimiste)", "Un index", "Un cookie"], a: 1, exp: "Anti-course au stock." },
+    { type: "qcm", q: "Sans verrou, deux clients peuvent…", opts: ["Rien", "Louer le dernier exemplaire tous les deux", "Se déconnecter", "Chiffrer"], a: 1, exp: "Survente." },
+    { type: "qcm", q: "Si l'exception est levée avant le commit…", opts: ["La location reste", "Rien n'est persisté (pas de commit)", "Le stock baisse quand même", "Rien"], a: 1, exp: "Aucune location fantôme." },
+    { type: "qcm", q: "Louer se fait en…", opts: ["GET", "POST + ValidateAntiForgeryToken", "PUT vers l'URL", "HEAD"], a: 1, exp: "Écrire = POST." },
+    { type: "qcm", q: "Un GET qui écrirait serait…", opts: ["Idéal", "Dangereux (rejouable, indexable, préchargé)", "Rapide", "Sûr"], a: 1, exp: "Jamais d'écriture en GET." },
+    { type: "qcm", q: "[ValidateAntiForgeryToken] protège contre…", opts: ["Le XSS", "Le CSRF", "Le N+1", "Le clickjacking"], a: 1, exp: "Jeton anti-CSRF." },
+    { type: "qcm", q: "Le Post-Redirect-Get évite…", opts: ["Le login", "La double soumission au rafraîchissement", "Le CSS", "Le cache"], a: 1, exp: "Redirection après POST." },
+    { type: "qcm", q: "Le test d'intégration traverse…", opts: ["Le CSS seul", "Toute la chaîne (service -> transaction -> base)", "Rien", "Le cache"], a: 1, exp: "De bout en bout." },
+    { type: "vf", q: "Le test tourne en CI sur un vrai MySQL.", a: true, exp: "Règle verrouillée." },
+    { type: "qcm", q: "FromSqlInterpolated(...FOR UPDATE) …", opts: ["Ouvre une faille SQL", "Interpole en paramètre (sûr) + verrouille", "Ralentit", "Chiffre"], a: 1, exp: "Paramétré, pas de concat." },
+    { type: "qcm", q: "Sur stock nul, le test vérifie…", opts: ["Rien", "L'exception ET 0 location créée", "Un 200", "Le CSS"], a: 1, exp: "Pas de fantôme." },
+    { type: "qcm", q: "await using var tx …", opts: ["Chiffre", "Dispose la transaction proprement (rollback si pas commit)", "Ralentit", "Déploie"], a: 1, exp: "Nettoyage garanti." },
+    { type: "vf", q: "La règle métier la plus précieuse est verrouillée dès sa naissance par son test.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Louer, atomique et prouvé",
+    intro: `<p>Transaction + verrou + POST + test d'intégration.</p>`,
+    questions: [
+      { type: "qcm", q: "L'atomicité vient de :", opts: ["BeginTransactionAsync + Commit", "un try/catch", "la chance", "un cache"], a: 0, exp: "Tout ou rien." },
+      { type: "qcm", q: "La course au stock est bloquée par :", opts: ["un verrou FOR UPDATE", "plus de RAM", "un index", "rien"], a: 0, exp: "Second client en attente." },
+      { type: "qcm", q: "L'écriture se fait en :", opts: ["POST + ValidateAntiForgeryToken", "GET", "HEAD", "OPTIONS"], a: 0, exp: "Jamais en GET." },
+      { type: "qcm", q: "La preuve : le test vérifie :", opts: ["stock -1, et 0 location sur stock nul", "le CSS", "le port", "rien"], a: 0, exp: "Toute la chaîne." },
+      { type: "vf", q: "Sur stock nul, aucune location fantôme n'est créée.", a: true, exp: "Pas de commit." }
+    ],
+    solution: `<pre class="pseudo">public async Task<Location> LouerAsync(string clientId, long jeuId, int n = 7) {  // méthode « louer » : client, jeu, durée
+  await using var tx = await _db.Database.BeginTransactionAsync();   // ouvre la transaction (tout ou rien)
+  var jeu = await _db.Jeux.FromSqlInterpolated(                      // va chercher la fiche du jeu…
+    $"SELECT * FROM Jeux WHERE Id = {jeuId} FOR UPDATE").SingleAsync();   // …FOR UPDATE = verrou ; on attend une seule fiche
+  if (jeu.StockLocation <= 0) throw new StockInsuffisantException(...);   // stock épuisé ? on refuse (exception) et on arrête
+  jeu.StockLocation--;                                              // sinon : on retire 1 au stock
+  _db.Locations.Add(new Location { ClientId = clientId, JeuId = jeu.Id, NbJours = n });   // on crée et ajoute la fiche de location
+  await _db.SaveChangesAsync(); await tx.CommitAsync();             // on écrit les deux changements, puis on VALIDE (définitif)
+}                                                                   // fin de la méthode
+// [HttpPost, ValidateAntiForgeryToken] ... RedirectToAction("MesLocations")   // l'action : POST + jeton anti-CSRF, puis redirection (Post-Redirect-Get)</pre>
+<p>Louer est verrouillé. Demain : acheter — prix figé et couverture (coverlet).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta transaction de location et son test…",
+  items: [
+  { id: "proj6cs-l11", title: "Louer : transaction verrouillée + test d'intégration", level: 3,
+    statement: "Écris le service LouerAsync (BeginTransactionAsync, verrou FOR UPDATE, contrôle de stock, décrément, commit), l'action POST protégée (ValidateAntiForgeryToken, Post-Redirect-Get), et deux tests d'intégration (décrément OK ; stock nul -> aucune location). Explique en 3-4 lignes le rôle du verrou et pourquoi POST et pas GET.",
+    hints: [
+      "await using var tx = await _db.Database.BeginTransactionAsync(); FromSqlInterpolated(... FOR UPDATE).",
+      "[HttpPost, ValidateAntiForgeryToken] ; RedirectToAction après.",
+      "Tests : (await _db.Jeux.FindAsync(id)).StockLocation ; CountAsync sur Locations."
+    ],
+    solution: "public async Task<Location> LouerAsync(string clientId, long jeuId, int nbJours = 7) {\n    await using var tx = await _db.Database.BeginTransactionAsync();\n    var jeu = await _db.Jeux.FromSqlInterpolated(\n        $\"SELECT * FROM Jeux WHERE Id = {jeuId} FOR UPDATE\").SingleAsync();  // verrou\n    if (jeu.StockLocation <= 0)\n        throw new StockInsuffisantException(\"Plus de stock de location\");\n    jeu.StockLocation--;\n    var loc = new Location { ClientId = clientId, JeuId = jeu.Id, NbJours = nbJours };\n    _db.Locations.Add(loc);\n    await _db.SaveChangesAsync();\n    await tx.CommitAsync();\n    return loc;\n}\n\n[Authorize]\n[HttpPost, ValidateAntiForgeryToken]\npublic async Task<IActionResult> Louer(long id) {\n    await _service.LouerAsync(_userManager.GetUserId(User)!, id);\n    return RedirectToAction(\"MesLocations\");        // Post-Redirect-Get\n}\n\n[Fact] public async Task Louer_decremente() {\n    await _service.LouerAsync(_client.Id, _jeu.Id);\n    (await _db.Jeux.FindAsync(_jeu.Id))!.StockLocation.Should().Be(2);\n}\n[Fact] public async Task Stock_nul_refuse_sans_fantome() {\n    _jeu.StockLocation = 0; await _db.SaveChangesAsync();\n    var act = async () => await _service.LouerAsync(_client.Id, _jeu.Id);\n    await act.Should().ThrowAsync<StockInsuffisantException>();\n    (await _db.Locations.CountAsync()).Should().Be(0);\n}\n\n// LE VERROU ET LE CHOIX DE POST\n// Verrou : deux clients qui louent le DERNIER exemplaire en meme temps liraient\n// tous deux stock=1 et creeraient DEUX locations (survente). FOR UPDATE force le\n// second a attendre la fin de la transaction du premier : il relit stock=0 et se\n// voit refuser. Correct sous charge. FromSqlInterpolated parametre {jeuId} (pas de\n// concatenation) -> pas d'injection SQL.\n// POST et pas GET : un GET est rejouable, prefetche par le navigateur, indexe par\n// les moteurs -- un lien qui loue tout seul serait un desastre. Ecrire = POST +\n// ValidateAntiForgeryToken, suivi d'une redirection (Post-Redirect-Get).",
+    note: "La transaction verrouillée est le même patron qu'au Niveau 6, mais ici elle naît avec son test d'intégration qui la prouve sur un vrai MySQL, en CI, à chaque commit. FromSqlInterpolated interpole en paramètre (jamais de concaténation), ce qui verrouille sans ouvrir d'injection SQL. C'est la différence décisive : au Niveau 6 on espérait que la concurrence était gérée ; au Niveau 8 on le vérifie mécaniquement." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

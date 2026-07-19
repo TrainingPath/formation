@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Générer le schéma : ddl-auto, ou s'aligner sur la base existante",
+  subtitle: "Hibernate sait créer tes tables. La vraie question : faut-il le laisser faire ?",
+  theory: `
+<h3>1. hbm2ddl : Hibernate architecte</h3>
+<p>Petit rappel de vocabulaire : le <strong>DDL</strong> (Data Definition Language, « langage de définition de données ») est la partie du SQL qui <em>fabrique la structure</em> : <code>CREATE TABLE</code>, <code>ALTER TABLE</code>, <code>DROP TABLE</code>. À partir de tes annotations, Hibernate peut générer ce DDL tout seul (cette fonction s'appelle <em>hbm2ddl</em>, « hibernate mapping to ddl »). La propriété qui pilote tout se règle comme les autres, dans persistence.xml :</p>
+<pre class="pseudo">&lt;property name="hibernate.hbm2ddl.auto" value="validate"/&gt;   &lt;!-- règle le comportement : ici "validate" = vérifier sans modifier --&gt;
+&lt;!-- équivalent Spring Boot : spring.jpa.hibernate.ddl-auto=validate --&gt;   &lt;!-- même réglage, autre nom de propriété --&gt;</pre>
+
+<h3>2. Les cinq valeurs à connaître</h3>
+<pre class="pseudo">none        → Hibernate ne touche à rien (défaut hors Spring Boot)   # aucune action sur le schéma
+validate    → compare entités et tables ; ERREUR si ça diverge       # vérifie, mais ne modifie jamais rien
+update      → ajoute tables/colonnes manquantes (ne supprime jamais)  # complète le schéma, sans jamais nettoyer
+create      → DROP puis CREATE au démarrage : la base repart de zéro  # DÉTRUIT tout puis recrée (données perdues)
+create-drop → comme create, plus DROP à l'arrêt (idéal tests auto)    # créée au démarrage, détruite à l'arrêt</pre>
+<p>Règle professionnelle : <strong>create/create-drop</strong> pour les tests et le prototypage, <strong>validate</strong> (ou none) partout ailleurs. <strong>update</strong> semble pratique mais accumule des colonnes fantômes et ne gère ni renommages ni suppressions.</p>
+
+<h3>3. Notre cas : la base existe déjà !</h3>
+<p>La Ludothèque a été conçue au Niveau 4 : MCD Merise, schéma MySQL soigné, données de test. La base est la <strong>source de vérité</strong> (la référence à laquelle tout le reste doit se conformer). La bonne posture est donc de s'ALIGNER dessus :</p>
+<pre class="pseudo">hibernate.hbm2ddl.auto = validate                          # on choisit "validate" : la base reste la référence
+
+Démarrage OK      → tes entités reflètent fidèlement le schéma        # aucune divergence : tout est aligné, on continue
+SchemaManagementException → lis le message : colonne manquante,       # une divergence détectée : Hibernate lève une erreur...
+                    type divergent, nom mal mappé... et corrige L'ENTITÉ  # ...tu corriges le mapping, JAMAIS la base</pre>
+<p>validate devient ainsi un <strong>test automatique de ton mapping</strong> à chaque démarrage (une <em>SchemaManagementException</em> est l'erreur qu'Hibernate lève quand une table ne correspond pas à ton entité).</p>
+
+<h3>4. Faire correspondre les types</h3>
+<p>Pour que validate passe, chaque colonne doit correspondre : BIGINT ↔ Long, VARCHAR(n) ↔ String + length, DECIMAL ↔ BigDecimal, DATE ↔ LocalDate, DATETIME ↔ LocalDateTime, TINYINT(1) ↔ boolean. En cas de désaccord, ajuste @Column (name, length, columnDefinition) — pas la base.</p>
+
+<h3>5. Et en vrai projet ? Les migrations</h3>
+<p>Quand le schéma doit évoluer, les pros n'utilisent ni update ni create : ils versionnent des scripts SQL avec un outil de <strong>migration</strong>. Une migration est un fichier de changement de schéma, numéroté et conservé dans le projet (comme un « commit » du schéma), que l'outil rejoue dans l'ordre. Les outils Java sont <strong>Flyway</strong> et <strong>Liquibase</strong> — exactement l'esprit des migrations EF Core, des migrations Laravel (php artisan migrate) et de makemigrations chez Django. Hibernate lit le schéma ; les migrations l'écrivent. Tu croiseras Flyway au Niveau 6.</p>
+<div class="warn">Ne lance JAMAIS create ou create-drop sur une base contenant des données réelles : le DROP TABLE est immédiat et sans corbeille. Vérifie deux fois la valeur de ddl-auto avant de démarrer sur la base ludotheque remplie au Niveau 4.</div>
+<div class="tip">Astuce d'apprentissage sans risque : garde ta base ludotheque en validate, et crée une seconde base ludotheque_sandbox où tu laisses Hibernate en create pour observer le DDL qu'il génère (show_sql l'affiche). Comparer SON schéma au TIEN est très instructif.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle propriété Hibernate pilote la génération du schéma ?", a: ["hibernate.hbm2ddl.auto", "hbm2ddl.auto", "ddl-auto"], ph: "hibernate…", exp: "hibernate.hbm2ddl.auto (spring.jpa.hibernate.ddl-auto côté Spring Boot)." },
+    { type: "qcm", q: "La valeur qui compare entités et tables SANS rien modifier :", opts: ["validate", "update", "create", "create-drop"], a: 0, exp: "Erreur au démarrage si divergence : un test de mapping gratuit." },
+    { type: "qcm", q: "La valeur qui détruit et recrée la base à chaque démarrage :", opts: ["create", "validate", "none", "update"], a: 0, exp: "DROP + CREATE : réservé aux bases jetables." },
+    { type: "qcm", q: "create-drop ajoute par rapport à create…", opts: ["Un DROP supplémentaire à l'arrêt de l'application", "Une sauvegarde automatique", "Un chiffrement des données", "Un envoi de mail"], a: 0, exp: "Parfait pour les tests automatisés : rien ne survit." },
+    { type: "vf", q: "update supprime les colonnes devenues inutiles dans les entités.", a: false, exp: "update ajoute mais ne supprime ni ne renomme jamais : colonnes fantômes garanties." },
+    { type: "qcm", q: "Pour la Ludothèque dont le schéma vient du Niveau 4, la bonne valeur est…", opts: ["validate", "create", "create-drop", "update"], a: 0, exp: "La base existante est la source de vérité : on s'aligne dessus." },
+    { type: "qcm", q: "validate échoue avec SchemaManagementException. Tu corriges…", opts: ["L'entité (annotations @Column, types)", "La base de production directement", "Le pom.xml", "Le navigateur"], a: 0, exp: "La base est la référence : c'est le mapping qui doit s'ajuster." },
+    { type: "qcm", q: "Le type Java attendu face à une colonne BIGINT :", opts: ["Long", "String", "BigDecimal", "LocalDate"], a: 0, exp: "BIGINT ↔ Long ; DECIMAL ↔ BigDecimal ; DATETIME ↔ LocalDateTime." },
+    { type: "vf", q: "En production réelle, ddl-auto=create est une pratique recommandée.", a: false, exp: "Jamais : DROP TABLE sans corbeille. validate ou none + migrations." },
+    { type: "qcm", q: "L'outil de migration de schéma cité pour l'écosystème Java :", opts: ["Flyway (ou Liquibase)", "npm", "Photoshop", "phpMyAdmin"], a: 0, exp: "Scripts SQL versionnés : tu le croiseras au Niveau 6." },
+    { type: "qcm", q: "Les équivalents migrations chez les voisins :", opts: ["Migrations EF Core, php artisan migrate, makemigrations Django", "Dockerfile partout", "git push", "SELECT * FROM migrations"], a: 0, exp: "Toutes les piles versionnent l'évolution du schéma par scripts." },
+    { type: "qcm", q: "En Spring Boot, la propriété équivalente s'écrit…", opts: ["spring.jpa.hibernate.ddl-auto", "spring.sql.mode", "server.ddl", "jpa.create.tables"], a: 0, exp: "Même mécanisme, préfixe Spring." },
+    { type: "input", q: "Quelle valeur de ddl-auto choisis-tu pour une suite de tests automatisés avec base jetable ?", a: ["create-drop", "create drop", "createdrop"], ph: "valeur…", exp: "create-drop : base créée au début, détruite à la fin." },
+    { type: "vf", q: "Avec validate, un démarrage sans erreur prouve que le mapping colle au schéma.", a: true, exp: "C'est un test de cohérence exécuté gratuitement à chaque lancement." },
+    { type: "qcm", q: "Pourquoi update est-il déconseillé à long terme ?", opts: ["Il accumule des colonnes obsolètes et ignore renommages/suppressions", "Il est payant", "Il efface la base chaque nuit", "Il ne fonctionne qu'avec Oracle"], a: 0, exp: "Le schéma dérive silencieusement : préfère des migrations explicites." }
+  ],
+  final: {
+    title: "Exercice final — Choisir la bonne stratégie",
+    intro: `<p>Quatre situations, quatre décisions : à chaque contexte sa valeur de ddl-auto. Raisonne en termes de source de vérité et de risque de perte de données.</p>`,
+    questions: [
+      { type: "qcm", q: "Tests d'intégration lancés par la CI sur une base vide dédiée :", opts: ["create-drop", "validate", "none", "update"], a: 0, exp: "Base jetable : créée pour les tests, détruite après." },
+      { type: "qcm", q: "Application Ludothèque branchée sur la base du Niveau 4 remplie de données :", opts: ["validate", "create", "create-drop", "update"], a: 0, exp: "On vérifie l'alignement sans jamais toucher au schéma ni aux données." },
+      { type: "qcm", q: "Prototype personnel du week-end, base locale sans valeur :", opts: ["create (ou create-drop)", "validate obligatoirement", "Interdiction de ddl-auto", "update en production"], a: 0, exp: "Itération rapide acceptable quand rien n'est précieux." },
+      { type: "vf", q: "En production au Niveau 6, l'évolution du schéma passera par des migrations versionnées (Flyway) plutôt que par ddl-auto.", a: true, exp: "Hibernate lit le schéma, les migrations l'écrivent." },
+      { type: "qcm", q: "validate signale : colonne prixlocation introuvable, la table a prix_location. La cause probable :", opts: ["Un @Column(name) manquant ou une convention de nommage désactivée", "MySQL est éteint", "Le pom.xml est vide", "Le driver est trop récent"], a: 0, exp: "Le mapping des noms diverge : on corrige l'entité, pas la base." }
+    ],
+    solution: `<pre class="pseudo">DÉCISION ddl-auto — arbre mental                            # comment choisir la bonne valeur
+La base contient-elle des données précieuses ?              # LA question à se poser en premier
+  OUI → validate (ou none)          [la base = source de vérité]   # on ne risque jamais les vraies données
+  NON, base jetable de tests → create-drop                 # créée puis détruite autour des tests
+  NON, prototype perso       → create                      # itération rapide, rien de précieux à perdre
+  update ? → à éviter : dérive silencieuse du schéma        # accumule des colonnes fantômes, ne nettoie pas
+
+Ludothèque : hibernate.hbm2ddl.auto = validate             # notre choix pour la base du Niveau 4
+Évolution du schéma en vrai projet : migrations (Flyway / Liquibase),   # les scripts SQL versionnés ÉCRIVENT le schéma
+comme EF Core migrations, artisan migrate, makemigrations. # même principe dans les autres piles</pre>
+<p>Le mapping est vérifié à chaque démarrage. Place à l'action : demain, l'EntityManager crée, lit et supprime tes premiers jeux dans la base.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l4", title: "La politique de schéma du projet", level: 2,
+    statement: "Rédige la section « Gestion du schéma » du futur README de la Ludothèque : quelle valeur de ddl-auto pour chaque environnement (poste de dev, tests automatisés, démo/production), pourquoi, et la procédure à suivre quand une évolution du schéma devient nécessaire (nouvelle colonne note_moyenne sur jeu, par exemple). Anticipe l'objection d'un collègue : « update ferait ça tout seul, pourquoi s'embêter ? »",
+    hints: [
+      "Trois environnements, trois réponses : où les données sont-elles précieuses, où sont-elles jetables ?",
+      "Pour l'évolution : qui écrit le ALTER TABLE, où est-il versionné, dans quel ordre base et entité changent-elles ?",
+      "Contre update : pense renommage de colonne, suppression, et divergence entre les bases des différents devs."
+    ],
+    solution: "GESTION DU SCHÉMA — Ludothèque\n\nEnvironnements :\n- Poste de dev   : validate — la base ludotheque du Niveau 4 est la référence ;\n                   toute divergence doit ÉCHOUER bruyamment au démarrage.\n- Tests auto     : create-drop sur une base dédiée ludotheque_test —\n                   schéma généré depuis les entités, détruit après la suite.\n- Démo / prod    : validate (à terme none + Flyway) — zéro modification\n                   automatique sur des données réelles.\n\nProcédure d'évolution (ex. ajout de jeu.note_moyenne) :\n1. Écrire le script SQL : ALTER TABLE jeu ADD note_moyenne DECIMAL(3,2);\n2. Le versionner (dossier db/migrations, puis Flyway au Niveau 6).\n3. L'appliquer sur chaque base.\n4. Ajouter l'attribut noteMoyenne à l'entité Jeu.\n5. Redémarrer : validate confirme l'alignement.\n\nRéponse à l'objection « update ferait ça tout seul » :\nupdate ne sait ni renommer ni supprimer, ne laisse aucune trace versionnée,\net chaque poste dériverait différemment. Un script versionné est relisible,\nrejouable et identique pour toute l'équipe.",
+    note: "Tu viens d'écrire une vraie décision d'architecture, celle qu'on te demandera de défendre en entretien. Elle réconcilie le Niveau 4 (le schéma comme contrat) et le Niveau 7 (CI/CD : tout changement est versionné et rejouable) — et elle vaut mot pour mot pour EF Core ou Django." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

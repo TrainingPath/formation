@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Fichiers et JSON",
+  subtitle: "Persister les données sans base de données.",
+  theory: `
+<h3>1. Pourquoi des fichiers ?</h3>
+<p>À la fin d'un script PHP, toutes les variables sont détruites (et à chaque nouvelle requête HTTP, le script repart de zéro !). Pour qu'une donnée <strong>persiste</strong> (survive au programme) — un score, un message du livre d'or, une config — il faut l'écrire sur le <strong>disque</strong>, dans un <strong>fichier</strong>. Lire le fichier, c'est recharger en mémoire ce qui avait été sauvegardé.</p>
+
+<h3>2. Lire et écrire en une seule ligne</h3>
+<p>PHP offre des fonctions « tout-en-un » qui ouvrent, écrivent (ou lisent) et ferment le fichier pour toi. Parfait pour les <strong>petits</strong> fichiers.</p>
+<pre class="pseudo">file_put_contents("notes.txt", "Ana;14\\n");             // CRÉE (ou ÉCRASE) le fichier et y écrit la chaîne (\\n = saut de ligne)
+file_put_contents("notes.txt", "Bob;9\\n", FILE_APPEND); // AJOUTE à la fin grâce au flag FILE_APPEND (n'écrase plus)
+$texte = file_get_contents("notes.txt");                 // lit TOUT le contenu dans une seule chaîne
+$lignes = file("notes.txt", FILE_IGNORE_NEW_LINES);      // lit le fichier en TABLEAU (une case = une ligne, sans les \\n)</pre>
+<div class="warn">Piège n°1 — l'écrasement : sans le flag <code>FILE_APPEND</code>, <code>file_put_contents</code> REMPLACE tout l'ancien contenu, comme une réaffectation de variable (leçon 2).</div>
+<p>Là où Java demandait PrintWriter + Scanner + try, PHP condense tout en un appel (même esprit que la classe <code>File</code> de C#).</p>
+
+<h3>3. Le contrôle fin : fopen / fgets / fwrite / fclose (l'équivalent de StreamReader/StreamWriter)</h3>
+<p>Les fonctions ci-dessus chargent le fichier <strong>entier</strong> en mémoire. Pour un <strong>gros</strong> fichier (un journal de plusieurs Go), on ouvre plutôt un <strong>flux (stream)</strong> et on le traite <strong>ligne par ligne</strong>. C'est exactement le rôle de <code>StreamReader</code>/<code>StreamWriter</code> en C# et de <code>BufferedReader</code>/<code>BufferedWriter</code> en Java. En PHP, on utilise <code>fopen</code> et ses compagnons.</p>
+<p><strong>Écrire au fil de l'eau (équivalent StreamWriter) :</strong></p>
+<pre class="pseudo">$f = fopen("notes.txt", "w");                 // OUVRE le fichier en écriture ("w") ; "w" ÉCRASE, "a" AJOUTE (append)
+                                              // $f est le "handle" : une poignée vers le flux ouvert
+fwrite($f, "Ana;14\\n");                       // ÉCRIT la chaîne dans le flux (fputs est un alias de fwrite)
+fwrite($f, "Bob;9\\n");                        // écrit une deuxième ligne
+fclose($f);                                   // FERME le flux : vide le tampon sur le disque et libère la ressource</pre>
+<div class="warn">Piège n°2 — toujours fermer : oublier <code>fclose</code> peut laisser des données dans le tampon (non écrites) et gaspille une ressource système. C'est le pendant du <code>using</code> (C#) et du try-with-resources (Java), mais en PHP c'est à TOI de fermer.</div>
+<p><strong>Lire au fil de l'eau (équivalent StreamReader) :</strong></p>
+<pre class="pseudo">$f = fopen("notes.txt", "r");                 // OUVRE le fichier en lecture ("r" = read)
+if ($f) {                                     // fopen renvoie false s'il échoue (fichier absent) → on vérifie
+    while (($ligne = fgets($f)) !== false) {   // fgets LIT la ligne suivante ; renvoie false à la FIN du fichier
+        echo rtrim($ligne) . "&lt;br&gt;";         // rtrim enlève le \\n de fin ; on affiche la ligne
+    }                                          // on reboucle tant qu'il reste des lignes (nombre inconnu → while)
+    fclose($f);                                // on ferme le flux une fois la lecture terminée
+}                                             // fin du if</pre>
+<p>Le motif <code>while (($ligne = fgets($f)) !== false)</code> est le jumeau PHP de <code>while ((ligne = ReadLine()) != null)</code> (C#) et <code>while ((ligne = readLine()) != null)</code> (Java) : on lit, on range dans <code>$ligne</code>, et <code>false</code> signale la fin du fichier. On peut aussi tester <code>feof($f)</code> (« end of file »).</p>
+<div class="tip">Tableau des équivalences : ÉCRITURE → C# <code>StreamWriter.WriteLine</code> · Java <code>BufferedWriter.write</code> · PHP <code>fwrite</code>. LECTURE → C# <code>StreamReader.ReadLine</code> · Java <code>BufferedReader.readLine</code> · PHP <code>fgets</code>. Même concept de flux tamponné, trois syntaxes.</div>
+
+<h3>4. Le CSV maison (une ligne = un enregistrement)</h3>
+<p>Un fichier <strong>CSV</strong> range une donnée par ligne, ses champs séparés par un caractère (ici le point-virgule).</p>
+<pre class="pseudo">foreach (file("notes.txt", FILE_IGNORE_NEW_LINES) as $ligne) { // parcourt chaque ligne du fichier (chargé en tableau)
+    if ($ligne === "") { continue; }          // cas limite : ligne vide → on saute au tour suivant
+    [$nom, $note] = explode(";", $ligne);     // explode découpe « Ana;14 » ; la destructuration range dans 2 variables
+    echo "$nom a eu $note&lt;br&gt;";              // affiche l'enregistrement reconstruit (interpolation, leçon 4)
+}                                              // fin de boucle</pre>
+
+<h3>5. JSON : le format du web moderne</h3>
+<p>Le <strong>JSON</strong> représente des structures (tableaux, associatifs) sous forme de <strong>TEXTE</strong> — le format d'échange universel (APIs, configs…). PHP le parle nativement :</p>
+<pre class="pseudo">$classe = [                                   // un tableau de tableaux associatifs (leçon 8)
+    ["nom" => "Ana", "note" => 14],           // enregistrement 1
+    ["nom" => "Bob", "note" => 9]             // enregistrement 2
+];                                            // fin de la structure
+$json = json_encode($classe);                 // ENCODE : structure PHP → chaîne JSON (texte)
+// résultat : [{"nom":"Ana","note":14},{"nom":"Bob","note":9}]
+
+$retour = json_decode($json, true);           // DÉCODE : JSON → structure PHP ; true = tableaux associatifs
+$retour[0]["nom"]   → "Ana"                    // on retrouve la structure d'origine</pre>
+<div class="warn">Sans le second argument <code>true</code>, json_decode rend des OBJETS (accès <code>$obj-&gt;nom</code>). Avec <code>true</code> : des tableaux associatifs, ceux que tu maîtrises. Choisis <code>true</code> pour l'instant.</div>
+
+<h3>6. Sauvegarder / charger une structure entière</h3>
+<pre class="pseudo">// SAUVER n'importe quelle structure, même imbriquée :
+file_put_contents("classe.json", json_encode($classe, JSON_PRETTY_PRINT)); // encode + écrit (PRETTY = indenté, lisible)
+
+// CHARGER en gérant le cas limite « fichier absent » :
+if (file_exists("classe.json")) {             // le fichier existe-t-il ? (au 1er lancement : non)
+    $classe = json_decode(file_get_contents("classe.json"), true) ?? []; // lit + décode ; ?? [] si JSON corrompu (null)
+} else {                                       // sinon (premier démarrage)…
+    $classe = [];                              // …on part sur une structure vide
+}                                             // fin du chargement</pre>
+<div class="tip">Deux lignes pour persister TOUTE une structure imbriquée : le JSON remplace ton CSV artisanal dès que les données se complexifient. C'est le cycle lire → mémoire → réécrire de Java leçon 17, en plus court.</div>
+
+<h3>7. Les autres outils fichiers</h3>
+<pre class="pseudo">file_exists($f)   → true / false   // le fichier existe-t-il ?
+unlink($f)        → supprime        // supprimer le fichier (nom hérité d'Unix)
+mkdir($d)         → crée un dossier // « make directory »
+scandir($d)       → un tableau      // lister le contenu d'un dossier (renvoie un TABLEAU de noms)
+filesize($f)      → un nombre       // taille du fichier en octets</pre>`,
+  exercises: [
+    { type: "qcm", q: "file_put_contents(\"log.txt\", $msg) sur un fichier existant…", opts: ["Ajoute à la fin", "ÉCRASE tout : pour ajouter, il faut le flag FILE_APPEND", "Refuse", "Crée une copie"], a: 1, exp: "Le piège de l'écrasement, version PHP (comme PrintWriter en Java)." },
+    { type: "qcm", q: "Ajouter une ligne à un journal sans perdre l'existant :", opts: ["file_put_contents($f, $msg)", "file_put_contents($f, $msg, FILE_APPEND)", "file_get_contents", "append($f)"], a: 1, exp: "Le troisième argument change tout." },
+    { type: "qcm", q: "file(\"notes.txt\", FILE_IGNORE_NEW_LINES) retourne…", opts: ["Une chaîne", "Un TABLEAU : une case par ligne, sans les \\n — prêt pour foreach", "Un booléen", "Un objet"], a: 1, exp: "Fichier → tableau en une ligne : le foreach prend le relais." },
+    { type: "qcm", q: "[$nom, $note] = explode(\";\", $ligne); réalise…", opts: ["Deux erreurs", "Découpage + DESTRUCTURATION : les deux morceaux atterrissent direct dans deux variables", "Une boucle", "Un tri"], a: 1, exp: "Le split + affectations de Java, condensé." },
+    { type: "qcm", q: "Le JSON sert à…", opts: ["Chiffrer", "Représenter des structures de données en TEXTE : le format d'échange universel du web", "Compresser", "Styler les pages"], a: 1, exp: "APIs, configs, sauvegarde : le lingua franca des données." },
+    { type: "qcm", q: "json_encode([\"a\" => 1]) retourne…", opts: ["Un tableau", "La chaîne {\"a\":1}", "1", "true"], a: 1, exp: "Structure → texte : prêt à écrire dans un fichier ou envoyer." },
+    { type: "qcm", q: "Pourquoi le <code>true</code> dans json_decode($json, true) ?", opts: ["Pour valider", "Pour obtenir des TABLEAUX ASSOCIATIFS (sinon : des objets à flèches)", "Pour la vitesse", "Obligatoire"], a: 1, exp: "Tes structures de la leçon 8, directement utilisables." },
+    { type: "input", q: "$r = json_decode('[{\"nom\":\"Zoé\",\"note\":16}]', true); Que vaut $r[0][\"note\"] ?", a: "16", ph: "nombre", exp: "JSON → liste d'enregistrements : la structure reine (leçon 8) restaurée." },
+    { type: "qcm", q: "json_decode sur un JSON MALFORMÉ retourne…", opts: ["[]", "null — d'où le ?? [] de secours dans le chargeur", "false", "Une exception toujours"], a: 1, exp: "Le cas limite « fichier corrompu » : null apprivoisé par ??." },
+    { type: "qcm", q: "Pourquoi tester file_exists AVANT file_get_contents ?", opts: ["Pour la beauté", "Premier lancement = pas encore de fichier : warning évité, on démarre sur [] (cas limite du jour 30 !)", "C'est plus rapide", "Inutile"], a: 1, exp: "Toute application a un premier démarrage : prévois-le." },
+    { type: "qcm", q: "CSV ou JSON pour sauvegarder une liste d'enregistrements AVEC des champs imbriqués (adresse = rue + ville) ?", opts: ["CSV, toujours", "JSON : l'imbrication est native — le CSV plat ne sait pas nicher des structures", "Ni l'un ni l'autre", "TXT brut"], a: 1, exp: "CSV pour le tabulaire simple, JSON dès que ça se structure." },
+    { type: "qcm", q: "JSON_PRETTY_PRINT dans json_encode sert à…", opts: ["Compresser", "Indenter le JSON : lisible par un humain qui ouvre le fichier", "Chiffrer", "Trier"], a: 1, exp: "Debug et maintenance facilités — quelques octets de plus, beaucoup de clarté." },
+    { type: "qcm", q: "Supprimer un fichier :", opts: ["delete($f)", "unlink($f)", "remove($f)", "file_delete"], a: 1, exp: "Nom historique hérité d'Unix." },
+    { type: "qcm", q: "scandir(\"uploads\") retourne…", opts: ["Le premier fichier", "Le TABLEAU des noms du dossier (dont . et ..) : prêt pour un foreach", "La taille", "true"], a: 1, exp: "Lister un dossier = parcourir un tableau : tout est tableau en PHP." },
+    { type: "qcm", q: "Le cycle complet d'une petite app PHP sans BDD :", opts: ["Tout en variables", "Charger le JSON au début → travailler en tableau → réécrire le JSON à la fin", "Un cookie géant", "Impossible"], a: 1, exp: "Le cycle de Java leçon 17, dialecte PHP : ton livre d'or (leçon 20) vivra ainsi." },
+    { type: "qcm", q: "Pour traiter un GROS fichier ligne par ligne (équivalent StreamReader), on utilise…", opts: ["file_get_contents", "fopen puis fgets dans une boucle, puis fclose", "json_decode", "scandir"], a: 1, exp: "fopen/fgets = le flux PHP, comme StreamReader (C#) / BufferedReader (Java)." },
+    { type: "qcm", q: "<code>fopen(\"log.txt\", \"a\")</code> : que fait le mode \"a\" ?", opts: ["Il lit", "Il ouvre en AJOUT (append) : on écrit à la fin sans écraser", "Il efface le fichier", "Il chiffre"], a: 1, exp: "\"w\" écrase, \"a\" ajoute, \"r\" lit." },
+    { type: "qcm", q: "<code>while (($ligne = fgets($f)) !== false)</code> s'arrête quand…", opts: ["La ligne est vide", "fgets renvoie false, c'est-à-dire à la FIN du fichier", "Après 10 lignes", "Jamais"], a: 1, exp: "false = fin de fichier (ou feof($f) vrai) : même motif qu'en C# et Java." },
+    { type: "qcm", q: "Que fait <code>fclose($f)</code> et pourquoi est-ce important ?", opts: ["Rien d'utile", "Il ferme le flux : vide le tampon sur le disque et libère la ressource — à ne jamais oublier en PHP", "Il supprime le fichier", "Il relit le fichier"], a: 1, exp: "En PHP, pas de using/try-with-resources auto : c'est à toi de fermer." },
+    { type: "qcm", q: "L'équivalent PHP de StreamWriter.WriteLine (C#) est…", opts: ["echo", "fwrite($f, \"texte\\n\") sur un flux ouvert en écriture", "print_r", "json_encode"], a: 1, exp: "fwrite écrit dans le flux ; fputs en est un alias." }
+  ],
+  final: {
+    title: "Exercice final — Le carnet de scores persistant",
+    intro: `<p>Le club de jeu sauvegarde ses records :</p>
+<pre class="pseudo">// Chargement (avec cas limites)
+$scores = file_exists("scores.json")                       // le fichier existe-t-il ?
+    ? (json_decode(file_get_contents("scores.json"), true) ?? [])   // oui : lit + décode ; ?? [] si JSON corrompu
+    : [];                                                  // (1) non (1er lancement) : tableau vide
+
+// Ajout du score du jour
+$scores[] = ["joueur" => "Ana", "points" => 4200];         // (2) ajoute un enregistrement en fin de tableau
+
+// Le meilleur (champion provisoire, jour 17 !)
+$best = $scores[0];                                        // hypothèse : le 1er score est le meilleur
+foreach ($scores as $s) {                                 // parcourt tous les scores
+    if ($s["points"] > $best["points"]) { $best = $s; }   // ce score dépasse le champion ? → il le remplace
+}                                                         // fin du parcours
+
+// Sauvegarde
+file_put_contents("scores.json", json_encode($scores, JSON_PRETTY_PRINT));  // (3) réécrit TOUT le tableau en JSON</pre>
+<p>Au lancement, scores.json contenait : <code>[{"joueur":"Bob","points":3100}]</code>.</p>`,
+    questions: [
+      { type: "qcm", q: "(1) Ce chargement gère DEUX cas limites. Lesquels ?", opts: ["Aucun", "Fichier absent (premier lancement → []) ET JSON corrompu (null → [])", "Trop de scores", "Le réseau"], a: 1, exp: "file_exists + ?? [] : la double ceinture du jour 30." },
+      { type: "input", q: "(2) Après l'ajout, combien d'enregistrements dans $scores ?", a: "2", ph: "nombre", exp: "Bob (chargé) + Ana (ajoutée)." },
+      { type: "qcm", q: "Que vaut $best à la fin ?", opts: ["Bob (3100)", "[\"joueur\" => \"Ana\", \"points\" => 4200] : le champion du jour 17, sur enregistrements", "0", "Erreur"], a: 1, exp: "4200 > 3100 : Ana détrône Bob." },
+      { type: "qcm", q: "(3) Pourquoi réécrire TOUT le tableau plutôt qu'APPEND la nouvelle ligne ?", opts: ["Caprice", "Un JSON est UNE structure complète : append casserait la syntaxe ([...][...] invalide) — on réécrit l'ensemble", "C'est plus lent exprès", "APPEND n'existe pas"], a: 1, exp: "CSV s'append ligne à ligne ; JSON se réécrit en bloc. Chaque format sa discipline." },
+      { type: "qcm", q: "Au PROCHAIN lancement, le programme verra…", opts: ["Un fichier vide", "Les 2 scores (Bob et Ana) : la boucle mémoire → disque → mémoire est bouclée", "Seulement Ana", "Une erreur"], a: 1, exp: "La persistance fonctionne : les données survivent au programme. Prêt pour le livre d'or !" }
+    ],
+    solution: `<pre class="pseudo">Cycle de vie :                                     // le voyage des données
+scores.json [Bob:3100]                             // état sur le disque au départ
+→ charge → [[Bob,3100]]                            // lu en mémoire
+→ ajoute → [[Bob,3100],[Ana,4200]]                 // Ana ajoutée
+→ champion → Ana (4200)                            // 4200 > 3100
+→ sauve → scores.json [Bob:3100, Ana:4200]         // réécrit sur le disque
+
+Cas limites couverts : fichier absent, JSON corrompu.   // les deux protections
+Règle : JSON = réécriture complète, CSV = append possible.</pre>
+<p>Persistance maîtrisée sans base de données. La semaine 3 t'attend : la POO PHP, puis les VRAIES bases de données avec PDO.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code PHP ici…",
+  items: [
+  { id: "php-json", title: "Les tâches en JSON", level: 3,
+    statement: "Sauvegarde un tableau de tâches (texte + fait oui/non) dans un fichier <code>taches.json</code>, puis relis le fichier, ajoute une tâche et re-sauvegarde. Affiche la liste avec ✅ / ⬜.",
+    hints: [
+      "Écrire : file_put_contents(\"taches.json\", json_encode($taches, JSON_PRETTY_PRINT));",
+      "Relire : $taches = json_decode(file_get_contents(\"taches.json\"), true); — le true donne des tableaux (pas des objets).",
+      "Ajouter : $taches[] = [\"texte\" => \"…\", \"fait\" => false]; puis re-sauvegarder."
+    ],
+    solution: "<?php                                        // ouvre la zone PHP\n$taches = [                                  // tableau de tableaux associatifs\n    [\"texte\" => \"Réviser PHP\", \"fait\" => true],   // tâche 1, terminée\n    [\"texte\" => \"Faire les exercices\", \"fait\" => false] // tâche 2, à faire\n];                                           // fin du tableau initial\n\nfile_put_contents(                           // écrit une chaîne dans un fichier (créé si absent)\n    \"taches.json\",                           // nom du fichier\n    json_encode($taches, JSON_PRETTY_PRINT)  // convertit le tableau en JSON lisible\n);                                           // fin de la sauvegarde\n\n$relues = json_decode(                       // opération inverse : JSON → PHP\n    file_get_contents(\"taches.json\"),        // lit tout le fichier en une chaîne\n    true                                     // true = tableaux associatifs (sinon : objets)\n);                                           // fin de la lecture\n\n$relues[] = [\"texte\" => \"Nouvelle tâche\", \"fait\" => false]; // [] = ajoute en fin de tableau\nfile_put_contents(\"taches.json\", json_encode($relues, JSON_PRETTY_PRINT)); // re-sauvegarde le tout\n\nforeach ($relues as $t) {                    // parcourt les tâches\n    $case = $t[\"fait\"] ? \"✅\" : \"⬜\";        // ternaire : coche si fait, case vide sinon\n    echo $case . \" \" . htmlspecialchars($t[\"texte\"]) . \"<br>\"; // affichage sécurisé\n}                                            // fin de l'affichage\n?>",
+    note: "json_encode/json_decode : le pont universel entre PHP et le stockage ou les API." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

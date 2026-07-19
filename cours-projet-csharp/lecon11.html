@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Autorisation par rôle et par ressource",
+  subtitle: "Qui a le droit de faire quoi : la matrice des trois profils.",
+  theory: `
+<h3>1. La matrice des droits</h3>
+<p>Une <strong>matrice des droits</strong> est un tableau « qui a le droit de faire quoi ». La Ludothèque décide : le <strong>client</strong> consulte, loue et achète ; le <strong>vendeur</strong> gère en plus le catalogue et les stocks ; l'<strong>administrateur</strong> gère aussi les comptes. Chaque action de l'API applique cette matrice — c'est l'<strong>autorisation</strong> (décider des droits d'une personne déjà identifiée).</p>
+
+<h3>2. [Authorize(Roles = …)] : le droit par rôle</h3>
+<p>L'attribut <code>[Authorize(Roles = …)]</code> posé sur une action n'en autorise l'accès qu'aux rôles listés :</p>
+<pre class="pseudo">[Authorize(Roles = Roles.Vendeur + "," + Roles.Administrateur)]  // réservé aux rôles Vendeur OU Administrateur
+[HttpPost("/api/jeux")]                                          // répond à POST /api/jeux (créer un jeu)
+public async Task&lt;ActionResult&lt;JeuDto&gt;&gt; Creer(CreationJeuDto dto) { ... }  // corps : enregistrer le nouveau jeu
+
+[Authorize(Roles = Roles.Administrateur)]                        // réservé au seul rôle Administrateur
+[HttpDelete("/api/utilisateurs/{id}")]                           // répond à DELETE /api/utilisateurs/{id}
+public async Task&lt;IActionResult&gt; Supprimer(string id) { ... }     // corps : supprimer le compte demandé</pre>
+<p>Le rôle est lu dans le <strong>claim</strong> du JWT (l'information de rôle inscrite dans le jeton, leçon 10) : pas besoin de réinterroger la base à chaque requête. Sans le bon rôle, le serveur renvoie <strong>403 Forbidden</strong> (« interdit » : la personne est connectée mais n'a pas le droit) — à ne pas confondre avec le <strong>401 Unauthorized</strong> (« pas connecté du tout »).</p>
+
+<h3>3. Le droit par ressource : « mes » locations</h3>
+<p>Le rôle ne suffit pas toujours : un client ne doit voir que <em>ses</em> locations, pas celles des autres — deux clients ont le même rôle mais pas les mêmes données. On compare alors l'identité du jeton à la ressource demandée :</p>
+<pre class="pseudo">[Authorize]                                          // exige seulement d'être connecté (n'importe quel rôle)
+[HttpGet("/api/mes-locations")]                      // répond à GET /api/mes-locations
+public async Task&lt;ActionResult&gt; MesLocations() {
+    var email = User.FindFirstValue(ClaimTypes.Name);   // identité du jeton
+    return Ok(await _service.LocationsDeAsync(email));  // filtre côté serveur
+}</pre>
+<p><code>User.FindFirstValue(ClaimTypes.Name)</code> lit l'identité <strong>dans le jeton</strong> (impossible à falsifier sans casser la signature). Le service ne renvoie ensuite que les locations de cet email.</p>
+<div class="warn">Ne jamais faire confiance à un identifiant client envoyé par le front (par exemple <code>?clientId=42</code> dans l'URL) : n'importe qui peut le changer en <code>43</code> pour espionner un autre compte. L'identité vient <strong>du jeton</strong>, jamais des paramètres de la requête.</div>
+
+<h3>4. Filtrer aussi l'affichage</h3>
+<pre class="pseudo">// dans une vue : n'afficher le bouton "Modifier" qu'au vendeur/admin
+if (User.IsInRole(Roles.Vendeur) || User.IsInRole(Roles.Administrateur)) { ... }  // n'affiche le bouton que si le rôle convient</pre>
+<p><code>User.IsInRole(...)</code> teste le rôle de l'utilisateur courant pour adapter l'interface (montrer ou cacher un bouton).</p>
+<div class="tip">Masquer un bouton n'est que du confort visuel : la vraie protection est <strong>côté serveur</strong> (l'attribut <code>[Authorize]</code>). Un attaquant peut toujours <strong>forger</strong> la requête HTTP directement (l'envoyer à la main, sans passer par la page) ; seul le contrôle serveur l'arrête.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Autoriser, c'est…", opts: ["Vérifier l'identité", "Décider des droits d'un utilisateur identifié", "Hacher un mot de passe", "Créer un compte"], a: 1, exp: "Le QUOI après le QUI." },
+    { type: "qcm", q: "Restreindre une action aux vendeurs et admins :", opts: ["[Authorize(Roles = \"Vendeur,Administrateur\")]", "[AllowAnonymous]", "if (true)", "[HttpPost]"], a: 0, exp: "Attribut sur l'action." },
+    { type: "qcm", q: "Connecté mais sans le bon rôle →", opts: ["401", "403 Forbidden", "404", "500"], a: 1, exp: "Identifié, mais interdit." },
+    { type: "qcm", q: "Pas de jeton du tout →", opts: ["401 Unauthorized", "403", "200", "301"], a: 0, exp: "Non authentifié." },
+    { type: "qcm", q: "Le rôle vérifié par [Authorize(Roles=…)] provient…", opts: ["De la base à chaque requête", "Du claim porté par le JWT", "Du cookie de session", "Du frontend"], a: 1, exp: "Lu dans le jeton signé." },
+    { type: "qcm", q: "Supprimer un compte est réservé à…", opts: ["Client", "Vendeur", "Administrateur", "Tout le monde"], a: 2, exp: "La matrice des droits." },
+    { type: "qcm", q: "GET /api/mes-locations identifie le client par…", opts: ["?clientId= dans l'URL", "User.FindFirstValue (le jeton)", "Un champ caché", "L'adresse IP"], a: 1, exp: "Jamais par la requête." },
+    { type: "vf", q: "On peut faire confiance à un id client envoyé par le frontend.", a: false, exp: "N'importe qui peut le modifier." },
+    { type: "qcm", q: "Un client qui demande les locations d'un autre client doit recevoir…", opts: ["Les données", "Ses propres données seulement (filtre serveur)", "Un 500", "Un token"], a: 1, exp: "Droit par ressource." },
+    { type: "qcm", q: "User.IsInRole(Roles.Vendeur) sert à…", opts: ["Créer un rôle", "Tester le rôle de l'utilisateur courant", "Signer un jeton", "Migrer"], a: 1, exp: "Ex. adapter l'affichage." },
+    { type: "vf", q: "Masquer un bouton dans l'interface suffit à protéger l'action.", a: false, exp: "La requête peut être forgée : protection serveur obligatoire." },
+    { type: "qcm", q: "La création de jeu est permise à…", opts: ["Client seulement", "Vendeur et Administrateur", "Personne", "Anonyme"], a: 1, exp: "Gestion du catalogue." },
+    { type: "qcm", q: "Utiliser Roles.Vendeur plutôt que \"Vendeur\" évite…", opts: ["Les 404", "Les fautes de frappe dans une chaîne de sécurité", "Le N+1", "Les migrations"], a: 1, exp: "Constantes (leçon 9)." },
+    { type: "qcm", q: "Authentification et autorisation sont…", opts: ["Le même mécanisme", "Deux étapes distinctes (qui ? / quel droit ?)", "Optionnelles", "Frontend"], a: 1, exp: "Deux middlewares distincts." },
+    { type: "vf", q: "[Authorize] sans rôle exige seulement d'être connecté.", a: true, exp: "N'importe quel utilisateur authentifié." }
+  ],
+  final: {
+    title: "Exercice final — Appliquer la matrice",
+    intro: `<p>On protège les actions sensibles de l'API.</p>`,
+    questions: [
+      { type: "qcm", q: "POST /api/jeux porte :", opts: ["[Authorize(Roles = \"Vendeur,Administrateur\")]", "[AllowAnonymous]", "[Authorize] seul", "rien"], a: 0, exp: "Catalogue = vendeur/admin." },
+      { type: "qcm", q: "DELETE /api/utilisateurs/{id} porte :", opts: ["[Authorize(Roles = \"Administrateur\")]", "[Authorize(Roles = \"Client\")]", "[AllowAnonymous]", "[HttpGet]"], a: 0, exp: "Comptes = admin." },
+      { type: "qcm", q: "Dans /api/mes-locations, l'email vient de :", opts: ["User.FindFirstValue(ClaimTypes.Name)", "Request.Query[\"email\"]", "un champ caché", "appsettings"], a: 0, exp: "Le jeton." },
+      { type: "qcm", q: "Un vendeur appelle DELETE /api/utilisateurs/7 :", opts: ["403 Forbidden", "200", "401", "204"], a: 0, exp: "Connecté mais pas admin." },
+      { type: "vf", q: "La protection doit exister côté serveur même si le bouton est masqué.", a: true, exp: "Le front n'est pas une barrière." }
+    ],
+    solution: `<pre class="pseudo">[Authorize(Roles = Roles.Vendeur + "," + Roles.Administrateur)]  // vendeur ou admin uniquement
+[HttpPost("/api/jeux")]                                          // POST /api/jeux (créer)
+public async Task&lt;ActionResult&lt;JeuDto&gt;&gt; Creer(CreationJeuDto dto) { ... }  // enregistrer le jeu
+
+[Authorize(Roles = Roles.Administrateur)]                        // admin uniquement
+[HttpDelete("/api/utilisateurs/{id}")]                           // DELETE /api/utilisateurs/{id}
+public async Task&lt;IActionResult&gt; Supprimer(string id) { ... }     // supprimer le compte
+
+[Authorize]                                                      // simplement être connecté
+[HttpGet("/api/mes-locations")]                                  // GET /api/mes-locations
+public async Task&lt;ActionResult&gt; MesLocations() {
+    var email = User.FindFirstValue(ClaimTypes.Name);            // identité lue dans le jeton
+    return Ok(await _service.LocationsDeAsync(email));            // renvoie SES locations seulement
+}</pre>
+<p>Les droits sont en place. Demain, le cœur métier : louer un jeu, dans une transaction.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes actions protégées…",
+  items: [
+  { id: "projcsharp-l11", title: "Protéger la gestion du stock", level: 3,
+    statement: "Écris l'action PUT /api/jeux/{id}/stock réservée aux rôles Vendeur et Administrateur (utilise les constantes Roles), qui appelle _service.ModifierStockAsync(id, dto) et renvoie 204 NoContent. Ajoute ensuite l'action GET /api/mes-achats ([Authorize] simple) qui filtre par l'email du jeton.",
+    hints: [
+      "[Authorize(Roles = Roles.Vendeur + \",\" + Roles.Administrateur)]",
+      "return NoContent(); après l'appel au service.",
+      "var email = User.FindFirstValue(ClaimTypes.Name);"
+    ],
+    solution: "[Authorize(Roles = Roles.Vendeur + \",\" + Roles.Administrateur)]   // reserve aux vendeurs et admins\n[HttpPut(\"/api/jeux/{id}/stock\")]                  // PUT /api/jeux/{id}/stock (modifier le stock)\npublic async Task<IActionResult> ModifierStock(int id, StockDto dto) {\n    await _service.ModifierStockAsync(id, dto);    // applique la modification via le service\n    return NoContent();                            // 204 : succes, rien a renvoyer\n}\n\n[Authorize]                                        // simplement etre connecte\n[HttpGet(\"/api/mes-achats\")]                       // GET /api/mes-achats\npublic async Task<ActionResult> MesAchats() {\n    var email = User.FindFirstValue(ClaimTypes.Name);   // identite lue dans le jeton\n    return Ok(await _service.AchatsDeAsync(email));  // renvoie SES achats seulement\n}",
+    note: "Deux niveaux d'autorisation : par rôle (le stock, affaire de vendeur/admin) et par ressource (mes achats : n'importe quel connecté, mais uniquement SES données, identifiées par le jeton). C'est la combinaison des deux qui rend l'API sûre." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Migrations et CRUD avec EF Core",
+  subtitle: "Créer les tables en code, puis lire et écrire pour de vrai.",
+  theory: `
+<h3>1. Les migrations : la base versionnée</h3>
+<p>Comment créer la table Taches ? Pas à la main ! Une <strong>migration</strong> est un fichier C# généré qui décrit un changement de <strong>schéma</strong> (la structure des tables et colonnes) — versionné avec le projet, rejouable par toute l'équipe. Analogie : le carnet de chantier qui note chaque modification de la maison, dans l'ordre :</p>
+<pre class="pseudo">dotnet ef migrations add CreationTaches   # génère un fichier de migration nommé "CreationTaches"
+dotnet ef database update                 # applique les migrations en attente à la base (crée réellement la table)</pre>
+<p>La migration contient <code>Up()</code> (créer la table) et <code>Down()</code> (l'inverse, pour annuler). EF Core note dans une table technique <code>__EFMigrationsHistory</code> ce qui a déjà été appliqué : jamais deux fois la même.</p>
+<h3>2. Modifier le schéma ensuite</h3>
+<pre class="pseudo"># On ajoute une propriété Priorite à l'entité, puis :   # d'abord on modifie la classe C# (ajout d'une propriété)
+dotnet ef migrations add AjoutPriorite                  # génère la migration qui décrit ce changement
+dotnet ef database update                               # applique le changement à la base existante</pre>
+<p>Règle d'or : on ne modifie <strong>jamais</strong> une migration déjà appliquée et partagée — on en AJOUTE une nouvelle.</p>
+<h3>3. Le CRUD complet avec le DbContext</h3>
+<pre class="pseudo">// CREATE                                                       // créer
+_context.Taches.Add(nouvelle);                                  // marque l'objet « à insérer » (rien en base encore)
+await _context.SaveChangesAsync();                              // ENVOIE l'INSERT en base (rien ne part avant !)
+
+// READ                                                         // lire
+var toutes = await _context.Taches.ToListAsync();               // SELECT * : toutes les tâches → List<Tache>
+var une    = await _context.Taches.FindAsync(3);               // SELECT par clé primaire (null si absente)
+
+// UPDATE : charger, modifier, sauvegarder                     // modifier
+var tache = await _context.Taches.FindAsync(3);                // 1) charger l'entité
+tache.EstTerminee = true;                                       // 2) modifier une propriété
+await _context.SaveChangesAsync();                              // 3) EF détecte le changement et génère l'UPDATE
+
+// DELETE                                                       // supprimer
+_context.Taches.Remove(tache);                                  // marque l'objet « à supprimer »
+await _context.SaveChangesAsync();                              // envoie le DELETE en base</pre>
+<h3>4. SaveChanges : le moment de vérité</h3>
+<p>Le DbContext <strong>traque</strong> (« change tracking ») les objets chargés/ajoutés/supprimés. Add, Remove et les modifications ne touchent PAS la base : tout part d'un coup au <code>SaveChangesAsync()</code>, dans une <strong>transaction</strong> (un lot « tout ou rien » : soit toutes les écritures réussissent, soit aucune). Un seul Save pour plusieurs opérations = tout ou rien.</p>
+<h3>5. async/await : le réflexe web</h3>
+<p><strong>Asynchrone</strong> veut dire « sans attendre bloqué ». Les méthodes se terminant par Async (<code>ToListAsync</code>, <code>SaveChangesAsync</code>…) libèrent le serveur pendant l'attente de la base : il traite d'autres requêtes au lieu de rester figé (analogie : le serveur de restaurant qui va prendre d'autres commandes pendant que la cuisine prépare). La signature devient :</p>
+<pre class="pseudo">[HttpGet]
+public async Task&lt;List&lt;Tache&gt;&gt; Toutes()          // async + Task<...> : méthode asynchrone renvoyant une liste
+    =&gt; await _context.Taches.ToListAsync();         // await = « attends le résultat sans bloquer le serveur »</pre>
+<p>Retiens le trio : <code>async</code> dans la signature, <code>Task&lt;T&gt;</code> en retour, <code>await</code> devant l'appel. (<code>Task&lt;T&gt;</code> = « une promesse de T qui arrivera plus tard ».)</p>
+<div class="warn">Oublier SaveChangesAsync() est LE bug classique : « j'ajoute mais rien ne s'enregistre ». Add ne fait que marquer l'objet ; Save écrit.</div>
+<div class="tip">FindAsync(id) est optimisé pour la clé primaire (et regarde d'abord en mémoire). Pour toute autre condition : FirstOrDefaultAsync(t => ...) — demain.</div>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce qu'une migration EF Core ?", opts: ["Un transfert de serveur", "Un fichier C# généré décrivant un changement de schéma, versionnable et rejouable", "Une sauvegarde", "Un export JSON"], a: 1, exp: "La structure de la base devient du code d'équipe." },
+    { type: "input", q: "Quelle commande applique les migrations en attente à la base ?", a: ["dotnet ef database update"], ph: "commande", exp: "dotnet ef database update — après chaque migrations add." },
+    { type: "qcm", q: "Que contient la méthode Down() d'une migration ?", opts: ["Le code de création", "L'inverse exact de Up(), pour pouvoir annuler", "Les données", "La config"], a: 1, exp: "Up construit, Down démolit." },
+    { type: "qcm", q: "Comment EF Core évite-t-il de rejouer une migration déjà appliquée ?", opts: ["Il ne l'évite pas", "La table __EFMigrationsHistory trace ce qui est fait", "Un fichier .lock", "Par la date"], a: 1, exp: "database update n'exécute que le delta." },
+    { type: "qcm", q: "Tu ajoutes une propriété Priorite à l'entité Tache. Ensuite ?", opts: ["Rien, c'est automatique", "dotnet ef migrations add AjoutPriorite puis database update", "Modifier la migration initiale", "ALTER TABLE à la main"], a: 1, exp: "Nouvelle évolution = nouvelle migration. L'historique reste rejouable." },
+    { type: "qcm", q: "Que fait _context.Taches.Add(t) SEUL, sans SaveChangesAsync ?", opts: ["INSERT immédiat", "Il marque l'objet « à insérer » : rien ne part en base avant le Save", "Il valide l'objet", "Erreur"], a: 1, exp: "LE piège du débutant : Add ≠ écrire." },
+    { type: "qcm", q: "Que fait FindAsync(3) ?", opts: ["Cherche par titre", "Cherche par clé primaire (regarde d'abord les objets déjà traqués), null si absent", "Renvoie la 3e ligne", "Supprime l'id 3"], a: 1, exp: "L'accès par clé optimisé." },
+    { type: "qcm", q: "Pour un UPDATE, que fait-on ?", opts: ["context.Update SQL", "Charger l'entité, modifier ses propriétés, SaveChangesAsync : EF détecte les changements", "Supprimer puis recréer", "Modifier le JSON"], a: 1, exp: "Le change tracking : EF compare et génère l'UPDATE minimal." },
+    { type: "qcm", q: "Trois Add + un Remove puis UN SaveChangesAsync. Que se passe-t-il en cas d'erreur au milieu de l'écriture ?", opts: ["Moitié écrite", "Rien n'est écrit : Save travaille dans une transaction — tout ou rien", "Seuls les Add passent", "La base est corrompue"], a: 1, exp: "L'unité de travail atomique, gratuite." },
+    { type: "qcm", q: "Pourquoi préférer ToListAsync à ToList dans une API ?", opts: ["C'est plus court", "Pendant l'attente de la base, le serveur reste libre de traiter d'autres requêtes", "Le résultat est différent", "ToList est obsolète"], a: 1, exp: "L'asynchronisme = la scalabilité du serveur web." },
+    { type: "qcm", q: "Quel est le trio syntaxique de l'asynchrone C# ?", opts: ["try/catch/finally", "async (signature) + Task<T> (retour) + await (appel)", "for/in/do", "get/set/init"], a: 1, exp: "public async Task<List<Tache>> Toutes() => await ..." },
+    { type: "qcm", q: "« J'ajoute des tâches via POST mais GET renvoie toujours [] après redémarrage » — avec EF Core cette fois. Diagnostic ?", opts: ["Normal, la RAM s'efface", "SaveChangesAsync manque probablement dans le POST : Add sans Save n'écrit rien", "SQLite ne persiste pas", "Le JSON est cassé"], a: 1, exp: "Avec une vraie base, les données doivent survivre : cherche le Save manquant." },
+    { type: "qcm", q: "Peut-on annuler la dernière migration non partagée ?", opts: ["Non, jamais", "Oui : dotnet ef migrations remove (si pas encore appliquée/partagée), ou database update vers une migration antérieure", "En supprimant la base uniquement", "Avec git revert seulement"], a: 1, exp: "Tant qu'elle n'est pas dans la nature, on peut la retirer proprement." },
+    { type: "vf", q: "SaveChangesAsync() peut enregistrer plusieurs ajouts, modifications et suppressions en un seul appel.", a: true, exp: "C'est même recommandé : une unité de travail, une transaction." },
+    { type: "vf", q: "Les migrations doivent être écrites à la main en SQL.", a: false, exp: "dotnet ef migrations add les GÉNÈRE à partir du diff entre entités et schéma." }
+  ],
+  final: {
+    title: "Exercice final — Le contrôleur passe au réel",
+    intro: `<p>TachesController utilise désormais EF Core :</p>
+<pre class="pseudo">[HttpGet]
+public async Task&lt;List&lt;Tache&gt;&gt; Toutes()               // GET api/taches (asynchrone)
+    =&gt; await _context.Taches.ToListAsync();             // SELECT * → liste des tâches
+
+[HttpGet("{id:int}")]
+public async Task&lt;ActionResult&lt;Tache&gt;&gt; ParId(int id)  // GET api/taches/{id}
+{
+    var tache = await _context.Taches.FindAsync(id);    // SELECT par clé primaire
+    return tache == null ? NotFound() : tache;          // null → 404, sinon → 200 + JSON
+}
+
+[HttpPost]
+public async Task&lt;ActionResult&lt;Tache&gt;&gt; Creer(Tache t)  // POST api/taches
+{
+    _context.Taches.Add(t);                             // marque « à insérer »
+    await _context.SaveChangesAsync();                  // INSERT réel ; t.Id est rempli par la base
+    return CreatedAtAction(nameof(ParId), new { id = t.Id }, t);  // 201 + Location
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Après le POST, d'où vient la valeur de t.Id renvoyée au client ?", opts: ["Du JSON du client", "La base l'a générée à l'INSERT ; EF Core l'a relue et remplie dans l'objet", "C'est toujours 0", "Du contrôleur"], a: 1, exp: "Après SaveChanges, l'objet est complété avec l'id auto-incrémenté." },
+      { type: "qcm", q: "On redémarre l'application. GET /api/taches renvoie :", opts: ["[]", "Les tâches créées avant le redémarrage : elles sont dans taches.db", "Une erreur", "Les tâches de demo"], a: 1, exp: "ENFIN la persistance : c'était l'objectif de la semaine." },
+      { type: "qcm", q: "Dans ParId, pourquoi le type de retour est-il Task<ActionResult<Tache>> ?", opts: ["Pour la beauté", "async (Task) + deux issues possibles (ActionResult) + la valeur (Tache) : les trois couches de la signature web moderne", "C'est obligatoire en SQLite", "Erreur du développeur"], a: 1, exp: "Décompose : Task = asynchrone, ActionResult = statuts, Tache = la donnée." },
+      { type: "qcm", q: "Le développeur retire await _context.SaveChangesAsync() du POST. Symptôme exact ?", opts: ["Erreur de compilation", "201 renvoyé avec Id = 0, et la tâche absente de la base : Add sans Save", "404", "Rien ne change"], a: 1, exp: "La réponse ment au client — le bug le plus trompeur d'EF Core." },
+      { type: "vf", q: "Pendant le await ToListAsync(), le thread du serveur reste bloqué à attendre SQLite.", a: false, exp: "Justement non : il est libéré pour d'autres requêtes. C'est tout le sens d'async/await." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 9 :
+// 1. dotnet ef migrations add Xxx → dotnet ef database update.
+// 2. On n'édite jamais une migration appliquée : on en ajoute une.
+// 3. CRUD : Add / ToListAsync-FindAsync / modifier+Save / Remove.
+// 4. RIEN ne s'écrit avant SaveChangesAsync (transaction, tout ou rien).
+// 5. async + Task<T> + await : le réflexe de toute méthode d'API.</pre>
+<p>Le CRUD fonctionne. Demain : les vraies requêtes — LINQ traduit en SQL.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-crud-membres", title: "Le CRUD des membres avec EF Core", level: 2,
+    statement: "Écris trois méthodes de <code>MembresController</code> (qui reçoit <code>AppDbContext</code> injecté) : (1) <code>[HttpPost]</code> <code>Creer(Membre m)</code> → ajoute, sauvegarde, renvoie 201 vers <code>ParId</code> ; (2) <code>[HttpPut(\"{id:int}\")]</code> <code>Modifier(int id, Membre modifie)</code> → charge par clé, 404 si absent, met à jour <code>Pseudo</code> et <code>Age</code>, sauvegarde, renvoie 204 ; (3) <code>[HttpDelete(\"{id:int}\")]</code> <code>Supprimer(int id)</code> → 404 ou suppression + 204. Tout en asynchrone.",
+    hints: [
+      "Chaque méthode : public async Task<...> et await sur FindAsync/SaveChangesAsync.",
+      "Modifier : var m = await _context.Membres.FindAsync(id); puis m.Pseudo = modifie.Pseudo; etc.",
+      "N'oublie pas le SaveChangesAsync dans les TROIS méthodes."
+    ],
+    solution: "[HttpPost]\npublic async Task<ActionResult<Membre>> Creer(Membre m)\n{\n    _context.Membres.Add(m);                  // marqué « à insérer »\n    await _context.SaveChangesAsync();        // INSERT réel, Id rempli\n    return CreatedAtAction(nameof(ParId), new { id = m.Id }, m);  // 201 + Location\n}\n\n[HttpPut(\"{id:int}\")]\npublic async Task<IActionResult> Modifier(int id, Membre modifie)\n{\n    var membre = await _context.Membres.FindAsync(id);   // charge par clé\n    if (membre == null) return NotFound();    // 404\n\n    membre.Pseudo = modifie.Pseudo;           // le change tracking observe\n    membre.Age    = modifie.Age;              // seconde propriété modifiée\n    await _context.SaveChangesAsync();        // UPDATE minimal généré\n    return NoContent();                       // 204\n}\n\n[HttpDelete(\"{id:int}\")]\npublic async Task<IActionResult> Supprimer(int id)\n{\n    var membre = await _context.Membres.FindAsync(id);   // charge par clé\n    if (membre == null) return NotFound();    // 404\n\n    _context.Membres.Remove(membre);          // marqué « à supprimer »\n    await _context.SaveChangesAsync();        // DELETE réel\n    return NoContent();                       // 204\n}",
+    note: "Compte les SaveChangesAsync : trois. Un par méthode d'écriture. Prends l'habitude de vérifier ce point en relisant tout code EF Core." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

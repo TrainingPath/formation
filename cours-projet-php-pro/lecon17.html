@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "L'image de production : multi-stage (PHP-FPM), non-root, scan",
+  subtitle: "Fabriquer l'artefact qui partira en prod — léger, non-root, scanné.",
+  theory: `
+<h3>1. Le Dockerfile multi-stage</h3>
+<p>Un <strong>Dockerfile</strong> est la recette qui construit l'<strong>image</strong> — le « moule » figé d'où l'on lance des conteneurs. <strong>Multi-stage</strong> (« en plusieurs étapes ») veut dire qu'on la construit en deux temps : un premier étage <em>atelier</em> qui installe les dépendances, un second étage <em>final</em>, léger, qui ne récupère que le résultat utile. <code>FROM … AS build</code> ouvre un étage nommé « build » ; <code>WORKDIR</code> fixe le dossier de travail ; <code>COPY</code> copie des fichiers dans l'image ; <code>RUN</code> exécute une commande pendant la construction. <code>composer install --no-dev --optimize-autoloader</code> installe les dépendances <em>de production</em> uniquement, en optimisant le chargement des classes.</p>
+<pre class="pseudo">FROM composer:2 AS build              # étage 1 "build" : image contenant Composer
+WORKDIR /app                          # dossier de travail dans l'image
+COPY composer.json composer.lock ./   # copie d'abord la liste des dépendances (pour profiter du cache)
+RUN composer install --no-dev --no-scripts --optimize-autoloader --no-interaction   # installe les dépendances de PROD uniquement
+COPY . .                              # puis copie tout le code du projet
+RUN composer dump-autoload --optimize # optimise le chargement des classes
+
+FROM php:8.5-fpm-alpine                    # runtime : léger, sans Composer
+RUN docker-php-ext-install pdo_mysql opcache   # ajoute les extensions PHP : accès MySQL + cache de bytecode
+WORKDIR /var/www                      # dossier de l'app dans l'image finale
+COPY --from=build --chown=www-data:www-data /app .   # récupère le résultat de l'étage build, propriété de www-data
+USER www-data                             # non-root
+EXPOSE 9000                           # déclare le port par lequel PHP-FPM écoute
+CMD ["php-fpm"]                        # commande lancée au démarrage du conteneur</pre>
+
+<h3>2. Pourquoi multi-stage et --no-dev</h3>
+<p>L'étage <code>build</code> contient Composer et tous les outils ; l'option <strong>--no-dev</strong> exclut les paquets réservés au développement (phpunit, pint, faker). L'étage final, lui, ne copie que le code et le <code>vendor</code> de production sur une base <code>alpine</code> (une distribution Linux minuscule). Résultat : une image plus légère et une <strong>surface d'attaque</strong> réduite — moins d'outils embarqués, moins de portes potentielles.</p>
+<pre class="pseudo">// L'étage 'build' contient Composer et les outils de dev
+// --no-dev : on N'installe PAS phpunit, pint, faker en production
+//   -> vendor/ plus léger, surface d'attaque réduite (pas d'outils de dev exposés)
+// L'étage final ne garde QUE le code + vendor de prod sur une base alpine</pre>
+
+<h3>3. Non-root : le moindre privilège</h3>
+<p>Par défaut, un conteneur s'exécute en <strong>root</strong> (le super-utilisateur tout-puissant). Si une faille de l'application est exploitée, l'attaquant hérite alors des pleins pouvoirs. La directive <code>USER www-data</code> fait tourner l'app sous un compte <strong>non privilégié</strong> : c'est le principe du <strong>moindre privilège</strong> — n'accorder que le strict nécessaire. Même compromise, l'application ne donne que les maigres droits de <code>www-data</code>.</p>
+<pre class="pseudo">// Par défaut un conteneur tourne en root -> une faille applicative devient root
+// USER www-data : même compromise, l'attaquant n'a que les droits de www-data
+// (cours Sécurité : moindre privilège ; cours Docker : non-root)</pre>
+
+<h3>4. Le scan d'image (trivy)</h3>
+<p><strong>trivy</strong> est un scanner d'images : il compare les composants de l'image à une base de <strong>CVE</strong> (failles de sécurité publiques répertoriées) et signale les vulnérabilités connues. <code>--severity CRITICAL --exit-code 1</code> fait échouer le build en cas de faille critique. <code>needs: [tests, qualite, securite]</code> impose que ce job ne démarre qu'après la réussite des trois autres.</p>
+<pre class="pseudo"># ci.yml — job image
+  image:                              # un job nommé "image"
+    needs: [tests, qualite, securite] # ne démarre qu'après ces trois jobs (tous verts)
+    steps:                            # ses étapes
+      - run: docker build -t ludotheque:ci .   # construit l'image à partir du Dockerfile
+      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci   # scanne l'image ; échoue s'il trouve une faille CRITIQUE</pre>
+<p>Une faille <strong>critique</strong> dans une couche de base bloque la construction : on ne publie jamais une image vulnérable.</p>
+
+<h3>5. Dev vs prod</h3>
+<div class="warn">Le compose de développement monte le code en volume (pratique pour l'itération) et installe les dépendances de dev ; la <strong>production</strong> utilise cette image immuable construite par la CI, avec <code>--no-dev</code>, <code>opcache</code>, config et routes en cache. On ne déploie jamais l'environnement de dev : on déploie un artefact figé, scanné, non-root, qu'on peut redéployer à l'identique (rollback — leçon 20).</div>
+<div class="tip">L'image de prod réunit d'un coup le cours Docker (multi-stage, non-root) et le cours Sécurité (moindre privilège, scan CVE, pas d'outils de dev). Elle est plus légère, plus sûre, et vérifiée par trivy à chaque build : l'artefact qui part en prod est un <strong>objet de confiance</strong>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un Dockerfile multi-stage sépare…", opts: ["Rien", "La construction (composer) du runtime final", "Deux bases", "Le CSS"], a: 1, exp: "build puis PHP-FPM." },
+    { type: "qcm", q: "L'étage final contient…", opts: ["Composer + outils de dev", "Le code + vendor de prod (--no-dev)", "La base", "phpunit"], a: 1, exp: "Léger, sûr." },
+    { type: "qcm", q: "--no-dev évite d'installer…", opts: ["pdo_mysql", "phpunit, pint, faker en prod", "opcache", "Rien"], a: 1, exp: "Surface réduite." },
+    { type: "qcm", q: "USER www-data signifie…", opts: ["root", "Un utilisateur non privilégié", "Un admin", "Personne"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "Sans USER, une faille applicative donne…", opts: ["Rien", "Les droits root dans le conteneur", "Un cache", "Un rôle"], a: 1, exp: "D'où non-root." },
+    { type: "qcm", q: "trivy scanne…", opts: ["Le code source", "L'image (CVE des couches)", "Le CSS", "La base"], a: 1, exp: "Failles connues." },
+    { type: "qcm", q: "Une CVE critique…", opts: ["Est publiée quand même", "Bloque la construction (job rouge)", "Est ignorée", "Chiffre l'image"], a: 1, exp: "Jamais d'image vulnérable." },
+    { type: "qcm", q: "Le job image dépend de…", opts: ["Rien", "needs: [tests, qualite, securite]", "La prod", "main"], a: 1, exp: "Après les verts." },
+    { type: "qcm", q: "En prod on déploie…", opts: ["L'env de dev", "L'image immuable de la CI", "Les sources", "Un zip"], a: 1, exp: "Artefact figé." },
+    { type: "qcm", q: "--optimize-autoloader sert à…", opts: ["Déployer", "Accélérer le chargement des classes en prod", "Chiffrer", "Tester"], a: 1, exp: "Perf." },
+    { type: "vf", q: "Une image immuable permet de revenir en arrière facilement.", a: true, exp: "Rollback (leçon 20)." },
+    { type: "qcm", q: "php:8.5-fpm-alpine plutôt qu'une image lourde car…", opts: ["Plus lourd", "Base minimale = surface réduite", "Obligatoire", "Plus lent"], a: 1, exp: "Léger et sûr." },
+    { type: "qcm", q: "opcache en prod…", opts: ["Ralentit", "Met le bytecode PHP en cache (perf)", "Chiffre", "Déploie"], a: 1, exp: "Compilation évitée." },
+    { type: "qcm", q: "L'image de prod réunit…", opts: ["Merise + SQL", "Docker (multi-stage, non-root) + Sécurité (scan)", "Le CSS", "Rien"], a: 1, exp: "Deux cours d'outillage." },
+    { type: "vf", q: "L'artefact de prod est un objet de confiance (scanné, non-root, léger).", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — L'image de prod durcie",
+    intro: `<p>Multi-stage + non-root + --no-dev + scan.</p>`,
+    questions: [
+      { type: "qcm", q: "L'image finale contient :", opts: ["code + vendor de prod (--no-dev)", "Composer + phpunit + sources", "la base", "les outils de dev"], a: 0, exp: "Léger." },
+      { type: "qcm", q: "Le conteneur tourne en :", opts: ["utilisateur non-root (www-data)", "root", "admin", "personne"], a: 0, exp: "Moindre privilège." },
+      { type: "qcm", q: "La sécurité de l'image est vérifiée par :", opts: ["trivy (CVE critiques bloquantes)", "un coup d'œil", "rien", "le CSS"], a: 0, exp: "Scan." },
+      { type: "qcm", q: "En prod on déploie :", opts: ["l'image immuable de la CI", "l'env de dev", "les sources", "un zip"], a: 0, exp: "Artefact figé." },
+      { type: "vf", q: "--no-dev retire les outils de dev de l'image de prod.", a: true, exp: "Surface réduite." }
+    ],
+    solution: `<pre class="pseudo">FROM composer:2 AS build                          # étage build (avec Composer)
+... composer install --no-dev --optimize-autoloader ...   # dépendances de prod, chargement optimisé
+FROM php:8.5-fpm-alpine                           # étage final léger
+RUN docker-php-ext-install pdo_mysql opcache      # extensions : MySQL + cache bytecode
+COPY --from=build --chown=www-data:www-data /app .   # récupère le code depuis l'étage build
+USER www-data                                     # non-root (moindre privilège)
+CMD ["php-fpm"]                                    # démarre PHP-FPM
+
+# ci.yml job image : build -> trivy (CRITICAL) -> smoke test</pre>
+<p>L'artefact est un objet de confiance. Demain : le pipeline complet et la protection de branche.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile de production…",
+  items: [
+  { id: "proj6php-l17", title: "L'image de production multi-stage, non-root, scannée", level: 3,
+    statement: "Écris le Dockerfile multi-stage (build Composer --no-dev -> runtime PHP-FPM alpine, utilisateur non-root) et le job CI 'image' (build + trivy CRITICAL). Explique en 3-4 lignes ce que --no-dev et le multi-stage retirent de l'image de prod et pourquoi non-root change tout en cas de faille.",
+    hints: [
+      "build : composer:2, install --no-dev --optimize-autoloader ; final : php:8.5-fpm-alpine.",
+      "COPY --from=build --chown=www-data + USER www-data (non-root).",
+      "ci.yml : needs [tests, qualite, securite] ; trivy --exit-code 1 --severity CRITICAL."
+    ],
+    solution: "# Dockerfile (production)\nFROM composer:2 AS build                          # etage build (contient Composer)\nWORKDIR /app                                      # dossier de travail\nCOPY composer.json composer.lock ./               # copie la liste des dependances (cache)\nRUN composer install --no-dev --no-scripts --optimize-autoloader --no-interaction   # dependances de PROD seulement\nCOPY . .                                          # copie tout le code\nRUN composer dump-autoload --optimize             # optimise le chargement des classes\n\nFROM php:8.5-fpm-alpine               # runtime : ni Composer ni outils de dev\nRUN docker-php-ext-install pdo_mysql opcache      # extensions : MySQL + cache bytecode\nWORKDIR /var/www                                  # dossier de l'app\nCOPY --from=build --chown=www-data:www-data /app .   # recupere le resultat de l'etage build\nUSER www-data                         # non-root\nEXPOSE 9000                                       # port d'ecoute de PHP-FPM\nCMD [\"php-fpm\"]                                    # commande de demarrage\n\n# ci.yml — job image\n  image:                                          # job \"image\"\n    needs: [tests, qualite, securite]             # apres les 3 jobs verts\n    runs-on: ubuntu-latest                        # machine Linux neuve\n    steps:                                        # etapes\n      - uses: actions/checkout@v4                 # recupere le code\n      - run: docker build -t ludotheque:ci .      # construit l'image\n      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci   # scan : rouge si faille CRITIQUE\n\n# CE QUE --no-dev ET LE MULTI-STAGE RETIRENT, POURQUOI NON-ROOT\n# --no-dev : phpunit, pint, faker, mockery ne servent qu'au developpement. Les\n# embarquer en prod alourdit l'image ET agrandit la surface d'attaque (des outils\n# puissants, parfois vulnerables, accessibles a un intrus). L'etage build les a ;\n# l'etage final ne copie que le vendor de PROD.\n# Multi-stage : Composer lui-meme (et le cache) reste dans l'etage build, absent\n# de l'image finale -> plus legere, plus rapide a deployer.\n# NON-ROOT : par defaut un conteneur tourne en root. Si l'app est compromise (RCE),\n# l'attaquant herite de root DANS le conteneur -> evasion facilitee. Avec USER\n# www-data, la meme faille ne donne que des droits sans privileges : rayon confine.",
+    note: "L'image de production est le point de convergence des trois cours d'outillage : Docker (multi-stage, image minimale), Sécurité (moindre privilège via non-root, --no-dev, scan CVE) et CI/CD (build automatisé, gate sur trivy). Le --no-dev est un réflexe PHP essentiel : les outils de dev (faker, mockery) n'ont rien à faire en production. Un artefact léger, non-root et scanné est le standard minimal d'une livraison responsable." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

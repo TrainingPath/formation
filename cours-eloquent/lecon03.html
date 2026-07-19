@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Le premier modèle : Model, table, fillable",
+  subtitle: "Trente lignes de PHP, et la table jeux devient une classe vivante.",
+  theory: `
+<h3>1. Générer le modèle : php artisan make:model</h3>
+<p>Un modèle Eloquent est une classe PHP qui <strong>représente une table</strong> (analogie : le modèle est la fiche vivante ; la table est le tiroir de fiches). Artisan la génère pour toi :</p>
+<pre class="pseudo">php artisan make:model Jeu          # génère le fichier du modèle Jeu dans app/Models
+
+// app/Models/Jeu.php (généré)      // chemin du fichier créé automatiquement pour toi
+namespace App\\Models;               // "adresse" de la classe, pour éviter les conflits de noms
+
+use Illuminate\\Database\\Eloquent\\Model;   // importe la classe de base Model d'Eloquent
+
+class Jeu extends Model             // la classe Jeu HÉRITE de Model : elle reçoit find, save, where…
+{                                   // début du corps de la classe
+    //                              // corps vide : tout le savoir-faire vient déjà de Model
+}                                   // fin de la classe</pre>
+<p>C'est tout : la classe <strong>hérite de Model</strong>, et ce simple extends lui offre find, save, where, les relations… (analogie de l'héritage : Jeu est l'enfant de Model et reçoit gratuitement tout son savoir-faire, comme un enfant hérite des outils de son parent). Le <strong>namespace</strong> App\\Models est son adresse : comme deux rues peuvent avoir chacune un n°10, le namespace évite que deux classes du même nom se confondent. Le nom est au <strong>singulier, en PascalCase</strong> : Jeu, Membre, Location, Avis. En Hibernate/JPA tu écrirais une classe annotée @Entity, en Django une classe héritant de models.Model, en EF Core une classe enregistrée dans un DbSet — même idée partout : une classe = une table.</p>
+
+<h3>2. Le piège du pluriel : protected $table</h3>
+<p>Leçon 2 : Eloquent devine la table en mettant le nom du modèle au <strong>pluriel anglais</strong>. Pour Jeu, il cherche donc… <strong>jeus</strong>. Or ta table du Niveau 4 s'appelle <em>jeux</em>. Résultat : « Base table or view not found: 1146 Table ludotheque.jeus doesn't exist ». La correction tient en une ligne :</p>
+<pre class="pseudo">class Jeu extends Model
+{
+    protected $table = 'jeux';     // convention cassée (il cherchait "jeus") → on impose "jeux"
+}</pre>
+<p>Deux autres propriétés corrigent les autres conventions si besoin :</p>
+<pre class="pseudo">protected $primaryKey = 'code';   // à utiliser SI la clé primaire ne s'appelle pas id
+public $timestamps = false;       // à utiliser SI created_at / updated_at n'existent pas dans la table</pre>
+<p>Membre, Location et Categorie suivent la convention : <strong>zéro ligne de config</strong> pour eux. On ne configure que l'exception — c'est tout l'esprit « convention over configuration ».</p>
+
+<h3>3. Les attributs : les colonnes deviennent des propriétés</h3>
+<p>Tu n'écris <strong>aucune propriété</strong> dans la classe : Eloquent lit les colonnes de la table et les expose dynamiquement (analogie : la fiche prend automatiquement une case pour chaque colonne du tiroir, sans que tu les dessines). Chaque colonne devient un attribut accessible en lecture et en écriture :</p>
+<pre class="pseudo">$jeu = Jeu::find(3);           // SELECT * FROM jeux WHERE id = 3 : récupère le jeu n°3
+
+echo $jeu-&gt;titre;           // lit la colonne titre (attribut dynamique)
+echo $jeu-&gt;prix_location;   // lit la colonne prix_location
+echo $jeu-&gt;created_at;      // lit le timestamp géré automatiquement par Eloquent
+
+$jeu-&gt;stock = 5;            // modifie l'attribut stock en mémoire (rien n'est encore en base)
+$jeu-&gt;save();               // UPDATE jeux SET stock = 5 WHERE id = 3 : enregistre le changement</pre>
+<p>Attention au revers : une faute de frappe ($jeu-&gt;titer) ne provoque pas d'erreur de compilation, elle retourne null. D'où l'importance de tester dans tinker.</p>
+
+<h3>4. Mass assignment : le danger, puis $fillable</h3>
+<p>Créer un jeu en passant un tableau entier s'appelle l'<strong>assignation de masse</strong> (mass assignment — analogie : au lieu de remplir la fiche case par case, on verse tout un seau de données d'un seul coup) :</p>
+<pre class="pseudo">Jeu::create($request-&gt;all());   // crée un jeu à partir de TOUT le formulaire reçu (pratique mais risqué)</pre>
+<p>Pratique… et dangereux : si un utilisateur malin ajoute un champ <em>role=admin</em> ou <em>prix_location=0</em> à la requête HTTP, il écrit dans des colonnes que tu ne voulais pas exposer. C'est une faille célèbre (GitHub en a été victime en 2012). Laravel bloque donc <strong>tout</strong> par défaut : sans liste blanche, create() lève une <strong>MassAssignmentException</strong>.</p>
+<pre class="pseudo">class Jeu extends Model
+{
+    protected $table = 'jeux';                          // on vise la bonne table
+
+    protected $fillable = [                             // liste blanche : colonnes autorisées à l'assignation de masse
+        'titre', 'prix_location', 'prix_vente', 'stock', // colonnes remplissables du formulaire de jeu
+        'categorie_id', 'editeur_id',                    // clés étrangères que l'on accepte de renseigner
+    ];   // SEULES ces colonnes sont assignables en masse
+}</pre>
+<p>La <strong>liste blanche</strong> $fillable, c'est la liste des invités à l'entrée d'une soirée : seuls les noms inscrits passent, tout le reste est refusé. L'inverse existe : <strong>protected $guarded = ['id', 'solde']</strong> interdit certaines colonnes et autorise le reste (une liste noire). Choisis un des deux, et préfère $fillable : une liste blanche est plus sûre qu'une liste noire.</p>
+
+<h3>5. Les quatre modèles de la Ludothèque</h3>
+<p>Génère d'un coup la base de la couche de persistance :</p>
+<pre class="pseudo">php artisan make:model Membre        # génère app/Models/Membre.php
+php artisan make:model Location      # génère app/Models/Location.php
+php artisan make:model Avis          # génère app/Models/Avis.php
+
+// Membre.php — convention OK, juste le fillable
+class Membre extends Model
+{
+    protected $fillable = ['nom', 'prenom', 'email', 'ville'];   // colonnes remplissables du membre
+}
+
+// Avis.php — « avis » est invariable : on fixe la table par sûreté
+class Avis extends Model
+{
+    protected $table = 'avis';                                   // pluriel = singulier → on impose "avis"
+    protected $fillable = ['jeu_id', 'membre_id', 'note', 'commentaire'];  // colonnes remplissables d'un avis
+}</pre>
+<p>Vérifie chaque modèle dans tinker : <em>Membre::count()</em> doit répondre sans erreur. Si une table n'est pas trouvée, tu sais maintenant exactement quelle propriété ajuster.</p>
+<div class="warn">Ne mets JAMAIS l'id ni des colonnes sensibles (solde, role, est_admin) dans $fillable : c'est précisément ce que la protection contre le mass assignment doit empêcher. Un $guarded = [] (tout autoriser) copié d'un tutoriel est une faille en production.</div>
+<div class="tip">Prends l'habitude de créer le modèle dès que la table existe, même vide de logique : protected $table si la convention casse, $fillable strict, et un test Membre::count() dans tinker. Trois réflexes qui valent pour Hibernate (@Table), Django (Meta.db_table) et EF Core ([Table]) aussi.</div>`,
+  exercises: [
+    { type: "qcm", q: "La commande artisan qui génère un modèle s'appelle…", opts: ["php artisan model:new Jeu", "php artisan make:model Jeu", "php artisan create Jeu", "composer make model Jeu"], a: 1, exp: "make:model génère la classe dans app/Models." },
+    { type: "qcm", q: "Un modèle Eloquent est une classe qui…", opts: ["Hérite de Illuminate\\Database\\Eloquent\\Model", "Implémente l'interface SQL", "Est un fichier XML", "Hérite de PDO"], a: 0, exp: "L'extends Model apporte find, save, where, les relations…" },
+    { type: "qcm", q: "Par convention, le nom d'un modèle s'écrit…", opts: ["au pluriel en snake_case", "en majuscules", "au singulier en PascalCase", "préfixé par tbl_"], a: 2, exp: "Jeu, Membre, Location — la table, elle, est au pluriel snake_case." },
+    { type: "qcm", q: "Sans configuration, le modèle Jeu cherche la table…", opts: ["jeux", "jeus", "jeu", "Jeux"], a: 1, exp: "Pluriel ANGLAIS automatique : jeu + s = jeus, qui n'existe pas." },
+    { type: "input", q: "Quelle propriété du modèle fixe explicitement le nom de la table ?", a: ["$table", "table", "protected $table"], ph: "protected $…", exp: "protected $table = 'jeux'; répare la convention cassée." },
+    { type: "qcm", q: "L'erreur « Base table or view not found: 1146 Table ludotheque.jeus » signifie…", opts: ["MySQL est éteint", "Le mot de passe est faux", "La table est vide", "Eloquent a deviné un nom de table qui n'existe pas"], a: 3, exp: "Le pluriel deviné (jeus) ne correspond pas à la table réelle (jeux)." },
+    { type: "vf", q: "Il faut déclarer une propriété PHP dans la classe pour chaque colonne de la table.", a: false, exp: "Les attributs sont dynamiques : Eloquent expose les colonnes automatiquement." },
+    { type: "qcm", q: "$jeu->titer (faute de frappe sur titre) provoque…", opts: ["Une erreur de compilation", "null, silencieusement", "Une MassAssignmentException", "Un plantage MySQL"], a: 1, exp: "Attribut inconnu = null : teste dans tinker pour détecter ces coquilles." },
+    { type: "qcm", q: "Le « mass assignment », c'est…", opts: ["Créer plusieurs tables d'un coup", "Remplir un modèle à partir d'un tableau entier de données", "Supprimer en masse", "Un type d'index MySQL"], a: 1, exp: "Jeu::create([...]) ou $jeu->fill([...]) : tout d'un coup." },
+    { type: "qcm", q: "Le danger du mass assignment sans protection :", opts: ["La base devient trop grosse", "Les requêtes sont plus lentes", "Un utilisateur peut injecter des champs non prévus (role, prix…) via la requête HTTP", "Les timestamps disparaissent"], a: 2, exp: "D'où la liste blanche $fillable — la faille a touché GitHub en 2012." },
+    { type: "input", q: "Quelle propriété liste les colonnes autorisées à l'assignation de masse ?", a: ["$fillable", "fillable", "protected $fillable"], ph: "protected $…", exp: "$fillable = liste blanche ; sans elle, create() lève une MassAssignmentException." },
+    { type: "qcm", q: "L'exception levée par create() quand aucune colonne n'est autorisée :", opts: ["TableNotFoundException", "QueryException", "FillableException", "MassAssignmentException"], a: 3, exp: "Laravel bloque tout par défaut : c'est une protection, pas un bug." },
+    { type: "vf", q: "$guarded est une liste noire : les colonnes citées sont interdites, le reste est autorisé.", a: true, exp: "L'inverse de $fillable — préfère la liste blanche, plus sûre." },
+    { type: "qcm", q: "Pour désactiver la gestion automatique de created_at / updated_at :", opts: ["public $timestamps = false;", "protected $fillable = [];", "protected $table = null;", "unset($this->created_at);"], a: 0, exp: "Utile pour une table héritée sans ces colonnes." },
+    { type: "qcm", q: "L'équivalent du modèle Eloquent en Hibernate/JPA :", opts: ["Un fichier .sql", "Une classe annotée @Entity", "Un contrôleur", "Un DbSet"], a: 1, exp: "@Entity chez JPA, models.Model chez Django, DbSet&lt;T&gt; chez EF Core." }
+  ],
+  final: {
+    title: "Exercice final — Quatre modèles sur pied",
+    intro: `<p>Jeu, Membre, Location, Avis : vérifie que tu sais les créer, les brancher sur les bonnes tables et les protéger.</p>`,
+    questions: [
+      { type: "qcm", q: "Parmi les modèles de la Ludothèque, ceux qui exigent protected $table sont…", opts: ["Membre et Location", "Jeu et Avis", "Tous", "Aucun"], a: 1, exp: "jeux (pluriel français) et avis (invariable) cassent la convention anglaise." },
+      { type: "input", q: "Complète : class Jeu extends Model { protected $… = 'jeux'; }", a: ["table", "$table"], ph: "nom de la propriété", exp: "protected $table = 'jeux'; — la ligne qui répare le pluriel." },
+      { type: "vf", q: "Jeu::create(['titre' => 'Catan']) fonctionne même si $fillable est absent du modèle.", a: false, exp: "Sans liste blanche : MassAssignmentException. La protection est active par défaut." },
+      { type: "qcm", q: "Le bon $fillable pour Avis :", opts: ["['id', 'created_at']", "[] avec $guarded = []", "['jeu_id', 'membre_id', 'note', 'commentaire']", "['*']"], a: 2, exp: "Les colonnes que le formulaire d'avis peut légitimement remplir — jamais l'id." },
+      { type: "qcm", q: "Pour vérifier qu'un modèle est bien branché sur sa table, le plus rapide est…", opts: ["Membre::count() dans tinker", "Relire le code trois fois", "Vider la base", "Redémarrer MySQL"], a: 0, exp: "Une réponse numérique = mapping OK ; une erreur 1146 = propriété $table à ajuster." }
+    ],
+    solution: `<pre class="pseudo">php artisan make:model Jeu | Membre | Location | Avis   # génère les 4 modèles
+
+class Jeu extends Model {                    // modèle du jeu
+    protected $table = 'jeux';               // pluriel cassé → config
+    protected $fillable = ['titre', 'prix_location', 'prix_vente',   // liste blanche…
+                           'stock', 'categorie_id', 'editeur_id'];   // …suite de la liste blanche
+}
+class Avis extends Model {                   // modèle de l'avis
+    protected $table = 'avis';               // invariable → config par sûreté
+    protected $fillable = ['jeu_id', 'membre_id', 'note', 'commentaire'];   // liste blanche de l'avis
+}
+Membre, Location : convention OK → juste le $fillable.
+
+Retenir : attributs dynamiques (colonne = propriété),
+$fillable = liste blanche anti mass assignment,
+$table / $primaryKey / $timestamps = réparations d'exception.</pre>
+<p>Tes modèles existent, mais la structure des tables vient encore du Niveau 4, créée à la main. Leçon 4 : les migrations, ou comment versionner le schéma comme du code.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l3", title: "Rédiger les quatre modèles de la Ludothèque", level: 1,
+    statement: "Écris de mémoire le code complet des quatre modèles Jeu, Membre, Location et Avis : namespace, import, héritage, propriété $table quand la convention est cassée, et $fillable adapté aux colonnes du schéma du Niveau 4. Pour chaque modèle, justifie en une phrase chaque propriété présente — et chaque propriété absente (pourquoi Membre n'a pas de $table ? pourquoi id n'est dans aucun $fillable ?).",
+    hints: [
+      "Structure fixe : namespace App\\Models; use Illuminate\\Database\\Eloquent\\Model; class X extends Model { … }.",
+      "Rejoue l'audit de la leçon 2 : quels modèles ont une table devinée fausse ? Ce sont les seuls à recevoir $table.",
+      "Pour $fillable, pars du formulaire : quelles colonnes un utilisateur peut-il légitimement envoyer ? id, created_at et updated_at n'en font jamais partie."
+    ],
+    solution: "namespace App\\Models;\nuse Illuminate\\Database\\Eloquent\\Model;\n\nclass Jeu extends Model {\n    protected $table = 'jeux';        // « jeus » deviné = faux\n    protected $fillable = ['titre', 'prix_location', 'prix_vente',\n                           'stock', 'categorie_id', 'editeur_id'];\n}\n\nclass Membre extends Model {          // table « membres » devinée = OK\n    protected $fillable = ['nom', 'prenom', 'email', 'ville'];\n}\n\nclass Location extends Model {        // table « locations » devinée = OK\n    protected $fillable = ['jeu_id', 'membre_id',\n                           'date_location', 'date_retour'];\n}\n\nclass Avis extends Model {\n    protected $table = 'avis';        // invariable, on fige par sûreté\n    protected $fillable = ['jeu_id', 'membre_id', 'note', 'commentaire'];\n}\n\nJustifications :\n- $table seulement où la convention casse (Jeu, Avis) : configurer le reste\n  serait du bruit.\n- id absent de tous les $fillable : la clé primaire appartient à la base,\n  jamais au formulaire (anti mass assignment).\n- timestamps : colonnes présentes au Niveau 4, donc aucune ligne à écrire,\n  Eloquent les gère seul.",
+    note: "Ces quatre classes sont la fondation de tout le cours : chaque leçon suivante les enrichira (relations, casts, scopes). Le duo « convention par défaut, propriété corrective en cas d'écart » se retrouve tel quel chez Hibernate (@Table), Django (Meta.db_table) et EF Core ([Table]) — au Niveau 6, tu reconnaîtras ce motif quel que soit l'ORM du projet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

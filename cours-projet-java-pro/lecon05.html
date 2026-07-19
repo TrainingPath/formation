@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Les entités JPA du catalogue, testées dès l'écriture",
+  subtitle: "La règle métier et son test naissent dans le même commit.",
+  theory: `
+<h3>1. Les entités JPA</h3>
+<pre class="pseudo">@Entity                                   // etiquette : cette classe correspond a une table de la base
+public class Categorie {                  // plan d'une categorie de jeux
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;   // cle primaire ; MySQL la numerote (AUTO_INCREMENT)
+    @Column(nullable = false, unique = true) private String nom;              // colonne texte obligatoire et sans doublon
+    // getters / setters (ou Lombok)       // methodes pour lire/ecrire les champs (Lombok peut les generer)
+}
+
+@Entity                                   // 2e table : les jeux
+public class Jeu {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;   // cle primaire auto-numerotee
+    @Column(nullable = false) private String titre;         // titre du jeu, obligatoire
+    @Column(nullable = false) private BigDecimal prixAchat; // prix de vente ; BigDecimal = nombre exact (argent)
+    @Column(nullable = false) private BigDecimal prixLocation;  // prix de location, exact lui aussi
+    private int stockVente;                 // exemplaires disponibles a la vente
+    private int stockLocation;              // exemplaires disponibles a la location
+    @ManyToOne(fetch = FetchType.LAZY) private Categorie categorie;   // plusieurs jeux -> 1 categorie ; LAZY = chargee seulement si utilisee
+}</pre>
+<p>Décodons ces étiquettes. Une <strong>entité</strong> est une classe Java dont chaque objet correspond à une ligne de table : <code>@Entity</code> établit ce lien. <code>@Id</code> désigne la clé primaire et <code>@GeneratedValue(IDENTITY)</code> laisse MySQL la numéroter automatiquement. <code>@Column</code> décrit une colonne (obligatoire, unique…). <code>BigDecimal</code> est le type des nombres <em>exacts</em>, obligatoire pour l'argent. <code>@ManyToOne</code> traduit le lien « plusieurs jeux pour une catégorie ». Le réglage <code>fetch = LAZY</code> (« paresseux ») signifie que la catégorie n'est chargée que si on l'utilise vraiment — première brique contre le problème dit <strong>N+1</strong> (une requête qui en déclenche cent autres inutilement, vu leçon 15).</p>
+
+<h3>2. La règle métier vit dans l'entité</h3>
+<pre class="pseudo">public boolean estLouable()   { return stockLocation > 0; }   // vrai s'il reste au moins 1 exemplaire en location
+public boolean estAchetable() { return stockVente > 0; }      // vrai s'il reste au moins 1 exemplaire en vente</pre>
+<p>Une règle, <strong>un</strong> endroit : partout ailleurs on appelle <code>jeu.estLouable()</code>, jamais <code>jeu.getStockLocation() > 0</code> réécrit dix fois.</p>
+
+<h3>3. Le test, écrit EN MÊME TEMPS</h3>
+<pre class="pseudo">class JeuTest {                                       // classe regroupant les tests de l'entite Jeu
+    @Test void nonLouableSiStockNul() {               // @Test = un scenario verifie automatiquement
+        Jeu j = new Jeu(); j.setStockLocation(0);     // on cree un jeu et on met son stock location a 0
+        assertThat(j.estLouable()).isFalse();         // on EXIGE que estLouable() reponde faux
+    }
+    @Test void louableSiStockPositif() {              // second scenario
+        Jeu j = new Jeu(); j.setStockLocation(3);     // stock location = 3 (positif)
+        assertThat(j.estLouable()).isTrue();          // on EXIGE que estLouable() reponde vrai
+    }
+}</pre>
+<p>Un <strong>test</strong> est un petit programme qui vérifie qu'un autre morceau de code fait bien ce qu'on attend. <code>@Test</code> marque une méthode comme scénario à exécuter automatiquement (par l'outil <strong>JUnit</strong>). <code>assertThat(...).isFalse()</code> est une <strong>assertion</strong> : elle affirme le résultat attendu et fait échouer le test s'il diffère ; cette écriture fluide et lisible vient de la bibliothèque <strong>AssertJ</strong>.</p>
+
+<h3>4. Le repository et son test JPA</h3>
+<pre class="pseudo">public interface JeuRepository extends JpaRepository<Jeu, Long> {   // interface = contrat ; JpaRepository fournit save/findAll... gratuitement
+    List<Jeu> findByStockLocationGreaterThan(int seuil);   // requête dérivée : Spring devine le SQL d'apres le NOM de la methode
+}
+
+@DataJpaTest                                  // teste la couche base sur une vraie base (MySQL en CI)
+class JeuRepositoryTest {
+    @Test void trouveLesLouables() { /* on insere 2 jeux dont 1 non louable -> on attend 1 resultat */ }
+}</pre>
+<p>Un <strong>repository</strong> (« dépôt ») est l'objet chargé de lire et d'écrire dans la base. Le déclarer comme une <strong>interface</strong> (un simple contrat, sans code) qui étend <code>JpaRepository</code> suffit : Spring fournit tout seul <code>save</code>, <code>findAll</code>, etc. Mieux, une <strong>requête dérivée</strong> comme <code>findByStockLocationGreaterThan</code> voit son SQL <em>deviné à partir de son nom</em> — on ne l'écrit pas. <code>@DataJpaTest</code> lance un test ciblé sur cette couche, branché sur un vrai MySQL en CI plutôt que sur une base mémoire qui mentirait sur le comportement réel.</p>
+
+<h3>5. « Non testé = non fait »</h3>
+<div class="warn">Au Niveau 6, les tests arrivaient à la semaine 3 — donc souvent jamais. Ici, la règle et son test entrent dans le même commit : la CI les exécute aussitôt, et une régression future devient <strong>rouge à la seconde</strong>. C'est le TDD léger d'une équipe qui a intégré que le code non testé n'est pas fait.</div>
+<div class="tip">Le job de tests de la CI a un service <code>mysql:8.4</code> (cours CI/CD leçon 10) : les tests <code>@DataJpaTest</code> tournent sur une vraie base, pas une base mémoire qui mentirait sur le comportement SQL réel.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une entité JPA est annotée…", opts: ["@Service", "@Entity", "@Controller", "@Bean"], a: 1, exp: "Mappée à une table." },
+    { type: "qcm", q: "@ManyToOne(fetch = LAZY) évite…", opts: ["La compilation", "De charger la catégorie inutilement (anti-N+1)", "Le test", "Le CSS"], a: 1, exp: "Chargée seulement si utilisée." },
+    { type: "qcm", q: "estLouable() est défini…", opts: ["Partout où on en a besoin", "Une seule fois, dans l'entité", "Dans le contrôleur", "En SQL"], a: 1, exp: "Une règle, un endroit." },
+    { type: "qcm", q: "Le prix est de type…", opts: ["double", "BigDecimal", "float", "String"], a: 1, exp: "Précision monétaire." },
+    { type: "qcm", q: "Le test de la règle est écrit…", opts: ["En semaine 3", "En même temps que la règle (même commit)", "Jamais", "En prod"], a: 1, exp: "TDD léger." },
+    { type: "qcm", q: "findByStockLocationGreaterThan est…", opts: ["Du SQL brut", "Une requête dérivée du nom de méthode", "Un test", "Un bean"], a: 1, exp: "Spring Data la génère." },
+    { type: "qcm", q: "@DataJpaTest teste…", opts: ["Le contrôleur", "La couche persistance (repository) sur une base", "Le CSS", "L'API"], a: 1, exp: "Slice de test ciblé." },
+    { type: "qcm", q: "Les tests JPA en CI tournent sur…", opts: ["Une base mémoire (H2)", "Un vrai MySQL (service CI)", "Rien", "La prod"], a: 1, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "assertThat(...).isFalse() vient de…", opts: ["JUnit seul", "AssertJ (assertions fluides)", "Mockito", "Spring"], a: 1, exp: "Lisibilité des assertions." },
+    { type: "qcm", q: "Écrire code + test dans le même commit…", opts: ["Ralentit", "Rend toute régression future immédiatement rouge", "Est interdit", "Est inutile"], a: 1, exp: "Filet permanent." },
+    { type: "vf", q: "Une base mémoire peut mentir sur le comportement SQL réel de MySQL.", a: true, exp: "D'où le vrai MySQL en CI." },
+    { type: "qcm", q: "@GeneratedValue(IDENTITY) délègue l'id à…", opts: ["Java", "L'AUTO_INCREMENT de MySQL", "Flyway", "L'utilisateur"], a: 1, exp: "Clé technique auto." },
+    { type: "qcm", q: "@Column(unique = true) sur nom…", opts: ["Est décoratif", "Reflète la contrainte UNIQUE du schéma", "Chiffre", "Ralentit"], a: 1, exp: "Cohérent avec V1." },
+    { type: "qcm", q: "Réécrire stockLocation > 0 partout est…", opts: ["Propre", "Une duplication qui divergera (préférer estLouable())", "Obligatoire", "Plus rapide"], a: 1, exp: "DRY." },
+    { type: "vf", q: "La règle métier est plus sûre encapsulée dans l'entité que dispersée.", a: true, exp: "Un seul point de vérité." }
+  ],
+  final: {
+    title: "Exercice final — Les entités et leur filet",
+    intro: `<p>Entités + règles + tests, ensemble.</p>`,
+    questions: [
+      { type: "qcm", q: "Le @ManyToOne vers Categorie :", opts: ["fetch = LAZY (anti-N+1)", "fetch = EAGER partout", "sans fetch", "en SQL brut"], a: 0, exp: "Chargé à la demande." },
+      { type: "qcm", q: "estLouable() est :", opts: ["dans l'entité, testé", "réécrit partout", "en SQL", "dans le contrôleur"], a: 0, exp: "Une règle, un endroit." },
+      { type: "qcm", q: "Le test du repository utilise :", opts: ["@DataJpaTest sur un vrai MySQL (CI)", "H2 mémoire", "aucune base", "un mock total"], a: 0, exp: "Comportement réel." },
+      { type: "qcm", q: "Le test de la règle est écrit :", opts: ["dans le même commit que la règle", "3 semaines après", "jamais", "en prod"], a: 0, exp: "Non testé = non fait." },
+      { type: "vf", q: "Une régression sur estLouable() deviendra rouge en CI.", a: true, exp: "Le filet est permanent." }
+    ],
+    solution: `<pre class="pseudo">@Entity class Jeu {                          // entite = une table
+  ... BigDecimal prixLocation; int stockLocation;   // prix exact + stock location
+  @ManyToOne(fetch=LAZY) Categorie categorie;       // lien vers la categorie, charge a la demande
+  boolean estLouable(){ return stockLocation > 0; } // la regle metier, a UN seul endroit
+}
+@Test void nonLouableSiStockNul(){           // test ecrit dans le meme commit que la regle
+  Jeu j=new Jeu(); j.setStockLocation(0);    // un jeu avec 0 en location
+  assertThat(j.estLouable()).isFalse();      // on exige : non louable
+}
+// JeuRepository.findByStockLocationGreaterThan(0) + @DataJpaTest   // requete derivee testee sur une vraie base</pre>
+<p>Les entités sont testées. Demain : la couche service et ses règles, sous CI.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes entités et leurs tests…",
+  items: [
+  { id: "proj6java-l5", title: "L'entité Jeu, sa règle et son test", level: 2,
+    statement: "Écris l'entité Jeu (JPA, BigDecimal, @ManyToOne LAZY vers Categorie), les méthodes estLouable()/estAchetable(), et deux tests JUnit/AssertJ qui les couvrent. Ajoute une requête dérivée de repository pour les jeux louables. Explique en 2-3 lignes pourquoi écrire le test dans le même commit change la donne.",
+    hints: [
+      "@Entity, @Id @GeneratedValue(IDENTITY), @Column(nullable=false).",
+      "estLouable() = stockLocation > 0 ; test des deux branches (0 et positif).",
+      "Repository : findByStockLocationGreaterThan(int) ; @DataJpaTest pour le vérifier."
+    ],
+    solution: "@Entity                                                      // etiquette : cette classe = une table de la base\npublic class Jeu {                                            // plan d'un jeu\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;   // cle primaire auto-numerotee par MySQL\n    @Column(nullable = false) private String titre;          // titre, obligatoire\n    @Column(nullable = false) private BigDecimal prixAchat;   // prix de vente ; BigDecimal = nombre exact (argent)\n    @Column(nullable = false) private BigDecimal prixLocation;// prix de location, exact lui aussi\n    private int stockVente;                                   // exemplaires en vente\n    private int stockLocation;                                // exemplaires en location\n    @ManyToOne(fetch = FetchType.LAZY) private Categorie categorie;   // plusieurs jeux -> 1 categorie ; LAZY = charge a la demande\n\n    public boolean estLouable()   { return stockLocation > 0; }   // regle metier : louable si stock location > 0\n    public boolean estAchetable() { return stockVente > 0; }      // achetable si stock vente > 0\n    // getters / setters                                       // accesseurs (peuvent etre generes par Lombok)\n}\n\npublic interface JeuRepository extends JpaRepository<Jeu, Long> {   // contrat ; JpaRepository fournit save/findAll... gratuitement\n    List<Jeu> findByStockLocationGreaterThan(int seuil);      // requete DERIVEE : le SQL est devine d'apres le nom\n}\n\n// JeuTest.java — ecrit DANS LE MEME COMMIT que la regle\nclass JeuTest {                                              // classe de tests de l'entite Jeu\n    @Test void nonLouableSiStockNul() {                      // scenario 1 (@Test = execute automatiquement)\n        Jeu j = new Jeu(); j.setStockLocation(0);            // un jeu avec 0 en location\n        assertThat(j.estLouable()).isFalse();                // on EXIGE : non louable\n    }\n    @Test void louableSiStockPositif() {                     // scenario 2\n        Jeu j = new Jeu(); j.setStockLocation(3);            // un jeu avec 3 en location\n        assertThat(j.estLouable()).isTrue();                 // on EXIGE : louable\n    }\n}\n\n// @DataJpaTest : findByStockLocationGreaterThan(0) sur un vrai MySQL (CI)\n\n// POURQUOI LE TEST DANS LE MEME COMMIT\n// La regle et sa preuve entrent ensemble : la CI les execute aussitot, et\n// toute regression future (quelqu'un change estLouable) devient ROUGE a la\n// seconde. Ecrit trois semaines plus tard, le test n'est souvent jamais ecrit\n// -- et la regression passe en prod. 'Non teste = non fait.'",
+    note: "L'encapsulation de la règle dans l'entité (une seule définition de estLouable) et l'écriture simultanée du test forment le socle du TDD léger de ce cours. Le fetch LAZY est un réflexe de performance posé dès la modélisation, pas un correctif tardif : au Niveau 8, la performance et les tests ne sont jamais des étapes séparées, ils naissent avec le code." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

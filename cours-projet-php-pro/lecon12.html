@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Acheter un jeu : prix figé et couverture (PHPUnit)",
+  subtitle: "Une facture ne change pas — et la qualité devient un cliquet.",
+  theory: `
+<h3>1. Acheter, sur l'autre stock</h3>
+<p>Acheter suit exactement le même patron sûr que louer (leçon 11) : une <strong>transaction</strong> atomique et un <strong>verrou</strong> <code>lockForUpdate()</code>, mais cette fois sur l'<em>autre</em> stock, <code>stock_vente</code>. La nouveauté est le <strong>montant</strong> de l'achat, que l'on va <em>figer</em>.</p>
+<pre class="pseudo">public function acheter(User $client, int $jeuId): Achat {              // acheter un jeu, renvoie l'achat créé
+    return DB::transaction(function () use ($client, $jeuId) {          // atomique : tout ou rien
+        $jeu = Jeu::where('id', $jeuId)->lockForUpdate()->firstOrFail();   // verrouille la ligne du jeu (anti-survente)
+        if ($jeu->stock_vente <= 0) throw new StockInsuffisantException("Plus de stock de vente");   // plus de stock de vente -> exception
+        $jeu->decrement('stock_vente');                                // retire 1 au stock de vente
+        return Achat::create([                                         // enregistre l'achat
+            'client_id' => $client->id, 'jeu_id' => $jeu->id,          // qui achète, quel jeu
+            'date_achat' => now(), 'montant' => $jeu->prix_achat,   // FIGÉ (copié)
+        ]);
+    });
+}</pre>
+
+<h3>2. Le prix est copié, pas référencé</h3>
+<p><strong>Figer</strong> le prix, c'est en <em>copier</em> la valeur dans l'achat au moment où il a lieu, au lieu de <em>référencer</em> (pointer vers) le prix courant du jeu. Une <strong>facture</strong> est un fait historique <strong>immuable</strong> : si le vendeur change le prix demain, les achats déjà enregistrés ne doivent surtout pas changer. C'est la même différence qu'entre photographier un panneau d'affichage (la photo reste, même si le panneau change) et écrire « voir le panneau » (qui affiche toujours la valeur du moment).</p>
+<pre class="pseudo">// montant = $jeu->prix_achat  -> COPIE la valeur au moment de l'achat
+// Si demain le vendeur change prix_achat, les factures passées NE bougent PAS
+// (une facture est un fait historique, immuable)</pre>
+
+<h3>3. Le test qui prouve le figeage</h3>
+<pre class="pseudo">public function test_prix_fige(): void {                               // prouve que le montant est figé
+    $prixInitial = $this->jeu->prix_achat;                            // on note le prix AVANT l'achat
+    $achat = app(JeuService::class)->acheter($this->client, $this->jeu->id);   // le client achète le jeu
+    $this->jeu->update(['prix_achat' => '99.00']);          // le prix change APRÈS
+    $this->assertEquals($prixInitial, $achat->fresh()->montant);  // le montant ne bouge pas
+}</pre>
+
+<h3>4. La couverture entre dans la CI (PHPUnit)</h3>
+<p>La <strong>couverture de tests</strong> (<em>code coverage</em>) mesure quel pourcentage des lignes de code est réellement exécuté par les tests. Un outil de mesure (<strong>PCOV</strong> ou <strong>Xdebug</strong>) l'enregistre pendant l'exécution. <code>--coverage --min=80</code> fait <em>échouer</em> le build si moins de 80 % du code est couvert.</p>
+<pre class="pseudo"># ci.yml (le runner a PCOV ou Xdebug pour la couverture)
+- run: php artisan test --coverage --min=80   # lance les tests ET mesure la couverture, minimum exigé 80 %
+# le build échoue si la couverture passe sous 80 %</pre>
+
+<h3>5. Le cliquet anti-recul</h3>
+<div class="warn">On règle le seuil au niveau <strong>actuel</strong>, puis on le remonte au fil des progrès — jamais on ne le baisse (cours CI/CD leçon 11). La couverture devient un cliquet : elle ne peut plus reculer sans faire échouer le build. La qualité n'est plus une intention, c'est une propriété du pipeline.</div>
+<div class="tip">Attention : 80 % de couverture ne veut pas dire « 80 % correct » — un test peut exécuter une ligne sans rien vérifier. La couverture repère le code <strong>jamais testé</strong> (une alarme utile), pas la qualité des assertions. On l'utilise comme garde-fou, pas comme objectif en soi.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter agit sur…", opts: ["stock_location", "stock_vente", "les deux", "aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Le montant de l'achat…", opts: ["Référence le prix courant", "Copie prix_achat au moment de l'achat (figé)", "Est nul", "Change chaque jour"], a: 1, exp: "Facture = fait historique." },
+    { type: "qcm", q: "Si le prix change après l'achat…", opts: ["Les factures passées changent", "Les factures passées ne bougent pas", "Erreur", "Remboursement auto"], a: 1, exp: "Figé." },
+    { type: "qcm", q: "Le test du figeage change le prix…", opts: ["Avant l'achat", "Après l'achat, puis vérifie le montant inchangé", "Jamais", "En prod"], a: 1, exp: "Preuve du figeage." },
+    { type: "qcm", q: "--coverage --min=80 mesure…", opts: ["La vitesse", "La couverture de tests (échoue sous 80%)", "La sécurité", "Le style"], a: 1, exp: "PCOV/Xdebug." },
+    { type: "qcm", q: "Le seuil de couverture est un…", opts: ["Objectif décoratif", "Cliquet (ne recule jamais)", "Maximum", "Hasard"], a: 1, exp: "Anti-recul." },
+    { type: "qcm", q: "On règle le seuil…", opts: ["À 100 % d'emblée", "Au niveau actuel, puis on remonte", "À 0", "Au hasard"], a: 1, exp: "Progressif." },
+    { type: "qcm", q: "80 % de couverture signifie…", opts: ["80 % correct", "80 % des lignes exécutées (pas forcément vérifiées)", "Zéro bug", "Parfait"], a: 1, exp: "Attention au sens." },
+    { type: "qcm", q: "La couverture repère surtout…", opts: ["Les bugs", "Le code JAMAIS testé", "Le style", "Les secrets"], a: 1, exp: "Alarme utile." },
+    { type: "qcm", q: "--min=80 dans la CI…", opts: ["Déploie", "Fait échouer le build sous le seuil", "Ignore", "Chiffre"], a: 1, exp: "Barrière." },
+    { type: "vf", q: "Une facture est un fait historique, donc immuable.", a: true, exp: "Prix figé." },
+    { type: "qcm", q: "Acheter est aussi…", opts: ["Non transactionnel", "DB::transaction + lockForUpdate (comme louer)", "Un GET", "Sans test"], a: 1, exp: "Même rigueur." },
+    { type: "qcm", q: "Copier le prix plutôt que le référencer évite…", opts: ["Rien", "Que modifier le catalogue réécrive l'historique", "Un index", "Un cache"], a: 1, exp: "Intégrité comptable." },
+    { type: "qcm", q: "Le cliquet garantit que la couverture…", opts: ["Monte ou stagne, jamais ne baisse", "Baisse librement", "Reste à 0", "N'existe pas"], a: 0, exp: "Qualité durable." },
+    { type: "vf", q: "Un test peut exécuter une ligne sans rien vérifier.", a: true, exp: "D'où : couverture ≠ qualité." }
+  ],
+  final: {
+    title: "Exercice final — Prix figé et cliquet de couverture",
+    intro: `<p>Achat immuable + couverture en CI.</p>`,
+    questions: [
+      { type: "qcm", q: "Le montant de l'achat :", opts: ["copie prix_achat (figé)", "référence le prix courant", "est nul", "change chaque jour"], a: 0, exp: "Fait historique." },
+      { type: "qcm", q: "Le test le prouve en :", opts: ["changeant le prix APRÈS et vérifiant le montant inchangé", "ne testant rien", "un screenshot", "un log"], a: 0, exp: "Figeage vérifié." },
+      { type: "qcm", q: "La couverture sert de :", opts: ["cliquet (seuil qui ne recule pas)", "linter", "déployeur", "chiffreur"], a: 0, exp: "Anti-recul." },
+      { type: "qcm", q: "80 % de couverture veut dire :", opts: ["80 % des lignes exécutées", "80 % correct", "zéro bug", "parfait"], a: 0, exp: "Prudence." },
+      { type: "vf", q: "On remonte le seuil au fil des progrès, jamais on ne le baisse.", a: true, exp: "Cliquet." }
+    ],
+    solution: `<pre class="pseudo">public function acheter(User $c, int $id): Achat {          // acheter un jeu
+  return DB::transaction(function () use ($c, $id) {         // atomique
+    $jeu = Jeu::where('id',$id)->lockForUpdate()->firstOrFail();   // verrouille la ligne
+    if ($jeu->stock_vente <= 0) throw new StockInsuffisantException(...);   // plus de stock -> exception
+    $jeu->decrement('stock_vente');                          // -1 au stock de vente
+    return Achat::create([...,'montant'=>$jeu->prix_achat]); // FIGÉ : on copie le prix du moment
+  });
+}
+// test : acheter -> update prix_achat=99 -> montant inchangé      // preuve du figeage
+# ci.yml : php artisan test --coverage --min=80                   // couverture minimale 80 % (cliquet)</pre>
+<p>L'achat est immuable et la qualité verrouillée. Demain : le frontend Blade, échappé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton achat figé et la couverture…",
+  items: [
+  { id: "proj6php-l12", title: "Achat à prix figé + cliquet de couverture", level: 3,
+    statement: "Écris le service acheter (transaction, stock_vente, montant = prix_achat figé), le test qui prouve le figeage (changer le prix APRÈS l'achat), et la commande de couverture en CI (--coverage --min=80). Explique en 3-4 lignes pourquoi copier le prix et ce que la couverture prouve — et ne prouve pas.",
+    hints: [
+      "montant = $jeu->prix_achat COPIÉ ; test : update prix_achat après, montant->fresh() inchangé.",
+      "php artisan test --coverage --min=80 (PCOV ou Xdebug sur le runner).",
+      "Couverture = code exécuté, pas code vérifié : un garde-fou, pas un objectif."
+    ],
+    solution: "public function acheter(User $client, int $jeuId): Achat {              // acheter un jeu, renvoie l'achat\n    return DB::transaction(function () use ($client, $jeuId) {          // atomique : tout ou rien\n        $jeu = Jeu::where('id', $jeuId)->lockForUpdate()->firstOrFail();   // verrouille la ligne (anti-survente)\n        if ($jeu->stock_vente <= 0)                                    // plus de stock de vente ?\n            throw new StockInsuffisantException(\"Plus de stock de vente\");   // -> exception (annule tout)\n        $jeu->decrement('stock_vente');                                // -1 au stock de vente\n        return Achat::create([                                         // enregistre l'achat\n            'client_id' => $client->id, 'jeu_id' => $jeu->id,          // client + jeu\n            'date_achat' => now(), 'montant' => $jeu->prix_achat,   // FIGE : on COPIE le prix du moment\n        ]);\n    });\n}\n\npublic function test_prix_fige(): void {                               // prouve le figeage du montant\n    $prixInitial = $this->jeu->prix_achat;                            // prix note AVANT l'achat\n    $achat = app(JeuService::class)->acheter($this->client, $this->jeu->id);   // le client achete\n    $this->jeu->update(['prix_achat' => '99.00']);        // le prix change APRES\n    $this->assertEquals($prixInitial, $achat->fresh()->montant);      // le montant, relu, n'a pas bouge\n}\n\n# ci.yml\n- run: php artisan test --coverage --min=80                            # tests + couverture, minimum 80 %\n\n// POURQUOI COPIER LE PRIX, CE QUE LA COUVERTURE (NE) PROUVE (PAS)\n// Copier : une facture est un FAIT DATE. Si Achat referencait le prix courant du\n// jeu (ex. via une relation), changer le catalogue reecrirait tout l'historique\n// comptable -- faux et potentiellement illegal. On copie donc la valeur au moment\n// de l'achat (figee).\n// Couverture : 80% signifie que 80% des lignes sont EXECUTEES par un test, pas\n// qu'elles sont bien VERIFIEES (un test sans assertion couvre sans prouver). Elle\n// repere le code jamais teste (alarme utile) ; le cliquet empeche qu'on regresse.\n// Mais la vraie qualite vient des assertions, pas du pourcentage.",
+    note: "Le prix figé est une règle d'intégrité comptable universelle : une facture, un reçu, un contrat sont des faits historiques qu'aucune modification ultérieure du catalogue ne doit altérer. Le cliquet de couverture illustre une philosophie de la qualité automatisée : on ne vise pas la perfection d'un coup, on empêche seulement la régression, en remontant le seuil pas à pas — à condition de se rappeler que la couverture mesure l'exécution, pas la pertinence des vérifications." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

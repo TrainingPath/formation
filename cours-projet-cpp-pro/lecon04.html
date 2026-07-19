@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Du MCD Merise au schéma SQL (dans le conteneur)",
+  subtitle: "Traduire la conception en tables, et faire charger le schéma automatiquement par MySQL.",
+  theory: `
+<h3>1. Rappel : du MCD au relationnel</h3>
+<p>Une <strong>base de données</strong> est un classeur électronique organisé en <strong>tables</strong> ; une table ressemble à un tableau (des colonnes fixes, des lignes qui s'ajoutent), comme une feuille de tableur. Le <strong>MCD Merise</strong> (Modèle Conceptuel de Données, issu de la méthode Merise) est un schéma de conception, dessiné avant tout code, qui décrit les <strong>entités</strong> — les grandes notions du métier : Jeu, Catégorie, Utilisateur — et les <strong>associations</strong> entre elles (un jeu appartient à une catégorie ; un utilisateur loue ou achète des jeux). Une entité est un « type de chose » dont on veut mémoriser des exemplaires.</p>
+<p>On traduit ce schéma en tables selon des règles simples : chaque entité devient une <strong>table</strong> ; une association de type « <strong>1..n</strong> » (un côté unique, un côté multiple : une catégorie a plusieurs jeux) devient une <strong>clé étrangère</strong> (une colonne qui pointe vers la ligne d'une autre table, comme un renvoi « voir fiche n° … ») ; une association « <strong>n..n</strong> » (plusieurs des deux côtés) devient une <strong>table de liaison</strong> intermédiaire.</p>
+
+<h3>2. Le schéma SQL</h3>
+<p>Le <strong>SQL</strong> (<em>Structured Query Language</em>) est le langage qui parle aux bases de données relationnelles : on y écrit des ordres pour créer des tables, insérer et lire des lignes. En SQL, un commentaire (ignoré par la machine) commence par deux tirets <code>--</code>.</p>
+<pre class="pseudo">CREATE TABLE categorie (               -- CREER une table nommee "categorie"
+  id INT AUTO_INCREMENT PRIMARY KEY,   -- identifiant entier, numerote tout seul, cle primaire (unique)
+  nom VARCHAR(50) NOT NULL             -- texte de 50 caracteres max, obligatoire (NOT NULL = jamais vide)
+);                                     -- fin de la table categorie
+CREATE TABLE jeu (                     -- CREER la table "jeu"
+  id INT AUTO_INCREMENT PRIMARY KEY,   -- identifiant unique auto-numerote
+  nom VARCHAR(100) NOT NULL,           -- nom du jeu, texte obligatoire (100 car. max)
+  categorie_id INT,                    -- reference vers la categorie (cle etrangere, definie plus bas)
+  prix_location DECIMAL(6,2) NOT NULL, -- prix de location : nombre a 2 decimales (precision monetaire)
+  prix_achat    DECIMAL(6,2) NOT NULL, -- prix d'achat, meme format
+  stock_location INT NOT NULL DEFAULT 0, -- nb d'exemplaires louables ; 0 par defaut a la creation
+  stock_vente    INT NOT NULL DEFAULT 0, -- nb d'exemplaires a vendre ; 0 par defaut
+  FOREIGN KEY (categorie_id) REFERENCES categorie(id) -- categorie_id doit exister dans categorie(id)
+);                                     -- fin de la table jeu</pre>
+<p>Détaillons les mots-clés. <code>CREATE TABLE</code> crée une table. <code>INT</code> = nombre entier, <code>VARCHAR(n)</code> = texte d'au plus n caractères, <code>DECIMAL(6,2)</code> = nombre à virgule avec 2 décimales exactes (parfait pour de l'argent, contrairement à <code>FLOAT</code> qui arrondit). <code>PRIMARY KEY</code> (clé primaire) est la colonne qui identifie chaque ligne de façon unique ; <code>AUTO_INCREMENT</code> demande à MySQL de numéroter automatiquement (1, 2, 3…). <code>NOT NULL</code> interdit une case vide, <code>DEFAULT 0</code> fixe une valeur par défaut. <code>FOREIGN KEY … REFERENCES</code> déclare la clé étrangère : elle garantit l'<strong>intégrité référentielle</strong>, c'est-à-dire qu'on ne peut pas ranger un jeu dans une catégorie qui n'existe pas. La table <code>achat</code> figera <code>prix_unitaire</code> (le prix payé, conservé pour l'historique) ; <code>location</code> portera durée et dates.</p>
+
+<h3>3. Charger le schéma automatiquement dans le conteneur</h3>
+<pre class="pseudo"># docker-compose.yml (service db)     # on complete la description du conteneur MySQL
+  db:
+    image: mysql:8.4                   # image MySQL prete a l'emploi
+    env_file: .env                     # secrets (mots de passe) lus depuis .env
+    volumes:                           # elements montes dans le conteneur
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro  # notre schema place dans le dossier d'init (:ro = lecture seule)
+      - dbdata:/var/lib/mysql          # volume de persistance des donnees</pre>
+<div class="tip">Tout script placé dans le dossier <code>/docker-entrypoint-initdb.d/</code> est exécuté <strong>automatiquement au premier démarrage</strong> de MySQL. <code>:ro</code> signifie <em>read-only</em> (lecture seule : le conteneur ne peut pas modifier notre fichier). Le schéma versionné est ainsi rejoué à l'identique pour tout le monde : la base est reproductible, pas « bricolée à la main ».</div>
+
+<h3>4. Versionner le schéma</h3>
+<div class="warn">Le fichier <code>schema.sql</code> est <strong>dans le dépôt</strong> Git : la structure de la base fait partie du code. Toute modification du schéma passe par un commit et une PR, comme le reste. (Les vrais projets utilisent en plus des <em>migrations</em> : des scripts qui font évoluer, étape par étape, une base déjà remplie sans en perdre les données.)</div>
+
+<h3>5. Des données de départ (seed)</h3>
+<pre class="pseudo">-- 02-seed.sql : quelques categories et jeux pour tester   -- fichier de donnees initiales
+INSERT INTO categorie (nom) VALUES ('Famille'), ('Stratégie');  -- AJOUTER 2 categories d'un coup
+INSERT INTO jeu (nom, categorie_id, prix_location, prix_achat,  -- AJOUTER un jeu : on liste d'abord les colonnes...
+                 stock_location, stock_vente)                   -- ...(suite des colonnes)
+VALUES ('Catan', 2, 4.00, 30.00, 3, 5);                         -- ...puis les valeurs correspondantes</pre>
+<p>Le mot <strong>seed</strong> (« semence ») désigne un jeu de données minimal inséré au départ. <code>INSERT INTO … VALUES …</code> ajoute une ou plusieurs lignes dans une table. Ces données permettent aux tests et aux démonstrations de tourner immédiatement, dans un environnement toujours identique.</p>
+`,
+  exercises: [
+    { type: "qcm", q: "Le MCD Merise décrit…", opts: ["le SQL final", "les entités et associations du domaine", "les conteneurs", "la CI"], a: 1, exp: "Conception." },
+    { type: "qcm", q: "Une association 1..n devient…", opts: ["une table de liaison", "une clé étrangère", "un index", "rien"], a: 1, exp: "FK côté « n »." },
+    { type: "qcm", q: "Une association n..n devient…", opts: ["une clé étrangère simple", "une table de liaison", "un DECIMAL", "un volume"], a: 1, exp: "Table intermédiaire." },
+    { type: "qcm", q: "Les prix sont en…", opts: ["FLOAT", "DECIMAL (précision monétaire)", "VARCHAR", "INT"], a: 1, exp: "Monnaie exacte." },
+    { type: "qcm", q: "jeu a…", opts: ["un seul stock", "deux stocks (location et vente)", "aucun stock", "trois stocks"], a: 1, exp: "Distincts." },
+    { type: "qcm", q: "Les clés étrangères assurent…", opts: ["la vitesse", "l'intégrité référentielle", "le chiffrement", "les logs"], a: 1, exp: "Cohérence." },
+    { type: "qcm", q: "Un script dans /docker-entrypoint-initdb.d/…", opts: ["est ignoré", "s'exécute au premier démarrage de MySQL", "efface la base à chaque fois", "compile"], a: 1, exp: "Init automatique." },
+    { type: "qcm", q: "schema.sql est…", opts: ["un secret", "versionné (la structure fait partie du code)", "jetable", "généré au hasard"], a: 1, exp: "Dans le dépôt." },
+    { type: "qcm", q: "Faire évoluer une base existante se fait via…", opts: ["un DROP DATABASE", "des migrations", "un volume", "un log"], a: 1, exp: "Évolutions versionnées." },
+    { type: "qcm", q: "Un fichier de seed sert à…", opts: ["chiffrer", "insérer des données de départ pour tests/démos", "déployer", "logger"], a: 1, exp: "Données initiales." },
+    { type: "vf", q: "Charger le schéma via le conteneur rend la base reproductible pour toute l'équipe.", a: true, exp: "Init scriptée." },
+    { type: "qcm", q: "DEFAULT 0 sur un stock signifie…", opts: ["stock infini", "un nouveau jeu démarre à 0 en stock", "erreur", "admin"], a: 1, exp: "Valeur par défaut." },
+    { type: "qcm", q: "La table achat figera…", opts: ["le stock", "prix_unitaire (historique)", "le rôle", "rien"], a: 1, exp: "Prix au moment de l'achat." },
+    { type: "qcm", q: "Modifier le schéma passe par…", opts: ["une édition manuelle en prod", "un commit et une PR", "un log", "rien"], a: 1, exp: "Comme tout code." },
+    { type: "qcm", q: "Le volume dbdata et le script d'init sont…", opts: ["identiques", "complémentaires : persistance + initialisation", "opposés", "inutiles"], a: 1, exp: "Deux rôles distincts." }
+  ],
+  final: {
+    title: "Exercice final — Traduire une association",
+    intro: `<p>Dans le MCD : un <strong>Jeu</strong> appartient à une <strong>Catégorie</strong> (une catégorie a plusieurs jeux). Comment le traduire ?</p>`,
+    questions: [
+      { type: "qcm", q: "Type d'association :", opts: ["n..n", "1..n (une catégorie, plusieurs jeux)", "1..1", "aucune"], a: 1, exp: "Un côté multiple." },
+      { type: "qcm", q: "Traduction relationnelle :", opts: ["une table de liaison", "une clé étrangère categorie_id dans jeu", "deux bases", "rien"], a: 1, exp: "FK côté « n »." },
+      { type: "qcm", q: "La contrainte à ajouter :", opts: ["UNIQUE", "FOREIGN KEY (categorie_id) REFERENCES categorie(id)", "DEFAULT", "INDEX seul"], a: 1, exp: "Intégrité." },
+      { type: "qcm", q: "Où charger ce schéma dans le conteneur ?", opts: ["dans le volume", "dans /docker-entrypoint-initdb.d/", "dans .env", "dans la CI"], a: 1, exp: "Init MySQL." },
+      { type: "qcm", q: "Le fichier schema.sql est…", opts: ["ignoré par Git", "versionné", "un secret", "généré à la volée"], a: 1, exp: "Partie du code." }
+    ],
+    solution: `<pre class="pseudo">CREATE TABLE categorie (                 -- table des categories
+  id INT AUTO_INCREMENT PRIMARY KEY,     -- identifiant unique auto-numerote
+  nom VARCHAR(50) NOT NULL               -- nom obligatoire
+);
+CREATE TABLE jeu (                       -- table des jeux
+  id INT AUTO_INCREMENT PRIMARY KEY,     -- identifiant unique
+  nom VARCHAR(100) NOT NULL,             -- nom obligatoire
+  categorie_id INT,                      -- reference vers une categorie (cle etrangere)
+  ...                                    -- (autres colonnes : prix, stocks...)
+  FOREIGN KEY (categorie_id) REFERENCES categorie(id)   -- association 1..n : chaque jeu pointe une categorie existante
+);
+-- monté dans /docker-entrypoint-initdb.d/ → rejoué à l'identique   -- schema charge auto au 1er demarrage</pre>
+<p>L'association 1..n devient une clé étrangère ; le schéma versionné est chargé automatiquement par le conteneur. Demain : le modèle en classes et le DAO, testés dès l'écriture.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton SQL ici…",
+  items: [
+  { id: "projcpppro-l04", title: "La table achat, prix figé", level: 2,
+    statement: "Écris le CREATE TABLE achat : id auto-incrémenté, utilisateur_id et jeu_id (clés étrangères), quantite, prix_unitaire (DECIMAL, figé au moment de l'achat), date_achat (DATETIME par défaut l'instant courant). Ajoute les deux FOREIGN KEY.",
+    hints: [
+      "prix_unitaire DECIMAL(6,2) NOT NULL — c'est le prix figé.",
+      "date_achat DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP.",
+      "FOREIGN KEY vers utilisateur(id) et jeu(id)."
+    ],
+    solution: "CREATE TABLE achat (                            -- table des achats\n  id             INT AUTO_INCREMENT PRIMARY KEY, -- identifiant unique auto-numerote\n  utilisateur_id INT NOT NULL,                   -- qui achete (cle etrangere)\n  jeu_id         INT NOT NULL,                   -- quel jeu (cle etrangere)\n  quantite       INT NOT NULL,                   -- combien d'exemplaires\n  prix_unitaire  DECIMAL(6,2) NOT NULL,          -- prix FIGE au moment de l'achat\n  date_achat     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- horodatage automatique de l'achat\n  FOREIGN KEY (utilisateur_id) REFERENCES utilisateur(id),     -- l'utilisateur doit exister\n  FOREIGN KEY (jeu_id)         REFERENCES jeu(id)              -- le jeu doit exister\n);",
+    note: "prix_unitaire est une dénormalisation volontaire : on fige le prix payé pour que l'historique reste vrai même si le catalogue change. Les clés étrangères garantissent l'intégrité référentielle, et date_achat horodate automatiquement. Ce schéma versionné sera rejoué à l'identique dans le conteneur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Les codes de statut : 2xx, 3xx, 4xx, 5xx",
+  subtitle: "En trois chiffres, le serveur raconte toute l'histoire de ta requête.",
+  theory: `
+<h3>1. Cinq familles, une logique</h3>
+<p>Chaque réponse HTTP commence par un <strong>code de statut</strong> : un petit nombre à trois chiffres par lequel le serveur résume, en un clin d'œil, comment la requête s'est passée. C'est comme une note globale collée en haut de la réponse. Le premier chiffre suffit à situer l'histoire — on note les familles <code>2xx</code>, <code>4xx</code>… où le <code>x</code> veut dire « n'importe quel chiffre » :</p>
+<pre class="pseudo">1xx  information      « je continue à travailler » (rare en API)      # 1xx = message d'attente ; rare dans les API
+2xx  succès           « c'est fait »                                  # 2xx = tout s'est bien passé
+3xx  redirection      « va voir ailleurs »                            # 3xx = la ressource est ailleurs, ou ta copie suffit
+4xx  erreur CLIENT    « TA requête est fautive »                      # 4xx = c'est TOI (le client) qui as fait l'erreur → corrige-la
+5xx  erreur SERVEUR   « JE suis en panne, ce n'est pas ta faute »     # 5xx = c'est le SERVEUR qui a un souci → va lire ses logs</pre>
+<p>La frontière 4xx/5xx est la première chose à regarder en <strong>débogage</strong> (la recherche de la cause d'un problème) : un 4xx t'invite à corriger la requête, un 5xx à aller lire les <strong>logs</strong> du serveur — les <em>logs</em> étant le journal où le serveur note tout ce qu'il fait, très utile pour comprendre une panne.</p>
+
+<h3>2. Les succès : 200, 201, 204</h3>
+<pre class="pseudo">200 OK          succès général : GET /jeux/5 → 200 + le JSON du jeu           # 200 = succès classique, avec les données dans le corps
+201 Created     ressource créée : POST /jeux → 201 + Location: /jeux/9        # 201 = un élément a été créé ; Location donne son adresse
+204 No Content  succès SANS corps : DELETE /jeux/5 → 204, rien à dire de plus  # 204 = réussi, mais aucune donnée à renvoyer</pre>
+<p>Le <strong>201</strong> s'accompagne de l'en-tête <code>Location</code> (leçon 2) qui pointe vers la ressource créée. Le <strong>204</strong> est le succès silencieux : l'opération a réussi, il n'y a simplement rien à renvoyer — typique du DELETE. Le client ne doit pas essayer de <strong>parser</strong> (analyser/décoder) un corps qui n'existe pas.</p>
+
+<h3>3. Les redirections : 301, 302, 304</h3>
+<pre class="pseudo">301 Moved Permanently   la ressource a déménagé pour toujours (nouvelle URL dans Location)   # 301 = adresse changée DÉFINITIVEMENT
+302 Found               déplacement temporaire                                               # 302 = déplacement PROVISOIRE
+304 Not Modified        « ta copie en cache est encore bonne » → pas de corps renvoyé        # 304 = rien n'a changé, garde ta copie (économie de données)</pre>
+<p>Le <strong>304</strong> est une optimisation élégante : le client dit « j'ai déjà une version, a-t-elle changé ? » et le serveur répond d'un simple 304 sans renvoyer les données. Nous détaillerons ce mécanisme de cache à la leçon 19.</p>
+
+<h3>4. Les erreurs client : le 4xx qu'il faut choisir juste</h3>
+<pre class="pseudo">400 Bad Request           requête malformée (JSON invalide, champ illisible…)      # 400 = le serveur ne comprend même pas ta requête
+401 Unauthorized          QUI ES-TU ? identité absente ou invalide                 # 401 = tu n'es pas (bien) identifié → présente-toi
+403 Forbidden             JE SAIS QUI TU ES, mais tu n'as pas le droit             # 403 = identité connue, mais action interdite pour toi
+404 Not Found             la ressource n'existe pas : GET /jeux/999                # 404 = l'adresse ne mène à rien
+405 Method Not Allowed    méthode non prévue : DELETE /jeux (sur la collection !)  # 405 = cette méthode n'est pas permise ici
+409 Conflict              conflit d'état : louer un jeu déjà loué                  # 409 = ta demande se heurte à l'état actuel de la ressource
+422 Unprocessable Entity  JSON bien formé mais invalide : "note": 12 sur 5         # 422 = syntaxe correcte, mais données absurdes
+429 Too Many Requests     ralentis ! limite de débit atteinte (leçon 19)          # 429 = trop de requêtes trop vite → attends un peu</pre>
+<p>La paire <strong>401 / 403</strong> est le distinguo le plus important — et le plus raté. <strong>401</strong> : le serveur ne sait pas qui tu es (pas de <strong>token</strong> — le jeton qui prouve ton identité, leçon 16 — ou token expiré) ; la solution est de t'<strong>authentifier</strong> (prouver qui tu es). <strong>403</strong> : il sait parfaitement qui tu es, et la réponse est non (un membre qui tente de supprimer un jeu du catalogue). S'authentifier à nouveau n'y changera rien. Nous y reviendrons avec les permissions, leçon 17.</p>
+<p>Nuance utile : <strong>400</strong> pour un corps illisible (faute de <strong>syntaxe</strong> — les règles d'écriture), <strong>422</strong> pour un corps lisible mais aux données invalides (faute de <strong>sémantique</strong> — le sens) : une note d'avis à 12 alors que l'échelle s'arrête à 5.</p>
+
+<h3>5. Les erreurs serveur, et le code comme contrat</h3>
+<pre class="pseudo">500 Internal Server Error   exception non gérée : le bug est côté serveur   # 500 = plantage imprévu DANS le serveur (pas ta faute)
+503 Service Unavailable     surcharge ou maintenance : réessaie plus tard   # 503 = serveur momentanément indisponible</pre>
+<p>Une <strong>exception</strong>, ici, est une erreur brutale qui interrompt le programme du serveur en pleine exécution. Un client bien écrit <strong>route sa logique sur le code</strong> (il décide quoi faire selon le code reçu) : 200 → afficher, 201 → suivre <code>Location</code>, 401 → écran de connexion, 403 → « accès refusé », 404 → « jeu introuvable », 422 → afficher les erreurs de formulaire, 5xx → « réessayez plus tard ». Le code fait donc <strong>partie du contrat de ton API</strong>, au même titre que le JSON : renvoyer 200 avec un corps <code>{ "erreur": "jeu introuvable" }</code> casse tous les clients qui font confiance aux codes.</p>
+<p>Bonne nouvelle : les <strong>frameworks</strong> (les boîtes à outils sur lesquelles on construit un serveur) font le gros du travail. Django REST Framework renvoie 405 tout seul si la méthode n'est pas implémentée, 400/422 via la validation des serializers ; Spring, Laravel et ASP.NET Core ont les mêmes automatismes. Ton rôle : choisir le bon code là où la logique métier décide (404, 409, 403…).</p>
+<div class="warn">Le péché capital : répondre <strong>200 pour une erreur</strong> (ou 500 pour une faute du client). Les codes existent pour que les programmes se comprennent sans lire les messages ; un code menteur rend ton API imprévisible et ses clients fragiles.</div>
+<div class="tip">Mnémotechnique 401/403 : <strong>401 = « badge manquant »</strong> (présente-toi), <strong>403 = « badge lu, porte interdite »</strong> (inutile de re-badger). Si tu n'en retiens qu'une aujourd'hui, retiens celle-là.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un code 4xx signale une erreur…", opts: ["Du serveur", "Du réseau", "Du client", "De la base de données"], a: 2, exp: "4xx : corrige ta requête ; 5xx : le serveur est en cause." },
+    { type: "qcm", q: "Réponse naturelle d'un DELETE /jeux/5 réussi :", opts: ["200 avec le jeu supprimé", "204 No Content", "301", "201 Created"], a: 1, exp: "Succès sans rien à renvoyer : 204." },
+    { type: "qcm", q: "POST /jeux réussit. Code et en-tête attendus :", opts: ["200 + Accept", "204 + Host", "201 + Location", "302 + Content-Length"], a: 2, exp: "201 Created, avec l'URL de la ressource dans Location." },
+    { type: "qcm", q: "Un client sans token valide appelle GET /membres/12/locations. Code correct :", opts: ["403", "404", "500", "401"], a: 3, exp: "Identité inconnue → 401 : « qui es-tu ? »." },
+    { type: "qcm", q: "Un membre authentifié tente DELETE /jeux/5 alors que seul l'admin y a droit :", opts: ["401", "403", "400", "204"], a: 1, exp: "Identité connue, droit refusé → 403." },
+    { type: "qcm", q: "GET /jeux/999 alors que le jeu 999 n'existe pas :", opts: ["404", "400", "500", "204"], a: 0, exp: "Not Found : la ressource n'existe pas." },
+    { type: "qcm", q: "Le client envoie DELETE /jeux (la collection entière), non prévu par l'API :", opts: ["200", "405", "503", "301"], a: 1, exp: "Method Not Allowed : la méthode n'est pas permise sur cette ressource." },
+    { type: "qcm", q: "Un POST /locations pour un jeu déjà loué devrait renvoyer…", opts: ["409 Conflict", "204", "304", "301"], a: 0, exp: "Conflit avec l'état actuel de la ressource." },
+    { type: "qcm", q: "JSON bien formé mais \"note\": 12 alors que l'échelle va de 1 à 5 :", opts: ["500", "304", "422", "201"], a: 2, exp: "Syntaxe OK, données invalides : Unprocessable Entity (400 se défend, 422 est plus précis)." },
+    { type: "qcm", q: "Une exception non gérée explose dans le code du serveur :", opts: ["400", "404", "429", "500"], a: 3, exp: "Internal Server Error : le bug est côté serveur, va lire les logs." },
+    { type: "vf", q: "Renvoyer 200 avec un corps { \"erreur\": \"introuvable\" } est une bonne pratique.", a: false, exp: "Code menteur : les clients routent leur logique sur le code, pas sur le message." },
+    { type: "vf", q: "Un 304 Not Modified renvoie la ressource complète pour vérification.", a: false, exp: "Justement non : « ta copie en cache est bonne », pas de corps (leçon 19)." },
+    { type: "input", q: "Quel code signale que la ressource demandée n'existe pas ?", a: ["404"], ph: "Un code…", exp: "404 Not Found, la star des codes d'erreur." },
+    { type: "input", q: "Quel code signale un succès sans corps de réponse ?", a: ["204"], ph: "Un code…", exp: "204 No Content, typique du DELETE." },
+    { type: "input", q: "Quel code dit « ralentis, tu as dépassé la limite de requêtes » ?", a: ["429"], ph: "Un code…", exp: "429 Too Many Requests — limites de débit, leçon 19." }
+  ],
+  final: {
+    title: "Exercice final — Le standard téléphonique de la Ludothèque",
+    intro: `<p>Une journée de trafic sur l'API : à chaque situation, le bon code.</p>`,
+    questions: [
+      { type: "qcm", q: "GET /jeux/5 : Catan existe et tout va bien.", opts: ["201", "200", "204", "304"], a: 1, exp: "Succès avec corps : 200 + le JSON du jeu." },
+      { type: "qcm", q: "PATCH /locations/40 pour rendre un jeu : token expiré.", opts: ["403", "404", "401", "422"], a: 2, exp: "Identité invalide → 401 ; le client doit se ré-authentifier." },
+      { type: "qcm", q: "POST /jeux/5/avis avec { \"note\": \"super\" } : le JSON se parse mais la note doit être un entier de 1 à 5.", opts: ["422 (ou 400)", "500", "301", "204"], a: 0, exp: "Données invalides dans un JSON bien formé : validation → 422." },
+      { type: "vf", q: "Pendant une maintenance, répondre 503 est plus honnête que 404.", a: true, exp: "503 : « service indisponible, réessaie » ; 404 ferait croire que la ressource n'existe plus." },
+      { type: "input", q: "Le serveur répond « HTTP/1.1 ___ Created » après la création d'un avis.", a: ["201"], ph: "Un code…", exp: "201 + Location: /jeux/5/avis/7." }
+    ],
+    solution: `<pre class="pseudo">2xx c'est fait      200 OK · 201 Created (+Location) · 204 No Content     # famille des succès
+3xx va voir ailleurs 301/302 déplacé · 304 cache encore bon               # famille des redirections
+4xx ta faute        400 malformé · 401 qui es-tu ? · 403 pas le droit     # erreurs DU CLIENT (1/2)…
+                    404 inexistant · 405 méthode interdite · 409 conflit  # …erreurs du client (2/2)…
+                    422 données invalides · 429 ralentis                  # …deux erreurs client de plus, fréquentes
+5xx ma faute        500 bug serveur · 503 indisponible                    # erreurs DU SERVEUR
+                                                                          # ↓ à retenir ↓
+Le code fait PARTIE du contrat : le client route sa logique dessus.</pre>  # un code juste = des clients fiables
+<p>Le serveur sait répondre juste. Prochaine leçon : apprendre à nommer ce qu'on expose — des ressources, pas des actions.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l5", title: "La table des codes de la Ludothèque", level: 2,
+    statement: "Rédige la politique de codes de statut de l'endpoint POST /locations (créer une location). Recense au moins six scénarios distincts — du succès aux différents échecs (identité, droits, jeu inexistant, jeu déjà loué, corps invalide, panne) — et pour chacun : le code choisi, une justification d'une phrase, et ce que le client devrait afficher à l'utilisateur.",
+    hints: [
+      "Commence par le chemin heureux : quel code pour une création réussie, avec quel en-tête ?",
+      "Distingue soigneusement : token absent/expiré vs membre banni qui n'a plus le droit de louer.",
+      "Jeu 999 inexistant vs jeu 5 existant mais déjà loué : deux codes différents. Lesquels ?"
+    ],
+    solution: "POST /locations — politique de codes :\n\n1. Succès → 201 Created + Location: /locations/41 + JSON de la location. Client : « Location confirmée ! »\n2. Token absent ou expiré → 401 Unauthorized. Client : rediriger vers l'écran de connexion.\n3. Membre banni (identité connue, droit refusé) → 403 Forbidden. Client : « Ton compte ne permet plus de louer. »\n4. \"jeu\": 999 qui n'existe pas → 404 Not Found. Client : « Ce jeu n'existe pas ou plus. »\n5. Jeu 5 existant mais déjà loué → 409 Conflict. Client : « Catan est déjà loué, réessaie plus tard. »\n6. Corps illisible (JSON malformé) → 400 Bad Request ; corps lisible mais invalide (date_debut dans le passé) → 422. Client : afficher les erreurs de formulaire.\n7. Exception serveur → 500 ; maintenance → 503. Client : « Réessaie dans quelques minutes » — et côté équipe, alerte + lecture des logs.\n\nRègle transverse : jamais de 200 pour un échec, jamais de 500 pour une faute du client.",
+    note: "Ce document est exactement ce qu'on attend dans la spécification d'une API professionnelle — tu le formaliseras avec OpenAPI à la leçon 14, et la leçon 12 donnera un format de corps d'erreur propre pour accompagner chaque code. Dans ton capstone, chaque endpoint de la Ludothèque méritera sa table de codes." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

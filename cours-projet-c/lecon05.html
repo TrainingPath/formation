@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "La couche d'accès aux données (DAO) : SELECT et mapping",
+  subtitle: "Lire des lignes MySQL et les transformer en struct Jeu : le rôle du DAO.",
+  theory: `
+<h3>1. Le DAO : traduire base ↔ struct</h3>
+<p>Le <strong>DAO</strong> (<em>Data Access Object</em>, « objet d'accès aux données ») est la <em>seule</em> couche qui connaît MySQL. Il exécute les requêtes et <strong>mappe</strong> chaque ligne vers une struct. <strong>Mapper</strong> (de l'anglais <em>map</em>, « faire correspondre ») signifie ici recopier chaque colonne d'une ligne de la base dans le champ correspondant d'une struct C : la colonne <code>nom</code> va dans le champ <code>nom</code>, la colonne <code>id</code> dans le champ <code>id</code>, etc. C'est un travail de traduction. Résultat : les services ne voient jamais de SQL, seulement des <code>Jeu</code> tout prêts.</p>
+
+<h3>2. Exécuter un SELECT et parcourir</h3>
+<p>Un <code>SELECT</code> peut renvoyer <em>plusieurs</em> lignes. On les lit une par une, dans une <strong>boucle</strong>, en remplissant un tableau de struct au passage.</p>
+<pre class="pseudo">int jeu_lister(MYSQL *c, Jeu tab[], int max) {   // remplit le tableau tab (max cases) de jeux ; renvoie combien ont été lus
+    if (mysql_query(c, "SELECT id,nom,prix_location,stock_location FROM jeu"))   // exécute le SELECT ; non-nul = erreur
+        return -1;                          // erreur SQL : on abandonne en renvoyant -1
+    MYSQL_RES *res = mysql_store_result(c); // récupère l'ensemble des lignes renvoyées
+    if (!res) return -1;                    // pas de résultat récupérable : erreur
+    int n = 0;                              // compteur de jeux lus (démarre à 0)
+    MYSQL_ROW row;                          // variable qui recevra tour à tour chaque ligne
+    while ((row = mysql_fetch_row(res)) &amp;&amp; n &lt; max) {   // lit la ligne suivante, tant qu'il y en a ET qu'on ne déborde pas
+        tab[n].id             = atoi(row[0]);   // colonne 0 (id) : texte → entier, rangé dans la struct
+        snprintf(tab[n].nom, sizeof(tab[n].nom), "%s", row[1] ? row[1] : "");  // colonne 1 (nom) : copie sûre, "" si NULL
+        tab[n].prix_location  = atof(row[2]);   // colonne 2 (prix) : texte → réel
+        tab[n].stock_location = atoi(row[3]);   // colonne 3 (stock) : texte → entier
+        n++;                                    // une ligne de plus : on avance le compteur/l'index
+    }
+    mysql_free_result(res);                 // libérer la mémoire du résultat (obligatoire)
+    return n;                               // renvoyer le nombre de jeux effectivement lus
+}</pre>
+<p>Petit lexique : <code>tab[]</code> est un <strong>tableau</strong> de struct <code>Jeu</code> fourni par l'appelant ; <code>max</code> est sa taille (le nombre maximal de cases). La boucle <code>while</code> répète tant que sa condition est vraie. La condition combine deux choses avec <code>&amp;&amp;</code> (« ET ») : il reste une ligne à lire <strong>et</strong> <code>n &lt; max</code> (on n'a pas encore rempli le tableau) — sécurité contre le débordement.</p>
+
+<h3>3. Les valeurs arrivent en chaînes</h3>
+<p><code>mysql_fetch_row</code> renvoie un tableau de <strong>chaînes de caractères</strong> (des <code>char *</code>, c'est-à-dire des pointeurs vers du texte) : <code>row[0]</code>, <code>row[1]</code>… Même un nombre arrive sous forme de texte (le caractère "5", pas la valeur 5). On le <strong>convertit</strong> donc : <code>atoi</code> (<em>ASCII to integer</em>) transforme "42" en l'entier 42 ; <code>atof</code> (<em>ASCII to float</em>) transforme "44.90" en le réel 44.90. L'ordre des <code>row[i]</code> suit exactement l'ordre des colonnes du <code>SELECT</code>.</p>
+<div class="warn">Une colonne <code>NULL</code> en base (une case vide) donne un pointeur <code>NULL</code> dans <code>row[i]</code>. Toujours tester (<code>row[1] ? row[1] : ""</code>, qui se lit « si <code>row[1]</code> existe, prends-le, sinon prends la chaîne vide ») avant de l'utiliser, sinon le programme plante.</div>
+
+<h3>4. Toujours libérer le résultat</h3>
+<p>Chaque <code>mysql_store_result</code> réussi doit être suivi d'un <code>mysql_free_result</code>, y compris dans les chemins d'erreur — sinon <strong>fuite mémoire</strong> (mémoire réservée jamais rendue) à chaque requête. Répétée des milliers de fois, la fuite finit par épuiser la mémoire.</p>
+<div class="tip">La fonction renvoie le <strong>nombre</strong> de lignes lues (et <code>-1</code> en cas d'erreur) : le service saura combien de jeux parcourir, sans jamais toucher au SQL. Renvoyer <code>-1</code> pour signaler l'erreur est une <em>valeur sentinelle</em> : une valeur impossible en temps normal (on ne lit jamais « -1 jeu ») qui sert de signal d'alarme.</div>
+<h3>Aller plus loin — pré-incrément (++i) et post-incrément (i++)</h3>
+<p>Les deux écritures ajoutent 1 à la variable ; la différence n'apparaît que lorsqu'on <strong>lit la valeur au moment même</strong> de l'incrémentation. La formule à retenir : <code>i++</code> « donne sa valeur, PUIS grandit » ; <code>++i</code> « grandit, PUIS donne sa valeur ».</p>
+<pre class="pseudo">int a = 5;        // a vaut 5
+int b = a++;      // POST-increment : b prend l'ANCIENNE valeur -> b = 5, et ENSUITE a passe a 6
+int c = 5;        // c vaut 5
+int d = ++c;      // PRE-increment : c passe d'abord a 6, PUIS d prend la NOUVELLE valeur -> d = 6</pre>
+<p>Dans une boucle <code>for (i = 0; i &lt; 5; i++)</code>, on ne lit pas le résultat de <code>i++</code> : on veut seulement « ajouter 1 ». C'est pourquoi <code>i++</code> et <code>++i</code> y donnent exactement la même boucle et sont interchangeables.</p>`,
+  exercises: [
+    { type: "qcm", q: "Le DAO est la couche qui…", opts: ["affiche", "connaît MySQL et mappe lignes ↔ struct", "décide des règles", "compile"], a: 1, exp: "Data Access Object." },
+    { type: "qcm", q: "Après un SELECT, on récupère le résultat avec…", opts: ["mysql_store_result", "mysql_query", "mysql_init", "mysql_close"], a: 0, exp: "Puis on parcourt les lignes." },
+    { type: "qcm", q: "mysql_fetch_row renvoie…", opts: ["un int", "une ligne (tableau de char*)", "une struct", "NULL toujours"], a: 1, exp: "row[0], row[1]… sont des chaînes." },
+    { type: "qcm", q: "Comment convertir row[0] en entier ?", opts: ["cast (int)", "atoi(row[0])", "int(row[0])", "toInt"], a: 1, exp: "atoi pour un entier ; atof pour un réel." },
+    { type: "qcm", q: "Une colonne NULL en base donne, dans row[i]…", opts: ["\"\"", "un pointeur NULL", "0", "une erreur"], a: 1, exp: "Il faut tester avant de l'utiliser." },
+    { type: "qcm", q: "Comment copier row[1] dans le champ nom sans risque ?", opts: ["strcpy(nom, row[1])", "snprintf(nom, sizeof(nom), \"%s\", row[1] ? row[1] : \"\")", "nom = row[1]", "gets"], a: 1, exp: "snprintf borne et gère le NULL." },
+    { type: "qcm", q: "Que faut-il faire après avoir parcouru le résultat ?", opts: ["rien", "mysql_free_result(res)", "free(res)", "mysql_close(res)"], a: 1, exp: "Libérer pour éviter la fuite." },
+    { type: "qcm", q: "La fonction jeu_lister renvoie…", opts: ["le résultat brut", "le nombre de lignes lues (ou -1)", "un pointeur MySQL", "void"], a: 1, exp: "Le service saura combien parcourir." },
+    { type: "qcm", q: "L'ordre des row[i] suit…", opts: ["l'ordre alphabétique", "l'ordre des colonnes du SELECT", "l'ordre des tables", "le hasard"], a: 1, exp: "row[0] = 1re colonne du SELECT." },
+    { type: "qcm", q: "Les services voient…", opts: ["du SQL", "des struct Jeu, jamais de SQL", "des row", "des MYSQL_RES"], a: 1, exp: "Le DAO isole la base." },
+    { type: "vf", q: "On peut oublier mysql_free_result sans conséquence.", a: false, exp: "Faux : fuite mémoire à chaque requête." },
+    { type: "qcm", q: "atof sert à convertir une chaîne en…", opts: ["entier", "réel (double)", "caractère", "pointeur"], a: 1, exp: "atof pour prix_location." },
+    { type: "qcm", q: "Le <code>&& n < max</code> dans la boucle sert à…", opts: ["accélérer", "ne pas déborder le tableau tab reçu", "trier", "rien"], a: 1, exp: "Sécurité : rester dans les bornes." },
+    { type: "qcm", q: "Si mysql_query renvoie non-zéro…", opts: ["tout va bien", "c'est une erreur : on renvoie -1", "on continue", "on relance 10 fois"], a: 1, exp: "0 = succès, sinon erreur." },
+    { type: "qcm", q: "Le mapping consiste à…", opts: ["afficher", "remplir les champs de la struct depuis les colonnes", "trier", "chiffrer"], a: 1, exp: "Ligne SQL → struct C." }
+  ],
+  final: {
+    title: "Exercice final — Lire un jeu par son id",
+    intro: `<p>On veut charger UN jeu. Analyse cette ébauche :</p>
+<pre class="pseudo">int dao_jeu_par_id(MYSQL *c, int id, Jeu *out) {   // charge le jeu d'identifiant id dans la struct pointée par out
+    char sql[128];                                  // tampon texte où l'on construira la requête
+    sprintf(sql, "SELECT id,nom,prix_location FROM jeu WHERE id=%d", id);  // écrit le SQL (sprintf : SANS borne de taille)
+    mysql_query(c, sql);                            // exécute la requête (BUG : retour non vérifié)
+    MYSQL_RES *res = mysql_store_result(c);         // récupère le résultat
+    MYSQL_ROW row = mysql_fetch_row(res);           // lit la 1re ligne (BUG : row peut être NULL si l'id n'existe pas)
+    out->id = atoi(row[0]);                         // BUG : plante si row vaut NULL
+    return 0;                                       // renvoie 0 sans avoir libéré le résultat (fuite mémoire)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Que manque-t-il après mysql_query et mysql_fetch_row ?", opts: ["rien", "vérifier les erreurs et que row n'est pas NULL (jeu absent)", "un printf", "un sleep"], a: 1, exp: "row peut être NULL si l'id n'existe pas → plantage." },
+      { type: "qcm", q: "Que manque-t-il avant de renvoyer ?", opts: ["rien", "mysql_free_result(res)", "free(out)", "un return -1"], a: 1, exp: "Libérer le résultat." },
+      { type: "qcm", q: "Ici l'id est un entier : le sprintf est-il risqué ?", opts: ["Très risqué", "Peu risqué car id est un int (pas une saisie texte) — mais une requête préparée reste préférable", "Toujours sûr", "Impossible"], a: 1, exp: "Un int ne peut pas injecter ; pour du texte, ce serait dangereux (leçon 6)." },
+      { type: "qcm", q: "Que renvoyer si le jeu n'existe pas ?", opts: ["0 quand même", "un code d'erreur (ex. -1) pour que le service réagisse", "un jeu vide sans le dire", "rien"], a: 1, exp: "Signaler l'absence clairement." },
+      { type: "qcm", q: "Le champ out est rempli…", opts: ["par valeur", "à travers le pointeur out (par adresse)", "globalement", "jamais"], a: 1, exp: "out-> modifie la struct de l'appelant." }
+    ],
+    solution: `<pre class="pseudo">int dao_jeu_par_id(MYSQL *c, int id, Jeu *out) {   // 0 = jeu trouvé et rempli ; -1 = absent ou erreur
+    char sql[128];                                  // tampon pour construire la requête
+    snprintf(sql, sizeof(sql),                      // construit le SQL SANS jamais déborder le tampon
+             "SELECT id,nom,prix_location FROM jeu WHERE id=%d", id);  // id est un int : insertion sûre
+    if (mysql_query(c, sql)) return -1;             // erreur SQL → renvoyer -1
+    MYSQL_RES *res = mysql_store_result(c);         // récupère le résultat
+    if (!res) return -1;                            // pas de résultat → -1
+    MYSQL_ROW row = mysql_fetch_row(res);           // lit la ligne (une seule attendue)
+    int trouve = 0;                                 // drapeau : a-t-on trouvé le jeu ?
+    if (row) {                                      // si une ligne existe (l'id existe bien) :
+        out->id = atoi(row[0]);                     // remplir l'id dans la struct de l'appelant
+        snprintf(out->nom, sizeof(out->nom), "%s", row[1] ? row[1] : "");  // remplir le nom (sûr, gère le NULL)
+        out->prix_location = atof(row[2]);          // remplir le prix (texte → réel)
+        trouve = 1;                                 // on marque : jeu trouvé
+    }
+    mysql_free_result(res);                         // libérer le résultat dans TOUS les cas
+    return trouve ? 0 : -1;          // -1 si le jeu n'existe pas
+}</pre>
+<p>On vérifie tout, on gère l'absence, on libère. Le DAO lit proprement. Demain : écrire dans la base sans se faire injecter.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l05", title: "Compter les jeux d'une catégorie", level: 3,
+    statement: "Écris int dao_nb_par_categorie(MYSQL *c, int cat_id) qui renvoie le nombre de jeux d'une catégorie donnée (SELECT COUNT(*) ... WHERE categorie_id = ...). Vérifie les erreurs, libère le résultat, renvoie -1 en cas de problème.",
+    hints: [
+      "Construis le SQL avec snprintf (cat_id est un int, donc sûr).",
+      "COUNT(*) renvoie une seule ligne, une seule colonne.",
+      "atoi(row[0]) ; n'oublie pas mysql_free_result."
+    ],
+    solution: "#include <mysql/mysql.h>\n#include <stdlib.h>\n#include <stdio.h>\n\nint dao_nb_par_categorie(MYSQL *c, int cat_id) {\n    char sql[128];\n    snprintf(sql, sizeof(sql),\n             \"SELECT COUNT(*) FROM jeu WHERE categorie_id=%d\", cat_id);\n    if (mysql_query(c, sql)) return -1;\n    MYSQL_RES *res = mysql_store_result(c);\n    if (!res) return -1;\n    MYSQL_ROW row = mysql_fetch_row(res);\n    int n = row ? atoi(row[0]) : 0;\n    mysql_free_result(res);\n    return n;\n}",
+    note: "COUNT(*) donne toujours une ligne. cat_id étant un entier, l'insérer via snprintf est sûr ; pour une saisie texte, il faudrait une requête préparée (leçon 6)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

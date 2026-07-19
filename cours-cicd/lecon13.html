@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Secrets et variables de CI",
+  subtitle: "Le pipeline devra parler au registre et au serveur — sans jamais montrer ses clés.",
+  theory: `
+<h3>1. Le besoin qui arrive</h3>
+<p>Un <strong>secret</strong> est une information sensible qui prouve une identité ou donne un droit : mot de passe, <strong>jeton</strong> (un mot de passe généré, souvent long), <strong>clé</strong>. La semaine 3 fera <strong>pousser</strong> (envoyer) des images au <strong>registre</strong> (l'entrepôt d'images) et <strong>déployer</strong> (installer sur le serveur) via SSH. Le pipeline aura donc de <strong>vrais</strong> secrets — qui ne peuvent pas vivre dans le YAML : celui-ci est commité, donc lisible par toute l'équipe et par tout <strong>fork</strong> (copie du dépôt faite par n'importe qui).</p>
+
+<h3>2. Les secrets GitHub</h3>
+<pre class="pseudo">Settings → Secrets and variables → Actions → New repository secret   # le chemin dans l'interface GitHub pour créer un secret
+  REGISTRY_TOKEN    : jeton du registre d'images (droit : écriture paquets)   # servira à publier les images
+  SSH_PRIVATE_KEY   : clé de déploiement du serveur (leçon 17)                # servira à se connecter au serveur en SSH
+
+# usage dans un step :
+- name: Connexion au registre
+  run: echo "${'$'}{{ secrets.REGISTRY_TOKEN }}" | \\    # la forme secrets.NOM récupère le secret ; echo l'envoie… ; \\ = la commande continue
+       docker login ghcr.io -u toi --password-stdin      # …vers docker login, via --password-stdin (lit le mot de passe sur l'entrée, pas en argument visible)</pre>
+<p>Le secret est <strong>chiffré au repos</strong> (stocké sous forme illisible), injecté seulement à l'exécution, et <strong>masqué</strong> dans les logs : s'il apparaît, GitHub le remplace par <code>***</code>. On y accède avec la syntaxe <code>secrets.NOM_DU_SECRET</code>.</p>
+
+<h3>3. Les limites du masquage</h3>
+<pre class="pseudo">✘ echo "&lt;le secret&gt;"           # masqué... mais pourquoi tenter le diable ? (à éviter)
+✘ echo "&lt;le secret&gt;" | base64  # base64 TRANSFORME le secret : GitHub ne le reconnaît plus → il n'est PLUS masqué ! (dangereux)
+✔ on ne journalise JAMAIS un secret, même « pour voir »   # la seule règle sûre (journaliser = écrire dans les logs)</pre>
+<p><strong>base64</strong> est un encodage réversible (n'importe qui peut le décoder) : transformer un secret ainsi le rend visible, car le masquage ne reconnaît que la forme exacte du secret.</p>
+
+<h3>4. Secrets contre variables</h3>
+<pre class="pseudo">secrets.*  : sensibles, chiffrés, masqués (jetons, clés)                 # pour ce qui doit rester caché
+vars.*     : configuration NON sensible (nom du registre, version Python)  # pour ce qui peut être public mais varie
+env: du YAML : valeurs jetables de CI (ci-secret du MySQL de service)    # pour ce qui ne protège rien de réel (leçon 10)</pre>
+
+<h3>5. Le moindre privilège, encore</h3>
+<pre class="pseudo">REGISTRY_TOKEN  : peut pousser des images. C'est tout.                    # aucun autre droit que sa mission
+SSH_PRIVATE_KEY : utilisateur deploy, qui ne peut QUE compose pull/up.    # un compte limité, pas administrateur
+# jamais un jeton « admin » ou une clé root : un pipeline compromis        # root = super-administrateur d'un serveur
+# ne doit donner que ce que sa mission exige                              # principe du "moindre privilège"</pre>
+<p>Le <strong>moindre privilège</strong> signifie : ne donner à chaque acteur (ici, le pipeline) que les droits <strong>strictement nécessaires</strong>. Ainsi, si un secret fuit, les dégâts possibles sont limités.</p>
+<div class="warn">Attention aux <strong>PR venues de forks</strong> : par défaut, GitHub ne leur expose pas les secrets — et c'est vital. Un inconnu pourrait sinon ouvrir une PR dont le YAML modifié <em>exfiltre</em> (fait sortir en douce) la clé SSH privée. Ne jamais assouplir ce réglage.</div>
+<div class="tip">Même règle depuis trois cours : le code (YAML) est public, la configuration sensible est dehors — <code>os.environ</code> au capstone, <code>--env-file</code> en Docker, <code>secrets.*</code> en CI. Un seul principe, trois étages. Et toujours : un secret exposé une fois doit être <strong>changé</strong> (on appelle cela la <em>rotation</em>).</div>`,
+  exercises: [
+    { type: "qcm", q: "Les vrais secrets ne vivent pas dans le YAML car…", opts: ["C'est lent", "Le YAML est commité : lisible par l'équipe et les forks", "GitHub l'interdit", "Le YAML est trop court"], a: 1, exp: "Code public, secrets dehors." },
+    { type: "qcm", q: "Les secrets se configurent…", opts: ["Dans le code", "Settings → Secrets and variables → Actions", "Dans le README", "Dans un commit"], a: 1, exp: "Hors du dépôt versionné." },
+    { type: "qcm", q: "Un secret s'utilise par…", opts: ["${{ secrets.NOM }}", "$SECRET_NOM en dur", "cat secret.txt", "un copier-coller"], a: 0, exp: "Injecté à l'exécution." },
+    { type: "qcm", q: "Dans les logs, un secret apparaît…", opts: ["En clair", "Masqué (***)", "En base64", "Jamais utilisé"], a: 1, exp: "Masquage automatique." },
+    { type: "qcm", q: "echo secret | base64 dans un step…", opts: ["Reste masqué", "Contourne le masquage : le secret transformé s'affiche", "Est chiffré", "Échoue"], a: 1, exp: "La limite du masquage." },
+    { type: "vf", q: "On peut journaliser un secret « juste pour déboguer »." , a: false, exp: "Jamais — les logs se partagent et s'archivent." },
+    { type: "qcm", q: "--password-stdin dans docker login sert à…", opts: ["La vitesse", "Éviter le mot de passe dans la ligne de commande (et son historique)", "Le style", "Rien"], a: 1, exp: "Déjà vu au cours Docker (l.13 du fil rouge)." },
+    { type: "qcm", q: "vars.* (variables) accueillent…", opts: ["Les clés SSH", "La config NON sensible (nom du registre, versions)", "Les mots de passe", "Les tokens"], a: 1, exp: "Sensible = secrets, public = vars." },
+    { type: "qcm", q: "ci-secret du MySQL de service (leçon 10) vit dans le YAML car…", opts: ["C'est une erreur", "Valeur jetable qui ne protège rien de réel", "GitHub le chiffre", "C'est la prod"], a: 1, exp: "Trois niveaux, trois usages." },
+    { type: "qcm", q: "REGISTRY_TOKEN doit pouvoir…", opts: ["Tout administrer", "Seulement pousser des images", "Supprimer le dépôt", "Lire les emails"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "La clé SSH de déploiement appartient à…", opts: ["root", "Un utilisateur deploy limité à compose pull/up", "L'admin GitHub", "Tout le monde"], a: 1, exp: "Un pipeline compromis ne donne que sa mission." },
+    { type: "qcm", q: "Les PR venues de forks…", opts: ["Reçoivent tous les secrets", "Ne reçoivent PAS les secrets par défaut — vital", "Sont interdites", "Sont plus rapides"], a: 1, exp: "Sinon : exfiltration par YAML modifié." },
+    { type: "qcm", q: "Le scénario d'attaque via fork :", opts: ["Impossible", "Une PR modifie le YAML pour exfiltrer un secret", "Un virus", "Un DDoS"], a: 1, exp: "D'où le réglage par défaut." },
+    { type: "qcm", q: "Le principe commun capstone/Docker/CI :", opts: ["Trois systèmes différents", "Code public, configuration sensible à l'extérieur (env)", "Tout chiffrer", "Tout cacher"], a: 1, exp: "Un principe, trois étages." },
+    { type: "vf", q: "Un secret utilisé une fois dans un log public doit être changé (rotation).", a: true, exp: "Exposé = grillé, comme toujours." }
+  ],
+  final: {
+    title: "Exercice final — Les clés du pipeline",
+    intro: `<p>On prépare les secrets dont la semaine 3 aura besoin.</p>`,
+    questions: [
+      { type: "qcm", q: "Les deux secrets à créer :", opts: ["REGISTRY_TOKEN et SSH_PRIVATE_KEY", "USER et PASSWORD", "API_KEY et DEBUG", "aucun"], a: 0, exp: "Registre + déploiement." },
+      { type: "qcm", q: "Leur lieu de vie :", opts: ["Settings → Secrets (jamais le YAML)", "le YAML", "le README", "un commit"], a: 0, exp: "Chiffrés au repos." },
+      { type: "qcm", q: "La connexion au registre :", opts: ["echo ${{ secrets.REGISTRY_TOKEN }} | docker login --password-stdin", "docker login -p token-en-clair", "un cookie", "ssh"], a: 0, exp: "Pas de secret en argument." },
+      { type: "qcm", q: "Le périmètre de chaque secret :", opts: ["Minimal (pousser / déployer, rien de plus)", "admin total", "au choix", "illimité"], a: 0, exp: "Moindre privilège." },
+      { type: "vf", q: "Les secrets restent inaccessibles aux PR de forks, et on n'y touche pas.", a: true, exp: "Le réglage qui protège tout." }
+    ],
+    solution: `<pre class="pseudo"># Settings → Secrets and variables → Actions
+REGISTRY_TOKEN   = jeton ghcr.io — droit : écriture des paquets, RIEN d'autre   # portée minimale : publier des images
+SSH_PRIVATE_KEY  = clé de l'utilisateur deploy — droit : compose pull/up, RIEN d'autre   # un compte serveur bridé
+
+# usage (semaine 3) :
+- run: echo "${'$'}{{ secrets.REGISTRY_TOKEN }}" | \\    # on récupère le secret et on l'envoie…
+       docker login ghcr.io -u toi --password-stdin      # …à docker login sans l'exposer en argument
+
+# règles : jamais dans le YAML, jamais dans les logs,               # les interdits
+# portée minimale, rotation si exposé, forks sans secrets.          # les garde-fous</pre>
+<p>Les clés sont prêtes et rangées. Demain : verrouiller main — pas de vert, pas de merge.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta politique de secrets…",
+  items: [
+  { id: "cicd-l13", title: "L'incident du secret loggé", level: 3,
+    statement: "Scénario d'incident : un collègue a ajouté « echo $TOKEN | base64 » dans un step pour « déboguer » — le jeton du registre est visible, transformé, dans les logs d'un run public d'il y a 3 jours. Écris le rapport d'incident : l'évaluation (qui a pu voir quoi), les 4 actions immédiates dans l'ordre (rotation d'abord !), et les 2 mesures préventives (revue du YAML, règle d'équipe).",
+    hints: [
+      "Le masquage ne couvre pas les transformations : base64 -d suffit à récupérer le jeton.",
+      "Ordre : révoquer/renouveler le jeton → purger les logs → vérifier l'usage frauduleux → corriger le YAML.",
+      "Préventif : le YAML passe en revue comme le code ; interdiction absolue d'echo sur secrets."
+    ],
+    solution: "RAPPORT D'INCIDENT — jeton de registre exposé dans les logs\n\nÉVALUATION\nLe step « echo $TOKEN | base64 » a écrit le jeton (encodé, PAS masqué :\nle masquage ne couvre que la forme exacte du secret) dans les logs d'un\nrun visible depuis 3 jours. Toute personne ayant accès aux logs a pu\nfaire base64 -d et obtenir un jeton qui PEUT POUSSER DES IMAGES —\ndonc potentiellement publier une image malveillante sous notre nom.\n\nACTIONS IMMÉDIATES (dans l'ordre)\n1. RÉVOQUER le jeton au registre et en générer un nouveau\n   (la rotation d'abord : chaque minute compte, le reste peut attendre).\n2. Mettre à jour le secret REGISTRY_TOKEN dans GitHub.\n3. Supprimer/purger les logs du run concerné.\n4. AUDITER le registre : aucune image poussée par ce jeton depuis 3 jours\n   qui ne corresponde à un run légitime ? (comparer digests et dates).\n\nPRÉVENTION\n1. Le YAML de workflow passe en REVUE comme n'importe quel code —\n   un « echo secret » ne doit jamais survivre à une PR.\n2. Règle d'équipe écrite : aucun secret dans un echo/print, même\n   transformé, même « temporairement ». Pour déboguer une connexion :\n   tester le RÉSULTAT (docker login réussit ?) — jamais la clé.",
+    note: "L'ordre des actions est le cœur de la leçon : on révoque AVANT d'enquêter — un jeton exposé se traite comme volé, pas comme « peut-être vu ». Et la mesure préventive n° 1 rappelle un fil rouge du cours : le pipeline EST du code, avec les mêmes exigences de revue que le reste." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le squelette C++ dans Docker Compose",
+  subtitle: "Deux conteneurs — l'application et MySQL — décrits une fois, reproductibles partout.",
+  theory: `
+<h3>1. Un Dockerfile pour compiler et exécuter</h3>
+<p>Rappel : une <strong>image</strong> est le modèle figé (comme un moule) à partir duquel Docker crée un <strong>conteneur</strong> (la boîte qui fait tourner notre programme). Le <strong>Dockerfile</strong> est la recette écrite qui explique, étape par étape, comment fabriquer cette image — un peu comme une fiche de cuisine : on part d'un ingrédient de base, on ajoute des éléments, on cuit.</p>
+<pre class="pseudo">FROM debian:stable                                                    # PARTIR d'une base : le systeme Debian, version stable
+RUN apt-get update &amp;&amp; apt-get install -y g++ cmake libmysqlcppconn-dev # INSTALLER les outils : compilateur g++, CMake, connecteur MySQL
+COPY . /src                                                           # COPIER tout le code du projet dans le dossier /src de l'image
+WORKDIR /src                                                          # SE PLACER dans /src (dossier de travail des commandes suivantes)
+RUN cmake -S . -B build &amp;&amp; cmake --build build                       # COMPILER : CMake prepare le dossier build, puis fabrique le programme
+CMD ["./build/ludotheque"]                                            # COMMANDE lancee au demarrage du conteneur : executer le programme</pre>
+<p>Détaillons chaque mot-clé. <code>FROM</code> (« à partir de ») choisit l'<strong>image de base</strong> : ici Debian, un système d'exploitation léger, dans sa version <code>stable</code>. <code>RUN</code> (« exécuter ») lance une commande pendant la fabrication ; <code>apt-get install</code> est le gestionnaire de paquets de Debian, l'équivalent d'un magasin d'applications en ligne de commande, qui télécharge et installe des logiciels (l'option <code>-y</code> répond « oui » automatiquement aux questions). <code>COPY . /src</code> copie le contenu du dossier courant (le <code>.</code> signifie « ici ») vers <code>/src</code> à l'intérieur de l'image. <code>WORKDIR</code> définit le <strong>dossier de travail</strong>, comme lorsqu'on entre dans un dossier avant d'y travailler. Le second <code>RUN</code> appelle le compilateur via CMake. Enfin <code>CMD</code> indique la commande à lancer automatiquement au démarrage du conteneur. (On rendra ce Dockerfile <em>multi-stage</em> et <em>non-root</em> en leçon 17 : deux techniques de sécurité vues plus tard.)</p>
+
+<h3>2. docker-compose : app + db</h3>
+<p>Un <strong>fichier YAML</strong> (extension <code>.yml</code>) est un format de texte simple où l'agencement se fait par l'indentation (les décalages en début de ligne), un peu comme une liste à puces hiérarchisée. Le fichier <code>docker-compose.yml</code> décrit tous les conteneurs du projet et la façon dont ils s'articulent.</p>
+<pre class="pseudo">services:                              # LISTE des conteneurs a lancer
+  db:                                  # 1er service : la base de donnees
+    image: mysql:8.4                   # utiliser l'image toute prete MySQL 8.4 (aucune fabrication)
+    env_file: .env                     # lire les secrets (MYSQL_ROOT_PASSWORD, etc.) depuis le fichier .env
+    volumes: ["dbdata:/var/lib/mysql"] # brancher le volume "dbdata" sur le dossier ou MySQL range ses donnees
+  app:                                 # 2e service : notre application
+    build: .                           # construire l'image depuis le Dockerfile du dossier courant
+    depends_on: [db]                   # demarrer db AVANT app (l'app a besoin de la base)
+    env_file: .env                     # l'app lit aussi ses reglages dans .env
+volumes:                               # DECLARATION des volumes nommes
+  dbdata:                              # le volume "dbdata" utilise plus haut</pre>
+<div class="tip"><strong>Docker Compose</strong> est le chef d'orchestre qui démarre plusieurs conteneurs d'une seule commande et les fait dialoguer. Un <strong>service</strong> est un conteneur décrit dans ce fichier. <code>build: .</code> construit l'app depuis le Dockerfile local, tandis que <code>image: mysql:8.4</code> télécharge MySQL déjà prêt. <code>depends_on</code> fixe l'ordre de démarrage.</div>
+
+<h3>3. Les secrets par env_file</h3>
+<div class="warn">Rappel : un <strong>secret</strong> est une information confidentielle (ici les mots de passe MySQL). Ils proviennent du fichier <code>.env</code> (non versionné, donc absent de Git), et ne sont <strong>jamais</strong> écrits en clair dans le <code>docker-compose.yml</code>. Le fichier versionné ne contient aucune valeur secrète : il se contente de dire « va chercher ces valeurs dans l'environnement ». <code>env_file</code> signifie littéralement « fichier d'environnement ».</div>
+
+<h3>4. Persister les données</h3>
+<p>Un conteneur est <strong>éphémère</strong> : quand on l'arrête, tout ce qu'il contenait s'efface. Un <strong>volume</strong> (ici <code>dbdata</code>) est un espace de stockage rangé à l'extérieur du conteneur, sur la machine hôte — comme un disque dur externe qu'on rebranche : il conserve les données MySQL d'un redémarrage à l'autre. Sans lui, tout le contenu de la base disparaîtrait à l'arrêt. Le code de l'application, lui, n'a pas besoin de volume : on le reconstruit à chaque fois depuis les sources.</p>
+
+<h3>5. Le cycle de travail</h3>
+<pre class="pseudo">docker compose up --build      # CONSTRUIRE les images puis DEMARRER app + db ensemble
+docker compose logs -f app     # AFFICHER en continu (-f = follow) les messages (logs) de l'app
+docker compose down            # ARRETER et supprimer les conteneurs (le volume, lui, reste)</pre>
+<p>Un <strong>log</strong> (journal) est la suite des messages qu'un programme écrit pour raconter ce qu'il fait ; l'option <code>-f</code> (<em>follow</em>, « suivre ») les affiche en direct, au fur et à mesure. Un seul dépôt, une seule commande : n'importe quel collègue obtient exactement le même environnement. C'est la reproductibilité au cœur du projet pro.</p>
+
+<h3>Aller plus loin — pré-incrément (++i) et post-incrément (i++)</h3>
+<p>Les deux écritures ajoutent 1 à la variable ; la différence n'apparaît que lorsqu'on <strong>lit la valeur au moment même</strong> de l'incrémentation. La formule à retenir : <code>i++</code> « donne sa valeur, PUIS grandit » ; <code>++i</code> « grandit, PUIS donne sa valeur ».</p>
+<pre class="pseudo">int a = 5;        // a vaut 5
+int b = a++;      // POST-increment : b prend l'ANCIENNE valeur -> b = 5, et ENSUITE a passe a 6
+int c = 5;        // c vaut 5
+int d = ++c;      // PRE-increment : c passe d'abord a 6, PUIS d prend la NOUVELLE valeur -> d = 6</pre>
+<p>Dans une boucle <code>for (i = 0; i &lt; 5; i++)</code>, on ne lit pas le résultat de <code>i++</code> : on veut seulement « ajouter 1 ». C'est pourquoi <code>i++</code> et <code>++i</code> y donnent exactement la même boucle et sont interchangeables.</p>`,
+  exercises: [
+    { type: "qcm", q: "Le Dockerfile décrit…", opts: ["les tests", "comment fabriquer l'image (base, dépendances, build)", "le SQL", "les rôles"], a: 1, exp: "Recette de l'image." },
+    { type: "qcm", q: "docker-compose sert à…", opts: ["compiler un seul fichier", "orchestrer plusieurs conteneurs (app + db)", "logger", "tester"], a: 1, exp: "Orchestration." },
+    { type: "qcm", q: "build: . dans compose signifie…", opts: ["tirer une image toute faite", "construire l'app depuis le Dockerfile local", "supprimer l'image", "rien"], a: 1, exp: "Image maison." },
+    { type: "qcm", q: "image: mysql:8.4 …", opts: ["compile MySQL", "tire une image MySQL prête à l'emploi", "efface la base", "logge"], a: 1, exp: "Image officielle." },
+    { type: "qcm", q: "depends_on: [db] …", opts: ["supprime db", "ordonne le démarrage (db avant app)", "copie db", "rien"], a: 1, exp: "Ordre." },
+    { type: "qcm", q: "Les secrets MySQL viennent…", opts: ["du docker-compose.yml", "de .env (env_file), non versionné", "du Dockerfile", "des logs"], a: 1, exp: "Hors du YAML versionné." },
+    { type: "qcm", q: "Un volume (dbdata) sert à…", opts: ["compiler", "persister les données entre redémarrages", "logger", "tester"], a: 1, exp: "Persistance." },
+    { type: "qcm", q: "Sans volume, les données MySQL…", opts: ["persistent", "disparaissent à l'arrêt du conteneur", "sont chiffrées", "sont versionnées"], a: 1, exp: "Conteneur éphémère." },
+    { type: "qcm", q: "docker compose up --build …", opts: ["arrête tout", "construit et démarre les services", "efface le volume", "logge seulement"], a: 1, exp: "Démarrage." },
+    { type: "qcm", q: "L'intérêt principal des conteneurs :", opts: ["la vitesse pure", "un environnement identique pour tous (reproductibilité)", "moins de code", "plus de secrets"], a: 1, exp: "Fin du « ça marche chez moi »." },
+    { type: "vf", q: "On écrit le mot de passe MySQL directement dans docker-compose.yml.", a: false, exp: "Faux : via .env." },
+    { type: "qcm", q: "Le code de l'app a-t-il besoin d'un volume ?", opts: ["oui", "non : il est reconstruit depuis les sources", "toujours", "jamais aucune app"], a: 1, exp: "Seule la base persiste." },
+    { type: "qcm", q: "docker compose down …", opts: ["supprime le dépôt", "arrête les conteneurs (le volume reste)", "efface le code", "compile"], a: 1, exp: "Arrêt propre." },
+    { type: "qcm", q: "libmysqlcppconn-dev installe…", opts: ["MySQL", "le connecteur C++ (en-têtes/bibliothèque)", "Docker", "CMake"], a: 1, exp: "Connector/C++." },
+    { type: "qcm", q: "Le Dockerfile de la leçon 2 sera amélioré en leçon 17 pour être…", opts: ["plus gros", "multi-stage et non-root (production durcie)", "sans build", "supprimé"], a: 1, exp: "Image de prod." }
+  ],
+  final: {
+    title: "Exercice final — Un compose sûr",
+    intro: `<p>Un collègue écrit :</p>
+<pre class="pseudo">services:
+  db:                                      # le service base de donnees
+    image: mysql:8.4                        # image MySQL prete a l'emploi
+    environment:                            # variables definies ICI, dans le fichier
+      MYSQL_ROOT_PASSWORD: "root123"        # (?) mot de passe ECRIT EN DUR dans un fichier versionne : danger
+  app:
+    build: .                                # construit l'app depuis le Dockerfile</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Le problème :", opts: ["aucun", "le mot de passe est en dur dans un fichier versionné", "trop de services", "trop lent"], a: 1, exp: "Secret exposé." },
+      { type: "qcm", q: "La correction :", opts: ["le raccourcir", "utiliser env_file: .env (non versionné)", "le mettre en commentaire", "rien"], a: 1, exp: "Secret hors du YAML." },
+      { type: "qcm", q: "Il manque aussi pour la base…", opts: ["rien", "un volume pour persister les données", "un second db", "un log"], a: 1, exp: "Persistance." },
+      { type: "qcm", q: "Et pour l'ordre de démarrage…", opts: ["rien", "depends_on: [db] sur app", "un sleep", "un thread"], a: 1, exp: "db avant app." },
+      { type: "qcm", q: "Le .env correspondant est…", opts: ["versionné", "ignoré par Git (secrets)", "public", "vide obligatoire"], a: 1, exp: "Jamais commité." }
+    ],
+    solution: `<pre class="pseudo">services:
+  db:
+    image: mysql:8.4                   # image MySQL prete a l'emploi
+    env_file: .env                     # MYSQL_ROOT_PASSWORD lu depuis .env, hors du YAML
+    volumes: ["dbdata:/var/lib/mysql"] # volume : les donnees survivent aux redemarrages
+  app:
+    build: .                           # construire l'app depuis le Dockerfile
+    depends_on: [db]                   # demarrer la base avant l'app
+    env_file: .env                     # l'app lit ses reglages dans .env
+volumes:
+  dbdata:                              # declaration du volume nomme
+# .env (ignore par Git) : MYSQL_ROOT_PASSWORD=..., LUDO_DB_PASSWORD=...   &lt;- vraies valeurs, non versionnees</pre>
+<p>Secrets via <code>.env</code>, base persistée par un volume, démarrage ordonné : un environnement reproductible et sûr. Demain : Git, branches et la première CI.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile / compose ici…",
+  items: [
+  { id: "projcpppro-l02", title: "Un docker-compose app + db", level: 2,
+    statement: "Écris un docker-compose.yml avec un service db (mysql:8.4, secrets via env_file .env, volume de persistance) et un service app (build: ., depends_on db, env_file .env). Déclare le volume nommé.",
+    hints: [
+      "services: db et app.",
+      "db : image, env_file, volumes ; app : build, depends_on, env_file.",
+      "N'oublie pas la section volumes: en bas."
+    ],
+    solution: "services:\n  db:\n    image: mysql:8.4                 # image MySQL prete a l'emploi\n    env_file: .env                   # secrets hors du YAML (lus depuis .env)\n    volumes:\n      - dbdata:/var/lib/mysql        # persistance des donnees de la base\n  app:\n    build: .                         # construit l'app depuis le Dockerfile\n    depends_on:\n      - db                           # demarrer la base avant l'app\n    env_file: .env                   # l'app lit ses reglages dans .env\nvolumes:\n  dbdata:                            # declaration du volume nomme",
+    note: "Le compose décrit un environnement reproductible : MySQL prêt à l'emploi, l'app construite depuis le Dockerfile, secrets injectés par .env (jamais versionné) et données persistées dans un volume. depends_on ordonne le démarrage. Une seule commande recrée le même setup pour toute l'équipe." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

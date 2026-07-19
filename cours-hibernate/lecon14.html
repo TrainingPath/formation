@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "JPQL avancé : jointures, paramètres, projections",
+  subtitle: "Joindre des associations, ramener juste ce qu'il faut, compter et grouper — le JPQL des vraies requêtes.",
+  theory: `
+<h3>1. JOIN : on joint des associations, pas des tables</h3>
+<p>Hier (leçon 13), tu as écrit tes premières requêtes JPQL sur une seule entité. Aujourd'hui, on traverse les relations. Grande différence avec le SQL du Niveau 4 : en JPQL, tu ne joins <strong>jamais des tables avec un ON</strong> — tu joins les <strong>associations</strong> déclarées dans tes entités (leçons 8 à 10). Hibernate connaît déjà les clés étrangères grâce à @ManyToOne et compagnie : il écrit la condition de jointure à ta place.</p>
+<pre class="pseudo">// Toutes les locations du jeu « Catan »
+TypedQuery&lt;Location&gt; q = em.createQuery(              // requête typée renvoyant des Location
+    "SELECT l FROM Location l JOIN l.jeu j WHERE j.titre = :t",  // JPQL : on joint l'association l.jeu (pas une table)
+    Location.class);                                  // la classe attendue en résultat
+q.setParameter("t", "Catan");                         // remplir le paramètre nommé :t
+List&lt;Location&gt; locations = q.getResultList();          // exécuter → la liste des locations
+// SQL généré (le ON vient du mapping @ManyToOne, pas de toi) :
+// SELECT l.* FROM location l JOIN jeu j ON l.jeu_id = j.id WHERE j.titre = ?</pre>
+<p><em>l.jeu</em> est l'attribut de l'entité Location, pas une table : c'est LE réflexe à prendre. Écrire « JOIN jeu j ON ... » à la mode SQL est une erreur de syntaxe JPQL.</p>
+
+<h3>2. Enchaîner les jointures et filtrer avec des paramètres</h3>
+<p>On peut traverser plusieurs relations d'affilée, avec des paramètres nommés (:nom) toujours préférés à la concaténation — même règle anti-injection que les PreparedStatement du Niveau 4.</p>
+<pre class="pseudo">// Les membres ayant loué au moins un jeu d'une catégorie donnée
+"SELECT DISTINCT m FROM Location l JOIN l.membre m JOIN l.jeu j " +  // on traverse l.membre puis l.jeu...
+"JOIN j.categorie c WHERE c.nom = :cat AND l.dateDebut &gt;= :depuis"   // ...puis j.categorie ; on filtre sur deux paramètres
+// setParameter("cat", "Stratégie") ; setParameter("depuis", LocalDate.of(2026,1,1))</pre>
+<p>Le DISTINCT évite qu'un membre ayant loué trois jeux de stratégie apparaisse trois fois — souviens-toi de l'effet multiplicateur des jointures vu au Niveau 4.</p>
+
+<h3>3. Projections : ne ramener que ce qu'on affiche</h3>
+<p>Jusqu'ici, SELECT l ramenait des entités complètes. Pour un écran de liste, c'est souvent trop : une <strong>projection</strong> ne sélectionne que certains attributs.</p>
+<pre class="pseudo">// Projection scalaire : liste de titres
+List&lt;String&gt; titres = em.createQuery(                   // le résultat sera une liste de String
+    "SELECT j.titre FROM Jeu j ORDER BY j.titre", String.class).getResultList();  // on ne ramène QUE le titre
+
+// Plusieurs colonnes → Object[] par ligne (peu confortable...)
+List&lt;Object[]&gt; lignes = em.createQuery(                 // chaque ligne sera un tableau d'objets
+    "SELECT j.titre, j.prixLocation FROM Jeu j").getResultList();  // deux colonnes → un Object[] par ligne
+String titre = (String) lignes.get(0)[0];   // cast manuel : fragile</pre>
+<p>La version propre est la <strong>projection DTO</strong> (Data Transfer Object : un simple objet fait pour transporter des données d'affichage) avec l'opérateur <em>new</em> : JPQL appelle directement un constructeur avec le <strong>nom complet</strong> de la classe.</p>
+<pre class="pseudo">// public record JeuStat(String titre, Long nbLocations) {}
+List&lt;JeuStat&gt; stats = em.createQuery(                   // résultat : une liste de JeuStat
+    "SELECT new com.ludo.dto.JeuStat(j.titre, COUNT(l)) " +  // new + nom COMPLET de la classe → appelle son constructeur
+    "FROM Location l JOIN l.jeu j GROUP BY j.titre", JeuStat.class)  // grouper par titre pour compter les locations
+    .getResultList();   // objets typés, prêts pour l'écran, NON gérés par l'EntityManager</pre>
+
+<h3>4. Agrégats, GROUP BY et HAVING</h3>
+<p>Les fonctions d'agrégation du Niveau 4 existent telles quelles : <strong>COUNT, AVG, SUM, MIN, MAX</strong> (compter, moyenne, somme, min, max), avec GROUP BY et HAVING. Elles s'appliquent à des attributs ou des entités.</p>
+<pre class="pseudo">// Note moyenne par jeu, seulement les jeux bien notés
+"SELECT j.titre, AVG(a.note) FROM Avis a JOIN a.jeu j " +   // moyenne des notes ; jointure Avis → jeu
+"GROUP BY j.titre HAVING AVG(a.note) &gt;= :seuil"             // grouper par jeu, ne garder que les bien notés
+// COUNT(l) compte des locations ; SUM(l.prixTotal) additionne un attribut
+// Rappel Niveau 4 : WHERE filtre les lignes AVANT le groupement,
+//                   HAVING filtre les groupes APRÈS.</pre>
+<p>getSingleResult convient quand l'agrégat rend une seule valeur : <em>Long nb = em.createQuery("SELECT COUNT(j) FROM Jeu j", Long.class).getSingleResult();</em> — COUNT rend toujours un Long en JPQL.</p>
+
+<h3>5. LEFT JOIN : ne pas perdre les orphelins</h3>
+<p>Un JOIN (interne) élimine les jeux sans location. Pour un tableau de bord « nombre de locations par jeu, y compris zéro », il faut <strong>LEFT JOIN</strong>, exactement comme au Niveau 4.</p>
+<pre class="pseudo">"SELECT j.titre, COUNT(l) FROM Jeu j LEFT JOIN j.locations l GROUP BY j.titre"  // LEFT JOIN : garde même les jeux sans location
+// Un jeu jamais loué apparaît avec COUNT = 0 ; en JOIN interne, il disparaît.</pre>
+<p>Côté autres piles, même arsenal : LINQ GroupBy/Select en EF Core, les agrégats annotate() de Django, withCount() d'Eloquent ; et sous les @Query de Spring Data JPA, c'est exactement ce JPQL que tu écriras.</p>
+<div class="warn">Ne confonds pas ce LEFT JOIN avec le JOIN FETCH de la leçon 18 : ici on joint pour FILTRER ou PROJETER, la collection j.locations n'est pas chargée dans les entités pour autant. Beaucoup de bugs N+1 naissent de cette confusion.</div>
+<div class="tip">Règle d'or des écrans de consultation : entité complète quand tu vas MODIFIER l'objet, projection DTO (SELECT new) quand tu vas seulement AFFICHER. Le DTO est plus léger, non surveillé par le contexte de persistance, et fige un contrat clair pour la couche web du Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "En JPQL, une jointure s'écrit sur…", opts: ["Une table avec ON", "Une association de l'entité (ex. l.jeu)", "Un index MySQL", "Un fichier de mapping XML"], a: 1, exp: "On joint les relations déclarées (@ManyToOne...) ; Hibernate génère le ON depuis le mapping." },
+    { type: "qcm", q: "Dans \"SELECT l FROM Location l JOIN l.jeu j\", que désigne l.jeu ?", opts: ["La table jeu de MySQL", "Une sous-requête", "L'attribut jeu (association @ManyToOne) de l'entité Location", "Un alias obligatoire de colonne"], a: 2, exp: "C'est l'attribut Java de l'entité : la condition de jointure vient du mapping." },
+    { type: "qcm", q: "Qui écrit la condition ON l.jeu_id = j.id dans le SQL généré ?", opts: ["Toi, dans la chaîne JPQL", "Hibernate, à partir du mapping @ManyToOne", "MySQL, par devinette", "Le driver JDBC"], a: 1, exp: "La clé étrangère est connue du mapping : le ON est généré automatiquement." },
+    { type: "vf", q: "En JPQL, écrire JOIN jeu j ON l.jeu_id = j.id comme en SQL est la syntaxe normale.", a: false, exp: "Erreur de syntaxe : en JPQL on joint des associations (JOIN l.jeu j), pas des tables avec ON." },
+    { type: "qcm", q: "SELECT j.titre FROM Jeu j retourne…", opts: ["Une List de String (projection scalaire)", "Une List de Jeu complets", "Un seul titre", "Une erreur : SELECT j obligatoire"], a: 0, exp: "Projection : on ne ramène que l'attribut, pas l'entité." },
+    { type: "qcm", q: "SELECT j.titre, j.prixLocation FROM Jeu j (sans DTO) rend chaque ligne sous forme de…", opts: ["Jeu", "Map", "String concaténé", "Object[] avec cast manuel"], a: 3, exp: "Plusieurs colonnes sans new → tableau d'Object peu confortable ; d'où la projection DTO." },
+    { type: "qcm", q: "La syntaxe correcte d'une projection DTO :", opts: ["SELECT new com.ludo.dto.JeuStat(j.titre, COUNT(l)) FROM ...", "SELECT JeuStat FROM ...", "SELECT dto(j.titre) FROM ...", "CREATE DTO JeuStat AS SELECT ..."], a: 0, exp: "L'opérateur new + nom complet de la classe : JPQL appelle le constructeur correspondant." },
+    { type: "input", q: "Quel mot-clé JPQL, suivi du nom complet de la classe, crée une projection DTO ?", a: ["new", "NEW", "select new", "SELECT NEW"], ph: "mot-clé…", exp: "SELECT new com.ludo.dto.JeuStat(...) : chaque ligne devient un objet typé." },
+    { type: "qcm", q: "Un objet DTO issu de SELECT new est…", opts: ["Géré par le contexte de persistance", "Non géré : simple objet de lecture, aucun dirty checking", "Automatiquement persisté", "Un proxy lazy"], a: 1, exp: "Ce n'est pas une entité : parfait pour afficher, inutilisable pour modifier la base." },
+    { type: "qcm", q: "En JPQL, COUNT(l) retourne un…", opts: ["int", "String", "Long", "BigDecimal"], a: 2, exp: "Les COUNT JPQL rendent toujours Long : d'où TypedQuery&lt;Long&gt; et getSingleResult." },
+    { type: "qcm", q: "Pour filtrer sur AVG(a.note) &gt;= 4 après groupement, on utilise…", opts: ["WHERE", "ON", "HAVING", "LIMIT"], a: 2, exp: "Rappel Niveau 4 : WHERE filtre avant le GROUP BY, HAVING filtre les groupes après." },
+    { type: "input", q: "Quel type de jointure garde les jeux n'ayant AUCUNE location dans le résultat ? (deux mots)", a: ["LEFT JOIN", "left join", "LEFT OUTER JOIN", "left outer join"], ph: "… JOIN", exp: "LEFT JOIN j.locations l : les jeux jamais loués restent, avec COUNT = 0." },
+    { type: "vf", q: "Avec un JOIN interne, un jeu sans aucune location disparaît du résultat.", a: true, exp: "Comme en SQL : le JOIN interne exige une correspondance ; LEFT JOIN pour garder les orphelins." },
+    { type: "qcm", q: "Pourquoi DISTINCT dans \"SELECT DISTINCT m FROM Location l JOIN l.membre m ...\" ?", opts: ["Pour trier les membres", "Pour éviter les doublons dus à l'effet multiplicateur de la jointure", "Pour accélérer MySQL", "C'est obligatoire avec JOIN"], a: 1, exp: "Un membre avec 3 locations sortirait 3 fois : la jointure multiplie les lignes (Niveau 4)." },
+    { type: "vf", q: "Un LEFT JOIN de projection charge la collection j.locations dans les entités Jeu retournées.", a: false, exp: "Non : il sert à filtrer/projeter. Charger la collection, c'est JOIN FETCH (leçon 18)." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau de bord de la Ludothèque",
+    intro: `<p>Le gérant veut un écran de statistiques : nombre de locations par jeu (y compris les jeux jamais loués), note moyenne des jeux bien notés, et la liste des membres actifs d'une catégorie. Chaque besoin appelle une construction JPQL précise.</p>`,
+    questions: [
+      { type: "qcm", q: "« Nombre de locations par jeu, y compris zéro » :", opts: ["SELECT j.titre, COUNT(l) FROM Jeu j JOIN j.locations l GROUP BY j.titre", "SELECT j.titre, COUNT(l) FROM Jeu j LEFT JOIN j.locations l GROUP BY j.titre", "SELECT COUNT(*) FROM Jeu", "SELECT j FROM Jeu j WHERE j.locations = 0"], a: 1, exp: "LEFT JOIN garde les jeux sans location (COUNT = 0) ; le JOIN interne les éliminerait." },
+      { type: "qcm", q: "Pour livrer ces stats à l'écran sous forme d'objets typés JeuStat(titre, nb) :", opts: ["SELECT new com.ludo.dto.JeuStat(j.titre, COUNT(l)) ...", "SELECT j INTO JeuStat ...", "em.mapTo(JeuStat.class)", "Impossible sans requête native"], a: 0, exp: "Projection DTO : new + nom complet de la classe, constructeur correspondant obligatoire." },
+      { type: "vf", q: "Pour ne garder que les jeux dont AVG(a.note) dépasse 4, la condition se place dans HAVING, pas dans WHERE.", a: true, exp: "La moyenne n'existe qu'après groupement : HAVING AVG(a.note) &gt; 4." },
+      { type: "input", q: "Complète : \"SELECT DISTINCT m FROM Location l JOIN l.membre m JOIN l.____ j WHERE j.titre = :t\"", a: ["jeu", "l.jeu"], ph: "l'association…", exp: "On traverse l'attribut jeu de Location : c'est l'association, pas la table." },
+      { type: "qcm", q: "q.setParameter(\"t\", saisieUtilisateur) plutôt que concaténer la saisie dans la chaîne, car…", opts: ["C'est plus rapide à taper", "Ça protège de l'injection (même principe que PreparedStatement au Niveau 4)", "JPQL interdit les chaînes littérales", "Ça évite le GROUP BY"], a: 1, exp: "Les paramètres nommés sont bindés proprement : jamais de concaténation de saisie utilisateur." }
+    ],
+    solution: `<pre class="pseudo">// 1. Locations par jeu, zéros compris → LEFT JOIN + GROUP BY + DTO
+List&lt;JeuStat&gt; stats = em.createQuery(                   // résultat : liste de JeuStat
+  "SELECT new com.ludo.dto.JeuStat(j.titre, COUNT(l)) " +  // projection DTO (new + nom complet de la classe)
+  "FROM Jeu j LEFT JOIN j.locations l GROUP BY j.titre", JeuStat.class)  // LEFT JOIN garde les jeux à 0 location
+  .getResultList();                                    // exécuter la requête
+
+// 2. Jeux bien notés → agrégat + HAVING (filtre APRÈS groupement)
+"SELECT j.titre, AVG(a.note) FROM Avis a JOIN a.jeu j " +   // moyenne des notes par jeu
+"GROUP BY j.titre HAVING AVG(a.note) &gt;= :seuil"             // ne garder que les moyennes >= :seuil
+
+// 3. Membres actifs d'une catégorie → jointures d'associations + DISTINCT
+"SELECT DISTINCT m FROM Location l JOIN l.membre m " +      // DISTINCT : chaque membre une seule fois
+"JOIN l.jeu j JOIN j.categorie c WHERE c.nom = :cat"        // traverser jeu puis catégorie, filtrer sur :cat</pre>
+<p>Tu sais désormais joindre, projeter et agréger — mais ces requêtes restent des chaînes figées. Demain : construire une requête MORCEAU PAR MORCEAU selon les critères cochés par l'utilisateur (Criteria API), et redescendre au SQL natif quand il le faut.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l14", title: "Concevoir la requête du palmarès", level: 3,
+    statement: "Le gérant de la Ludothèque veut un « palmarès » : pour chaque catégorie, le nombre de jeux, le nombre total de locations (y compris les catégories dont aucun jeu n'a été loué) et la note moyenne des avis, en ne gardant que les catégories d'au moins 3 jeux. Rédige la requête JPQL complète avec une projection DTO CategorieStat, puis justifie par écrit : chaque type de jointure choisi (interne ou LEFT), l'emplacement de chaque filtre (WHERE ou HAVING), et pourquoi un DTO plutôt que des entités.",
+    hints: [
+      "Pars de Categorie et traverse c.jeux puis j.locations et j.avis : lesquelles de ces traversées doivent survivre à l'absence de données ?",
+      "« Au moins 3 jeux » porte sur un COUNT : ce filtre peut-il vivre dans un WHERE ?",
+      "Attention aux doublons : joindre à la fois locations et avis multiplie les lignes — COUNT(DISTINCT ...) peut sauver la mise."
+    ],
+    solution: "SELECT new com.ludo.dto.CategorieStat(\n    c.nom,\n    COUNT(DISTINCT j),\n    COUNT(DISTINCT l),\n    AVG(a.note))\nFROM Categorie c\nJOIN c.jeux j                -- interne : une catégorie sans jeu est hors palmarès\nLEFT JOIN j.locations l      -- LEFT : garder les catégories jamais louées (total 0)\nLEFT JOIN j.avis a           -- LEFT : garder les jeux sans avis (AVG rend null)\nGROUP BY c.nom\nHAVING COUNT(DISTINCT j) >= 3   -- filtre sur un agrégat → HAVING, jamais WHERE\n\nJustifications :\n- JOIN interne sur c.jeux : le seuil « au moins 3 jeux » exclut de toute façon\n  les catégories vides ; inutile de les garder.\n- LEFT JOIN sur locations et avis : l'énoncé exige les catégories sans location.\n- COUNT(DISTINCT ...) : la double jointure locations × avis multiplie les lignes\n  (effet multiplicateur du Niveau 4) ; sans DISTINCT, les comptes explosent.\n- HAVING : la condition porte sur COUNT, qui n'existe qu'après GROUP BY.\n- DTO : écran de consultation pure → objets légers, non gérés, contrat clair\n  pour la couche web ; charger des entités complètes serait du gaspillage.",
+    note: "Ce raisonnement jointure par jointure (qui survit à l'absence de données ? où vit chaque filtre ?) est exactement celui que tu feras avec les @Query de Spring Data JPA au Niveau 6, et il se transpose tel quel aux GroupBy de LINQ/EF Core ou aux annotate() de Django. La leçon 16 ajoutera la pagination à ce palmarès." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

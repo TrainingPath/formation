@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Casts, accesseurs et mutateurs",
+  subtitle: "MySQL parle en chaînes ; tes modèles répondent en dates, booléens et euros.",
+  theory: `
+<h3>1. Le problème : tout arrive en chaîne</h3>
+<p>MySQL renvoie des données brutes : '4.50' est une chaîne de caractères, '2026-07-01' est une chaîne, un booléen (vrai/faux) est stocké en 0 ou 1. Sans rien faire, tu écris des comparaisons piégées et des calculs de dates à la main. Un <strong>cast</strong> (« conversion de type ») dit à Eloquent de transformer automatiquement la valeur brute en son vrai type PHP (analogie : un traducteur posté à la sortie de la base qui rend chaque valeur dans la bonne langue — nombre, date, booléen). La propriété <strong>$casts</strong> déclare ce type pour chaque colonne :</p>
+<pre class="pseudo">// app/Models/Jeu.php
+protected $casts = [                   // table de conversion des colonnes du modèle Jeu
+    'prix_location' =&gt; 'decimal:2',    // chaîne '4.50' → décimal à 2 décimales
+    'est_visible'   =&gt; 'boolean',      // 0/1 de MySQL → vrai true / false PHP
+    'options'       =&gt; 'array',        // colonne JSON ↔ tableau PHP
+];
+
+// app/Models/Location.php
+protected $casts = [                   // conversions pour le modèle Location
+    'date_location' =&gt; 'date',         // chaîne '2026-07-01' → objet date (Carbon)
+    'date_retour'   =&gt; 'date',         // idem pour la date de retour
+];</pre>
+<p>Dès lors, $jeu-&gt;est_visible est un VRAI booléen, $jeu-&gt;options un tableau PHP (<strong>sérialisé</strong> — c'est-à-dire converti en texte JSON — au moment du save), et les dates… deviennent magiques. <em>Équivalents : @Convert et les types chez JPA, ValueConverter chez EF Core, les champs typés du modèle Django.</em></p>
+
+<h3>2. Les dates deviennent Carbon</h3>
+<p>Une colonne castée en 'date' ou 'datetime' arrive en objet <strong>Carbon</strong> — la bibliothèque de dates de Laravel, déjà croisée avec now() (analogie : une date qui sait faire ses propres calculs, au lieu d'une simple chaîne muette). Chaque appel ci-dessous part de la date et en tire une information :</p>
+<pre class="pseudo">$location-&gt;date_location-&gt;format('d/m/Y');        // met en forme → « 01/07/2026 »
+$location-&gt;date_location-&gt;diffInDays(now());      // écart en jours avec aujourd'hui → 9
+$location-&gt;date_location-&gt;addDays(14);            // ajoute 14 jours → la date limite de retour
+$location-&gt;date_location-&gt;isPast();               // cette date est-elle passée ? → true
+
+// created_at et updated_at sont castés en Carbon automatiquement, depuis toujours</pre>
+<p>Le calcul de retard de la leçon 17 (diffInDays) ne fonctionnait QUE grâce à ce cast. Sans lui, tu comparerais des chaînes de caractères, pas des dates.</p>
+
+<h3>3. Accesseurs : des attributs calculés</h3>
+<p>Un <strong>accesseur</strong> fabrique un attribut qui n'existe pas en base : il est calculé en PHP à la lecture (analogie : une case « total » d'une facture, recalculée à l'affichage, jamais stockée). Syntaxe moderne : une méthode qui retourne un objet Attribute. Le <strong>fn () =&gt; …</strong> est une <em>fonction fléchée</em>, une closure courte qui renvoie une valeur.</p>
+<pre class="pseudo">// app/Models/Membre.php
+use Illuminate\\Database\\Eloquent\\Casts\\Attribute;   // importe la classe Attribute
+
+protected function nomComplet(): Attribute   // méthode-accesseur, nommée en camelCase
+{
+    return Attribute::make(                  // construit l'attribut calculé
+        get: fn () =&gt; $this-&gt;prenom . ' ' . $this-&gt;nom,   // get: valeur lue = prénom + espace + nom
+    );
+}
+
+$membre-&gt;nom_complet;    // « Léa Dupont » — on lit l'attribut en snake_case !</pre>
+<p>La méthode se nomme en <strong>camelCase</strong> (nomComplet, majuscules à l'intérieur), l'attribut se lit en <strong>snake_case</strong> (nom_complet, underscores) : c'est la convention Eloquent. L'accesseur peut aussi TRANSFORMER une vraie colonne : get: fn ($value) =&gt; ucfirst($value) mettrait une majuscule au titre, par exemple. Le calcul a lieu en PHP, à la lecture.</p>
+
+<h3>4. Mutateurs : nettoyer à l'écriture</h3>
+<p>Le <strong>mutateur</strong> est le miroir de l'accesseur : il transforme la valeur AVANT qu'elle parte en base (analogie : le contrôle à l'entrepôt qui nettoie et étiquette chaque colis avant de le ranger). get (lecture) et set (écriture) cohabitent dans le même Attribute :</p>
+<pre class="pseudo">// app/Models/Membre.php
+protected function email(): Attribute       // méthode-mutateur sur la colonne email
+{
+    return Attribute::make(
+        set: fn ($value) =&gt; strtolower(trim($value)),   // set: nettoie AVANT écriture (minuscules + espaces enlevés)
+    );
+}
+
+$membre-&gt;email = '  LEA@Exemple.BE ';   // valeur sale saisie par l'utilisateur
+$membre-&gt;save();                        // stocké après nettoyage : lea@exemple.be</pre>
+<p>Plus un seul doublon d'email pour cause de majuscules : la règle vit DANS le modèle, appliquée partout, même dans tinker ou un import. C'est l'esprit Active Record de la leçon 7 : l'objet connaît ses propres règles.</p>
+
+<h3>5. $appends : les attributs calculés dans le JSON</h3>
+<p>Par défaut, un accesseur n'apparaît PAS dans toArray() / toJson() (les méthodes qui transforment le modèle en tableau ou en <strong>JSON</strong>, le format texte des API) — il n'existe qu'à la demande. Pour l'embarquer dans les réponses d'API :</p>
+<pre class="pseudo">// app/Models/Membre.php
+protected $appends = ['nom_complet'];   // ajoute l'accesseur nom_complet aux sorties JSON/tableau
+
+// GET /api/membres/12 →                   la réponse contient maintenant :
+// { "id": 12, "prenom": "Léa", "nom": "Dupont",
+//   "nom_complet": "Léa Dupont", … }      ← l'attribut calculé y figure
+
+// Et le complément déjà connu : cacher le sensible
+protected $hidden = ['mot_de_passe'];   // retire ces colonnes des sorties JSON</pre>
+<p>Casts, accesseurs, mutateurs, appends : quatre réglages qui font la frontière entre un modèle « sac de chaînes » et un modèle expressif prêt pour l'API du Niveau 6.</p>
+<div class="warn">Un accesseur est calculé EN PHP, à la lecture : nom_complet n'est PAS une colonne. Membre::where('nom_complet', 'Léa Dupont') échouera — MySQL ne la connaît pas. Pour filtrer, reviens aux vraies colonnes (where sur prenom et nom) ou à une expression SQL (CONCAT en raw, leçon 15). Même piège pour orderBy.</div>
+<div class="tip">Pose les casts DÈS la création du modèle, en recopiant les types de ta migration : chaque boolean, date, decimal et colonne JSON mérite sa ligne dans $casts. C'est une minute de travail qui élimine toute une famille de bugs de comparaison — et tes diffInDays fonctionneront du premier coup.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans cast, une colonne DECIMAL de MySQL arrive en PHP comme…", opts: ["Un float", "Une chaîne de caractères", "Un entier", "Un objet Money"], a: 1, exp: "MySQL parle en chaînes : '4.50'. Le cast decimal:2 rétablit le bon type." },
+    { type: "qcm", q: "La propriété qui déclare les types des colonnes d'un modèle :", opts: ["$fillable", "$types", "$casts", "$schema"], a: 2, exp: "protected $casts = ['est_visible' => 'boolean', …] : la table de conversion du modèle." },
+    { type: "qcm", q: "Le cast 'array' sur une colonne JSON permet…", opts: ["De lire un tableau PHP et de le voir sérialisé en JSON au save", "De créer un index", "D'éviter les migrations", "De chiffrer la colonne"], a: 0, exp: "Aller-retour automatique tableau PHP ↔ JSON en base." },
+    { type: "qcm", q: "Une colonne castée en 'date' devient à la lecture…", opts: ["Une chaîne formatée", "Un timestamp entier", "Un objet Carbon (diffInDays, format, addDays, isPast…)", "Un tableau"], a: 2, exp: "Carbon : toute l'arithmétique de dates sans manipulation de chaînes." },
+    { type: "vf", q: "created_at et updated_at exigent une ligne dans $casts pour devenir des objets Carbon.", a: false, exp: "Les timestamps automatiques sont castés d'office depuis la leçon 2." },
+    { type: "input", q: "Quelle méthode Carbon calcule le nombre de jours entre deux dates ?", a: ["diffInDays", "diffInDays()", "->diffInDays()"], ph: "nom de la méthode…", exp: "$location->date_location->diffInDays(now()) : le calcul de retard de la leçon 17." },
+    { type: "qcm", q: "Un accesseur sert à…", opts: ["Créer une colonne en base", "Fabriquer ou transformer un attribut À LA LECTURE, calculé en PHP", "Accélérer les requêtes", "Valider un formulaire"], a: 1, exp: "Attribute::make(get: …) : nom_complet n'existe nulle part en base." },
+    { type: "qcm", q: "La méthode d'accesseur nomComplet() s'utilise en lisant…", opts: ["$membre->nomComplet()", "$membre->nom_complet", "$membre->getNomComplet", "Membre::nomComplet"], a: 1, exp: "Méthode en camelCase, attribut en snake_case : la convention des accesseurs modernes." },
+    { type: "input", q: "Quelle classe importe-t-on pour la syntaxe moderne des accesseurs/mutateurs ?", a: ["Attribute", "Casts\\Attribute", "Illuminate\\Database\\Eloquent\\Casts\\Attribute"], ph: "use Illuminate\\Database\\Eloquent\\Casts\\… ;", exp: "Attribute::make(get: …, set: …) vient de Illuminate\\Database\\Eloquent\\Casts\\Attribute." },
+    { type: "qcm", q: "Un mutateur transforme la valeur…", opts: ["À la lecture", "AVANT l'écriture en base (set:)", "Pendant la migration", "Au moment du toJson"], a: 1, exp: "set: fn ($value) => strtolower(trim($value)) — le nettoyage vit dans le modèle." },
+    { type: "qcm", q: "Le grand intérêt du mutateur email (minuscules + trim) dans le MODÈLE plutôt que dans le contrôleur :", opts: ["C'est plus rapide", "La règle s'applique PARTOUT : contrôleurs, imports, tinker — impossible de l'oublier", "Ça évite une migration", "Aucun"], a: 1, exp: "L'esprit Active Record : l'objet porte ses propres règles, quel que soit le chemin d'écriture." },
+    { type: "vf", q: "Un accesseur apparaît automatiquement dans le JSON retourné par l'API.", a: false, exp: "Il faut l'ajouter à $appends = ['nom_complet'] pour l'embarquer dans toArray/toJson." },
+    { type: "input", q: "Quelle propriété du modèle ajoute un accesseur aux sérialisations JSON ?", a: ["appends", "$appends", "protected $appends"], ph: "protected $… = ['nom_complet'];", exp: "$appends — et $hidden pour le chemin inverse (cacher le sensible)." },
+    { type: "qcm", q: "Membre::where('nom_complet', 'Léa Dupont') échoue parce que…", opts: ["La syntaxe est fausse", "nom_complet est calculé en PHP : MySQL ne connaît pas cette colonne", "where est réservé aux nombres", "Il manque un cast"], a: 1, exp: "Filtrer se fait sur les vraies colonnes (prenom, nom) ou en SQL (CONCAT, leçon 15)." },
+    { type: "qcm", q: "L'équivalent des casts chez EF Core :", opts: ["Les ValueConverters", "Include()", "sync()", "paginate()"], a: 0, exp: "ValueConverter chez EF Core, @Convert chez JPA, champs typés chez Django : la conversion type PHP/SQL est universelle." }
+  ],
+  final: {
+    title: "Exercice final — Des modèles qui parlent métier",
+    intro: `<p>Passage en revue des quatre modèles : chaque colonne reçoit son vrai type, chaque règle d'écriture rejoint son modèle, et l'API expose des attributs propres.</p>`,
+    questions: [
+      { type: "qcm", q: "Sur Location, le cast indispensable pour écrire date_location->diffInDays(now()) :", opts: ["'date_location' => 'array'", "'date_location' => 'date'", "'date_location' => 'boolean'", "Aucun"], a: 1, exp: "Le cast date → objet Carbon → toute l'arithmétique de dates." },
+      { type: "qcm", q: "L'attribut est_visible du modèle Jeu doit être comparable avec un vrai true/false :", opts: ["'est_visible' => 'boolean' dans $casts", "Un if ($jeu->est_visible == '1')", "Une colonne VARCHAR", "Un accesseur obligatoire"], a: 0, exp: "Le cast boolean transforme le 0/1 de MySQL en vrai booléen PHP." },
+      { type: "input", q: "Dans Attribute::make(…), quel paramètre nommé définit la transformation À L'ÉCRITURE ?", a: ["set", "set:", "set: fn"], ph: "Attribute::make(…: …)", exp: "set: pour le mutateur, get: pour l'accesseur — les deux peuvent cohabiter." },
+      { type: "vf", q: "Ajouter 'nom_complet' à $appends ET le définir en accesseur permet à GET /api/membres de l'exposer.", a: true, exp: "L'accesseur calcule, $appends embarque : le duo des attributs d'API." },
+      { type: "qcm", q: "Trier les membres par nom_complet côté SQL :", opts: ["orderBy('nom_complet') fonctionne", "Impossible directement : orderBy sur les vraies colonnes (nom, prenom) ou orderByRaw avec CONCAT", "Il faut un cast", "Trier en PHP est toujours mieux"], a: 1, exp: "L'accesseur n'existe qu'en PHP : le tri SQL exige les vraies colonnes ou une expression raw." }
+    ],
+    solution: `<pre class="pseudo">$casts     'prix' =&gt; 'decimal:2' · 'est_visible' =&gt; 'boolean'
+           'date_retour' =&gt; 'date' (→ Carbon) · 'options' =&gt; 'array' (JSON)
+ACCESSEUR  Attribute::make(get: fn () =&gt; …)   → attribut calculé, lu en snake_case
+MUTATEUR   Attribute::make(set: fn ($v) =&gt; …) → nettoyage AVANT écriture
+$appends   embarque l'accesseur dans le JSON · $hidden cache le sensible
+
+PIÈGE : un accesseur n'est PAS une colonne → ni where() ni orderBy() dessus
+Ailleurs : @Convert (JPA) · ValueConverter (EF Core) · champs typés (Django)</pre>
+<p>Tes modèles parlent enfin le langage du métier. Dernière couche d'intelligence : nommer les requêtes récurrentes et réagir aux événements de la vie d'un modèle. Leçon 19 : scopes, events et bonnes pratiques.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l18", title: "La revue de typage des quatre modèles", level: 2,
+    statement: "Passe en revue les quatre modèles de la Ludothèque et rédige leur plan de typage complet : pour Jeu (prix_location, est_visible, options JSON), Membre (email, prenom + nom, date_naissance), Location (date_location, date_retour) et Avis (note), décide ce qui relève d'un cast, d'un accesseur ou d'un mutateur. Écris chaque déclaration, justifie-la par un bug concret qu'elle prévient, et désigne les accesseurs à ajouter à $appends pour l'API — en signalant ceux sur lesquels il sera impossible de faire un where().",
+    hints: [
+      "Règle de tri : conversion de TYPE d'une vraie colonne → cast ; valeur CALCULÉE à la lecture → accesseur ; NETTOYAGE avant écriture → mutateur.",
+      "Pour chaque cast, cherche le bug évité : comparer '0' et false, comparer des dates en chaînes, oublier de décoder du JSON…",
+      "nom_complet et est_en_retard sont des candidats accesseurs : lesquels méritent $appends, et pourquoi ne seront-ils jamais filtrables en SQL ?"
+    ],
+    solution: "JEU\n  $casts = ['prix_location' => 'decimal:2',   // sinon '4.50' chaîne :\n            'est_visible'   => 'boolean',     //   tris et calculs faux\n            'options'       => 'array'];      // JSON décodé/encodé seul\n  Bug prévenu : if ($jeu->est_visible) avec '0' (chaîne truthy en\n  d'autres langages, piège de comparaison) → vrai booléen fiable.\n\nMEMBRE\n  $casts = ['date_naissance' => 'date'];\n  Mutateur email : set: fn ($v) => strtolower(trim($v));\n    → bug prévenu : LEA@… et lea@… créant deux comptes.\n  Accesseur nom_complet : get: fn () => $this->prenom.' '.$this->nom;\n  $appends = ['nom_complet']; // exposé à l'API\n  ⚠ where('nom_complet', …) impossible : calculé en PHP.\n\nLOCATION\n  $casts = ['date_location' => 'date', 'date_retour' => 'date'];\n    → bug prévenu : comparer '2026-07-01' > '2026-06-30' en chaînes\n      marche par accident, diffInDays exige Carbon.\n  Accesseur est_en_retard :\n    get: fn () => $this->date_retour === null\n         && $this->date_location->diffInDays(now()) > 14;\n  $appends = ['est_en_retard'];\n  ⚠ pas de where('est_en_retard') : pour FILTRER les retards en SQL,\n    un scope avec whereNull + condition de date (leçon 19 !).\n\nAVIS\n  $casts = ['note' => 'integer'];\n    → bug prévenu : avg() et comparaisons sur '4' chaîne.\n\nBilan : cast = type d'une vraie colonne ; accesseur = calcul de\nlecture (jamais filtrable) ; mutateur = règle d'écriture qui vit\ndans le modèle, appliquée sur TOUS les chemins d'écriture.",
+    note: "Ce plan de typage est la première chose qu'un relecteur regarde dans une couche modèle : il dit si l'équipe subit sa base ou la maîtrise. La remarque sur est_en_retard — accesseur pour AFFICHER, scope pour FILTRER — annonce la leçon 19 et un principe qui vaut pour tous les ORM : la même règle métier existe souvent en deux exemplaires, un pour PHP, un pour SQL, et ils doivent rester d'accord." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

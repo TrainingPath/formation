@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Sécurité dans le pipeline CI/CD (SAST, secret scanning)",
+  subtitle: "DevSecOps : la sécurité comme contrôle continu, pas comme audit annuel.",
+  theory: `
+<h3>1. Déplacer la sécurité « vers la gauche »</h3>
+<p>Un <strong>pipeline CI/CD</strong> est la chaîne automatisée qui, à chaque modification du code, le teste puis le déploie. « Déplacer la sécurité vers la gauche » (shift left) veut dire l'introduire tôt dans cette chaîne, plutôt qu'à la toute fin. Le <strong>DevSecOps</strong> (contraction de Développement, Sécurité et Opérations) fait de la sécurité un contrôle <strong>continu</strong> : vérifié à chaque <strong>commit</strong> (chaque enregistrement de modification), comme les tests. Le pipeline devient ainsi le gardien automatique de tout ce cours.</p>
+
+<h3>2. Le job « securite » — quatre contrôles</h3>
+<p>Un <strong>job</strong> est une tâche du pipeline, décrite en YAML (le format texte de configuration). Voici un job qui enchaîne quatre contrôles de sécurité, l'un après l'autre :</p>
+<pre class="pseudo">  securite:
+    runs-on: ubuntu-latest                          # sur quelle machine tourne le job (ici Ubuntu)
+    steps:                                           # la liste des etapes, jouees dans l'ordre
+      - uses: actions/checkout@v4                    # etape 1 : recuperer le code du depot
+
+      - name: Detection de secrets (leçon 8)
+        run: gitleaks detect --source . --redact     # cherche un secret dans l'historique -> job rouge si trouve
+
+      - name: SAST — analyse statique du code
+        run: pip install bandit && bandit -r catalogue -ll   # bandit lit le code et signale eval(), SQL concatene...
+
+      - name: Dependances vulnerables (leçon 12)
+        run: pip install pip-audit && pip-audit      # compare les libs a la liste des CVE connues
+
+      - name: Image (leçon 12, 16)
+        run: trivy image --exit-code 1 --severity CRITICAL ludotheque:${'$'}{{ github.sha }}   # scanne l'image, echoue si CVE CRITIQUE</pre>
+
+<h3>3. SAST vs DAST</h3>
+<p>Deux familles d'outils complémentaires. Le <strong>SAST</strong> (analyse statique) lit le code sans le lancer. Le <strong>DAST</strong> (analyse dynamique) teste l'application pendant qu'elle tourne, comme le ferait un attaquant de l'extérieur, souvent sur un environnement de <strong>staging</strong> (une copie de pré-production).</p>
+<pre class="pseudo">SAST (statique) : analyse le CODE sans l'executer -> failles dans NOTRE code     # bandit, CodeQL, SonarQube
+                  (bandit, CodeQL, SonarQube) — tot, a chaque commit             # detecte au plus tot
+DAST (dynamique): teste l'APPLICATION qui tourne -> failles vues de l'exterieur   # OWASP ZAP simule un attaquant
+                  (OWASP ZAP) — plus tard, sur staging                           # sur un environnement de pre-production
+Complementaires : le code ET le comportement.                                    # deux angles differents</pre>
+
+<h3>4. Bloquer sur faille critique</h3>
+<p>La <strong>protection de branche</strong> (vue en CI/CD) empêche de fusionner (merger) du code tant que certains contrôles ne sont pas « verts ». On y ajoute le job sécurité : une faille critique rend le job « rouge » et bloque tout.</p>
+<pre class="pseudo">Ce job rejoint tests/qualite/image dans la protection de branche (CI/CD l.14) :
+- CVE / faille CRITIQUE -> job rouge -> merge et livraison bloques   # rien de critique ne passe
+- faille moyenne -> signalee, ticket, non bloquant                   # a traiter, sans tout arreter
+-> une faille critique ne peut PAS atteindre la production par inadvertance.   # la barriere est automatique</pre>
+
+<h3>5. La sécurité du pipeline lui-même</h3>
+<p>Le pipeline détient des secrets (accès au registre d'images, clés SSH de déploiement) et peut publier en production : c'est donc lui-même une cible de choix, à protéger.</p>
+<pre class="pseudo">Le pipeline a des secrets (registre, SSH) et deploie en prod : c'est une cible.
+- secrets a portee minimale (CI/CD l.13), pas exposes aux PR de forks   # un fork = une copie externe du depot, non fiable
+- actions epinglees (versions), pas de script arbitraire non revu       # figer les versions des outils utilises
+- le YAML de workflow passe en revue comme le code (un "echo secret" interdit)   # relire le workflow comme du vrai code</pre>
+<p>Un <strong>fork</strong> est une copie du dépôt réalisée par une personne extérieure ; une PR venant d'un fork ne doit jamais recevoir les secrets du projet, car son auteur n'est pas de confiance. Un <strong>test d'intrusion</strong> (pentest) est une attaque simulée, menée par des humains, pour trouver ce que les outils automatiques ratent.</p>
+<div class="warn">L'outillage automatique (SAST, scan) attrape le connu et le motif évident — il ne remplace pas la revue humaine ni le test d'intrusion. Un SAST vert ne veut pas dire « sûr », mais « pas de faille évidente détectée ». La sécurité reste un processus, pas une case cochée par un outil.</div>
+<div class="tip">DevSecOps, c'est la convergence des trois cours de Niveau 7 : le pipeline (CI/CD) exécute automatiquement les contrôles de sécurité (ce cours) sur une application conteneurisée (Docker). Chaque commit est désormais testé fonctionnellement ET vérifié côté sécurité.</div>`,
+  exercises: [
+    { type: "qcm", q: "« Déplacer la sécurité vers la gauche » signifie…", opts: ["Un audit annuel", "Un contrôle continu, à chaque commit", "Après la prod", "Jamais"], a: 1, exp: "Tôt et souvent." },
+    { type: "qcm", q: "DevSecOps fait de la sécurité…", opts: ["Une étape finale", "Un contrôle continu comme les tests", "L'affaire d'un seul", "Un audit externe"], a: 1, exp: "Intégrée au pipeline." },
+    { type: "qcm", q: "gitleaks dans le pipeline détecte…", opts: ["Les CVE", "Les secrets dans le code/l'historique (leçon 8)", "Le XSS", "Le CSS"], a: 1, exp: "Secret → rouge." },
+    { type: "qcm", q: "Le SAST analyse…", opts: ["L'app en cours d'exécution", "Le CODE sans l'exécuter (failles dans notre code)", "Le réseau", "Les logs"], a: 1, exp: "bandit, CodeQL…" },
+    { type: "qcm", q: "Le DAST teste…", opts: ["Le code statique", "L'APPLICATION qui tourne (vue de l'extérieur)", "Les commits", "Les secrets"], a: 1, exp: "OWASP ZAP sur staging." },
+    { type: "qcm", q: "SAST et DAST sont…", opts: ["Redondants", "Complémentaires (code ET comportement)", "Identiques", "Inutiles"], a: 1, exp: "Deux angles." },
+    { type: "qcm", q: "pip-audit dans le job sécurité scanne…", opts: ["Le code", "Les dépendances vulnérables (leçon 12)", "Les secrets", "Le réseau"], a: 1, exp: "CVE des libs." },
+    { type: "qcm", q: "trivy scanne…", opts: ["Le code", "L'image (failles appli + système)", "Les logs", "Le CSS"], a: 1, exp: "Leçons 12/16." },
+    { type: "qcm", q: "Une faille critique en CI devrait…", opts: ["Être ignorée", "Rendre le job rouge → merge et livraison bloqués", "Accélérer", "Chiffrer"], a: 1, exp: "Barrière (CI/CD l.14)." },
+    { type: "qcm", q: "Une faille moyenne…", opts: ["Bloque tout", "Est signalée, ticket, non bloquant", "Est ignorée à jamais", "Chiffre"], a: 1, exp: "Priorisation." },
+    { type: "qcm", q: "Le pipeline lui-même est…", opts: ["Sans risque", "Une cible (secrets, accès prod) à sécuriser", "Public", "Inutile"], a: 1, exp: "Secrets, actions épinglées, revue du YAML." },
+    { type: "qcm", q: "Un SAST vert signifie…", opts: ["« Sûr »", "« Pas de faille évidente détectée »", "« Aucune faille »", "« Testé humainement »"], a: 1, exp: "Pas un certificat." },
+    { type: "vf", q: "L'outillage remplace la revue humaine et le test d'intrusion.", a: false, exp: "Il les complète." },
+    { type: "qcm", q: "DevSecOps réunit…", opts: ["Un seul cours", "Le pipeline (CI/CD), la sécurité (ce cours), les conteneurs (Docker)", "Merise", "Le CSS"], a: 1, exp: "Convergence Niveau 7." },
+    { type: "vf", q: "Le YAML de workflow doit passer en revue comme le code.", a: true, exp: "Un « echo secret » ne passe pas." }
+  ],
+  final: {
+    title: "Exercice final — Le job sécurité",
+    intro: `<p>Le pipeline teste et déploie mais ne cherche pas les failles.</p>`,
+    questions: [
+      { type: "qcm", q: "Détection de secrets :", opts: ["gitleaks detect", "un test unitaire", "docker ps", "un ping"], a: 0, exp: "Leçon 8." },
+      { type: "qcm", q: "Analyse du code :", opts: ["SAST (bandit / CodeQL)", "un scan de ports", "un cookie", "rien"], a: 0, exp: "Failles dans notre code." },
+      { type: "qcm", q: "Dépendances et image :", opts: ["pip-audit + trivy", "un cache", "un log", "un WAF"], a: 0, exp: "Leçons 12/16." },
+      { type: "qcm", q: "Une critique :", opts: ["Rend le job rouge → merge bloqué", "est ignorée", "accélère", "chiffre"], a: 0, exp: "Protection de branche." },
+      { type: "vf", q: "Un job vert ne prouve pas l'absence de faille, seulement l'absence de faille évidente.", a: true, exp: "Processus, pas case cochée." }
+    ],
+    solution: `<pre class="pseudo">  securite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4                          # recuperer le code
+      - run: gitleaks detect --source . --redact           # secrets (l.8)
+      - run: pip install bandit && bandit -r catalogue -ll # SAST : analyse du code
+      - run: pip install pip-audit && pip-audit            # dependances vulnerables (l.12)
+      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:${'$'}{{ github.sha }}   # image : echoue si CVE critique
+
+# Rejoint tests/qualite/image dans la protection de branche (CI/CD l.14) :   # ajoute aux controles requis
+# faille CRITIQUE -> rouge -> merge et livraison bloques.                    # barriere automatique
+# DAST (OWASP ZAP) sur staging en complement.                               # test dynamique en pre-prod</pre>
+<p>La sécurité est dans le pipeline. Demain : les données personnelles et le RGPD.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pipeline sécurisé…",
+  items: [
+  { id: "secu-l17", title: "Le pipeline DevSecOps complet", level: 3,
+    statement: "Écris le job « securite » complet à ajouter au pipeline de la Ludothèque (cours CI/CD), avec les 4 contrôles (secrets, SAST, dépendances, image), leur politique de blocage (critique = rouge, moyen = ticket), et un paragraphe expliquant comment ce job s'intègre à la protection de branche et pourquoi il ne remplace pas la revue humaine ni un test d'intrusion périodique.",
+    hints: [
+      "4 étapes : gitleaks, bandit/SAST, pip-audit, trivy — chacune avec son seuil.",
+      "Le job rejoint tests/qualite/image dans les status checks requis (CI/CD l.14).",
+      "L'automatique attrape le connu ; l'humain et le pentest trouvent le reste."
+    ],
+    solution: "# .github/workflows/ci.yml — job securite (DevSecOps)\n  securite:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with: { fetch-depth: 0 }        # historique complet pour gitleaks\n\n      # 1. Secrets (leçon 8) — bloquant\n      - name: Secrets\n        run: |\n          curl -sSfL https://.../gitleaks | tar xz\n          ./gitleaks detect --source . --redact --exit-code 1\n\n      # 2. SAST — analyse statique (bandit) — critique bloquant\n      - name: SAST\n        run: pip install bandit && bandit -r catalogue -ll\n\n      # 3. Dépendances vulnérables (leçon 12) — critique bloquant\n      - name: Dépendances\n        run: pip install pip-audit && pip-audit\n\n      # 4. Image (leçons 12, 16) — CRITICAL bloquant, HIGH signalé\n      - name: Image\n        run: |\n          trivy image --exit-code 1 --severity CRITICAL ludotheque:${{ github.sha }}\n          trivy image --exit-code 0 --severity HIGH ludotheque:${{ github.sha }}  # rapport\n\n# POLITIQUE\n# - CRITIQUE (secret, CVE critique, faille SAST grave) -> job ROUGE -> merge bloqué\n# - MOYENNE/ÉLEVÉE -> rapportée, ticket priorisé, non bloquant\n# Ce job est ajouté aux STATUS CHECKS REQUIS de la protection de branche\n# (CI/CD l.14) : aucune faille critique n'atteint la prod par inadvertance.\n#\n# CE QUE ÇA NE FAIT PAS\n# L'automatique attrape le CONNU (secrets, CVE, motifs SAST). Il ne trouve\n# ni les failles logiques métier (un IDOR subtil), ni les enchaînements\n# complexes. D'où : revue humaine de sécurité en PR + test d'intrusion\n# périodique (interne ou externe) sur staging. Le pipeline est le filet\n# permanent ; l'humain est le regard qui voit ce que les motifs ratent.",
+    note: "Ce job est la clé de voûte des trois cours de Niveau 7 : il fait exécuter par le pipeline (CI/CD) les contrôles de sécurité (ce cours) sur l'artefact conteneurisé (Docker). Le dernier paragraphe est essentiel à l'honnêteté intellectuelle : le DevSecOps automatise la détection du connu, mais la sécurité reste un processus humain — un IDOR métier ou une logique d'autorisation cassée passent sous le radar des outils et n'apparaissent qu'à la revue ou au pentest." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

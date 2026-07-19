@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Créer et lire : save, create, get, all",
+  subtitle: "Les tables de la Ludothèque sont vides : tes premiers INSERT et SELECT s'écrivent aujourd'hui — en Python.",
+  theory: `
+<h3>1. Créer en deux temps : l'objet, puis save()</h3>
+<p>Le migrate de la leçon 4 a créé <em>ludotheque_jeu</em> et <em>ludotheque_membre</em>… vides. Peuplons-les depuis le shell. Première méthode, en deux temps : on <strong>instancie</strong> la classe (instancier = fabriquer un exemplaire concret d'une classe, ici un jeu précis) — et à ce stade, <strong>rien ne part en base</strong>, l'objet vit seulement dans la mémoire Python, comme une note sur un brouillon pas encore recopiée dans le registre. C'est la méthode <strong>save()</strong> (« sauvegarder ») qui déclenche l'<strong>INSERT</strong> (la commande SQL qui ajoute une ligne) :</p>
+<pre class="pseudo">&gt;&gt;&gt; from ludotheque.models import Jeu   # on importe la classe Jeu depuis le fichier models.py
+&gt;&gt;&gt; jeu = Jeu(titre='Catan', editeur='Kosmos', prix=32.50, stock=4)   # on cree l'objet en memoire (aucune requete)
+&gt;&gt;&gt; jeu.pk is None                       # pk = "primary key", la cle primaire ; is None = "vaut-il rien ?"
+True                      # aucun INSERT : l'objet n'existe qu'en mémoire   # True = vrai : pas encore de ligne en base
+&gt;&gt;&gt; jeu.save()            # INSERT INTO ludotheque_jeu (titre, ...) VALUES (...)   # save() envoie l'INSERT a MySQL
+&gt;&gt;&gt; jeu.pk                # on relit la cle primaire de l'objet
+1                         # Django a récupéré l'id AUTO_INCREMENT de MySQL   # la base a attribue l'id 1</pre>
+<p>Observe l'aller-retour : avant save(), <em>jeu.pk is None</em> ; après, Django a rempli <strong>jeu.pk</strong> (raccourci de jeu.id) avec la valeur que MySQL vient d'attribuer. L'objet Python et la ligne MySQL sont désormais liés par cette clé.</p>
+
+<h3>2. Le raccourci create() et le manager objects</h3>
+<p>Deux temps, c'est instructif, mais au quotidien on préfère le raccourci : <strong>Jeu.objects.create(...)</strong> instancie ET sauvegarde en un seul appel — et surtout, il <strong>renvoie l'objet créé</strong>, pk déjà rempli. Au passage, fais connaissance avec <strong>objects</strong> : le <strong>manager</strong> par défaut. Un <em>manager</em> est l'objet « gestionnaire » attaché à chaque modèle, la porte d'entrée de toutes les requêtes (create, all, get, filter…) — pense à un guichet unique par lequel passent toutes tes demandes à la base.</p>
+<pre class="pseudo">&gt;&gt;&gt; azul = Jeu.objects.create(titre='Azul', editeur='Next Move',   # create() = instancie + save() en un seul appel
+...                           prix=39.90, stock=2)                  # (les ... marquent la suite de la meme ligne)
+&gt;&gt;&gt; azul.pk               # la cle primaire est deja disponible
+2                         # créé, sauvé, renvoyé : tout en un   # MySQL a attribue l'id 2
+
+&gt;&gt;&gt; from ludotheque.models import Membre   # on importe aussi la classe Membre
+&gt;&gt;&gt; zelda = Membre.objects.create(pseudo='zelda42', email='zelda@ludo.be')   # cree un membre (id et date auto-remplis)
+&gt;&gt;&gt; zelda.date_inscription                 # on lit la date d'inscription
+datetime.date(2026, 7, 10)   # auto_now_add a travaillé tout seul   # la date a ete posee automatiquement a la creation</pre>
+
+<h3>3. Tout lire : all() et le QuerySet</h3>
+<p>Pour relire ce qu'on vient d'écrire : <strong>Jeu.objects.all()</strong> (« tous ») renvoie un <strong>QuerySet</strong> — l'équivalent objet de <em>SELECT ... FROM ludotheque_jeu</em> (SELECT = lire des lignes). On peut l'<strong>itérer</strong> (le parcourir un élément à la fois) avec une boucle <em>for</em>, en prendre le premier élément avec <strong>.first()</strong>, et le shell l'affiche lisiblement grâce au __str__ écrit à la leçon 3 :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.all()                        # demande tous les jeux -> SELECT ... FROM ludotheque_jeu
+&lt;QuerySet [&lt;Jeu: Azul&gt;, &lt;Jeu: Catan&gt;]&gt;     # trié par titre (Meta.ordering)   # affichage lisible grace a __str__
+
+&gt;&gt;&gt; for jeu in Jeu.objects.all():            # on parcourt chaque jeu du resultat...
+...     print(jeu.titre, jeu.prix)           # ... et on affiche son titre et son prix
+Azul 39.90                                   # 1er tour de boucle
+Catan 32.50                                  # 2e tour de boucle
+
+&gt;&gt;&gt; Jeu.objects.all().first()               # .first() = renvoie le premier objet du QuerySet
+&lt;Jeu: Azul&gt;               # le premier… ou None si la table est vide   # None = "rien" si aucun jeu</pre>
+<p>Garde le réflexe de la leçon 2 : <em>print(Jeu.objects.all().query)</em> te montre le SELECT exact. Le QuerySet cache bien d'autres talents (paresse, chaînage) — ils ont leur leçon entière, la 7.</p>
+
+<h3>4. Lire UN objet : get() et ses deux exceptions</h3>
+<p><strong>get()</strong> (« obtiens ») ne renvoie pas un QuerySet mais <strong>UN objet</strong> — c'est sa promesse, et il la tient brutalement. Une <strong>exception</strong> est un signal d'erreur que Python lance quand quelque chose cloche (le programme s'arrête si personne ne l'attrape). Deux échecs possibles, deux exceptions : <strong>Jeu.DoesNotExist</strong> (« n'existe pas ») si aucune ligne ne correspond, <strong>Jeu.MultipleObjectsReturned</strong> (« plusieurs objets renvoyés ») si plusieurs correspondent. D'où la règle : get() s'utilise sur <strong>pk ou un champ unique</strong>, et sous <strong>try/except</strong> (le bloc qui « essaie » du code et « attrape » l'erreur au lieu de planter) dans du vrai code :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.get(pk=1)          # cherche LE jeu dont la cle primaire vaut 1
+&lt;Jeu: Catan&gt;              # un OBJET, pas un QuerySet   # get() rend directement l'objet
+
+&gt;&gt;&gt; Jeu.objects.get(titre='7 Wonders')   # cherche un jeu absent du catalogue
+Traceback (most recent call last):        # "Traceback" = la trace de l'erreur qui remonte
+    ...                                   # (lignes techniques resumees)
+ludotheque.models.Jeu.DoesNotExist: Jeu matching query does not exist.   # exception : aucun jeu ne correspond
+
+&gt;&gt;&gt; try:                                  # try = "essaie ce bloc..."
+...     jeu = Jeu.objects.get(titre='7 Wonders')   # ... le get() qui risque d'echouer
+... except Jeu.DoesNotExist:              # except = "... si cette erreur precise survient, fais ceci"
+...     print('Pas encore au catalogue')  # message propre au lieu d'un plantage
+Pas encore au catalogue                   # resultat affiche : l'erreur a ete geree</pre>
+<p>Dans une vue Django, tu connais déjà l'idiome équivalent depuis le Niveau 3 : <em>get_object_or_404(Jeu, pk=1)</em> — le même get(), qui transforme DoesNotExist en page 404 propre.</p>
+
+<h3>5. save() qui re-sauve : c'est le pk qui décide</h3>
+<p>Que fait save() sur un objet <strong>déjà en base</strong> ? Pas un second INSERT : un <strong>UPDATE</strong> (la commande SQL qui modifie une ligne existante) — de <em>toutes</em> les colonnes. La logique est limpide : pk vide → INSERT ; pk rempli → UPDATE ... WHERE id = pk (WHERE = la condition qui cible la bonne ligne). Vérifie-le toi-même avec connection.queries :</p>
+<pre class="pseudo">&gt;&gt;&gt; catan = Jeu.objects.get(pk=1)   # on recupere le jeu d'id 1 (il existe deja : pk rempli)
+&gt;&gt;&gt; catan.stock = 3                  # on modifie l'attribut stock EN MEMOIRE (rien n'est encore envoye)
+&gt;&gt;&gt; catan.save()          # pk=1 existe → UPDATE, pas INSERT   # save() genere un UPDATE car l'objet a deja un id
+
+&gt;&gt;&gt; from django.db import connection      # on importe connection pour lire son journal de requetes
+&gt;&gt;&gt; connection.queries[-1]['sql']         # [-1] = la DERNIERE requete ; ['sql'] = son texte SQL
+UPDATE ludotheque_jeu SET titre = 'Catan', editeur = 'Kosmos',   -- UPDATE ... SET = modifie les colonnes
+       prix = 32.50, stock = 3, ... WHERE id = 1                 -- WHERE id = 1 = uniquement la ligne d'id 1</pre>
+<p>Toutes les colonnes repartent, même celles qui n'ont pas changé — la leçon 6 t'apprendra à faire plus fin. Une ligne pour les voisins : em.persist() chez Hibernate/JPA, Add() + SaveChanges() chez EF Core, Model::create() chez Eloquent.</p>
+<div class="warn">Un <strong>get() sans try/except</strong> est une bombe à retardement : le jour où l'objet n'existe pas (ou existe en double), l'exception remonte et la page explose en erreur 500. Dans le shell, l'exception est ton amie ; dans une vue, c'est try/except ou get_object_or_404 — jamais get() nu.</div>
+<div class="tip"><strong>create() renvoie l'objet créé</strong> : récupère-le toujours dans une variable (catan = Jeu.objects.create(...)). Tu auras son pk sous la main pour la suite — et dès la leçon 8, les ForeignKey te demanderont ces objets à chaque instant.</div>`,
+  exercises: [
+    { type: "qcm", q: "jeu = Jeu(titre='Dixit', editeur='Libellud', prix=31.90) exécute…", opts: ["Un INSERT immédiat", "Aucune requête : l'objet n'existe qu'en mémoire Python", "Un SELECT de vérification", "Une erreur : il manque save"], a: 1, exp: "Instancier ne touche pas la base ; jeu.pk vaut None tant que save() n'est pas appelé." },
+    { type: "qcm", q: "Après jeu.save() sur un objet jamais sauvegardé…", opts: ["Un INSERT part et Django remplit jeu.pk avec l'id attribué par MySQL", "Un UPDATE part", "Rien ne se passe", "jeu.pk reste None"], a: 0, exp: "L'AUTO_INCREMENT de MySQL fournit l'id, Django le rapatrie dans l'objet." },
+    { type: "vf", q: "Avant le premier save(), jeu.pk vaut None.", a: true, exp: "C'est le signe que l'objet n'a pas encore de ligne en base." },
+    { type: "qcm", q: "Jeu.objects.create(titre='Azul', ...) équivaut à…", opts: ["Un simple SELECT", "Instancier sans sauvegarder", "Instancier + save() en un appel, et renvoyer l'objet créé", "Créer la table"], a: 2, exp: "Le raccourci du quotidien : l'objet revient avec son pk déjà rempli." },
+    { type: "input", q: "Le manager par défaut, porte d'entrée des requêtes (Jeu.…​.all()) :", a: ["objects"], ph: "Jeu.…", exp: "objects porte create, all, get, filter — toute l'API de requêtage du modèle." },
+    { type: "qcm", q: "Jeu.objects.all() renvoie…", opts: ["Une liste Python", "Un QuerySet", "Un dictionnaire", "Le premier jeu"], a: 1, exp: "L'équivalent objet de SELECT ... FROM ludotheque_jeu — ses secrets à la leçon 7." },
+    { type: "qcm", q: "Le shell affiche &lt;QuerySet [&lt;Jeu: Catan&gt;, &lt;Jeu: Azul&gt;]&gt; plutôt que &lt;Jeu: Jeu object (1)&gt; grâce à…", opts: ["La méthode __str__ écrite à la leçon 3", "Meta.db_table", "connection.queries", "get_object_or_404"], a: 0, exp: "__str__ rend chaque objet lisible partout : shell, admin, templates." },
+    { type: "input", q: "La méthode de QuerySet qui renvoie le premier objet, ou None si vide :", a: ["first", "first()", ".first()"], ph: "Jeu.objects.all().…", exp: "first() ne lève jamais d'exception : None si la table est vide." },
+    { type: "qcm", q: "Jeu.objects.get(pk=1) renvoie…", opts: ["Un QuerySet d'un élément", "Une liste", "Toujours None", "UN objet Jeu directement"], a: 3, exp: "C'est la promesse de get() : un objet, pas un conteneur — jeu.titre marche immédiatement." },
+    { type: "qcm", q: "get() ne trouve aucune ligne correspondante. Il…", opts: ["Renvoie None", "Lève l'exception Jeu.DoesNotExist", "Renvoie un QuerySet vide", "Crée l'objet"], a: 1, exp: "D'où le try/except obligatoire dans du vrai code — ou get_object_or_404 dans une vue." },
+    { type: "qcm", q: "Jeu.objects.get(editeur='Asmodee') alors que trois jeux ont cet éditeur…", opts: ["Renvoie le premier des trois", "Renvoie les trois", "Lève Jeu.MultipleObjectsReturned", "Renvoie None"], a: 2, exp: "get() promet UN objet : plusieurs résultats est une erreur, pas un choix." },
+    { type: "vf", q: "get() s'utilise de préférence sur pk ou un champ unique.", a: true, exp: "C'est la seule façon de garantir zéro ou un résultat — jamais MultipleObjectsReturned." },
+    { type: "qcm", q: "catan a déjà pk=1 ; on modifie catan.stock puis catan.save(). En SQL, il part…", opts: ["Un UPDATE de toutes les colonnes WHERE id=1", "Un INSERT d'une nouvelle ligne", "Un DELETE puis un INSERT", "Rien"], a: 0, exp: "pk rempli → UPDATE ; pk vide → INSERT. C'est le pk qui décide, vérifiable dans connection.queries." },
+    { type: "qcm", q: "Dans une vue Django, l'idiome du Niveau 3 qui remplace le try/except autour de get() :", opts: ["print(qs.query)", "get_object_or_404", "connection.queries", "objects.first"], a: 1, exp: "Même get() dessous, mais DoesNotExist devient une propre page 404." },
+    { type: "qcm", q: "L'équivalent de create()/save() chez EF Core (C#/ASP.NET Core) :", opts: ["em.persist()", "Model::create()", "Add() + SaveChanges()", "INSERT INTO"], a: 2, exp: "em.persist() chez Hibernate/JPA, Model::create() chez Eloquent : trois syntaxes, une même idée." }
+  ],
+  final: {
+    title: "Exercice final — Premiers INSERT, premiers SELECT",
+    intro: `<p>La Ludothèque prend vie : on vérifie que tu maîtrises l'aller (créer) et le retour (lire), et surtout ce qui part réellement vers MySQL à chaque ligne.</p>`,
+    questions: [
+      { type: "qcm", q: "jeu = Jeu(titre='7 Wonders', editeur='Repos Prod', prix=44.90) puis jeu.save() : combien de requêtes SQL en tout ?", opts: ["0", "2", "1 : l'INSERT au moment du save()", "3"], a: 2, exp: "L'instanciation ne coûte rien ; save() déclenche l'unique INSERT." },
+      { type: "qcm", q: "La grande différence entre all() et get() :", opts: ["all() renvoie un QuerySet, get() renvoie UN objet (ou lève une exception)", "get() est plus rapide, c'est tout", "all() écrit en base", "Aucune"], a: 0, exp: "Un conteneur de résultats d'un côté, un objet unique et exigeant de l'autre." },
+      { type: "input", q: "L'exception levée par Jeu.objects.get(titre='Inexistant') :", a: ["DoesNotExist", "Jeu.DoesNotExist"], ph: "Jeu.…", exp: "Chaque modèle porte sa propre exception DoesNotExist — à attraper avec try/except." },
+      { type: "vf", q: "save() sur un objet dont le pk est rempli fait un UPDATE, jamais un second INSERT.", a: true, exp: "INSERT ou UPDATE : c'est le pk qui décide, toujours." },
+      { type: "qcm", q: "membre = Membre.objects.create(pseudo='mario_b', email='mario@ludo.be') — que vaut membre juste après ?", opts: ["None", "L'objet Membre créé, pk rempli, date_inscription posée par auto_now_add", "Un QuerySet", "Un booléen de succès"], a: 1, exp: "create() renvoie l'objet : récupère-le toujours dans une variable." }
+    ],
+    solution: `<pre class="pseudo">Créer en 2 temps : jeu = Jeu(titre='Catan', ...)   → 0 requête, jeu.pk is None   # objet en memoire seulement
+                   jeu.save()                       → INSERT, pk rempli par MySQL   # la ligne part en base
+Raccourci        : catan = Jeu.objects.create(...)  → instancie + save + RENVOIE l'objet   # tout en un
+Manager          : objects = la porte d'entrée (create, all, get, filter...)   # le guichet unique du modele
+Tout lire        : Jeu.objects.all() → QuerySet, itérable, .first()   # equivaut a SELECT ... FROM la table
+                   affichage &lt;QuerySet [&lt;Jeu: Catan&gt;...]&gt; grâce à __str__   # affichage lisible
+Lire UN objet    : Jeu.objects.get(pk=1) → UN objet                   # get() rend un objet, pas un QuerySet
+                   Jeu.DoesNotExist / Jeu.MultipleObjectsReturned     # ses deux exceptions possibles
+                   → try/except, ou get_object_or_404 dans une vue (Niveau 3)   # a gerer proprement
+Re-save          : pk vide → INSERT | pk rempli → UPDATE (toutes les colonnes)   # le pk decide
+Ailleurs         : em.persist (JPA) · Add+SaveChanges (EF Core) · Model::create (Eloquent)   # meme idee ailleurs</pre>
+<p>Créer et lire, c'est acquis. Reste à faire vivre les données : leçon 6, <strong>Modifier et supprimer : update, delete, get_or_create</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l5", title: "La séance de shell qui peuple la Ludothèque", level: 1,
+    statement: "Rédige la séance de manage.py shell complète qui peuple la Ludothèque : trois jeux (Catan, Azul, 7 Wonders — éditeur, prix en euros et stock réalistes) et deux membres (zelda42, mario_b). Contrainte pédagogique : crée au moins un jeu en deux temps (instanciation puis save()) et les autres avec create(), en expliquant à chaque fois ce que vaut pk avant et après. Pour CHAQUE ligne de la séance, prédis la requête SQL envoyée à MySQL (ou écris « 0 requête »). Ensuite, relis le tout : Jeu.objects.all() et un get() réussi. Termine par un get() qui échoue (jeu absent du catalogue), géré proprement avec try/except, et indique comment tu vérifierais tes prédictions SQL avec connection.queries.",
+    hints: [
+      "Deux temps : Jeu(titre=...) ne coûte rien (pk is None), c'est save() qui déclenche l'INSERT et remplit pk ; create() fait tout d'un coup et RENVOIE l'objet — garde-le dans une variable.",
+      "Pour les membres, ne fournis ni id ni date_inscription : qui remplit ces colonnes à ta place ?",
+      "Le get() qui échoue lève Jeu.DoesNotExist — attrape précisément cette exception ; et connection.queries (DEBUG=True) te donne la liste exacte des requêtes parties, dans l'ordre."
+    ],
+    solution: "Séance de shell — prédictions SQL en commentaire\n>>> from ludotheque.models import Jeu, Membre\n\n# 1) Catan en DEUX temps\n>>> catan = Jeu(titre='Catan', editeur='Kosmos', prix=32.50, stock=4)\n# 0 requête — objet en mémoire, catan.pk is None\n>>> catan.save()\n# INSERT INTO ludotheque_jeu (titre, editeur, prix, ...) VALUES ('Catan', ...)\n# → catan.pk vaut maintenant 1 (AUTO_INCREMENT de MySQL)\n\n# 2) Azul et 7 Wonders avec create()\n>>> azul = Jeu.objects.create(titre='Azul', editeur='Next Move', prix=39.90, stock=2)\n# INSERT INTO ludotheque_jeu ... — azul revient avec pk=2\n>>> wonders = Jeu.objects.create(titre='7 Wonders', editeur='Repos Prod', prix=44.90, stock=3)\n# INSERT INTO ludotheque_jeu ... — pk=3\n\n# 3) Les deux membres\n>>> zelda = Membre.objects.create(pseudo='zelda42', email='zelda@ludo.be')\n# INSERT INTO ludotheque_membre ... — id et date_inscription remplis\n# automatiquement (AUTO_INCREMENT + auto_now_add)\n>>> mario = Membre.objects.create(pseudo='mario_b', email='mario@ludo.be')\n# INSERT INTO ludotheque_membre ...\n\n# 4) Relecture\n>>> Jeu.objects.all()\n# SELECT ... FROM ludotheque_jeu ORDER BY titre\n# <QuerySet [<Jeu: 7 Wonders>, <Jeu: Azul>, <Jeu: Catan>]>\n>>> Jeu.objects.get(pk=1)\n# SELECT ... FROM ludotheque_jeu WHERE id = 1 → <Jeu: Catan>\n\n# 5) Le get() qui échoue, géré proprement\n>>> try:\n...     dixit = Jeu.objects.get(titre='Dixit')\n... except Jeu.DoesNotExist:\n...     print('Dixit n est pas encore au catalogue')\n# SELECT ... WHERE titre = 'Dixit' → 0 ligne → exception attrapée\n\n# Vérification des prédictions\n>>> from django.db import connection\n>>> for q in connection.queries: print(q['sql'])\n# 5 INSERT + les SELECT, dans l'ordre prédit.",
+    note: "Cette séance est le premier vrai dialogue entre ton Python et la base du Niveau 4 : chaque ligne du shell a son ombre SQL, et connection.queries (leçon 2) te permet de confronter prédiction et réalité — l'habitude qui te vaccinera contre le SQL caché. Au Niveau 3, l'admin Django faisait ces INSERT à ta place sans rien montrer ; au Niveau 6, tes fixtures et scripts de peuplement du projet full-stack reprendront exactement ce canevas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

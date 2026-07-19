@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Middleware, rôles et autorisation",
+  subtitle: "Des filtres sur le chemin des requêtes : qui a le droit de faire quoi ?",
+  theory: `
+<h3>1. Le middleware : un poste de contrôle</h3>
+<p>Un <strong>middleware</strong> (« logiciel du milieu ») est un filtre traversé par la requête AVANT qu'elle atteigne le contrôleur (et parfois au retour). Image : le portique de sécurité à l'entrée d'un aéroport, que tu franchis avant d'accéder aux portes d'embarquement. Tu en utilises déjà sans le savoir : la vérification CSRF (leçon 6) et le démarrage de session (leçon 13) sont des middlewares !</p>
+<pre class="pseudo">Requête ─▶ [session] ─▶ [csrf] ─▶ [auth] ─▶ Contrôleur ─▶ Réponse   # la requete traverse chaque filtre l'un apres l'autre avant d'atteindre le controleur</pre>
+<h3>2. Protéger des routes : le middleware auth</h3>
+<pre class="pseudo">// Une route :
+Route::get('/admin', [AdminController::class, 'index'])   // route vers la page admin...
+     ->middleware('auth');                                // ...protegee : reservee aux connectes
+
+// Un groupe entier :
+Route::middleware('auth')->group(function () {            // applique 'auth' a TOUTES les routes du groupe
+    Route::get('/profil', ...);                           // route protegee
+    Route::post('/signatures', ...);                      // route protegee
+});                                                        // fin du groupe</pre>
+<p>Un visiteur non connecté qui tente d'accéder à ces routes est <strong>automatiquement redirigé vers /login</strong> — et grâce à <code>intended()</code> (leçon 16), il reviendra à sa destination après connexion.</p>
+<h3>3. Écrire son propre middleware</h3>
+<pre class="pseudo">php artisan make:middleware EstAdmin   # cree le fichier app/Http/Middleware/EstAdmin.php</pre>
+<pre class="pseudo">public function handle(Request $request, Closure $next): Response   // handle() est appele pour chaque requete filtree
+{
+    if (!$request->user() || !$request->user()->est_admin) {        // SI personne n'est connecte OU pas admin...
+        abort(403, 'Réservé aux administrateurs');                  // ...bloque avec une erreur 403 (interdit)
+    }
+    return $next($request);   // sinon : laisse passer la requete vers le maillon suivant
+}</pre>
+<p><code>$next($request)</code> passe le relais au maillon suivant de la chaîne (<code>Closure</code> = la suite du traitement). Ne pas l'appeler = bloquer la requête. On l'enregistre avec un <strong>alias</strong> (un surnom, ex. <code>'admin'</code>) puis on l'applique : <code>-&gt;middleware(['auth', 'admin'])</code>.</p>
+<h3>4. Les rôles : une simple colonne</h3>
+<p>Un <strong>rôle</strong> définit ce qu'un utilisateur a le droit de faire. Pour un petit projet, un booléen <code>est_admin</code> ou une colonne <code>role</code> (« membre », « admin ») dans la table users suffit — ajoutée par migration, bien sûr.</p>
+<h3>5. Les Gates : l'autorisation fine</h3>
+<p>Le middleware protège des <strong>routes</strong> ; la <strong>Gate</strong> (« porte ») protège des <strong>actions précises</strong> : « peut-on modifier CETTE signature-là ? »</p>
+<pre class="pseudo">// Definition (dans AppServiceProvider::boot) :
+Gate::define('modifier-signature', function (User $user, Signature $s) {   // definit la regle "modifier-signature"
+    return $user->id === $s->user_id || $user->est_admin;                  // autorise : l'auteur OU un admin
+});
+
+// Controleur :
+Gate::authorize('modifier-signature', $signature);  // verifie l'autorisation ; declenche un 403 si refus
+
+{{-- Blade : n'afficher le bouton qu'aux autorises --}}
+@can('modifier-signature', $signature)              {{-- SI l'utilisateur est autorise... --}}
+    &lt;a href="..."&gt;Modifier&lt;/a&gt;                       {{-- ...affiche le bouton Modifier --}}
+@endcan                                             {{-- fin du bloc @can --}}</pre>
+<div class="warn">Cacher le bouton avec @can ne suffit PAS : un pirate peut forger la requête directement. La vérification côté serveur (Gate::authorize ou middleware) est la seule vraie protection. L'affichage conditionnel n'est que du confort.</div>
+<div class="tip">Ordre logique des middlewares : ['auth', 'admin'] — vérifier qu'on est connecté AVANT de vérifier qu'on est admin.</div>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce qu'un middleware ?", opts: ["Un logiciel intermédiaire payant", "Un filtre traversé par la requête avant (ou après) le contrôleur", "Une table de base de données", "Un template Blade"], a: 1, exp: "Un poste de contrôle sur la route de la requête." },
+    { type: "qcm", q: "Quels middlewares as-tu déjà utilisés sans le savoir ?", opts: ["Aucun", "La vérification CSRF et le démarrage de session", "Le compilateur Blade", "Composer"], a: 1, exp: "Le 419 de la leçon 6 venait d'un middleware !" },
+    { type: "qcm", q: "Que se passe-t-il quand un visiteur non connecté demande une route protégée par ->middleware('auth') ?", opts: ["Erreur 500", "Redirection automatique vers la page de connexion", "Page blanche", "Accès accordé en lecture"], a: 1, exp: "Et intended() le ramènera après connexion." },
+    { type: "qcm", q: "Comment protéger dix routes d'un coup ?", opts: ["Dix ->middleware('auth')", "Route::middleware('auth')->group(function () { ... })", "Un fichier .htaccess", "Impossible"], a: 1, exp: "Le groupe applique le middleware à tout son contenu." },
+    { type: "qcm", q: "Dans un middleware, que fait return $next($request); ?", opts: ["Bloque la requête", "Passe la requête au maillon suivant de la chaîne", "Redémarre le serveur", "Renvoie une 404"], a: 1, exp: "Sans cet appel, la requête ne va pas plus loin." },
+    { type: "input", q: "Quelle commande génère un middleware nommé EstAdmin ?", a: ["php artisan make:middleware EstAdmin"], ph: "commande", exp: "make:middleware, comme make:controller ou make:model." },
+    { type: "qcm", q: "Quel code HTTP pour « connecté mais pas le droit » ?", opts: ["401", "403 Forbidden", "404", "419"], a: 1, exp: "403 = identifié mais interdit. (401 = non identifié.)" },
+    { type: "qcm", q: "Pourquoi l'ordre ['auth', 'admin'] et pas l'inverse ?", opts: ["Ordre alphabétique", "Il faut être connecté avant de pouvoir vérifier si on est admin", "Aucune importance", "admin est plus rapide"], a: 1, exp: "Sans auth, $request->user() est null : le test admin n'aurait pas de sens." },
+    { type: "qcm", q: "Middleware vs Gate : quelle répartition ?", opts: ["Identiques", "Middleware protège des ROUTES ; Gate protège des ACTIONS précises sur des objets précis", "Gate est obsolète", "Middleware ne sert qu'au CSRF"], a: 1, exp: "« Accès à /admin » vs « modifier CETTE signature »." },
+    { type: "qcm", q: "Que fait Gate::authorize('modifier-signature', $signature) en cas de refus ?", opts: ["Renvoie false silencieusement", "Interrompt avec une erreur 403", "Redirige vers /login", "Supprime la signature"], a: 1, exp: "authorize = vérifier OU stopper net." },
+    { type: "qcm", q: "À quoi sert @can('modifier-signature', $s) dans une vue ?", opts: ["À sécuriser l'action côté serveur", "À n'afficher le bouton qu'aux utilisateurs autorisés : du confort, pas de la sécurité", "À créer la Gate", "À valider le formulaire"], a: 1, exp: "L'affichage conditionnel améliore l'interface ; la sécurité reste côté serveur." },
+    { type: "qcm", q: "Pourquoi cacher le bouton « Supprimer » ne suffit-il pas ?", opts: ["Les boutons sont toujours visibles", "Un attaquant peut envoyer la requête DELETE directement, sans passer par l'interface", "Le CSS peut échouer", "Blade est lent"], a: 1, exp: "L'interface appartient au client ; la règle doit vivre sur le serveur." },
+    { type: "qcm", q: "La Gate « modifier-signature » autorise qui ?", opts: ["Tout le monde", "L'auteur de la signature OU un admin", "Seulement les admins", "Personne"], a: 1, exp: "user->id === s->user_id || user->est_admin : la règle métier typique." },
+    { type: "vf", q: "Ajouter une colonne role à la table users nécessite une nouvelle migration.", a: true, exp: "add_role_to_users_table — on ne modifie jamais une migration déjà exécutée (leçon 8)." },
+    { type: "vf", q: "Un middleware peut aussi agir sur la RÉPONSE, après le contrôleur.", a: true, exp: "Le code placé après $next($request) s'exécute au retour — utile pour les en-têtes, la mesure du temps…" }
+  ],
+  final: {
+    title: "Exercice final — La zone d'administration du livre d'or",
+    intro: `<p>Le livre d'or a maintenant sa zone admin. Analyse chaque ligne :</p>
+<pre class="pseudo">// Middleware EstAdmin :
+public function handle(Request $request, Closure $next): Response   // filtre appele a chaque requete
+{
+    if (!$request->user()?->est_admin) {          // SI pas d'utilisateur OU pas admin (?-> = nullsafe)...
+        abort(403);                               // ...interdit (403)
+    }
+    return $next($request);                       // sinon : laisse passer
+}
+
+// routes/web.php :
+Route::middleware(['auth', 'admin'])->group(function () {           // groupe protege : connecte PUIS admin
+    Route::get('/admin', [AdminController::class, 'index']);        // page admin
+    Route::delete('/signatures/{id}', [SignatureController::class, 'destroy']);   // suppression protegee
+});
+
+{{-- Vue liste : --}}
+@can('supprimer-signature', $s)                   {{-- SI autorise a supprimer cette signature... --}}
+    &lt;form method="POST" action="..."&gt;@csrf @method('DELETE')   {{-- formulaire POST simulant DELETE + jeton CSRF --}}
+    &lt;button&gt;Supprimer&lt;/button&gt;&lt;/form&gt;             {{-- bouton de suppression --}}
+@endcan                                           {{-- fin du bloc @can --}}</pre>`,
+    questions: [
+      { type: "qcm", q: "Un visiteur NON connecté demande /admin. Que se passe-t-il ?", opts: ["403 direct", "Le middleware auth le redirige vers /login (il n'atteint jamais le test admin)", "404", "Accès en lecture seule"], a: 1, exp: "Premier maillon de la chaîne : auth. L'ordre compte." },
+      { type: "qcm", q: "Un membre connecté mais NON admin demande /admin :", opts: ["Redirection vers /login", "403 : le middleware EstAdmin bloque", "Accès accordé", "419"], a: 1, exp: "auth passe (connecté), admin bloque (pas le rôle)." },
+      { type: "qcm", q: "Un membre non admin, malin, envoie directement DELETE /signatures/3 avec un outil. Résultat ?", opts: ["La signature est supprimée : le bouton était caché mais la route ouverte", "403 : la route DELETE est DANS le groupe protégé — la vraie sécurité est là", "500", "Rien"], a: 1, exp: "Voilà pourquoi on protège les routes et pas seulement les boutons." },
+      { type: "qcm", q: "Que fait @method('DELETE') dans le formulaire ?", opts: ["Rien", "Simule le verbe DELETE (les formulaires HTML ne connaissent que GET/POST)", "Supprime le formulaire", "Chiffre l'envoi"], a: 1, exp: "Un champ caché _method=DELETE que Laravel interprète." },
+      { type: "vf", q: "Grâce à l'opérateur nullsafe ?-> dans $request->user()?->est_admin, le middleware ne plante pas même si user() est null — il renvoie proprement un 403.", a: true, exp: "null?->est_admin vaut null, donc !null vaut true → abort(403). Pas de crash « property on null », un refus propre." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 17 :
+// 1. Middleware = filtre sur la route de la requete ; ->middleware('auth')
+//    protege, les groupes protegent en masse.
+// 2. Middleware maison : handle() + return $next($request) pour laisser passer.
+// 3. 401/redirect login = pas connecte ; 403 = connecte mais pas le droit.
+// 4. Gate::define + Gate::authorize : l'autorisation par action et par objet.
+// 5. @can n'est que du confort d'affichage : la securite vit cote serveur.
+// 6. @method('DELETE') simule les verbes manquants des formulaires HTML.</pre>
+<p>Sécurité en place ! Demain, on ouvre une nouvelle porte : servir du JSON pour les applications mobiles et JavaScript.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code PHP/Laravel ici…",
+  items: [
+  { id: "laravel-middleware-majeur", title: "Le middleware de majorité", level: 3,
+    statement: "Le forum de la famille est interdit aux moins de 18 ans. Écris (1) le middleware <code>EstMajeur</code> : si l'utilisateur connecté a un champ <code>age</code> inférieur à 18, interrompre avec un 403 et le message « Réservé aux majeurs » ; sinon laisser passer ; (2) le groupe de routes qui protège <code>/forum</code> (GET, <code>ForumController::index</code>) avec la connexion obligatoire PUIS la majorité (alias <code>majeur</code>).",
+    hints: [
+      "La signature : public function handle(Request $request, Closure $next): Response.",
+      "Le test : $request->user()->age < 18 → abort(403, '...'). Sinon return $next($request);",
+      "Le groupe : Route::middleware(['auth', 'majeur'])->group(...) — auth d'abord !"
+    ],
+    solution: "// app/Http/Middleware/EstMajeur.php\npublic function handle(Request $request, Closure $next): Response\n{\n    if ($request->user()->age < 18) {      // auth est passé avant : user() existe\n        abort(403, 'Réservé aux majeurs'); // stop : la requête ne va pas plus loin\n    }\n    return $next($request);                // majeur : on laisse passer\n}\n\n// routes/web.php\nRoute::middleware(['auth', 'majeur'])->group(function () {\n    Route::get('/forum', [ForumController::class, 'index']);\n});\n// Ordre crucial : 'auth' garantit un utilisateur connecté,\n// donc user() n'est jamais null quand 'majeur' s'exécute.",
+    note: "Remarque comme le middleware reste minuscule : UNE responsabilité (filtrer), une dizaine de lignes. Si ton middleware grossit, quelque chose est au mauvais endroit." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

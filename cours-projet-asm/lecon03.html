@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Lire l'entrée standard (read)",
+  subtitle: "Récupérer les octets tapés ou envoyés dans un tube, dans un tampon en mémoire.",
+  theory: `
+<h3>1. Lire, c'est demander au noyau de remplir un tampon</h3>
+<p>Après avoir su écrire (leçon 2), il faut savoir <strong>lire</strong> ce qu'on nous donne. On utilise l'appel système <strong>read</strong> (numéro 0). Il fonctionne à l'envers de <code>write</code> : au lieu d'envoyer des octets, il en <strong>reçoit</strong> depuis un descripteur et les range en mémoire. Ses arguments suivent la même convention : <code>rdi</code> = le descripteur (0 = entrée standard, stdin, d'où arrivent les données), <code>rsi</code> = l'adresse où stocker les octets reçus, <code>rdx</code> = le nombre maximal d'octets qu'on accepte. Il renvoie dans <code>rax</code> le nombre d'octets <strong>réellement</strong> lus.</p>
+<pre class="pseudo">mov rax, 0         ; numero de l'appel : read = 0
+mov rdi, 0         ; 1er argument : descripteur 0 = entree standard (stdin)
+mov rsi, adresse   ; 2e argument : OU stocker les octets recus (l'adresse d'un tampon)
+mov rdx, taille    ; 3e argument : au PLUS combien d'octets on veut
+syscall            ; rax recoit le nombre d'octets lus (0 = fin de fichier)</pre>
+
+<h3>2. Réserver un tampon dans la section .bss</h3>
+<p>Pour recevoir les octets, il faut un endroit où les mettre : un <strong>tampon</strong> (en anglais <em>buffer</em>). Un <strong>tampon</strong> est une zone de mémoire réservée pour retenir temporairement des données de passage — comme un plateau sur lequel on pose les plats avant de les traiter. On le déclare dans la section <strong>.bss</strong>, réservée à la mémoire <strong>non initialisée</strong> : on demande de la place vierge, sans dire quoi mettre dedans.</p>
+<pre class="pseudo">section .bss
+    buf resb 65536         ; resb = "reserve byte(s)" : reserve 65536 octets vides (64 Kio de tampon)</pre>
+<p>La directive <code>resb</code> (« <em>reserve byte</em> ») réserve un nombre d'octets. Ici 65536 octets (soit 64 <strong>Kio</strong>, kibioctets — 65536 = 64 × 1024). Avantage de <code>.bss</code> : cette place n'alourdit PAS le fichier exécutable sur le disque ; elle n'existe qu'au lancement, quand le système la met à zéro. C'est parfait pour un grand tampon de travail.</p>
+
+<h3>3. Lire, éventuellement en plusieurs fois</h3>
+<pre class="pseudo">    xor r13, r13           ; met r13 a 0 : r13 comptera le TOTAL d'octets deja lus
+.read_loop:                ; etiquette : debut de la boucle de lecture
+    xor rax, rax           ; rax = 0 -> appel read
+    xor rdi, rdi           ; rdi = 0 -> descripteur stdin
+    lea rsi, [buf + r13]   ; adresse d'ecriture = debut du tampon DECALE des octets deja lus
+    mov rdx, 65536         ; taille totale du tampon
+    sub rdx, r13           ; rdx = place RESTANTE (taille totale - deja lu)
+    syscall                ; lit ; rax = nombre d'octets lus cette fois
+    cmp rax, 0             ; compare le resultat a 0...
+    jle .read_done         ; jle = "jump if less or equal" : si rax <= 0, on arrete (0 = fin, <0 = erreur)
+    add r13, rax           ; sinon : on ajoute les octets lus au total
+    cmp r13, 65536         ; le tampon est-il plein ?
+    jl .read_loop          ; jl = "jump if less" : s'il reste de la place, on relit
+.read_done:                ; sortie de la boucle : tout est lu</pre>
+<div class="warn"><code>read</code> ne lit pas forcément tout d'un coup : il peut rendre <strong>moins</strong> que demandé, surtout depuis un tube ou le clavier (les données arrivent par paquets). On <strong>boucle</strong> donc tant qu'il renvoie un nombre positif, en écrivant chaque fois <strong>à la suite</strong> (à l'adresse <code>buf + r13</code>, décalée du nombre d'octets déjà rangés). Quand <code>read</code> renvoie <code>rax = 0</code>, c'est la <strong>fin de fichier</strong> (en anglais <em>EOF</em>, « <em>end of file</em> ») : plus rien à lire — au clavier, on la déclenche avec Ctrl-D ; dans un tube, c'est la fin du fichier source. <code>cmp</code> compare deux valeurs et <code>jle</code>/<code>jl</code> sont des <strong>sauts conditionnels</strong> (on saute seulement si la comparaison le dit) : ce sont les « si… alors va là-bas » de l'assembleur.</div>
+
+<h3>4. Où en sont les octets après la lecture ?</h3>
+<p>À la sortie de la boucle, <code>r13</code> contient le <strong>nombre total d'octets lus</strong>, et la zone <code>buf[0..r13)</code> (les cases du tampon, du début jusqu'à r13 exclu) contient le <strong>texte brut</strong> reçu : des chiffres, des espaces, des sauts de ligne, tels quels. Rien n'est encore « compris » : ce ne sont que des caractères. À l'étape suivante, on <strong>parcourra</strong> cette zone pour en extraire les nombres.</p>
+
+<h3>5. Des registres qui survivent aux appels</h3>
+<div class="tip">On garde le total dans <code>r13</code>, un registre dit <strong>callee-saved</strong> (« sauvegardé par l'appelé »). Cela signifie qu'une routine appelée s'engage, par convention, à ne pas l'abîmer : sa valeur <strong>survivra</strong> aux appels de nos autres routines (write, conversions…). À l'inverse, certains registres sont « de passage » et peuvent être écrasés à tout moment. Ranger les valeurs importantes (le total, la somme…) dans des registres persistants évite de les perdre en cours de route — un réflexe essentiel dès qu'un programme appelle des sous-programmes.</div>`,
+  exercises: [
+    { type: "qcm", q: "read porte le numéro…", opts: ["1", "0", "60", "2"], a: 1, exp: "sys_read = 0." },
+    { type: "qcm", q: "Le descripteur de l'entrée standard est…", opts: ["0", "1", "2", "60"], a: 0, exp: "stdin = 0." },
+    { type: "qcm", q: "L'adresse du tampon va dans…", opts: ["rdi", "rsi", "rdx", "rax"], a: 1, exp: "2e argument." },
+    { type: "qcm", q: "La taille maximale à lire va dans…", opts: ["rsi", "rdx", "rdi", "rbx"], a: 1, exp: "3e argument." },
+    { type: "qcm", q: "read renvoie dans rax…", opts: ["toujours la taille demandée", "le nombre d'octets réellement lus", "l'adresse", "1"], a: 1, exp: "Peut être < demande." },
+    { type: "qcm", q: "rax = 0 après read signifie…", opts: ["erreur", "fin de fichier (plus rien à lire)", "un octet lu", "succès partiel"], a: 1, exp: "EOF." },
+    { type: "qcm", q: ".bss sert à…", opts: ["du code", "réserver de la mémoire non initialisée", "des constantes", "afficher"], a: 1, exp: "Tampons." },
+    { type: "qcm", q: "resb 65536 réserve…", opts: ["65536 bits", "65536 octets", "1 octet", "rien"], a: 1, exp: "64 Kio." },
+    { type: "qcm", q: "Pourquoi boucler sur read ?", opts: ["par style", "car read peut renvoyer moins que demandé", "pour ralentir", "sans raison"], a: 1, exp: "Lecture partielle possible." },
+    { type: "qcm", q: "On écrit à la suite dans le tampon avec…", opts: ["[buf]", "[buf + r13] (offset = octets déjà lus)", "[buf + 1]", "rax"], a: 1, exp: "Position courante." },
+    { type: "vf", q: "read peut lire moins d'octets que la taille demandée.", a: true, exp: "D'où la boucle." },
+    { type: "qcm", q: "Après la boucle, r13 contient…", opts: ["0", "le total d'octets lus", "l'adresse de fin", "1"], a: 1, exp: "Taille des données." },
+    { type: "qcm", q: "buf[0..r13) contient…", opts: ["des nombres binaires", "le texte brut (chiffres, espaces, sauts de ligne)", "rien", "du code"], a: 1, exp: "Octets ASCII." },
+    { type: "qcm", q: "On garde le total dans r13 car…", opts: ["c'est rapide", "callee-saved : il survit aux appels de routines", "obligatoire", "au hasard"], a: 1, exp: "Persistant." },
+    { type: "qcm", q: "Au clavier, la fin de saisie se signale par…", opts: ["Entrée", "Ctrl-D (EOF)", "Échap", "Ctrl-C seulement"], a: 1, exp: "Fin de fichier." }
+  ],
+  final: {
+    title: "Exercice final — Un cat minimal (lire puis réécrire)",
+    intro: `<p>Pour vérifier read + write, on veut un mini-<code>cat</code> : lire une fois l'entrée standard dans un tampon, puis réécrire les octets lus sur la sortie standard.</p>`,
+    questions: [
+      { type: "qcm", q: "Après read, le nombre d'octets lus est dans…", opts: ["rdx", "rax", "rsi", "r13"], a: 1, exp: "Retour de read." },
+      { type: "qcm", q: "Pour réécrire, la longueur pour write vient de…", opts: ["rdx d'origine", "rax renvoyé par read", "1", "0"], a: 1, exp: "Octets réellement lus." },
+      { type: "qcm", q: "L'adresse pour write est…", opts: ["une autre zone", "le même tampon buf", "0", "rax"], a: 1, exp: "Ce qu'on vient de lire." },
+      { type: "qcm", q: "read utilise le descripteur…", opts: ["1", "0", "2", "60"], a: 1, exp: "stdin." },
+      { type: "qcm", q: "write utilise le descripteur…", opts: ["0", "1", "2", "60"], a: 1, exp: "stdout." }
+    ],
+    solution: `<pre class="pseudo">section .bss
+    buf resb 65536
+section .text
+    global _start
+_start:
+    ; lire une fois
+    xor rax, rax           ; read
+    xor rdi, rdi           ; stdin
+    lea rsi, [buf]
+    mov rdx, 65536
+    syscall                ; rax = octets lus
+    ; réécrire ce qu'on a lu
+    mov rdx, rax           ; longueur = octets lus
+    mov rax, 1             ; write
+    mov rdi, 1             ; stdout
+    lea rsi, [buf]
+    syscall
+    mov rax, 60            ; exit
+    xor rdi, rdi
+    syscall
+; echo "bonjour" | ./cat   -> bonjour</pre>
+<p>On lit dans <code>buf</code>, on récupère le nombre d'octets dans <code>rax</code>, on le passe comme longueur à <code>write</code>. Le tampon voyage de l'entrée à la sortie. Demain : convertir le texte en nombres (atoi).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur ici…",
+  items: [
+  { id: "projasm-l03", title: "La boucle de lecture complète", level: 3,
+    statement: "Écris la boucle de lecture de ludostat : lire l'entrée standard dans buf (65536 octets) en bouclant tant que read renvoie un nombre positif, en accumulant le total d'octets lus dans r13 (callee-saved). S'arrêter à EOF (rax<=0) ou tampon plein.",
+    hints: [
+      "Initialise r13 à 0. Écris à [buf + r13], taille restante = 65536 - r13.",
+      "cmp rax, 0 ; jle fin (0 = EOF, négatif = erreur).",
+      "add r13, rax ; recommence tant que r13 < 65536."
+    ],
+    solution: "section .bss\n    buf resb 65536\nsection .text\n    xor r13, r13              ; total d'octets lus\n.read_loop:\n    xor rax, rax             ; read\n    xor rdi, rdi             ; stdin\n    lea rsi, [buf + r13]     ; ecrire a la suite\n    mov rdx, 65536\n    sub rdx, r13             ; place restante\n    syscall\n    cmp rax, 0\n    jle .read_done           ; 0 = EOF, < 0 = erreur\n    add r13, rax             ; avancer le total\n    cmp r13, 65536\n    jl .read_loop\n.read_done:\n    ; buf[0..r13) contient tout le texte lu",
+    note: "read peut rendre moins que demandé (depuis un tube ou le clavier), d'où la boucle : on écrit chaque fois à [buf + r13] et on avance r13. rax = 0 marque la fin de fichier. En gardant le total dans r13 (callee-saved), il survivra aux appels de write et des routines de conversion utilisés ensuite." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

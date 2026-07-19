@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "L'image de production : multi-stage (JAR), non-root, scan",
+  subtitle: "Fabriquer l'artefact qui partira en prod — léger, non-root, scanné.",
+  theory: `
+<h3>1. Le Dockerfile multi-stage</h3>
+<p>Un <strong>Dockerfile</strong> est la recette qui décrit, ligne par ligne, comment fabriquer une <strong>image</strong> — un paquet figé contenant l'application et tout ce qu'il lui faut pour tourner. Un <strong>conteneur</strong> est une copie de cette image en train de s'exécuter. « Multi-stage » (à plusieurs étages) : on utilise un premier étage lourd pour <em>construire</em> (le <em>builder</em>, avec Maven et le JDK) puis on ne garde, dans l'étage final, que le strict nécessaire pour <em>faire tourner</em> l'application. Le <strong>JAR</strong> est le fichier unique produit par la compilation ; le <strong>JRE</strong> est le moteur minimal qui exécute du Java (contrairement au JDK, il n'a pas le compilateur).</p>
+<pre class="pseudo">FROM maven:3.9-eclipse-temurin-21 AS builder   # etage BUILDER : part d'une image contenant Maven + le JDK 21
+WORKDIR /app                              # se place dans le dossier de travail /app
+COPY pom.xml .                            # copie d'abord le pom.xml (liste des dependances)
+RUN mvn -B dependency:go-offline          # couche cache des dépendances
+COPY src ./src                            # copie ensuite le code source
+RUN mvn -B -DskipTests package            # produit target/ludotheque-*.jar
+
+FROM eclipse-temurin:25-jre               # runtime SANS Maven, SANS JDK complet
+RUN useradd --create-home --shell /bin/false ludo   # cree un utilisateur 'ludo' sans privileges (ni shell de connexion)
+WORKDIR /app                              # dossier de travail de l'image finale
+COPY --from=builder /app/target/ludotheque-*.jar app.jar   # recupere UNIQUEMENT le JAR depuis l'etage builder
+USER ludo                                 # non-root
+EXPOSE 8080                               # signale que l'appli ecoute sur le port 8080
+ENTRYPOINT ["java","-jar","app.jar"]      # commande lancee au demarrage du conteneur : executer le JAR</pre>
+
+<h3>2. Pourquoi multi-stage</h3>
+<pre class="pseudo">// L'étage 'builder' contient Maven, le JDK, les sources, le cache (~800 Mo)
+// L'étage final ne garde QUE le JRE + le JAR (~200 Mo)
+// -> image plus légère, surface d'attaque réduite (ni compilateur ni sources en prod)</pre>
+
+<h3>3. Non-root : le moindre privilège</h3>
+<pre class="pseudo">// Par défaut un conteneur tourne en root -> une faille applicative devient root
+// USER ludo : même compromise, l'attaquant n'a que les droits de 'ludo'
+// (cours Sécurité : moindre privilège ; cours Docker : non-root)</pre>
+
+<h3>4. Le scan d'image (trivy)</h3>
+<p><strong>trivy</strong> est un scanner qui inspecte l'image à la recherche de <strong>CVE</strong> — des failles de sécurité connues et répertoriées (comme un rappel de sécurité sur un modèle de voiture). Une <em>CVE critique</em> fait échouer la construction. Le dernier <em>smoke test</em> (« test de fumée ») vérifie juste que l'image démarre et répond, via l'adresse de santé <code>/actuator/health</code>.</p>
+<pre class="pseudo"># ci.yml — job image
+  image:                                   # le job qui construit et verifie l'image
+    needs: [tests, qualite, securite]      # ne demarre qu'APRES la reussite de ces trois jobs
+    steps:                                 # les etapes du job
+      - run: docker build -t ludotheque:ci .   # construit l'image a partir du Dockerfile
+      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci   # scanne : job ROUGE (exit 1) si une CVE CRITIQUE est trouvee
+      - run: docker run --rm -d -p 8080:8080 ... && curl -fs localhost:8080/actuator/health   # smoke test : lance l'image et verifie qu'elle repond</pre>
+<p>Une faille <strong>critique</strong> dans une couche de base bloque la construction : on ne publie jamais une image vulnérable.</p>
+
+<h3>5. Dev vs prod</h3>
+<div class="warn">Le compose de développement garde le rechargement à chaud pratique ; la <strong>production</strong> utilise cette image immuable construite par la CI. On ne déploie jamais l'environnement de dev : on déploie un artefact figé, scanné, non-root, que l'on peut redéployer à l'identique (et donc revenir en arrière — leçon 20).</div>
+<div class="tip">L'image de prod réunit d'un coup le cours Docker (multi-stage, non-root) et le cours Sécurité (moindre privilège, scan CVE). Elle est plus légère, plus sûre, et vérifiée par trivy à chaque build : l'artefact qui part en prod est un <strong>objet de confiance</strong>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un Dockerfile multi-stage sépare…", opts: ["Rien", "La construction (builder) du runtime final", "Deux bases", "Le CSS"], a: 1, exp: "builder puis JRE." },
+    { type: "qcm", q: "L'étage final contient…", opts: ["Maven + JDK + sources", "Seulement le JRE + le JAR", "La base", "Le cache Maven"], a: 1, exp: "Léger, sûr." },
+    { type: "qcm", q: "Le multi-stage réduit…", opts: ["La lisibilité", "La taille et la surface d'attaque", "La vitesse d'exécution", "Rien"], a: 1, exp: "Ni compilateur ni sources en prod." },
+    { type: "qcm", q: "USER ludo signifie…", opts: ["root", "Un utilisateur non privilégié", "Un admin", "Personne"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "Sans USER, une faille applicative donne…", opts: ["Rien", "Les droits root dans le conteneur", "Un cache", "Un rôle"], a: 1, exp: "D'où non-root." },
+    { type: "qcm", q: "trivy scanne…", opts: ["Le code source", "L'image (CVE des couches)", "Le CSS", "La base"], a: 1, exp: "Failles connues." },
+    { type: "qcm", q: "Une CVE critique…", opts: ["Est publiée quand même", "Bloque la construction (job rouge)", "Est ignorée", "Chiffre l'image"], a: 1, exp: "Jamais d'image vulnérable." },
+    { type: "qcm", q: "Le job image dépend de…", opts: ["Rien", "needs: [tests, qualite, securite]", "La prod", "main"], a: 1, exp: "Après les verts." },
+    { type: "qcm", q: "En prod on déploie…", opts: ["L'env de dev", "L'image immuable de la CI", "Les sources", "Un zip"], a: 1, exp: "Artefact figé." },
+    { type: "qcm", q: "dependency:go-offline sert à…", opts: ["Déployer", "Mettre les dépendances en couche cache", "Chiffrer", "Tester"], a: 1, exp: "Build plus rapide." },
+    { type: "vf", q: "Une image immuable permet de revenir en arrière facilement.", a: true, exp: "Rollback (leçon 20)." },
+    { type: "qcm", q: "eclipse-temurin:25-jre plutôt que :25-jdk car…", opts: ["Plus lourd", "Le runtime n'a pas besoin du compilateur", "Obligatoire", "Plus lent"], a: 1, exp: "Surface réduite." },
+    { type: "qcm", q: "Le smoke test après build vérifie…", opts: ["Le CSS", "Que l'image démarre et répond (/actuator/health)", "La base", "Le rôle"], a: 1, exp: "Image fonctionnelle." },
+    { type: "qcm", q: "L'image de prod réunit…", opts: ["Merise + SQL", "Docker (multi-stage, non-root) + Sécurité (scan)", "Le CSS", "Rien"], a: 1, exp: "Deux cours d'outillage." },
+    { type: "vf", q: "L'artefact de prod est un objet de confiance (scanné, non-root, léger).", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — L'image de prod durcie",
+    intro: `<p>Multi-stage + non-root + scan + smoke test.</p>`,
+    questions: [
+      { type: "qcm", q: "L'image finale contient :", opts: ["JRE + JAR seulement", "Maven + JDK + sources", "la base", "le cache Maven"], a: 0, exp: "Léger." },
+      { type: "qcm", q: "Le conteneur tourne en :", opts: ["utilisateur non-root (USER ludo)", "root", "admin", "personne"], a: 0, exp: "Moindre privilège." },
+      { type: "qcm", q: "La sécurité de l'image est vérifiée par :", opts: ["trivy (CVE critiques bloquantes)", "un coup d'œil", "rien", "le CSS"], a: 0, exp: "Scan." },
+      { type: "qcm", q: "En prod on déploie :", opts: ["l'image immuable de la CI", "l'env de dev", "les sources", "un zip"], a: 0, exp: "Artefact figé." },
+      { type: "vf", q: "Une CVE critique bloque la construction de l'image.", a: true, exp: "Jamais publiée." }
+    ],
+    solution: `<pre class="pseudo">FROM maven:3.9-eclipse-temurin-21 AS builder   # etage builder : Maven + JDK pour compiler
+... mvn -B -DskipTests package        # -> target/*.jar   # compile et produit le JAR
+FROM eclipse-temurin:25-jre           # etage final : seulement le JRE (leger)
+RUN useradd ... ludo                  # cree un utilisateur sans privileges
+COPY --from=builder /app/target/ludotheque-*.jar app.jar   # copie uniquement le JAR depuis le builder
+USER ludo                             # le conteneur tournera en non-root
+ENTRYPOINT ["java","-jar","app.jar"]  # au demarrage : execute le JAR
+
+# ci.yml job image : build -> trivy (CRITICAL) -> smoke test /actuator/health   # build, scan CVE bloquant, puis verif que l'image repond</pre>
+<p>L'artefact est un objet de confiance. Demain : le pipeline complet et la protection de branche.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile de production…",
+  items: [
+  { id: "proj6java-l17", title: "L'image de production multi-stage, non-root, scannée", level: 3,
+    statement: "Écris le Dockerfile multi-stage (builder Maven -> runtime JRE, JAR copié, utilisateur non-root) et le job CI 'image' (build + trivy CRITICAL + smoke test /actuator/health). Explique en 3-4 lignes ce que le multi-stage retire de l'image de prod et pourquoi non-root change tout en cas de faille.",
+    hints: [
+      "builder : maven:3.9-eclipse-temurin-21, package (skip tests) ; final : eclipse-temurin:25-jre.",
+      "COPY --from=builder du seul JAR ; useradd + USER ludo (non-root).",
+      "ci.yml : needs [tests, qualite, securite] ; trivy --exit-code 1 --severity CRITICAL."
+    ],
+    solution: "# Dockerfile (production)\nFROM maven:3.9-eclipse-temurin-21 AS builder\nWORKDIR /app\nCOPY pom.xml .\nRUN mvn -B dependency:go-offline          # couche cache des dependances\nCOPY src ./src\nRUN mvn -B -DskipTests package            # -> target/ludotheque-*.jar\n\nFROM eclipse-temurin:25-jre               # runtime : ni Maven ni JDK complet\nRUN useradd --create-home --shell /bin/false ludo\nWORKDIR /app\nCOPY --from=builder /app/target/ludotheque-*.jar app.jar\nUSER ludo                                 # non-root\nEXPOSE 8080\nENTRYPOINT [\"java\",\"-jar\",\"app.jar\"]\n\n# ci.yml — job image\n  image:\n    needs: [tests, qualite, securite]\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: docker build -t ludotheque:ci .\n      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci\n      - name: Smoke test\n        run: |\n          docker run --rm -d -p 8080:8080 --name t ludotheque:ci\n          for i in $(seq 1 15); do curl -fs localhost:8080/actuator/health && break; sleep 3; done\n          docker stop t\n\n# CE QUE LE MULTI-STAGE RETIRE, POURQUOI NON-ROOT\n# L'etage builder embarque Maven, le JDK complet, les sources et le cache de\n# dependances (~800 Mo) -- tout cela n'a AUCUNE utilite en production et forme\n# une surface d'attaque (un compilateur present aide un intrus). L'etage final ne\n# copie que le JRE + le JAR (~200 Mo) : plus leger, plus rapide a deployer, moins\n# expose.\n# NON-ROOT : par defaut un conteneur tourne en root. Si l'application est\n# compromise (RCE), l'attaquant herite de root DANS le conteneur -> evasion\n# facilitee, degats maximaux. Avec USER ludo, la meme faille ne donne que les\n# droits d'un utilisateur sans privileges : le rayon de destruction est confine.",
+    note: "L'image de production est le point de convergence des trois cours d'outillage : Docker (multi-stage, image minimale), Sécurité (moindre privilège via non-root, scan CVE) et CI/CD (build automatisé, gate sur trivy). C'est aussi la condition du rollback : parce que l'image est immuable et versionnée, revenir à la version précédente est trivial (leçon 20). Un artefact léger, non-root et scanné n'est pas un luxe — c'est le standard minimal d'une livraison responsable." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

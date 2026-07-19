@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "La relation N-N : ManyToManyField (les catégories de jeux)",
+  subtitle: "Un jeu, plusieurs catégories ; une catégorie, plusieurs jeux — et Django gère la table de jointure à ta place.",
+  theory: `
+<h3>1. Le problème : un jeu, plusieurs catégories</h3>
+<p>« 7 Wonders » est à la fois un jeu de <strong>Stratégie</strong> et un jeu <strong>Famille</strong> ; et la catégorie « Stratégie » regroupe des dizaines de jeux. Une <strong>ForeignKey</strong> (leçons 8-9) ne convient pas : elle ne range chaque ligne que d'un seul côté (une location a UN jeu). Ici la relation est <strong>plusieurs-à-plusieurs</strong> (N-N) : plusieurs des deux côtés à la fois — exactement le cas que tu résolvais au Niveau 4, en Merise, avec une <strong>table associative</strong> (une table intermédiaire qui relie deux tables). Côté Django, un seul champ suffit :</p>
+<pre class="pseudo">class Categorie(models.Model):                        # nouveau modele : une categorie de jeu
+    nom = models.CharField(max_length=50, unique=True)   # nom unique (pas deux fois "Strategie")
+
+class Jeu(models.Model):                              # on enrichit le modele Jeu
+    titre = models.CharField(max_length=120)          # titre du jeu
+    prix = models.DecimalField(max_digits=6, decimal_places=2)   # prix (decimal exact)
+    stock = models.PositiveIntegerField(default=0)    # stock, 0 par defaut
+    categories = models.ManyToManyField(Categorie, related_name="jeux")   # relation N-N ; related_name : strategie.jeux</pre>
+
+<h3>2. Côté MySQL : la table de jointure automatique</h3>
+<p>Une <strong>table de jointure</strong> (ou table associative) est une table dont le seul rôle est de relier deux autres tables. Après makemigrations et migrate, MySQL ne contient pas deux tables mais <strong>trois</strong> : Django a généré la table associative tout seul.</p>
+<pre class="pseudo">mysql&gt; SHOW TABLES;                    -- liste les tables de la base
+ludotheque_categorie                  -- la table des categories
+ludotheque_jeu                        -- la table des jeux
+ludotheque_jeu_categories        ← créée automatiquement   -- la table de jointure generee par Django
+
+mysql&gt; DESCRIBE ludotheque_jeu_categories;   -- structure de la table de jointure
+id | jeu_id | categorie_id        (paire jeu_id + categorie_id UNIQUE)   -- 2 cles etrangeres, couple unique</pre>
+<p>Une ligne = « ce jeu appartient à cette catégorie ». C'est mot pour mot ta table associative du Niveau 4, écrite et entretenue pour toi. Même idée ailleurs : @ManyToMany avec @JoinTable chez Hibernate/JPA, belongsToMany et sa table pivot chez Eloquent, les skip navigations d'EF Core.</p>
+
+<h3>3. L'API d'écriture : add, remove, set, clear</h3>
+<pre class="pseudo">&gt;&gt;&gt; strategie = Categorie.objects.create(nom="Stratégie")   # cree la categorie Strategie
+&gt;&gt;&gt; famille   = Categorie.objects.create(nom="Famille")     # cree la categorie Famille
+&gt;&gt;&gt; catan = Jeu.objects.get(titre="Catan")                  # recupere l'objet Jeu Catan
+
+&gt;&gt;&gt; catan.categories.add(strategie)              # INSERT dans la jointure   # ajoute une ligne (catan, strategie)
+&gt;&gt;&gt; catan.categories.add(famille)                # ajoute une ligne (catan, famille)
+&gt;&gt;&gt; catan.categories.all()                       # lit les categories de Catan
+&lt;QuerySet [&lt;Categorie: Stratégie&gt;, &lt;Categorie: Famille&gt;]&gt;   # les deux categories
+
+&gt;&gt;&gt; catan.categories.remove(famille)             # DELETE d'une ligne   # retire l'association avec Famille
+&gt;&gt;&gt; catan.categories.set([strategie, famille])   # remplace TOUT d'un coup   # la jointure = exactement cette liste
+&gt;&gt;&gt; catan.categories.clear()                     # vide la jointure du jeu   # supprime toutes les associations de Catan</pre>
+<p>Chaque appel écrit <strong>immédiatement</strong> dans la table de jointure : aucun save() à faire. Et remove comme clear ne suppriment jamais les Categorie elles-mêmes — seulement les lignes d'association.</p>
+
+<h3>4. Le sens inverse et le filtrage à travers la relation</h3>
+<p>Comme pour les ForeignKey de la leçon 9, le related_name ouvre le sens inverse ; et le double underscore traverse la relation dans un filter.</p>
+<pre class="pseudo">&gt;&gt;&gt; strategie.jeux.all()                 # grâce à related_name="jeux"   # les jeux de la categorie Strategie
+&lt;QuerySet [&lt;Jeu: Catan&gt;, &lt;Jeu: 7 Wonders&gt;]&gt;   # deux jeux dans cette categorie
+
+&gt;&gt;&gt; qs = Jeu.objects.filter(categories__nom="Stratégie")   # les jeux dont une categorie se nomme Strategie
+&gt;&gt;&gt; print(qs.query)                      # ton réflexe de la leçon 2   # afficher le SQL prevu
+SELECT ... FROM ludotheque_jeu                                        -- on part de la table jeu
+INNER JOIN ludotheque_jeu_categories ON (jeu.id = jointure.jeu_id)    -- 1er saut : vers la table de jointure
+INNER JOIN ludotheque_categorie ON (jointure.categorie_id = categorie.id)   -- 2e saut : vers la table categorie
+WHERE ludotheque_categorie.nom = Stratégie                          -- condition sur le nom de la categorie</pre>
+<p>Deux JOIN écrits pour toi : le trajet jeu → jointure → catégorie que tu tapais à la main au Niveau 4.</p>
+
+<h3>5. Et si la jointure porte des données ? L'option through</h3>
+<p>Parfois l'association elle-même a des colonnes (date d'ajout, position dans un classement…). On déclare alors un modèle intermédiaire explicite et on le branche avec l'option <strong>through</strong> (« à travers »). Tu connais déjà ce motif sans le savoir : <strong>Location</strong> est exactement cela — une association N-N entre Jeu et Membre, enrichie de dates et d'un prix, que nous avons choisi de modéliser en modèle à part entière dès la leçon 8. Simple mention ici, retiens le mot-clé :</p>
+<pre class="pseudo">class Jeu(models.Model):                              # rappel du modele Jeu
+    ...                                               # (ses champs deja vus)
+    testeurs = models.ManyToManyField(Membre, through="SeanceTest")   # N-N via un modele intermediaire "SeanceTest"</pre>
+<div class="warn">add, remove, set et clear écrivent tout de suite en base — et exigent que le Jeu possède déjà une clé primaire. Sauvegarde l'objet AVANT de toucher à ses categories, sinon ValueError.</div>
+<div class="tip">Pour une liste de cases à cocher dans un formulaire, set([...]) est ton ami : un seul appel remplace exactement la sélection de l'utilisateur, ajouts et retraits compris.</div>`,
+  exercises: [
+    { type: "qcm", q: "Entre Jeu et Categorie, la relation est…", opts: ["1-N : un jeu a une seule catégorie", "N-N : un jeu a plusieurs catégories et inversement", "1-1 : une catégorie par jeu", "Aucune relation possible"], a: 1, exp: "Catan est Stratégie ET Famille ; Stratégie contient des dizaines de jeux." },
+    { type: "qcm", q: "Le champ Django pour une relation N-N :", opts: ["ForeignKey", "OneToOneField", "ManyToManyField", "ManyField"], a: 2, exp: "Déclaré d'un seul côté, il crée la table de jointure." },
+    { type: "input", q: "Le nom exact de la table de jointure créée par Django pour le champ categories de Jeu (app ludotheque) :", a: ["ludotheque_jeu_categories"], ph: "ludotheque_…", exp: "app_modele_champ : ludotheque_jeu_categories." },
+    { type: "qcm", q: "Les colonnes de cette table de jointure :", opts: ["id, jeu_id, categorie_id", "titre, nom", "id, nom, prix", "jeu, categorie (objets complets)"], a: 0, exp: "Deux clés étrangères, paire unique — la table associative de Merise." },
+    { type: "qcm", q: "catan.categories.add(strategie) provoque…", opts: ["Un UPDATE de ludotheque_jeu", "Un INSERT immédiat dans la table de jointure", "Rien tant qu'on n'appelle pas save()", "Un DELETE"], a: 1, exp: "Une ligne (catan.id, strategie.id) apparaît aussitôt." },
+    { type: "vf", q: "Après catan.categories.add(strategie), il faut appeler catan.save() pour enregistrer la relation.", a: false, exp: "add écrit directement dans la table de jointure, sans save()." },
+    { type: "input", q: "La méthode qui remplace d'un coup toutes les catégories d'un jeu par une nouvelle liste :", a: ["set", "set()", ".set()"], ph: "catan.categories.…", exp: "set([...]) ajoute et retire ce qu'il faut pour coller à la liste." },
+    { type: "qcm", q: "catan.categories.clear()…", opts: ["Supprime les Categorie de la base", "Vide la table de jointure pour ce jeu, sans toucher aux Categorie", "Supprime le jeu", "Lève une erreur"], a: 1, exp: "Seules les lignes d'association disparaissent." },
+    { type: "qcm", q: "strategie.jeux.all() fonctionne grâce à…", opts: ["related_name='jeux' sur le ManyToManyField", "Un champ jeux déclaré dans Categorie", "Un import spécial", "Un JOIN écrit à la main"], a: 0, exp: "Le related_name ouvre le sens inverse, comme en leçon 9." },
+    { type: "qcm", q: "Jeu.objects.filter(categories__nom='Stratégie') génère en SQL…", opts: ["Deux INNER JOIN et un WHERE", "Deux requêtes séparées", "Une boucle Python", "Un produit cartésien sans condition"], a: 0, exp: "jeu → jointure → categorie : vérifie avec print(qs.query)." },
+    { type: "vf", q: "Il faut déclarer le ManyToManyField dans Jeu ET dans Categorie.", a: false, exp: "Un seul côté suffit ; l'autre sens existe via related_name." },
+    { type: "qcm", q: "L'option through d'un ManyToManyField sert à…", opts: ["Accélérer la requête", "Déclarer soi-même le modèle de jointure pour y ajouter des champs", "Traverser un pare-feu", "Rendre la relation obligatoire"], a: 1, exp: "Jointure enrichie — Location en est l'exemple vivant." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA du ManyToManyField :", opts: ["@OneToMany", "@ManyToMany", "@JoinColumn", "@Entity"], a: 1, exp: "Souvent accompagné de @JoinTable pour nommer la jointure." },
+    { type: "vf", q: "On peut appeler jeu.categories.add(...) sur un Jeu jamais sauvegardé (sans clé primaire).", a: false, exp: "La jointure a besoin du jeu_id : sauvegarde d'abord, ValueError sinon." },
+    { type: "qcm", q: "Chez Eloquent (Laravel), la relation N-N se déclare avec…", opts: ["hasMany", "belongsTo", "belongsToMany", "hasOne"], a: 2, exp: "Avec une table pivot, l'équivalent de notre table de jointure." }
+  ],
+  final: {
+    title: "Exercice final — La table que tu n'écriras plus jamais",
+    intro: `<p>Le classement des jeux de la Ludothèque est en place : vérifions que la mécanique N-N est claire, de la table MySQL au related_name.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour relier N jeux à N catégories, Django crée…", opts: ["Une colonne texte dans ludotheque_jeu", "Une table de jointure ludotheque_jeu_categories", "Une vue MySQL", "Un fichier JSON"], a: 1, exp: "Ta table associative du Niveau 4, générée automatiquement." },
+      { type: "input", q: "La méthode pour retirer UNE catégorie d'un jeu sans toucher aux autres :", a: ["remove", "remove()", ".remove()"], ph: "catan.categories.…", exp: "remove supprime une ligne de la jointure, clear les supprime toutes." },
+      { type: "vf", q: "remove et clear suppriment des lignes de la table de jointure, jamais des lignes de ludotheque_categorie.", a: true, exp: "On casse l'association, pas la catégorie." },
+      { type: "qcm", q: "Le sens inverse strategie.jeux.all() renvoie…", opts: ["Un QuerySet des jeux de la catégorie", "Un seul Jeu", "Une liste Python figée", "Une erreur"], a: 0, exp: "Un QuerySet, paresseux comme toujours." },
+      { type: "qcm", q: "Pour une jointure porteuse de données (date, quantité…), on utilise…", opts: ["through", "related_name", "unique=True", "on_delete"], a: 0, exp: "Un modèle intermédiaire explicite branché avec through." }
+    ],
+    solution: `<pre class="pseudo">N-N               : categories = models.ManyToManyField(Categorie, related_name="jeux")   # un seul champ, un cote
+Côté MySQL        : table ludotheque_jeu_categories (jeu_id, categorie_id)   # la table de jointure automatique
+Écriture          : add / remove / set([...]) / clear  → effet immédiat, sans save()   # ecrit direct dans la jointure
+Lecture           : jeu.categories.all()   |   strategie.jeux.all()   # sens direct et sens inverse (related_name)
+Filtrer à travers : Jeu.objects.filter(categories__nom="Stratégie")  → 2 JOIN   # jeu -> jointure -> categorie
+Jointure enrichie : through (Location en est l'exemple vivant)   # modele intermediaire quand l'assoc a des donnees
+Ailleurs          : @ManyToMany (JPA) · belongsToMany (Eloquent) · skip navigations (EF Core)   # equivalents</pre>
+<p>Il nous reste une dernière relation à ranger dans la boîte à outils : le un-pour-un. Rendez-vous à la leçon 11, « La relation 1-1 : OneToOneField (le profil du membre) ».</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l10", title: "Trois tables pour une relation", level: 2,
+    statement: "La Ludothèque doit classer ses jeux : « Stratégie », « Famille », « Ambiance »… et un même jeu peut appartenir à plusieurs catégories. Rédige une analyse en trois temps. 1) Explique pourquoi ni un CharField categorie dans Jeu, ni une ForeignKey vers Categorie ne peuvent modéliser ce besoin, en t'appuyant sur ta modélisation Merise du Niveau 4. 2) Écris la séance de shell Django complète : création de trois catégories, classement de deux jeux (dont un dans deux catégories), correction d'une erreur de classement avec remove ou set, puis lecture dans les deux sens. 3) Prédis le SQL généré par Jeu.objects.filter(categories__nom='Stratégie') AVANT de le vérifier avec print(qs.query) : combien de tables, combien de JOIN ?",
+    hints: [
+      "CharField : que se passe-t-il pour un jeu à deux catégories ? ForeignKey : combien de catégories au maximum par jeu ?",
+      "Dans le shell : objects.create pour les catégories, get pour les jeux, puis add ou set ; la lecture inverse passe par related_name='jeux'.",
+      "Le SQL doit toucher trois tables — ludotheque_jeu, la jointure, ludotheque_categorie — donc deux INNER JOIN."
+    ],
+    solution: "1) CharField : une seule valeur texte → impossible de stocker proprement deux catégories (ou alors 'Stratégie,Famille', invérifiable et infiltrable). ForeignKey : une seule catégorie par jeu, or le besoin est N des deux côtés. En Merise : association N-N → table associative → ManyToManyField.\n\n2) Séance de shell :\nstrategie = Categorie.objects.create(nom='Stratégie')\nfamille  = Categorie.objects.create(nom='Famille')\nambiance = Categorie.objects.create(nom='Ambiance')\ncatan   = Jeu.objects.get(titre='Catan')\nwonders = Jeu.objects.get(titre='7 Wonders')\ncatan.categories.add(strategie)\nwonders.categories.add(strategie, famille)\ncatan.categories.add(ambiance)          # erreur de classement\ncatan.categories.remove(ambiance)       # ou catan.categories.set([strategie])\ncatan.categories.all()                  # → [Stratégie]\nstrategie.jeux.all()                    # → [Catan, 7 Wonders]\n\n3) SQL prédit :\nSELECT jeu.* FROM ludotheque_jeu\nINNER JOIN ludotheque_jeu_categories ON jeu.id = jointure.jeu_id\nINNER JOIN ludotheque_categorie ON jointure.categorie_id = categorie.id\nWHERE categorie.nom = 'Stratégie'\nTrois tables, deux JOIN — la traversée de table associative du Niveau 4, écrite par l'ORM.",
+    note: "Cette table de jointure, tu l'écrivais à la main en SQL au Niveau 4 ; et au Niveau 3, l'admin Django t'affichait déjà un sélecteur multiple sans que tu saches ce qu'il cachait. Dans le projet full-stack du Niveau 6, chaque écran « tags », « catégories » ou « favoris » reposera sur ce même trio table de jointure / add / set — et Hibernate, EF Core ou Eloquent te resserviront exactement la même mécanique sous d'autres noms." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

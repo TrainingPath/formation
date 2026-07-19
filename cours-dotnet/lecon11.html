@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Relations entre entités",
+  subtitle: "Un membre possède plusieurs tâches : relier les tables comme des objets.",
+  theory: `
+<h3>1. La relation 1-N en C#</h3>
+<p>Une <strong>entité</strong> est une classe C# qui correspond à une table (rappel leçon 8). Dans la vraie vie, un <strong>Membre</strong> possède plusieurs <strong>Tâches</strong> : c'est une <strong>relation « un-à-plusieurs »</strong> (notée 1-N : « 1 membre → N tâches »). Analogie : un professeur (1) a plusieurs élèves (N), et chaque élève a un seul professeur. En EF Core, cette relation s'écrit avec trois ingrédients : une <strong>collection</strong> côté parent (la liste des enfants), une <strong>clé étrangère</strong> (en anglais « foreign key », abrégée FK : une colonne qui stocke l'Id du parent) et une <strong>propriété de navigation</strong> (une propriété-objet qui pointe vers l'autre côté, pour circuler entre les deux comme entre deux objets C#).</p>
+<pre class="pseudo">public class Membre                                    // le parent : un membre
+{
+    public int Id { get; set; }                        // clé primaire du membre
+    public string Pseudo { get; set; } = "";           // son pseudo
+    public List&lt;Tache&gt; Taches { get; set; } = new();   // navigation 1→N : ses tâches (le côté « plusieurs »)
+}
+
+public class Tache                                     // l'enfant : une tâche
+{
+    public int Id { get; set; }                        // clé primaire de la tâche
+    public string Titre { get; set; } = "";            // son titre
+    public int MembreId { get; set; }          // la clé étrangère : l'Id du membre propriétaire
+    public Membre? Membre { get; set; }        // navigation N→1 : le membre auquel elle appartient
+}</pre>
+<p>Trois éléments : la <strong>collection</strong> côté parent, la <strong>clé étrangère</strong> <code>MembreId</code> (convention : NomDeClasse + Id) et la <strong>propriété de navigation</strong> côté enfant. EF Core détecte tout par convention (il devine la relation d'après les noms) et crée la contrainte en base à la prochaine migration.</p>
+<h3>2. Créer des données liées</h3>
+<pre class="pseudo">var tache = new Tache { Titre = "Arroser", MembreId = 3 };   // créer une tâche en donnant directement l'Id du propriétaire (3)
+_context.Taches.Add(tache);                                 // marquée « à insérer »
+await _context.SaveChangesAsync();                          // INSERT réel en base
+
+// ou via la collection du parent :
+membre.Taches.Add(new Tache { Titre = "Courses" });         // ajouter la tâche À la collection du membre déjà chargé
+await _context.SaveChangesAsync();     // MembreId rempli tout seul</pre>
+<h3>3. Charger les relations : Include</h3>
+<p>Par défaut, EF Core ne charge PAS les relations : <code>membre.Taches</code> resterait vide ! Il faut demander explicitement le <strong>chargement anticipé</strong> (en anglais « eager loading » : charger tout de suite, en même temps que le parent) avec <code>Include</code> :</p>
+<pre class="pseudo">var membres = await _context.Membres                    // table Membres
+    .Include(m => m.Taches)             // JOIN : les tâches arrivent avec
+    .ToListAsync();                                     // exécuter → chaque membre a ses tâches remplies
+
+var tache = await _context.Taches                       // table Taches
+    .Include(t => t.Membre)             // remonter vers le propriétaire
+    .FirstOrDefaultAsync(t => t.Id == 7);               // la tâche n°7 (ou null), avec son membre chargé</pre>
+<h3>4. Le problème N+1</h3>
+<p>Afficher 100 tâches avec le pseudo du propriétaire SANS Include, en accédant à <code>t.Membre.Pseudo</code> dans une boucle (avec le <em>lazy loading</em>, le chargement paresseux, activé) = 1 requête pour les tâches + 100 requêtes pour aller chercher chaque membre. C'est le fameux <strong>problème N+1</strong> (1 requête de départ + N requêtes cachées), le piège de performance n°1 de TOUS les ORM (un <strong>ORM</strong> — Object-Relational Mapping — est un outil qui fait correspondre objets et tables ; Eloquent en PHP et Hibernate en Java en sont). L'antidote : <code>Include</code> — 1 ou 2 requêtes, point.</p>
+<h3>5. Attention aux cycles JSON</h3>
+<p>Sérialiser un Membre → ses Taches → chacune pointe le Membre → qui a des Taches… <strong>boucle infinie</strong> ! (« Sérialiser » = transformer un objet en texte JSON à renvoyer au client.) Solutions : projeter avec <code>Select</code> vers un objet dédié, un <strong>DTO</strong> (Data Transfer Object, « objet de transfert » : une classe qui ne contient QUE ce que le client doit voir), ou configurer <code>ReferenceHandler.IgnoreCycles</code>. La projection DTO est la voie propre :</p>
+<pre class="pseudo">var resultat = await _context.Membres                   // table Membres
+    .Select(m => new {                                  // projeter chaque membre vers un objet dédié (sans cycle)
+        m.Id, m.Pseudo,                                 // on ne garde que l'Id et le pseudo du membre
+        Taches = m.Taches.Select(t => new { t.Id, t.Titre })   // + ses tâches réduites à Id+Titre (aucun retour vers Membre)
+    })
+    .ToListAsync();                                     // exécuter la requête</pre>
+<div class="warn">Symptôme classique : « membre.Taches est toujours vide alors que la base contient des tâches ». Réflexe : il manque un Include.</div>
+<div class="tip">La suppression d'un membre qui a des tâches : par défaut EF Core configure la cascade (les tâches partent avec). Comportement configurable — décide-le consciemment, jamais par accident.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quels éléments définissent une relation 1-N par convention ?", opts: ["Un attribut [Relation]", "Collection côté parent, clé étrangère MembreId + navigation côté enfant", "Un fichier XML", "Une interface"], a: 1, exp: "List<Tache> + int MembreId + Membre? Membre : EF déduit tout." },
+    { type: "qcm", q: "Quel nom de propriété EF Core reconnaît-il comme clé étrangère vers Membre ?", opts: ["FkMembre", "MembreId (NomDeClasse + Id)", "IdDeMembre", "Cle"], a: 1, exp: "La convention de nommage évite la configuration." },
+    { type: "qcm", q: "Sans Include, que contient membre.Taches après un chargement du membre ?", opts: ["Toutes ses tâches", "Une liste vide : les relations ne se chargent pas par défaut", "null toujours", "Une exception"], a: 1, exp: "LE piège : EF ne charge que ce qu'on demande." },
+    { type: "qcm", q: "Comment charger les membres AVEC leurs tâches ?", opts: ["ToListAsync suffit", "_context.Membres.Include(m => m.Taches).ToListAsync()", "LoadAll()", "Join manuel obligatoire"], a: 1, exp: "Include = le chargement anticipé (eager loading)." },
+    { type: "qcm", q: "Qu'est-ce que le problème N+1 ?", opts: ["Une erreur de calcul", "1 requête pour la liste + 1 requête PAR élément pour sa relation", "Un dépassement mémoire", "Un bug de SQLite"], a: 1, exp: "Invisible sur 5 lignes, mortel sur 10 000." },
+    { type: "qcm", q: "Le N+1 existe-t-il ailleurs qu'en .NET ?", opts: ["Non", "Oui : tous les ORM (Eloquent, Hibernate/JPA…) y sont exposés — le concept est universel", "Uniquement en PHP", "Uniquement avec MySQL"], a: 1, exp: "Apprends l'antidote une fois (Include/with/join fetch), sers-t'en partout." },
+    { type: "qcm", q: "membre.Taches.Add(new Tache{...}) puis SaveChangesAsync : que vaut MembreId de la nouvelle tâche ?", opts: ["0", "L'id du membre : EF Core le remplit via la relation", "null", "Il faut le donner à la main"], a: 1, exp: "Créer via la collection du parent = FK automatique." },
+    { type: "qcm", q: "Pourquoi sérialiser un Membre avec ses Taches (chargées) peut-il boucler à l'infini ?", opts: ["Bug du JSON", "Cycle : Membre → Taches → Membre → Taches… le sérialiseur tourne en rond", "Trop de données", "SQLite le refuse"], a: 1, exp: "Les navigations bidirectionnelles créent des cycles d'objets." },
+    { type: "qcm", q: "Quelle est la solution PROPRE au problème des cycles ?", opts: ["Supprimer les relations", "Projeter avec Select vers un DTO (objet dédié à la réponse, sans cycle)", "Désactiver le JSON", "Limiter à 10 tâches"], a: 1, exp: "Le DTO expose exactement ce que le client doit voir — ni plus ni moins." },
+    { type: "qcm", q: "Que crée la migration après l'ajout de la relation ?", opts: ["Rien", "La colonne MembreId + la contrainte de clé étrangère (intégrité référentielle)", "Une table de liaison", "Un index unique sur Titre"], a: 1, exp: "Impossible de créer une tâche pointant vers un membre inexistant." },
+    { type: "qcm", q: "On tente d'insérer une tâche avec MembreId = 999 (inexistant). Résultat ?", opts: ["Ça passe", "SaveChangesAsync lève une erreur de contrainte : la base protège la cohérence", "Le membre 999 est créé", "MembreId devient null"], a: 1, exp: "L'intégrité référentielle en action." },
+    { type: "qcm", q: "Include peut-il se combiner avec Where et la pagination ?", opts: ["Non", "Oui : _context.Taches.Include(t => t.Membre).Where(...).Skip(...).Take(...).ToListAsync()", "Seulement avec Find", "Uniquement en SQL brut"], a: 1, exp: "Les leçons se cumulent : relations + filtres + pagination." },
+    { type: "qcm", q: "Une relation N-N (une tâche peut avoir plusieurs étiquettes, une étiquette plusieurs tâches) s'écrit :", opts: ["Impossible en EF Core", "List<Etiquette> d'un côté ET List<Tache> de l'autre : EF crée la table de jointure", "Avec trois clés étrangères", "Avec un Dictionary"], a: 1, exp: "EF Core génère la table de liaison automatiquement." },
+    { type: "vf", q: "La propriété de navigation Membre? Membre est stockée comme colonne dans la table Taches.", a: false, exp: "Seule MembreId est une colonne ; la navigation est un concept objet, matérialisé par le JOIN." },
+    { type: "vf", q: "Par défaut, supprimer un membre supprime aussi ses tâches (cascade).", a: true, exp: "Comportement par défaut pour les relations requises — à décider consciemment." }
+  ],
+  final: {
+    title: "Exercice final — Membres et tâches reliés",
+    intro: `<p>L'API expose les tâches avec leur propriétaire :</p>
+<pre class="pseudo">[HttpGet]                                               // GET api/taches
+public async Task&lt;object&gt; Toutes()                      // renvoie une liste d'objets anonymes (DTO)
+{
+    return await _context.Taches                         // table Taches
+        .Include(t => t.Membre)                          // charger aussi le membre propriétaire (JOIN)
+        .OrderByDescending(t => t.CreeLe)                // les plus récentes d'abord
+        .Select(t => new {                               // projeter vers un objet plat (sans cycle)
+            t.Id, t.Titre, t.EstTerminee,                // les champs de la tâche que l'on expose
+            Proprietaire = t.Membre!.Pseudo              // + le pseudo du membre (! = « il n'est pas null, l'Include l'a chargé »)
+        })
+        .ToListAsync();                                  // exécuter la requête
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de requêtes SQL pour 200 tâches et 20 membres ?", opts: ["201", "1 (un JOIN) — l'Include/Select fusionne tout", "220", "20"], a: 1, exp: "Le SELECT avec JOIN rapporte tout d'un coup. Adieu N+1." },
+      { type: "qcm", q: "Que reçoit le client pour chaque tâche ?", opts: ["L'objet complet avec cycles", "{id, titre, estTerminee, proprietaire} : un DTO plat, sans cycle possible", "Seulement l'id", "Le membre entier"], a: 1, exp: "La projection façonne la réponse — et neutralise les cycles." },
+      { type: "qcm", q: "Sans le Select (retour des entités brutes avec Include), quel risque à la sérialisation ?", opts: ["Aucun", "Le cycle Tache → Membre → Taches → … : erreur ou JSON infini", "Un 404", "Un tri différent"], a: 1, exp: "C'est exactement le scénario que le DTO évite." },
+      { type: "qcm", q: "Que déclenche la suppression du membre n°3, propriétaire de 12 tâches (config par défaut) ?", opts: ["Erreur systématique", "Les 12 tâches sont supprimées en cascade avec lui", "Les tâches deviennent orphelines", "Rien"], a: 1, exp: "La cascade par défaut : à connaître pour ne jamais être surpris." },
+      { type: "vf", q: "Le t.Membre! (avec !) dit au compilateur : « fais-moi confiance, Membre n'est pas null ici ».", a: true, exp: "L'opérateur null-forgiving : justifié car l'Include garantit le chargement — à n'utiliser qu'en connaissance de cause." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 11 :
+// 1. 1-N : List<Enfant> côté parent, ParentId + Parent? côté enfant.
+// 2. Les relations NE se chargent PAS seules : Include(x => x.Relation).
+// 3. N+1 = le piège universel des ORM ; Include = l'antidote.
+// 4. Créer via la collection du parent remplit la FK tout seul.
+// 5. Sérialisation : projeter en DTO avec Select — jamais d'entités cycliques.
+// 6. Cascade de suppression : un choix conscient, pas un accident.</pre>
+<p>Les données sont reliées… mais on accepte encore n'importe quoi en entrée. Demain : la validation avec les DataAnnotations.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-relations-projets", title: "Projets et tâches", level: 3,
+    statement: "Le gestionnaire s'enrichit : un <code>Projet</code> contient plusieurs <code>Tache</code>. Écris (1) les deux entités avec la relation complète par convention (collection, FK, navigation) ; (2) la méthode d'API asynchrone <code>[HttpGet(\"avec-taches\")]</code> qui renvoie tous les projets projetés en objets anonymes {Id, Nom, NbTaches, Titres} où NbTaches est le nombre de tâches et Titres la liste de leurs titres — sans problème N+1 ni cycle JSON.",
+    hints: [
+      "Projet : public List<Tache> Taches { get; set; } = new(); — Tache : public int ProjetId + public Projet? Projet.",
+      "Avec un Select, l'Include devient même inutile : EF traduit la sous-requête dans le SQL.",
+      "NbTaches = p.Taches.Count, Titres = p.Taches.Select(t => t.Titre).ToList()."
+    ],
+    solution: "public class Projet                                     // le parent : un projet\n{\n    public int Id { get; set; }                         // cle primaire\n    public string Nom { get; set; } = \"\";               // son nom\n    public List<Tache> Taches { get; set; } = new();    // navigation 1->N : ses taches\n}\n\npublic class Tache                                      // l'enfant : une tache\n{\n    public int Id { get; set; }                         // cle primaire\n    public string Titre { get; set; } = \"\";             // son titre\n    public int ProjetId { get; set; }                   // cle etrangere (convention : Projet + Id)\n    public Projet? Projet { get; set; }                 // navigation N->1 : son projet\n}\n\n[HttpGet(\"avec-taches\")]                                // GET api/projets/avec-taches\npublic async Task<object> AvecTaches()                  // renvoie une liste d'objets anonymes\n{\n    // Une seule requete SQL : la projection embarque la sous-requete\n    return await _context.Projets                       // table Projets\n        .Select(p => new                                // projeter chaque projet vers un objet dedie\n        {\n            p.Id,                                       // l'id du projet\n            p.Nom,                                      // le nom du projet\n            NbTaches = p.Taches.Count,                    // COUNT en base\n            Titres   = p.Taches.Select(t => t.Titre).ToList(),   // la liste des titres (pas de cycle)\n        })\n        .ToListAsync();                                 // executer la requete\n}",
+    note: "Astuce de pro : quand tu projettes avec Select, EF Core génère le JOIN nécessaire tout seul — le DTO règle à la fois le N+1 ET les cycles." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Les déclencheurs (TRIGGER)",
+  subtitle: "Réagir automatiquement à une modification des données.",
+  theory: `
+<h3>1. Qu'est-ce qu'un trigger ?</h3>
+<p>Un <strong>déclencheur</strong> (en anglais <strong>trigger</strong>, « gâchette ») est un bloc de code qui s'exécute TOUT SEUL quand un <code>INSERT</code>, un <code>UPDATE</code> ou un <code>DELETE</code> se produit sur une table. On ne l'appelle jamais soi-même : c'est l'événement (l'écriture) qui le déclenche, comme un détecteur de mouvement qui allume la lumière dès que quelqu'un passe.</p>
+
+<h3>2. Les tables spéciales inserted et deleted</h3>
+<p>Pendant l'exécution du trigger, SQL Server fournit deux tables temporaires automatiques qui contiennent les lignes concernées :</p>
+<pre class="pseudo">inserted   -- contient les NOUVELLES lignes (celles ajoutées par un INSERT, ou la version « après » d'un UPDATE)
+deleted    -- contient les ANCIENNES lignes (celles retirées par un DELETE, ou la version « avant » d'un UPDATE)</pre>
+<p>Un UPDATE remplit les deux : <code>deleted</code> = avant, <code>inserted</code> = après.</p>
+
+<h3>3. Un trigger AFTER (journalisation)</h3>
+<p><strong>AFTER INSERT</strong> signifie « après une insertion réussie ». <strong>Journaliser</strong>, c'est garder une trace des actions dans une table d'historique.</p>
+<pre class="pseudo">CREATE TRIGGER trg_Louer_Log   -- crée un déclencheur nommé trg_Louer_Log
+ON LOUER   -- attaché à la table LOUER
+AFTER INSERT   -- il s'exécute APRÈS chaque insertion dans LOUER
+AS
+BEGIN   -- début du corps du trigger
+    SET NOCOUNT ON;   -- pas de message « n lignes affectées »
+    INSERT INTO JOURNAL (action, idJeu, quand)   -- écrit une trace dans la table JOURNAL
+    SELECT N'location', idJeu, GETDATE() FROM inserted;   -- pour chaque ligne insérée : le mot « location », l'idJeu, l'instant présent
+END;   -- fin du trigger</pre>
+<p>Après chaque insertion dans LOUER, une trace est ajoutée dans JOURNAL — automatiquement.</p>
+
+<h3>4. Maintenir une cohérence (décrémenter le stock)</h3>
+<p>Un trigger peut aussi maintenir des données à jour : ici, baisser le stock à chaque location.</p>
+<pre class="pseudo">CREATE TRIGGER trg_Louer_Stock   -- déclencheur de mise à jour du stock
+ON LOUER   -- sur la table LOUER
+AFTER INSERT   -- après chaque location insérée
+AS
+BEGIN
+    SET NOCOUNT ON;   -- silence le compteur de lignes
+    UPDATE JEU   -- on va modifier la table JEU
+    SET stockLocation = stockLocation - 1   -- baisser son stock de 1
+    FROM JEU
+    INNER JOIN inserted i ON JEU.idJeu = i.idJeu;   -- ... pour les jeux qui figurent dans inserted (ceux qu'on vient de louer)
+END;</pre>
+<div class="warn">Un trigger opère par LOT : <code>inserted</code> peut contenir plusieurs lignes. Il faut raisonner en ensemble (jointure sur inserted), jamais supposer une seule ligne.</div>
+
+<h3>5. INSTEAD OF et bonnes pratiques</h3>
+<p>Un trigger <strong>INSTEAD OF</strong> (« à la place de ») remplace carrément l'opération d'origine au lieu de s'ajouter après (utile sur les vues). Les triggers sont puissants mais peuvent masquer la logique : à utiliser pour l'audit et l'intégrité, avec un code court et sûr. <strong>DISABLE</strong> désactive, <strong>DROP</strong> supprime.</p>
+<pre class="pseudo">DISABLE TRIGGER trg_Louer_Log ON LOUER;   -- désactiver   -- le met en pause sans le supprimer
+DROP TRIGGER trg_Louer_Log;               -- supprimer   -- le retire définitivement</pre>`,
+  exercises: [
+    { type: "qcm", q: "Un trigger s'exécute…", opts: ["Quand on l'appelle avec EXEC", "Automatiquement lors d'un INSERT/UPDATE/DELETE", "Une fois par jour", "Jamais"], a: 1, exp: "Déclenché par l'événement." },
+    { type: "qcm", q: "La table des nouvelles lignes s'appelle…", opts: ["added", "inserted", "new", "rows"], a: 1, exp: "inserted." },
+    { type: "qcm", q: "La table des anciennes lignes s'appelle…", opts: ["old", "deleted", "removed", "prev"], a: 1, exp: "deleted." },
+    { type: "qcm", q: "Un UPDATE remplit…", opts: ["Seulement inserted", "inserted (après) ET deleted (avant)", "Seulement deleted", "Aucune"], a: 1, exp: "Les deux tables." },
+    { type: "qcm", q: "Créer un trigger :", opts: ["CREATE TRIGGER nom ON table AFTER INSERT AS ...", "NEW TRIGGER", "MAKE TRIG", "DECLARE TRIGGER"], a: 0, exp: "CREATE TRIGGER." },
+    { type: "qcm", q: "AFTER INSERT signifie…", opts: ["Avant l'insertion", "Après l'insertion réussie", "Au lieu de", "Jamais"], a: 1, exp: "Après l'événement." },
+    { type: "qcm", q: "Un trigger opère…", opts: ["Toujours sur une seule ligne", "Par lot : inserted peut avoir plusieurs lignes", "Sur les colonnes", "Sur les index"], a: 1, exp: "Raisonner en ensemble." },
+    { type: "qcm", q: "Décrémenter le stock après location :", opts: ["EXEC", "UPDATE JEU ... JOIN inserted", "SELECT", "TOP"], a: 1, exp: "Jointure sur inserted." },
+    { type: "qcm", q: "INSTEAD OF …", opts: ["Ajoute après", "Remplace l'opération (utile sur les vues)", "Trie", "Supprime la table"], a: 1, exp: "À la place de l'action." },
+    { type: "qcm", q: "Désactiver un trigger :", opts: ["STOP TRIGGER", "DISABLE TRIGGER nom ON table", "OFF", "PAUSE"], a: 1, exp: "DISABLE TRIGGER." },
+    { type: "vf", q: "On n'appelle jamais un trigger directement avec EXEC.", a: true, exp: "Il réagit à un événement." },
+    { type: "qcm", q: "Un bon usage des triggers :", opts: ["Tout le code métier", "L'audit et l'intégrité, avec du code court", "Le tri", "Le formatage"], a: 1, exp: "Audit/intégrité." },
+    { type: "vf", q: "Supposer une seule ligne dans inserted est une erreur fréquente.", a: true, exp: "Penser par lot." },
+    { type: "qcm", q: "Journaliser chaque location :", opts: ["Un SELECT", "AFTER INSERT qui écrit dans JOURNAL depuis inserted", "Un index", "Un CHECK"], a: 1, exp: "Trace automatique." },
+    { type: "qcm", q: "Supprimer un trigger :", opts: ["DELETE TRIGGER", "DROP TRIGGER nom", "REMOVE", "TRUNCATE"], a: 1, exp: "DROP TRIGGER." }
+  ],
+  final: {
+    title: "Exercice final — Automatiser une trace",
+    intro: `<p>On veut journaliser automatiquement chaque nouvelle location.</p>`,
+    questions: [
+      { type: "qcm", q: "Le bon moment :", opts: ["BEFORE INSERT", "AFTER INSERT sur LOUER", "AFTER SELECT", "INSTEAD OF DELETE"], a: 1, exp: "Après insertion." },
+      { type: "qcm", q: "La source des nouvelles lignes :", opts: ["deleted", "inserted", "new", "LOUER seul"], a: 1, exp: "inserted." },
+      { type: "qcm", q: "Écrire la trace :", opts: ["INSERT INTO JOURNAL ... SELECT ... FROM inserted", "EXEC JOURNAL", "UPDATE", "TOP"], a: 0, exp: "Depuis inserted." },
+      { type: "qcm", q: "Gérer plusieurs lignes insérées :", opts: ["Supposer une seule", "Raisonner en ensemble (jointure/SELECT sur inserted)", "Ignorer", "Une boucle obligatoire"], a: 1, exp: "Par lot." },
+      { type: "vf", q: "Un trigger AFTER INSERT s'exécute sans qu'on l'appelle explicitement.", a: true, exp: "Automatique." }
+    ],
+    solution: `<pre class="pseudo">CREATE TRIGGER trg_Louer_Log   -- déclencheur de journalisation
+ON LOUER   -- sur la table LOUER
+AFTER INSERT   -- après chaque insertion
+AS
+BEGIN
+    SET NOCOUNT ON;   -- pas de message de comptage
+    INSERT INTO JOURNAL (action, idJeu, quand)   -- ajoute une trace dans JOURNAL
+    SELECT N'location', idJeu, GETDATE()   -- « location », l'idJeu concerné, l'instant présent
+    FROM inserted;   -- pour chaque ligne insérée (peut être plusieurs)
+END;</pre>
+<p>Ta base réagit toute seule. Demain : MERGE et opérations d'ensemble.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton trigger…",
+  items: [
+  { id: "sqlsrv-l18", title: "Trigger de stock à l'achat", level: 3,
+    statement: "Écris un trigger 'trg_Acheter_Stock' sur la table ACHETER qui, après chaque INSERT, diminue de 1 le stockVente du jeu concerné dans JEU. Gère le cas de plusieurs lignes insérées (raisonne par ensemble via une jointure sur inserted).",
+    hints: [
+      "CREATE TRIGGER trg_Acheter_Stock ON ACHETER AFTER INSERT.",
+      "UPDATE JEU SET stockVente = stockVente - 1 FROM JEU INNER JOIN inserted i ON JEU.idJeu = i.idJeu.",
+      "Si un jeu peut être acheté en plusieurs exemplaires d'un coup, agréger inserted par idJeu et soustraire le COUNT."
+    ],
+    solution: "CREATE TRIGGER trg_Acheter_Stock\nON ACHETER\nAFTER INSERT\nAS\nBEGIN\n    SET NOCOUNT ON;\n    UPDATE JEU\n    SET stockVente = stockVente - x.nb\n    FROM JEU\n    INNER JOIN (\n        SELECT idJeu, COUNT(*) AS nb\n        FROM inserted\n        GROUP BY idJeu\n    ) AS x ON JEU.idJeu = x.idJeu;\nEND;",
+    note: "Le piège classique du trigger : inserted peut contenir plusieurs lignes. En agrégeant inserted par idJeu (COUNT) puis en soustrayant ce nombre, le trigger reste correct même pour un INSERT multi-lignes — là où un simple « - 1 » supposerait à tort une seule ligne." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

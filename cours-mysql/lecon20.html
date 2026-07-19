@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Projet guidé : la Ludothèque en MySQL",
+  subtitle: "Assembler tout le cours en une base complète et vivante.",
+  theory: `
+<h3>1. Le plan d'ensemble</h3>
+<p>Ce projet réunit TOUT ce qu'on a appris. Une <strong>ludothèque</strong> est un endroit où l'on emprunte, loue ou achète des jeux (comme une bibliothèque, mais pour les jeux). On va : créer les tables en InnoDB avec <code>AUTO_INCREMENT</code> et contraintes (leçons 2 et 15), les remplir (leçon 3), les interroger avec jointures (leçon 10) et fenêtrage (leçon 12), puis automatiser avec procédures (leçon 18), transactions (leçon 17) et triggers (leçon 19). C'est la même Ludothèque que dans les autres cours de la formation — ici, en version MySQL.</p>
+
+<h3>2. Le schéma (rappel)</h3>
+<p>Le <strong>schéma</strong> est le plan de toutes les tables et de leurs colonnes. Entre parenthèses figurent les colonnes de chaque table :</p>
+<pre class="pseudo">CATEGORIE(idCategorie, libelle)          -- les catégories de jeux (Stratégie, Famille…)
+FOURNISSEUR(idFournisseur, nom)          -- les fournisseurs qui livrent les jeux
+UTILISATEUR(idUtilisateur, nom, email)   -- les personnes ; + CLIENT / VENDEUR / ADMINISTRATEUR (des types d'utilisateurs)
+JEU(idJeu, titre, prixAchat, prixLocation,  -- le catalogue des jeux…
+    stockVente, stockLocation, idCategorie, idFournisseur)  -- …avec deux stocks et deux liens (catégorie, fournisseur)
+LOUER(idClient, idJeu, dateDebut, nbJours)  -- qui loue quel jeu, quand, pour combien de jours
+ACHETER(idClient, idJeu, dateAchat)      -- qui achète quel jeu, quand
+RESERVER(idClient, idJeu, dateResa)      -- qui réserve quel jeu, quand</pre>
+<p>Point clé : deux stocks distincts (<code>stockVente</code> pour la vente, <code>stockLocation</code> pour la location) et un fournisseur relié au jeu.</p>
+
+<h3>3. Créer et peupler</h3>
+<p>On crée la table JEU avec toutes ses protections, puis on y insère deux jeux :</p>
+<pre class="pseudo">CREATE TABLE JEU (
+  idJeu INT AUTO_INCREMENT PRIMARY KEY,   -- identifiant unique auto-numéroté (clé primaire)
+  titre VARCHAR(120) NOT NULL,            -- titre obligatoire
+  prixLocation DECIMAL(6,2) CHECK (prixLocation &gt; 0),   -- prix exact, forcé positif
+  stockVente INT NOT NULL DEFAULT 0 CHECK (stockVente &gt;= 0),      -- stock de vente, 0 par défaut, jamais négatif
+  stockLocation INT NOT NULL DEFAULT 0 CHECK (stockLocation &gt;= 0),-- stock de location, mêmes règles
+  idCategorie INT NOT NULL,               -- catégorie obligatoire
+  idFournisseur INT NULL,                 -- fournisseur FACULTATIF (NULL autorisé)
+  CONSTRAINT fk_jeu_cat  FOREIGN KEY (idCategorie)  REFERENCES CATEGORIE(idCategorie),      -- lien vers CATEGORIE
+  CONSTRAINT fk_jeu_four FOREIGN KEY (idFournisseur) REFERENCES FOURNISSEUR(idFournisseur)  -- lien vers FOURNISSEUR
+) ENGINE=InnoDB;                          -- InnoDB : clés étrangères et transactions réellement appliquées
+
+INSERT INTO JEU (titre, prixLocation, stockVente, stockLocation, idCategorie)  -- on ne fournit PAS idJeu (auto-généré)
+VALUES ('Catan', 5.00, 3, 2, 1), ('Dixit', 3.50, 5, 4, 2);   -- deux jeux insérés en une commande</pre>
+
+<h3>4. Interroger la Ludothèque</h3>
+<p>Une requête d'analyse avancée : le jeu le plus loué DE CHAQUE catégorie, grâce au fenêtrage (leçon 12) :</p>
+<pre class="pseudo">-- top 1 jeu le plus loué par catégorie (fenêtrage MySQL 8)
+WITH classe AS (                          -- CTE : on classe les jeux dans chaque catégorie
+  SELECT j.titre, j.idCategorie,
+    ROW_NUMBER() OVER (PARTITION BY j.idCategorie   -- numérotation séparée par catégorie…
+                       ORDER BY COUNT(l.idJeu) DESC) AS r  -- …du plus loué au moins loué (r = 1 = le plus loué)
+  FROM JEU j LEFT JOIN LOUER l ON j.idJeu = l.idJeu  -- LEFT JOIN pour garder les jeux jamais loués
+  GROUP BY j.titre, j.idCategorie          -- on compte les locations par jeu
+)
+SELECT titre, idCategorie FROM classe WHERE r = 1;  -- on garde le n°1 de chaque catégorie</pre>
+
+<h3>5. Automatiser une location (le cœur métier)</h3>
+<p>La procédure qui rassemble tout : elle VÉRIFIE le stock (avec une variable et un <code>IF</code>), puis effectue la location de façon indivisible (transaction) :</p>
+<pre class="pseudo">DELIMITER $$
+CREATE PROCEDURE louer(IN p_client INT, IN p_jeu INT)  -- procédure avec deux paramètres d'entrée : le client et le jeu
+BEGIN
+    DECLARE stock INT;                    -- DECLARE = crée une variable locale "stock" de type entier
+    SELECT stockLocation INTO stock FROM JEU WHERE idJeu = p_jeu;  -- range le stock actuel du jeu dans la variable stock
+    IF stock &gt; 0 THEN                     -- IF … THEN = SI le stock est suffisant, alors…
+        START TRANSACTION;                -- …on ouvre une transaction (tout ou rien)
+            INSERT INTO LOUER (idClient, idJeu, dateDebut, nbJours)  -- on enregistre la location…
+            VALUES (p_client, p_jeu, CURDATE(), 7);
+            UPDATE JEU SET stockLocation = stockLocation - 1 WHERE idJeu = p_jeu;  -- …et on décrémente le stock
+        COMMIT;                           -- on valide les deux écritures ensemble
+    END IF;                               -- END IF = fin du bloc conditionnel
+END$$
+DELIMITER ;</pre>
+<div class="tip">Cette procédure réunit tout le cours : variable et <code>IF</code> (contrôle du stock), transaction (<code>INSERT</code> + <code>UPDATE</code> indivisibles), et la logique métier de la location. C'est la Ludothèque qui fonctionne pour de vrai, en MySQL.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le modèle Ludothèque a…", opts: ["Un seul stock", "Deux stocks : stockVente et stockLocation", "Aucun stock", "Trois stocks"], a: 1, exp: "Vente et location séparées." },
+    { type: "qcm", q: "FOURNISSEUR est relié à…", opts: ["CLIENT", "JEU (idFournisseur)", "LOUER", "CATEGORIE"], a: 1, exp: "Le jeu a un fournisseur." },
+    { type: "qcm", q: "idJeu se déclare avec…", opts: ["TEXT", "INT AUTO_INCREMENT PRIMARY KEY", "UNIQUE seul", "DEFAULT"], a: 1, exp: "Clé auto-incrémentée." },
+    { type: "qcm", q: "Le moteur pour les FK et transactions :", opts: ["MyISAM", "InnoDB", "MEMORY", "CSV"], a: 1, exp: "InnoDB." },
+    { type: "qcm", q: "Relier JEU à CATEGORIE :", opts: ["UNIQUE", "FOREIGN KEY (idCategorie) REFERENCES CATEGORIE", "CHECK", "DEFAULT"], a: 1, exp: "Clé étrangère." },
+    { type: "qcm", q: "Le top jeu par catégorie utilise…", opts: ["GROUP BY seul", "ROW_NUMBER OVER (PARTITION BY ...) + WHERE r = 1", "LIMIT 1 global", "UNION"], a: 1, exp: "Fenêtrage MySQL 8." },
+    { type: "qcm", q: "Louer implique idéalement…", opts: ["Une seule écriture", "INSERT dans LOUER + UPDATE du stock, en transaction", "Aucune écriture", "Un SELECT"], a: 1, exp: "Opérations liées." },
+    { type: "qcm", q: "Contrôler le stock dans la procédure :", opts: ["Un LIMIT", "DECLARE + SELECT ... INTO + IF", "Un index", "Un CHECK"], a: 1, exp: "Variable + condition." },
+    { type: "qcm", q: "On appelle la procédure avec…", opts: ["EXEC", "CALL louer(1, 5)", "RUN", "DO"], a: 1, exp: "CALL." },
+    { type: "qcm", q: "idFournisseur peut être NULL car…", opts: ["Toujours obligatoire", "Un jeu peut ne pas avoir de fournisseur enregistré", "C'est une PK", "C'est un index"], a: 1, exp: "Relation optionnelle." },
+    { type: "vf", q: "La même Ludothèque sert de fil rouge dans tous les cours pour comparer les SGBD.", a: true, exp: "Application commune." },
+    { type: "qcm", q: "Peupler JEU sans fournir idJeu, c'est normal car…", opts: ["Oubli", "idJeu est AUTO_INCREMENT", "Erreur", "NULL"], a: 1, exp: "Auto-généré." },
+    { type: "vf", q: "La procédure louer combine variable, IF, transaction et logique métier.", a: true, exp: "Synthèse du cours." },
+    { type: "qcm", q: "Compter les locations par jeu, 0 compris :", opts: ["INNER JOIN + COUNT(*)", "LEFT JOIN LOUER + COUNT(l.idJeu)", "LIMIT", "UNION"], a: 1, exp: "LEFT JOIN." },
+    { type: "qcm", q: "ACHETER et LOUER sont…", opts: ["La même table", "Deux tables distinctes (acheter vs louer)", "Des vues", "Des index"], a: 1, exp: "Deux usages du jeu." }
+  ],
+  final: {
+    title: "Exercice final — La procédure d'achat complète",
+    intro: `<p>À l'image de louer, on veut une procédure acheter, robuste et atomique.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock concerné par un achat :", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "La vente touche stockVente." },
+      { type: "qcm", q: "Rendre l'achat indivisible :", opts: ["Deux requêtes séparées", "START TRANSACTION ... COMMIT", "LIMIT", "UNION"], a: 1, exp: "Transaction." },
+      { type: "qcm", q: "Vérifier le stock avant :", opts: ["Un LIMIT", "SELECT ... INTO + IF", "COMMIT", "un index"], a: 1, exp: "Variable + condition." },
+      { type: "qcm", q: "Encadrer la procédure :", opts: ["Rien", "DELIMITER $$ ... END$$ DELIMITER ;", "COMMIT seul", "BEGIN seul"], a: 1, exp: "DELIMITER." },
+      { type: "vf", q: "La structure d'acheter reprend celle de louer, sur stockVente au lieu de stockLocation.", a: true, exp: "Même motif." }
+    ],
+    solution: `<pre class="pseudo">DELIMITER $$
+CREATE PROCEDURE acheter(IN p_client INT, IN p_jeu INT)  -- procédure d'achat, deux paramètres d'entrée
+BEGIN
+    DECLARE stock INT;                    -- variable locale pour le stock
+    SELECT stockVente INTO stock FROM JEU WHERE idJeu = p_jeu;  -- lit le stock de VENTE du jeu
+    IF stock &gt; 0 THEN                     -- si un exemplaire est disponible…
+        START TRANSACTION;
+            INSERT INTO ACHETER (idClient, idJeu, dateAchat)   -- enregistre l'achat…
+            VALUES (p_client, p_jeu, CURDATE());
+            UPDATE JEU SET stockVente = stockVente - 1 WHERE idJeu = p_jeu;  -- …et décrémente le stock de vente
+        COMMIT;                           -- valide le tout d'un bloc
+    END IF;
+END$$
+DELIMITER ;</pre>
+<p>La Ludothèque tourne en MySQL. Demain : l'examen final.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête de synthèse…",
+  items: [
+  { id: "mysql-l20", title: "Tableau de bord de la Ludothèque", level: 3,
+    statement: "Écris une requête « tableau de bord » qui, pour chaque catégorie, affiche : le libellé, le nombre de jeux, le stock de location total, le stock de vente total et le nombre total de locations. Utilise des LEFT JOIN pour ne perdre aucune catégorie et un GROUP BY.",
+    hints: [
+      "Pars de CATEGORIE, LEFT JOIN JEU, LEFT JOIN LOUER.",
+      "SUM(stockLocation), SUM(stockVente), COUNT(DISTINCT j.idJeu), COUNT(l.idJeu).",
+      "GROUP BY c.libelle ; COUNT(DISTINCT j.idJeu) pour ne pas surcompter les jeux (la jointure LOUER duplique les lignes)."
+    ],
+    solution: "SELECT c.libelle,\n       COUNT(DISTINCT j.idJeu) AS nb_jeux,\n       SUM(j.stockLocation)   AS stock_loc,\n       SUM(j.stockVente)      AS stock_vente,\n       COUNT(l.idJeu)         AS nb_locations\nFROM CATEGORIE c\nLEFT JOIN JEU   j ON j.idCategorie = c.idCategorie\nLEFT JOIN LOUER l ON l.idJeu = j.idJeu\nGROUP BY c.libelle\nORDER BY nb_jeux DESC;",
+    note: "Ce tableau de bord mobilise tout : jointures externes pour garder toutes les catégories, agrégats multiples, et COUNT(DISTINCT) pour ne pas surcompter les jeux quand la jointure avec LOUER duplique les lignes. C'est le genre de requête d'analyse qu'on écrit au quotidien sur une vraie base MySQL." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "La relation 1-N : @OneToMany et mappedBy",
+  subtitle: "Depuis un Jeu, voir toutes ses locations — sans ajouter la moindre colonne en base.",
+  theory: `
+<h3>1. L'autre sens de la même relation</h3>
+<p>Hier, Location a reçu sa référence vers Jeu (@ManyToOne, colonne jeu_id). Aujourd'hui on veut naviguer dans l'autre sens : depuis un Jeu, obtenir <strong>la liste de ses locations</strong>. C'est une relation <strong>1-N</strong> (« un-vers-plusieurs ») : UN jeu, PLUSIEURS locations. Point crucial du Niveau 4 : la table <em>jeu</em> ne stocke RIEN sur les locations — la relation vit entièrement dans la colonne <em>jeu_id</em> de la table <em>location</em>. Le côté 1-N côté objet doit donc être un pur <strong>miroir</strong> (un reflet en lecture), sans nouvelle colonne.</p>
+<pre class="pseudo">table jeu                    table location
++----+---------+            +----+--------+-----------+
+| id | titre   |            | id | jeu_id | membre_id |
++----+---------+            +----+--------+-----------+
+| 42 | Catan   |  ◄──────── | 1  |   42   |     7     |
+|    |         |  ◄──────── | 2  |   42   |     9     |
+La relation N'EXISTE qu'ici, dans jeu_id. Une seule fois.</pre>
+
+<h3>2. @OneToMany(mappedBy = "jeu")</h3>
+<pre class="pseudo">@Entity                                    // Jeu est une entité
+public class Jeu {                         // début de la classe Jeu
+  // ... id, titre, prixLocation (leçon 3) ...   // attributs déjà mappés précédemment
+
+  @OneToMany(mappedBy = "jeu")             // côté 1-N : "jeu" = le NOM DE L'ATTRIBUT (dans Location)
+  private List&lt;Location&gt; locations = new ArrayList&lt;&gt;();  // la liste des locations, initialisée vide
+
+  public List&lt;Location&gt; getLocations() { return locations; }  // accesseur pour lire la liste
+}                                          // fin de la classe Jeu</pre>
+<p><strong>mappedBy = "jeu"</strong> signifie : « cette collection est le reflet de l'attribut <em>jeu</em> de la classe Location — la relation est déjà mappée là-bas ». Attention, c'est le nom de l'<strong>attribut Java</strong> (private Jeu jeu), pas de la colonne jeu_id. Résultat : aucune colonne ajoutée, aucune table créée ; Hibernate remplit la liste avec un SELECT ... FROM location WHERE jeu_id = ?.</p>
+
+<h3>3. Propriétaire contre inverse : qui écrit la FK ?</h3>
+<p>Dans une relation bidirectionnelle (navigable dans les deux sens), JPA distingue deux rôles. Le <strong>côté propriétaire</strong> (owning side) est celui qui porte la FK : le @ManyToOne avec son @JoinColumn — c'est LUI que Hibernate regarde pour écrire en base. Le <strong>côté inverse</strong> (celui du mappedBy) n'est qu'une vue de lecture.</p>
+<pre class="pseudo">// PIÈGE : modifier seulement le côté inverse
+jeu.getLocations().add(loc);    // liste en mémoire modifiée... mais rien d'autre
+tx.commit();                    // → AUCUN SQL : le côté inverse n'écrit jamais la FK !
+
+// CORRECT : c'est le côté propriétaire qui compte
+loc.setJeu(jeu);                // ← ceci écrit la colonne jeu_id (côté propriétaire)
+em.persist(loc);                // planifier l'INSERT de la location
+tx.commit();                    // → INSERT INTO location (jeu_id, ...) VALUES (42, ...)</pre>
+<p>Et si tu oublies mappedBy ? Hibernate croit à DEUX relations indépendantes et invente une <strong>table de jointure</strong> jeu_locations que ton schéma du Niveau 4 n'a jamais prévue. Le mappedBy n'est pas décoratif : il dit « ne crée rien, tout est déjà chez Location ».</p>
+
+<h3>4. Les méthodes helper : garder les deux côtés d'accord</h3>
+<p>La base n'écoute que le propriétaire, mais TES OBJETS en mémoire doivent rester cohérents des deux côtés. La solution classique : des méthodes d'aide (<strong>helpers</strong>) dans Jeu qui synchronisent tout en un appel.</p>
+<pre class="pseudo">public void addLocation(Location loc) {   // ajouter une location au jeu, des DEUX côtés à la fois
+  locations.add(loc);        // côté inverse : la liste (mémoire)
+  loc.setJeu(this);          // côté propriétaire : la FK (base)
+}                            // fin du helper addLocation
+
+public void removeLocation(Location loc) { // retirer une location, des deux côtés
+  locations.remove(loc);     // côté inverse : on l'enlève de la liste (mémoire)
+  loc.setJeu(null);          // orpheline en mémoire (cf. orphanRemoval ci-dessous)
+}                            // fin du helper removeLocation</pre>
+<p>Désormais le code appelant écrit jeu.addLocation(loc) et ne peut plus désynchroniser les deux côtés. Adopte ce motif pour TOUTES tes relations bidirectionnelles.</p>
+
+<h3>5. cascade et orphanRemoval : puissants, donc dangereux</h3>
+<p>Deux options de @OneToMany propagent des opérations : <strong>cascade = CascadeType.ALL</strong> (persist/remove du parent propagés aux enfants) et <strong>orphanRemoval = true</strong> (retirer un enfant de la liste = DELETE en base). Pour Jeu/Location, ce serait une faute : une location est un <strong>fait historique</strong> qui survit conceptuellement au jeu — et supprimer un jeu ne doit pas rayer l'historique des locations (la FK du Niveau 4 s'y opposerait de toute façon). Réserve cascade/orphanRemoval aux <strong>compositions fortes</strong> où l'enfant n'a aucun sens sans le parent (une commande et ses lignes, un quiz et ses questions). Ailleurs : hasMany chez Eloquent, l'accès inverse jeu.location_set chez Django, la collection de navigation chez EF Core ; et c'est ce mapping que Spring Data exploitera dans tes futures requêtes dérivées.</p>
+<div class="warn">jeu.getLocations().add(loc) tout seul ne modifie JAMAIS la base : le côté mappedBy est en lecture seule pour Hibernate. Seul loc.setJeu(jeu) — le côté propriétaire — écrit la colonne jeu_id. Le helper addLocation existe précisément pour rendre cette erreur impossible.</div>
+<div class="tip">Initialise toujours la collection à la déclaration (= new ArrayList&lt;&gt;()) : tu élimines les NullPointerException avant le premier persist, et les helpers fonctionnent même sur un Jeu tout neuf. Et ne mets un @OneToMany que si tu navigueras vraiment dans ce sens — un côté inverse inutile, c'est de la surface de bug gratuite.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'annotation à placer dans Jeu pour exposer la liste de ses locations :", opts: ["@OneToMany(mappedBy = \"jeu\")", "@ManyToOne(fetch = FetchType.LAZY)", "@JoinColumn(name = \"locations\")", "@ManyToMany"], a: 0, exp: "Le côté 1 expose une collection, miroir du @ManyToOne d'en face." },
+    { type: "input", q: "Dans @OneToMany(mappedBy = \"…\") côté Jeu, quelle valeur exacte écrire entre guillemets ?", a: ["jeu", "\"jeu\""], ph: "la valeur…", exp: "Le NOM DE L'ATTRIBUT @ManyToOne dans Location (private Jeu jeu), pas la colonne jeu_id." },
+    { type: "qcm", q: "mappedBy = \"jeu\" désigne…", opts: ["Le nom de l'attribut @ManyToOne dans Location", "Le nom de la colonne jeu_id", "Le nom de la table jeu", "Un alias JPQL"], a: 0, exp: "C'est une référence Java → Java : « la relation est déjà mappée par cet attribut »." },
+    { type: "qcm", q: "Le côté PROPRIÉTAIRE de la relation Jeu/Location est…", opts: ["Le @ManyToOne de Location (il porte @JoinColumn, donc la FK)", "Le @OneToMany de Jeu", "Les deux à égalité", "La table MySQL elle-même"], a: 0, exp: "Le propriétaire est toujours le côté qui porte la clé étrangère : Hibernate n'écoute que lui." },
+    { type: "vf", q: "Ajouter @OneToMany(mappedBy = \"jeu\") dans Jeu crée une colonne supplémentaire dans la table jeu.", a: false, exp: "Aucune colonne, aucune table : mappedBy dit que tout existe déjà côté location (jeu_id)." },
+    { type: "qcm", q: "Si tu oublies mappedBy sur le @OneToMany, Hibernate…", opts: ["Crée une table de jointure jeu_locations non prévue au Niveau 4", "Refuse de compiler", "Supprime la colonne jeu_id", "Ignore l'annotation"], a: 0, exp: "Sans mappedBy, il croit à une relation indépendante et invente sa propre table de jointure." },
+    { type: "qcm", q: "Quel côté Hibernate consulte-t-il pour écrire la colonne jeu_id en base ?", opts: ["Le côté propriétaire : l'attribut jeu de Location", "Le côté inverse : la liste locations de Jeu", "Les deux", "Aucun : jeu_id est manuel"], a: 0, exp: "Le côté mappedBy est une vue de lecture ; seul loc.setJeu(...) écrit la FK." },
+    { type: "vf", q: "jeu.getLocations().add(loc) suivi d'un commit suffit pour enregistrer la relation en base.", a: false, exp: "Le côté inverse n'écrit jamais : sans loc.setJeu(jeu), la colonne jeu_id reste inchangée." },
+    { type: "qcm", q: "Le rôle de la méthode helper addLocation(Location loc) :", opts: ["Synchroniser en un appel la liste (mémoire) ET la FK via setJeu (base)", "Exécuter l'INSERT immédiatement", "Créer la table location", "Vider le cache d'Hibernate"], a: 0, exp: "locations.add(loc) + loc.setJeu(this) : impossible de désynchroniser les deux côtés." },
+    { type: "input", q: "Quel attribut de @OneToMany déclenche un DELETE quand une location est retirée de la liste ?", a: ["orphanRemoval", "orphanremoval", "orphanRemoval = true", "orphanremoval = true"], ph: "nom de l'attribut…", exp: "orphanRemoval = true : l'enfant retiré devient orphelin et sa ligne est supprimée." },
+    { type: "qcm", q: "cascade = CascadeType.ALL sur les locations d'un Jeu serait une faute car…", opts: ["Supprimer un jeu tenterait d'effacer l'historique des locations", "cascade n'existe pas en JPA", "Les listes Java l'interdisent", "MySQL ne connaît pas les cascades"], a: 0, exp: "Une location est un fait historique à vie propre — et la FK du Niveau 4 protégerait de toute façon." },
+    { type: "qcm", q: "Un cas LÉGITIME de cascade + orphanRemoval :", opts: ["Une composition forte : l'enfant n'a aucun sens sans le parent (commande/lignes)", "Toute relation, systématiquement", "Uniquement les @ManyToMany", "Jamais, c'est interdit"], a: 0, exp: "Quand le cycle de vie de l'enfant EST celui du parent, la propagation devient logique." },
+    { type: "vf", q: "La table location reste strictement identique après l'ajout du @OneToMany dans Jeu.", a: true, exp: "Le côté inverse est purement objet : le schéma du Niveau 4 ne bouge pas d'un octet." },
+    { type: "qcm", q: "Les équivalents du @OneToMany inverse dans les autres piles :", opts: ["hasMany (Eloquent), jeu.location_set (Django), collection de navigation (EF Core)", "belongsTo, ForeignKey, DbSet", "SELECT, INSERT, DELETE", "map, filter, reduce"], a: 0, exp: "Chaque ORM offre la navigation 1 → N ; les noms changent, le concept non." },
+    { type: "qcm", q: "La bonne déclaration de la collection dans Jeu :", opts: ["private List&lt;Location&gt; locations = new ArrayList&lt;&gt;();", "private List&lt;Location&gt; locations; // null jusqu'au premier find", "private Location[] locations = null;", "private String locations;"], a: 0, exp: "Initialisée à la déclaration : zéro NullPointerException, helpers utilisables dès le new." }
+  ],
+  final: {
+    title: "Exercice final — Le Jeu et son historique de locations",
+    intro: `<p>Objectif : compléter l'entité Jeu pour naviguer vers ses locations, écrire le helper addLocation, puis créer une location pour Catan en passant UNIQUEMENT par ce helper.</p>`,
+    questions: [
+      { type: "qcm", q: "La déclaration correcte côté Jeu :", opts: ["@OneToMany(mappedBy = \"jeu\") private List&lt;Location&gt; locations = new ArrayList&lt;&gt;();", "@OneToMany @JoinColumn(name = \"jeu_id\") private List&lt;Location&gt; locations;", "@ManyToOne private List&lt;Location&gt; locations;", "@OneToMany(mappedBy = \"jeu_id\") private List&lt;Location&gt; locations;"], a: 0, exp: "mappedBy pointe l'ATTRIBUT « jeu » de Location, et la liste est initialisée." },
+      { type: "vf", q: "Ce nouveau code exige de modifier la table location du Niveau 4.", a: false, exp: "Rien à modifier : la relation vit déjà dans jeu_id, le côté inverse n'est qu'un miroir objet." },
+      { type: "qcm", q: "Le corps correct de addLocation(Location loc) dans Jeu :", opts: ["locations.add(loc); loc.setJeu(this);", "locations.add(loc); // c'est suffisant", "loc.setJeu(this); em.persist(loc); em.flush();", "this.locations = null;"], a: 0, exp: "Les deux côtés en un appel : la liste pour la mémoire, setJeu pour la FK." },
+      { type: "input", q: "Dans addLocation, quel appel écrit réellement la future colonne jeu_id ?", a: ["loc.setJeu(this)", "setJeu(this)", "setJeu", "loc.setJeu"], ph: "l'appel…", exp: "Le côté propriétaire : sans lui, la liste seule ne produit aucun SQL." },
+      { type: "qcm", q: "Faut-il ajouter cascade = CascadeType.ALL et orphanRemoval = true sur cette relation ?", opts: ["Non : une location est un fait historique, pas un composant du jeu", "Oui, toujours, par défaut", "Oui, mais seulement orphanRemoval", "Oui, MySQL l'exige"], a: 0, exp: "Réserve la propagation aux compositions fortes ; ici la FK du Niveau 4 protégerait d'ailleurs l'historique." }
+    ],
+    solution: `<pre class="pseudo">@Entity                                          // Jeu est une entité
+public class Jeu {                               // début de la classe Jeu
+  // ... id, titre, prixLocation ...             // attributs déjà mappés
+
+  @OneToMany(mappedBy = "jeu")                    // miroir : AUCUNE colonne créée en base
+  private List&lt;Location&gt; locations = new ArrayList&lt;&gt;();  // liste initialisée vide
+
+  public void addLocation(Location loc) {         // helper : synchronise les deux côtés
+    locations.add(loc);      // côté inverse  (mémoire)
+    loc.setJeu(this);        // côté propriétaire (→ colonne jeu_id)
+  }                                               // fin du helper
+}                                                 // fin de la classe Jeu
+
+// Utilisation :
+tx.begin();                                       // ouvrir la transaction
+Jeu catan = em.find(Jeu.class, 42L);              // charger le jeu Catan (id 42)
+Location loc = new Location(LocalDate.now());      // créer une location (date du jour)
+loc.setMembre(em.getReference(Membre.class, 7L));  // poser le membre via proxy (leçon 8)
+catan.addLocation(loc);                            // les DEUX côtés d'accord en un seul appel
+em.persist(loc);                                   // planifier l'INSERT
+tx.commit();   // → INSERT INTO location (jeu_id, membre_id, date_debut) VALUES (42, 7, ?)</pre>
+<p>N-1, 1-N : la paire est complète. Reste le cas où AUCUN côté ne peut porter la FK : un jeu a plusieurs catégories, une catégorie regroupe plusieurs jeux. Demain, @ManyToMany et sa table de jointure — assumée, cette fois.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l9", title: "Le côté Membre de la relation", level: 2,
+    statement: "Location référence aussi Membre (@ManyToOne membre, leçon 8). Conçois le côté inverse : ajoute dans Membre la liste de ses locations, les helpers addLocation/removeLocation, puis rédige ta décision argumentée sur cascade et orphanRemoval pour CETTE relation (que se passerait-il, lors de la désinscription d'un membre, avec orphanRemoval = true ? avec cascade = REMOVE ? que dirait la FK du Niveau 4 ?). Termine en expliquant pourquoi le helper doit vivre dans Membre et non dans le code appelant.",
+    hints: [
+      "Le mappedBy doit pointer le nom EXACT de l'attribut @ManyToOne dans Location — lequel est-ce ici ?",
+      "Scénario test : membre.getLocations().remove(uneLocation) avec orphanRemoval = true — quelle ligne disparaîtrait, et est-ce acceptable pour un historique de locations ?",
+      "Un helper centralisé : qui garantit que PERSONNE ne peut ajouter une location sans poser la FK ?"
+    ],
+    solution: "@Entity\npublic class Membre {\n  // ... id, pseudo, email (leçon 3) ...\n\n  @OneToMany(mappedBy = \"membre\")     // attribut « membre » de Location\n  private List<Location> locations = new ArrayList<>();\n\n  public void addLocation(Location loc) {\n    locations.add(loc);\n    loc.setMembre(this);              // côté propriétaire → membre_id\n  }\n  public void removeLocation(Location loc) {\n    locations.remove(loc);\n    loc.setMembre(null);\n  }\n}\n\nDécision cascade/orphanRemoval : AUCUN DES DEUX.\n- orphanRemoval = true : retirer une location de la liste (simple\n  manipulation mémoire !) déclencherait un DELETE — l'historique des\n  locations fondrait au fil des refactorings. Inacceptable.\n- cascade = REMOVE : désinscrire un membre effacerait toutes ses\n  locations passées ; or la Ludothèque a besoin de cet historique\n  (statistiques, litiges). De plus la FK membre_id NOT NULL du\n  Niveau 4 signale le conflit : la vraie réponse métier est\n  d'interdire la suppression d'un membre ayant des locations,\n  ou d'anonymiser (on y reviendra au projet du Niveau 6).\n\nPourquoi le helper DANS Membre : c'est le seul endroit qui voit les\ndeux côtés à la fois. Si chaque appelant devait penser à faire\nlist.add + setMembre, l'oubli serait inévitable et produirait des\nobjets incohérents (liste et FK en désaccord). Encapsuler la règle\ndans l'entité la rend impossible à violer.",
+    note: "Décider « pas de cascade » est une décision de conception, pas une omission : note-la en commentaire dans le code. Tu reposeras exactement cette question pour Jeu ↔ Avis, puis en @ManyToMany demain — et tu la retrouveras sous d'autres noms dans EF Core (DeleteBehavior) et Django (on_delete)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

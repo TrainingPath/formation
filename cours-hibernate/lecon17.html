@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les transactions : ACID côté ORM",
+  subtitle: "Louer un jeu = deux écritures ou aucune. Le tout-ou-rien, version EntityManager.",
+  theory: `
+<h3>1. Rappel du Niveau 4 : ACID</h3>
+<p>Tu as vu les transactions côté SQL. <strong>ACID</strong> résume leurs quatre garanties : <strong>A</strong>tomicité (tout ou rien), <strong>C</strong>ohérence (les contraintes restent vraies), <strong>I</strong>solation (les transactions simultanées ne se marchent pas dessus), <strong>D</strong>urabilité (un commit survit au crash). Rien ne change côté ORM : c'est toujours MySQL/InnoDB qui garantit ACID. JPA ne fait que <strong>piloter</strong> la transaction depuis Java, via l'objet <strong>EntityTransaction</strong>.</p>
+<pre class="pseudo">EntityTransaction tx = em.getTransaction();  // récupérer l'objet qui pilote la transaction
+tx.begin();      // → START TRANSACTION côté MySQL
+// ... écritures ...
+tx.commit();     // → COMMIT : tout est validé, durablement
+// ou tx.rollback(); → ROLLBACK : tout est annulé, comme si rien n'était</pre>
+
+<h3>2. Le cas d'école : louer un jeu</h3>
+<p>« Louer Catan » = <strong>deux</strong> écritures indissociables : créer la Location ET décrémenter le stock du jeu. Si la seconde échoue après la première, la base ment : une location existe pour un exemplaire jamais sorti du stock. La transaction rend le duo <strong>atomique</strong>.</p>
+<pre class="pseudo">tx.begin();                            // ouvrir la transaction
+Jeu jeu = em.find(Jeu.class, jeuId);   // charger le jeu (entité gérée)
+if (jeu.getStock() &lt;= 0) throw new StockEpuiseException();  // refuser la location s'il n'y a plus de stock
+
+Location loc = new Location(membre, jeu, LocalDate.now());  // créer la location (état transient)
+em.persist(loc);                       // écriture 1 : la location (INSERT planifié)
+jeu.setStock(jeu.getStock() - 1);      // écriture 2 : dirty checking (UPDATE planifié, leçon 6)
+tx.commit();                           // les DEUX partent ensemble... ou aucune</pre>
+
+<h3>3. Le motif complet : try / catch / rollback / finally</h3>
+<p>Si une exception surgit entre begin et commit (contrainte violée, bug, panne), la transaction reste ouverte et ses verrous avec. Le motif canonique garantit qu'on ne laisse <strong>jamais</strong> une transaction pendante ni un EntityManager ouvert :</p>
+<pre class="pseudo">EntityManager em = emf.createEntityManager();  // ouvrir l'EntityManager
+EntityTransaction tx = em.getTransaction();    // récupérer l'objet transaction
+try {                                          // bloc protégé (on tente le travail)
+    tx.begin();                                // ouvrir la transaction
+    // ... find / persist / modifications ...  // le travail métier va ici
+    tx.commit();                               // valider : le SQL planifié part
+} catch (RuntimeException e) {                  // si une erreur survient...
+    if (tx.isActive()) tx.rollback();   // annule TOUT depuis begin
+    throw e;                            // on ne masque pas l'erreur (on la relance)
+} finally {                                    // dans TOUS les cas (succès ou échec)...
+    em.close();                         // ...toujours fermer l'EntityManager
+}</pre>
+<p>Le test <em>tx.isActive()</em> évite un second plantage si le commit lui-même a déjà invalidé la transaction.</p>
+
+<h3>4. Le flush : le SQL part au commit</h3>
+<p>Souviens-toi des leçons 5 et 6 : persist et le dirty checking ne font que <strong>planifier</strong> le SQL. C'est le <strong>flush</strong> (le vidage des écritures en attente), déclenché automatiquement par le commit (et avant certaines requêtes), qui envoie réellement INSERT et UPDATE à MySQL, dans une seule transaction base de données. D'où l'ordre des événements :</p>
+<pre class="pseudo">tx.begin()          → START TRANSACTION
+em.persist(loc)     → (rien ne part : planifié dans le contexte)
+jeu.setStock(n-1)   → (rien ne part : dirty checking notera au flush)
+tx.commit()         → flush : INSERT INTO location ... ;
+                              UPDATE jeu SET stock = ... ;
+                      puis COMMIT MySQL — atomiques ensemble</pre>
+
+<h3>5. @Transactional et l'isolation, en un mot</h3>
+<p>Dans le cours Spring, tu posais <strong>@Transactional</strong> sur une méthode de service : Spring exécutait exactement ce motif begin/commit/rollback/close autour de ta méthode — rollback automatique sur RuntimeException. Tu sais maintenant ce que l'annotation cache. Équivalents ailleurs : transaction() chez Eloquent, transaction.atomic chez Django, BeginTransaction/SaveChanges chez EF Core. Quant aux <strong>niveaux d'isolation</strong> (READ COMMITTED, REPEATABLE READ...) vus au Niveau 4 : ils s'appliquent tels quels, c'est toujours InnoDB qui les fait respecter — REPEATABLE READ par défaut sur MySQL.</p>
+<div class="warn">Une exception attrapée SANS rollback laisse la transaction ouverte : verrous MySQL conservés, écritures en suspens, et les requêtes suivantes du même EntityManager échouent bizarrement. Si tu attrapes, tu rollbackes — pas d'exception à cette règle.</div>
+<div class="tip">Une transaction = UNE opération métier, la plus courte possible : « louer un jeu », pas « la session de l'utilisateur ». Ouvre tard, commite tôt, ne fais jamais d'appel lent (réseau, fichier) entre begin et commit — chaque seconde de transaction ouverte, ce sont des verrous que les autres attendent.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans ACID, l'atomicité signifie…", opts: ["Les requêtes sont rapides", "Toutes les écritures de la transaction réussissent, ou aucune n'est appliquée", "Les données sont chiffrées", "Une seule connexion à la fois"], a: 1, exp: "Le tout-ou-rien : c'est la propriété qui sauve la location + le stock." },
+    { type: "qcm", q: "Qui garantit réellement les propriétés ACID quand tu utilises Hibernate ?", opts: ["Le moteur MySQL/InnoDB, comme au Niveau 4", "Hibernate seul, sans la base", "Le compilateur Java", "Le navigateur"], a: 0, exp: "JPA pilote (begin/commit) ; la garantie ACID reste le travail du SGBD." },
+    { type: "input", q: "Quel objet JPA, obtenu via em.getTransaction(), pilote begin/commit/rollback ?", a: ["EntityTransaction", "entitytransaction", "l'EntityTransaction"], ph: "nom de l'interface…", exp: "EntityTransaction tx = em.getTransaction() : le volant de la transaction." },
+    { type: "qcm", q: "tx.begin() correspond côté MySQL à…", opts: ["COMMIT", "START TRANSACTION", "CREATE TABLE", "ROLLBACK"], a: 1, exp: "L'ouverture de la transaction base : tout ce qui suit sera atomique." },
+    { type: "input", q: "Quelle méthode annule toutes les écritures depuis le begin ?", a: ["rollback", "rollback()", "tx.rollback", "tx.rollback()"], ph: "nom de la méthode…", exp: "rollback() : la base revient à l'état d'avant begin, comme si rien ne s'était passé." },
+    { type: "qcm", q: "« Louer un jeu » exige une transaction parce que…", opts: ["C'est plus rapide", "Créer la Location et décrémenter le stock doivent réussir ou échouer ENSEMBLE", "persist ne marche pas sans", "MySQL l'exige pour tout SELECT"], a: 1, exp: "Deux écritures indissociables : sans atomicité, location sans baisse de stock possible." },
+    { type: "qcm", q: "Si le commit échoue à la 2e écriture, la 1re (l'INSERT de la location)…", opts: ["Reste en base", "Est annulée avec tout le reste par le rollback", "Est déplacée dans une table d'erreurs", "Devient un SELECT"], a: 1, exp: "Atomicité : le rollback efface tout ce qui a été fait depuis begin." },
+    { type: "vf", q: "La décrémentation jeu.setStock(n-1) nécessite un appel explicite à em.update().", a: false, exp: "L'entité est gérée : le dirty checking (leçon 6) génère l'UPDATE au flush — em.update() n'existe pas." },
+    { type: "qcm", q: "Dans le motif canonique, le rollback se place…", opts: ["Dans le bloc try, après commit", "Dans le catch, si tx.isActive()", "Dans finally, toujours", "Avant begin"], a: 1, exp: "catch → rollback si active, puis on relance ; finally → em.close()." },
+    { type: "qcm", q: "Le rôle du bloc finally dans le motif :", opts: ["Refaire un commit", "Fermer l'EntityManager dans tous les cas, succès ou échec", "Attraper les exceptions", "Relancer la transaction"], a: 1, exp: "em.close() doit s'exécuter quoi qu'il arrive : pas de fuite de ressources." },
+    { type: "qcm", q: "Le flush est le moment où…", opts: ["Le SQL planifié (INSERT, UPDATE) est réellement envoyé à MySQL", "La table est vidée", "Le cache disque est effacé", "La connexion se ferme"], a: 0, exp: "Déclenché par le commit : persist et dirty checking n'avaient fait que planifier." },
+    { type: "vf", q: "Entre begin et commit, em.persist(loc) envoie immédiatement son INSERT à MySQL.", a: false, exp: "L'INSERT part au flush, déclenché par le commit — l'écriture différée des leçons 5 et 6." },
+    { type: "qcm", q: "@Transactional de Spring, posé sur une méthode de service, fait quoi sous le capot ?", opts: ["Le motif begin/commit + rollback automatique sur RuntimeException", "Un simple commentaire", "Un cache de résultats", "Une requête native"], a: 0, exp: "Spring enveloppe ta méthode dans exactement le motif de cette leçon." },
+    { type: "qcm", q: "Le niveau d'isolation par défaut de MySQL/InnoDB (revu du Niveau 4) :", opts: ["READ UNCOMMITTED", "REPEATABLE READ", "SERIALIZABLE", "AUCUN"], a: 1, exp: "REPEATABLE READ ; les niveaux d'isolation restent l'affaire d'InnoDB, ORM ou pas." },
+    { type: "vf", q: "Il est conseillé de garder la transaction ouverte pendant toute la session de l'utilisateur.", a: false, exp: "Transaction courte = verrous courts : une opération métier, ouvre tard, commite tôt." }
+  ],
+  final: {
+    title: "Exercice final — La location blindée",
+    intro: `<p>Tu écris le service louerJeu(membreId, jeuId) : vérifier le stock, créer la Location, décrémenter le stock — le tout atomique, sans transaction pendante ni EntityManager qui fuit, même en cas d'erreur.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre correct du squelette :", opts: ["begin → find → persist(loc) → setStock(n-1) → commit", "persist → begin → commit → find", "commit → begin → rollback", "find → commit → begin → persist"], a: 0, exp: "Tout le travail métier vit entre begin et commit ; le commit scelle les deux écritures." },
+      { type: "qcm", q: "Le commit de cette méthode déclenche, via le flush…", opts: ["Seulement l'INSERT de la location", "L'INSERT de la location ET l'UPDATE du stock, dans la même transaction MySQL", "Seulement l'UPDATE du stock", "Un DELETE"], a: 1, exp: "persist planifié + dirty checking : les deux ordres SQL partent ensemble au flush." },
+      { type: "vf", q: "Si StockEpuiseException est levée après begin, on peut sortir de la méthode sans rollback puisqu'on n'a encore rien persisté.", a: false, exp: "La transaction resterait active (verrous, EM pollué) : catch → rollback si isActive(), toujours." },
+      { type: "input", q: "Quelle méthode de tx vérifie qu'elle est encore active avant de rollbacker ?", a: ["isActive", "isActive()", "tx.isActive", "tx.isActive()"], ph: "nom de la méthode…", exp: "if (tx.isActive()) tx.rollback() : évite un second plantage si le commit a déjà tout invalidé." },
+      { type: "qcm", q: "Au Niveau 6, cette méthode de service sera simplement annotée…", opts: ["@Transactional", "@Entity", "@Column", "@GeneratedValue"], a: 0, exp: "Spring générera begin/commit/rollback/close autour de la méthode : tu sais désormais ce qu'il écrit." }
+    ],
+    solution: `<pre class="pseudo">public Location louerJeu(Long membreId, Long jeuId) {   // méthode de service : louer un jeu
+  EntityManager em = emf.createEntityManager();          // ouvrir l'EntityManager
+  EntityTransaction tx = em.getTransaction();            // récupérer la transaction
+  try {                                                  // bloc protégé
+      tx.begin();                                  // START TRANSACTION
+      Jeu jeu = em.find(Jeu.class, jeuId);         // charger le jeu (entité gérée)
+      if (jeu.getStock() &lt;= 0) throw new StockEpuiseException(jeu.getTitre());  // refuser si stock vide
+
+      Membre membre = em.getReference(Membre.class, membreId);  // proxy du membre (0 SELECT)
+      Location loc = new Location(membre, jeu, LocalDate.now());  // créer la location
+      em.persist(loc);                             // écriture 1 (INSERT planifié)
+      jeu.setStock(jeu.getStock() - 1);            // écriture 2 (dirty checking)
+
+      tx.commit();     // flush : INSERT + UPDATE puis COMMIT — atomiques
+      return loc;                                  // renvoyer la location créée
+  } catch (RuntimeException e) {                   // en cas d'erreur...
+      if (tx.isActive()) tx.rollback();            // tout-ou-rien respecté
+      throw e;                                     // relancer l'erreur
+  } finally {                                      // dans tous les cas...
+      em.close();                                  // jamais de fuite de ressource
+  }
+}
+// Demain au Niveau 6 : @Transactional public Location louerJeu(...) — Spring
+// écrit tout ce squelette pour toi.</pre>
+<p>Tes écritures sont désormais atomiques et propres. Reste un ennemi sournois côté LECTURE : la boucle qui déclenche une requête par jeu affiché. Demain, chasse au problème N+1 et à son antidote, le JOIN FETCH.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l17", title: "Le retour de location, version atomique", level: 3,
+    statement: "Conçois en pseudo-code Java l'opération inverse de la location : rendreJeu(locationId), qui doit (1) marquer la Location comme rendue (dateRetourEffective = aujourd'hui), (2) ré-incrémenter le stock du jeu, (3) calculer et enregistrer une pénalité de retard si la date de retour prévue est dépassée. Rédige le motif transactionnel complet, puis justifie par écrit : pourquoi ces trois écritures partagent UNE transaction, quels appels génèrent du SQL et à quel moment (flush), ce que le rollback annule exactement si l'écriture de la pénalité échoue, et pourquoi le calcul de la pénalité (pur Java) peut rester dans la transaction alors qu'un envoi d'email de confirmation devrait en sortir.",
+    hints: [
+      "Repère les entités gérées : location (via find) et location.getJeu() — combien d'appels persist sont vraiment nécessaires pour les écritures 1 et 2 ?",
+      "Trace la chronologie : quels ordres SQL le flush du commit enverra-t-il, et dans quel ordre logique ?",
+      "L'email : que se passe-t-il si le serveur mail met 10 secondes à répondre pendant que la transaction tient ses verrous MySQL ?"
+    ],
+    solution: "rendreJeu(locationId) :\n  em = emf.createEntityManager()\n  tx = em.getTransaction()\n  essayer :\n    tx.begin()\n    loc = em.find(Location.class, locationId)        // gérée\n    si loc.getDateRetourEffective() != null :\n        lever DejaRenduException()\n\n    loc.setDateRetourEffective(aujourd'hui)          // écriture 1 : dirty checking\n    loc.getJeu().setStock(stock + 1)                 // écriture 2 : dirty checking\n                                                     // (le jeu est géré aussi : AUCUN persist requis)\n    si aujourd'hui > loc.getDateRetourPrevue() :\n        p = new Penalite(loc, calculMontant(retardEnJours))   // calcul pur Java : OK ici\n        em.persist(p)                                // écriture 3 : INSERT planifié\n\n    tx.commit()   // flush : UPDATE location, UPDATE jeu, INSERT penalite\n                  // puis COMMIT MySQL — les trois atomiques\n  attraper (ex) :\n    si tx.isActive() : tx.rollback()\n    relancer\n  enfin :\n    em.close()\n  // L'email de confirmation part APRÈS le commit, hors transaction.\n\nJustifications :\n- Une seule transaction : un retour « à moitié fait » (stock +1 mais\n  location toujours ouverte, ou pénalité sans retour) rendrait la base\n  incohérente — c'est le C de ACID qui dépend du A.\n- SQL au flush : les deux setters ne génèrent rien sur le moment ;\n  le dirty checking et le persist ne produisent leurs UPDATE/INSERT\n  qu'au commit.\n- Si l'INSERT de la pénalité échoue (contrainte, panne) : le rollback\n  annule AUSSI les deux UPDATE déjà flushés — retour au state d'avant begin.\n- Le calcul de pénalité est instantané et sans I/O : il peut vivre dans\n  la transaction. L'email est un appel lent et non transactionnel (on ne\n  « rollback » pas un email !) : le garder dedans allongerait les verrous\n  et un échec SMTP annulerait un retour pourtant valide.",
+    note: "Distinguer ce qui appartient à la transaction (écritures base) de ce qui doit en sortir (email, appels réseau) est LE réflexe qui t'évitera les @Transactional interminables au Niveau 6 — Spring propose même les événements after-commit pour cela. Même discipline chez EF Core (SaveChanges court) et Django (transaction.atomic le plus étroit possible)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Le query builder : where, orderBy, limit",
+  subtitle: "Filtrer, trier, limiter côté MySQL : la requête se construit comme une phrase.",
+  theory: `
+<h3>1. Le query builder derrière Eloquent</h3>
+<p>Depuis la leçon 5, tu écris Jeu::where(...) sans savoir ce qui se cache derrière : un <strong>query builder</strong>, un objet qui accumule les clauses et ne part vers MySQL qu'au dernier moment (analogie : un bon de commande qu'on remplit ligne par ligne ; il ne part en cuisine qu'à l'envoi). Chaque méthode retourne le builder lui-même — d'où le chaînage.</p>
+<pre class="pseudo">$requete = Jeu::where('stock', '&gt;', 0);   // construit une clause WHERE, AUCUN SQL envoyé !
+$requete-&gt;orderBy('titre');               // ajoute ORDER BY titre, toujours rien envoyé…
+$jeux = $requete-&gt;get();                  // MAINTENANT get() déclenche : SELECT * FROM jeux
+                                          //   WHERE stock &gt; 0 ORDER BY titre</pre>
+<p>Seules les méthodes terminales déclenchent la requête : <strong>get, first, count, exists, paginate…</strong> Ce comportement différé existe partout : LINQ chez EF Core, QuerySet paresseux chez Django, Criteria API chez JPA.</p>
+
+<h3>2. where dans tous ses états</h3>
+<pre class="pseudo">Jeu::where('stock', 0)-&gt;get();                    // stock = 0 (= implicite avec 2 arguments)
+Jeu::where('prix_location', '&lt;=', 5)-&gt;get();      // prix_location <= 5 (opérateur explicite)
+Jeu::where('titre', 'like', 'C%')-&gt;get();         // titre commençant par C (le LIKE du cours SQL)
+
+// Deux where enchaînés = AND
+Jeu::where('stock', '&gt;', 0)                       // stock > 0…
+    -&gt;where('prix_location', '&lt;', 6)              // …ET prix_location < 6
+    -&gt;get();                                      // exécute la requête</pre>
+<p>Et toute une famille de variantes spécialisées, qui se lisent comme leur SQL :</p>
+<pre class="pseudo">Membre::whereIn('ville', ['Liège', 'Namur'])-&gt;get();   // ville IN ('Liège', 'Namur')
+Location::whereBetween('date_location', ['2026-01-01', '2026-01-31'])-&gt;get();   // date entre deux bornes
+Location::whereNull('date_retour')-&gt;get();        // date_retour IS NULL → pas encore rendu !
+Location::whereDate('created_at', '2026-07-01')-&gt;get();   // uniquement la partie DATE de created_at</pre>
+<p>whereNull('date_retour') est LA requête des locations en cours de la Ludothèque — retiens-la, elle revient jusqu'à l'examen.</p>
+
+<h3>3. orWhere et le piège des parenthèses</h3>
+<p><strong>orWhere</strong> ajoute un OR… et réveille le piège de priorité vu au Niveau 4 : AND est prioritaire sur OR. Sans parenthèses, la condition ne dit pas ce que tu crois :</p>
+<pre class="pseudo">// FAUX : prix &lt; 6 AND stock = 0   OR   stock IS NULL  ← le OR s'échappe !
+Jeu::where('prix_location', '&lt;', 6)-&gt;where('stock', 0)-&gt;orWhereNull('stock');   // logique erronée
+
+// CORRECT : une closure = une paire de parenthèses
+Jeu::where('prix_location', '&lt;', 6)               // prix < 6 ET…
+    -&gt;where(function ($query) {                   // …( ouvre un groupe de parenthèses
+        $query-&gt;where('stock', 0)-&gt;orWhereNull('stock');   // stock = 0 OU stock IS NULL
+    })                                            // ) ferme le groupe
+    -&gt;get();                                      // exécute la requête
+// SQL : WHERE prix_location &lt; 6 AND (stock = 0 OR stock IS NULL)</pre>
+<p>Règle : dès qu'un orWhere cohabite avec des where, groupe le bloc OR dans une closure.</p>
+
+<h3>4. Trier et limiter</h3>
+<pre class="pseudo">Jeu::orderBy('titre')-&gt;get();                     // ORDER BY titre ASC (croissant)
+Jeu::orderByDesc('prix_location')-&gt;get();         // ORDER BY prix_location DESC (décroissant)
+Jeu::orderBy('editeur_id')-&gt;orderBy('titre')-&gt;get();   // tri multiple : d'abord éditeur, puis titre
+
+Avis::latest()-&gt;take(5)-&gt;get();     // les 5 plus récents (ORDER BY created_at DESC LIMIT 5)
+Jeu::orderBy('titre')-&gt;limit(10)-&gt;get();          // LIMIT 10 : au plus 10 lignes
+Jeu::orderBy('titre')-&gt;skip(10)-&gt;take(10)-&gt;get(); // OFFSET 10 LIMIT 10 : la 2e "page" de 10</pre>
+<p>Et pour ne rapatrier que le nécessaire :</p>
+<pre class="pseudo">Jeu::select('id', 'titre')-&gt;get();                // ne rapatrie que 2 colonnes
+Jeu::where('titre', 'Catan')-&gt;exists();           // booléen (true/false), zéro modèle chargé
+Jeu::where('stock', '&gt;', 0)-&gt;count();             // SELECT COUNT(*) côté SQL
+Jeu::where('titre', 'Catan')-&gt;value('prix_location');   // récupère UNE seule valeur
+Jeu::orderBy('titre')-&gt;pluck('titre', 'id');      // dictionnaire id =&gt; titre (idéal pour un menu)</pre>
+
+<h3>5. Construire conditionnellement : when() et toSql()</h3>
+<p>Le formulaire de recherche du catalogue a des filtres <strong>facultatifs</strong>. Le builder se construit pièce par pièce avec <strong>when()</strong> (analogie : un interrupteur — le filtre ne s'allume que si l'utilisateur a rempli le champ) :</p>
+<pre class="pseudo">$jeux = Jeu::query()                              // démarre un builder vide
+    -&gt;when($recherche, function ($query, $recherche) {   // SI $recherche est renseigné…
+        $query-&gt;where('titre', 'like', '%' . $recherche . '%');   // …filtre sur le titre
+    })
+    -&gt;when($prixMax, function ($query, $prixMax) {       // SI $prixMax est renseigné…
+        $query-&gt;where('prix_location', '&lt;=', $prixMax);  // …filtre sur le prix
+    })
+    -&gt;orderBy('titre')                            // tri final
+    -&gt;get();                                      // exécute la requête
+// when(valeur, closure) : la closure ne s'applique que si la valeur est truthy</pre>
+<p>Pour vérifier ce que tu as construit : <strong>toSql()</strong> affiche la requête (avec des ? à la place des bindings) sans l'exécuter. Le duo toSql() + DB::listen est ton microscope à requêtes.</p>
+<div class="warn">Un orWhere mal groupé ne provoque AUCUNE erreur : la requête s'exécute, mais avec la mauvaise logique — des lignes en trop ou en moins, silencieusement. C'est le pire type de bug. Dès que where et orWhere se mélangent, la closure de groupement est obligatoire, et toSql() te permet de vérifier les parenthèses générées.</div>
+<div class="tip">Traduis mentalement chaque chaîne en SQL avant de l'exécuter : where → WHERE, orderBy → ORDER BY, take → LIMIT. Si tu sais écrire la requête au Niveau 4, tu sais la chaîner ici — et en cas de doute, toSql() arbitre en une seconde dans tinker.</div>`,
+  exercises: [
+    { type: "qcm", q: "Jeu::where('stock', '>', 0) sans get() derrière…", opts: ["Exécute la requête immédiatement", "Ne lance AUCUNE requête : le builder accumule les clauses", "Retourne une Collection", "Provoque une erreur"], a: 1, exp: "Exécution différée : seuls get, first, count, exists… déclenchent le SQL." },
+    { type: "qcm", q: "Les méthodes qui DÉCLENCHENT réellement la requête :", opts: ["where et orderBy", "get, first, count, exists", "select et limit", "when et toSql"], a: 1, exp: "Les méthodes terminales ; les autres ne font que construire." },
+    { type: "qcm", q: "Jeu::where('stock', 0) sous-entend quel opérateur ?", opts: ["LIKE", ">", "=", "IN"], a: 2, exp: "Deux arguments = égalité implicite ; sinon on passe l'opérateur en 2e position." },
+    { type: "qcm", q: "Deux ->where() enchaînés sont combinés par…", opts: ["OR", "AND", "UNION", "XOR"], a: 1, exp: "Chaque where ajoute une condition AND ; le OR exige orWhere." },
+    { type: "input", q: "Quelle méthode filtre sur une liste de valeurs (SQL : ville IN ('Liège', 'Namur')) ?", a: ["whereIn", "wherein", "whereIn()"], ph: "nom de la méthode…", exp: "whereIn('ville', ['Liège', 'Namur']) : le IN du cours SQL." },
+    { type: "qcm", q: "Les locations en cours (jeu pas encore rendu) :", opts: ["Location::whereNull('date_retour')->get()", "Location::where('date_retour', null)->first()", "Location::whereDate('date_retour')", "Location::all()"], a: 0, exp: "whereNull génère IS NULL — le = NULL classique ne marche pas en SQL, souviens-toi du Niveau 4." },
+    { type: "vf", q: "where('prix', '<', 6)->where('stock', 0)->orWhereNull('stock') équivaut à prix < 6 AND (stock = 0 OR stock IS NULL).", a: false, exp: "Sans closure, le OR s'échappe : AND est prioritaire, la logique devient (prix < 6 AND stock = 0) OR stock IS NULL." },
+    { type: "qcm", q: "Pour générer des parenthèses autour d'un bloc OR :", opts: ["Impossible en Eloquent", "La méthode parentheses()", "Un where(function ($query) { … }) qui groupe le bloc", "Des crochets"], a: 2, exp: "Une closure = une paire de parenthèses dans le SQL généré." },
+    { type: "input", q: "Quelle méthode trie en ordre décroissant en un seul appel (sans passer 'desc' en argument) ?", a: ["orderByDesc", "orderbydesc", "orderByDesc()"], ph: "nom de la méthode…", exp: "orderByDesc('prix_location') — équivalent de orderBy('prix_location', 'desc')." },
+    { type: "qcm", q: "Avis::latest()->take(5)->get() retourne…", opts: ["Les 5 avis les plus anciens", "Les 5 avis les plus récents (ORDER BY created_at DESC LIMIT 5)", "5 avis au hasard", "Tous les avis"], a: 1, exp: "latest() = orderByDesc('created_at') ; take = limit." },
+    { type: "qcm", q: "Vérifier si un jeu nommé « Catan » existe, SANS charger de modèle :", opts: ["Jeu::where('titre', 'Catan')->exists()", "Jeu::all()->contains('Catan')", "Jeu::find('Catan')", "count(Jeu::all())"], a: 0, exp: "exists() retourne un booléen via un SELECT minimal — la variante vue à la leçon 5." },
+    { type: "qcm", q: "Jeu::orderBy('titre')->pluck('titre', 'id') retourne…", opts: ["Un seul titre", "Une collection id => titre, idéale pour un menu déroulant", "Tous les modèles complets", "Une erreur"], a: 1, exp: "pluck(valeur, clé) : le dictionnaire prêt pour un select HTML." },
+    { type: "qcm", q: "when($prixMax, closure) applique la closure…", opts: ["Toujours", "Seulement si $prixMax est truthy (filtre facultatif)", "Jamais", "Une fois sur deux"], a: 1, exp: "L'outil des formulaires de recherche à filtres optionnels." },
+    { type: "input", q: "Quelle méthode affiche le SQL généré (avec des ?) sans exécuter la requête ?", a: ["toSql", "toSql()", "->toSql()"], ph: "nom de la méthode…", exp: "toSql() : le microscope à requêtes, parfait dans tinker." },
+    { type: "vf", q: "Le comportement différé du query builder (rien ne part avant get) existe aussi chez EF Core et Django.", a: true, exp: "LINQ différé, QuerySet paresseux : le pattern est universel chez les ORM." }
+  ],
+  final: {
+    title: "Exercice final — Le moteur de recherche du catalogue",
+    intro: `<p>Le catalogue de la Ludothèque gagne sa barre de recherche : texte libre, prix maximum, disponibilité, tri. Chaque clause doit partir en SQL, pas en PHP.</p>`,
+    questions: [
+      { type: "qcm", q: "Les jeux disponibles à moins de 5 €, triés par titre :", opts: ["Jeu::all()->where('stock', '>', 0)", "Jeu::where('stock', '>', 0)->where('prix_location', '<', 5)->orderBy('titre')->get()", "Jeu::orderBy('titre')", "Jeu::where('stock OR prix')"], a: 1, exp: "Deux where (AND), un orderBy, un get : tout en SQL." },
+      { type: "input", q: "Quelle méthode filtre les locations de janvier 2026 entre deux dates (SQL : BETWEEN) ?", a: ["whereBetween", "wherebetween", "whereBetween()"], ph: "nom de la méthode…", exp: "whereBetween('date_location', ['2026-01-01', '2026-01-31'])." },
+      { type: "qcm", q: "« prix < 6 ET (rupture de stock OU stock inconnu) » s'écrit…", opts: ["Trois where enchaînés", "where('prix_location', '<', 6)->where(function ($q) { $q->where('stock', 0)->orWhereNull('stock'); })", "orWhere partout", "whereIn('stock', [0, null])"], a: 1, exp: "Le bloc OR dans une closure : les parenthèses générées respectent la logique voulue." },
+      { type: "vf", q: "Jeu::where('titre', 'like', '%' . $q . '%') protège automatiquement $q contre l'injection SQL.", a: true, exp: "L'API fluide binde toutes les valeurs — c'est le raw (leçon 15) qui exigera ta vigilance." },
+      { type: "qcm", q: "Le filtre « prix max » est facultatif dans le formulaire. La méthode adaptée :", opts: ["if dans la vue", "when($prixMax, function ($q, $max) { $q->where('prix_location', '<=', $max); })", "orWhere", "toSql"], a: 1, exp: "when applique la clause seulement si la valeur est fournie : le builder se construit à la carte." }
+    ],
+    solution: `<pre class="pseudo">CONSTRUIRE (rien ne part)          DÉCLENCHER (le SQL part)
+  where / orWhere (+ closure !)      get, first, count
+  whereIn, whereBetween,             exists, value, pluck
+  whereNull, whereDate               paginate (leçon 16)
+  orderBy / orderByDesc / latest
+  limit-take / skip                  VÉRIFIER : toSql(), DB::listen
+  select, when
+
+Piège n°1 : orWhere sans closure → le OR s'échappe (AND prioritaire)
+Réflexe   : filtrer en SQL, jamais Jeu::all()-&gt;where(...) en PHP</pre>
+<p>Tu sais filtrer et trier les lignes. Leçon 14 : les compter, les moyenner, les regrouper — et filtrer les jeux selon leurs avis avec whereHas.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l13", title: "La requête de recherche, clause par clause", level: 2,
+    statement: "Écris la requête complète du moteur de recherche du catalogue de la Ludothèque : quatre filtres FACULTATIFS (texte libre sur le titre, prix maximum, « disponibles uniquement » en case à cocher, ville de l'éditeur parmi une liste) et un tri (titre ou prix, choisi par l'utilisateur). Rédige le chaînage complet avec when(), justifie chaque clause en une phrase, indique le moment exact où le SQL part vers MySQL, et explique pourquoi la version Jeu::all() suivie de filtres de Collection serait une faute.",
+    hints: [
+      "Pars de Jeu::query() puis empile un when() par filtre facultatif : la closure ne s'applique que si la valeur existe.",
+      "Le tri choisi par l'utilisateur est une VALEUR de colonne : valide-la contre une liste blanche (['titre', 'prix_location']) avant de la passer à orderBy.",
+      "Rien ne part avant la méthode terminale : compte les clauses, puis repère le get() (ou le futur paginate)."
+    ],
+    solution: "$tri = in_array($request->tri, ['titre', 'prix_location'])\n        ? $request->tri : 'titre';          // liste blanche du tri\n\n$jeux = Jeu::query()\n    ->when($request->q, function ($query, $q) {\n        $query->where('titre', 'like', '%' . $q . '%');\n    })                                       // texte libre, bindé d'office\n    ->when($request->prix_max, function ($query, $max) {\n        $query->where('prix_location', '<=', $max);\n    })                                       // filtre numérique facultatif\n    ->when($request->boolean('disponibles'), function ($query) {\n        $query->where('stock', '>', 0);\n    })                                       // case à cocher\n    ->when($request->villes, function ($query, $villes) {\n        $query->whereIn('editeur_id',\n            Editeur::whereIn('ville', $villes)->pluck('id'));\n    })                                       // liste de villes → IN\n    ->orderBy($tri)\n    ->get();                                 // ← LE SQL PART ICI, pas avant\n\nPourquoi pas Jeu::all()->filter(...) : all() rapatrie TOUTE la table\n(mémoire, réseau), puis filtre en PHP ligne par ligne ; le moindre\ncatalogue de 10 000 jeux transforme la recherche en gouffre. Filtrer\ncôté MySQL utilise les index du Niveau 4 et ne fait voyager que les\nrésultats. Bonus sécurité : chaque valeur passée à where/whereIn est\nbindée automatiquement — et le nom de colonne du tri, lui, passe par\nune liste blanche car un nom de colonne ne se binde pas.",
+    note: "Ce patron « builder + filtres conditionnels » est le squelette de toutes les pages de recherche du Niveau 6. Tu le retrouveras trait pour trait ailleurs : IQueryable composé en LINQ (EF Core), QuerySet affiné par étapes (Django), Specification pattern (Spring Data). La liste blanche sur le nom de colonne du tri est le détail que les débutants oublient — et que les auditeurs sécurité vérifient en premier." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

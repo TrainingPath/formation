@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Le frontend : templates échappés et en-têtes de sécurité",
+  subtitle: "Donner un visage à l'app — XSS et clickjacking fermés d'office.",
+  theory: `
+<h3>1. L'échappement, gratuit et par défaut</h3>
+<pre class="pseudo">{# catalogue.html #}
+{% for jeu in page %}                     {# boucle : pour chaque jeu de la page courante #}
+  <tr>                                     {# une ligne de tableau par jeu #}
+    <td>{{ jeu.titre }}</td>                {# {{ }} ÉCHAPPE : &lt;script&gt; devient du texte #}
+    <td>{{ jeu.prix_location }} €</td>      {# affiche le prix, echappe lui aussi #}
+    <td>                                    {# cellule contenant le bouton d'action #}
+      <form method="post" action="{% url 'louer' jeu.id %}">   {# formulaire POST vers l'URL nommee « louer » #}
+        {% csrf_token %}                    {# obligatoire sur les POST #}
+        <button {% if not jeu.est_louable %}disabled{% endif %}>Louer</button>   {# bouton desactive si le jeu n'est pas louable #}
+      </form>                               {# fin du formulaire #}
+    </td>                                   {# fin de la cellule #}
+  </tr>                                     {# fin de la ligne #}
+{% endfor %}                                {# fin de la boucle #}</pre>
+<p>Un <strong>template</strong> est une page HTML « à trous » où Django insère les données (le langage de gabarit s'appelle <strong>DTL</strong>). <code>{{ ... }}</code> affiche une valeur en l'<strong>échappant</strong> — en neutralisant les caractères dangereux : un titre contenant <code>&lt;script&gt;</code> apparaît comme du texte inoffensif, jamais exécuté. C'est la parade automatique contre le <strong>XSS</strong> (« cross-site scripting » : injecter du code qui s'exécute chez les autres visiteurs). <code>{% csrf_token %}</code> ajoute un jeton anti-<strong>CSRF</strong> (une attaque qui fait exécuter une action à ton insu depuis un autre site). Le danger vient toujours d'un contournement (<code>|safe</code>), qu'on bannit sur du contenu utilisateur (cours Sécurité l.3).</p>
+
+<h3>2. Les en-têtes de sécurité, posés d'office</h3>
+<pre class="pseudo"># settings.py
+SECURE_CONTENT_TYPE_NOSNIFF = True     # le navigateur ne devine pas les types (anti-confusion MIME)
+X_FRAME_OPTIONS = "DENY"               # anti-clickjacking : interdit d'afficher le site dans une iframe
+# django-csp : Content-Security-Policy-Report-Only d'abord   # d'abord en observation, sans bloquer
+CSP_DEFAULT_SRC = ("'self'",)          # par defaut, ne charger que les ressources du site lui-meme
+CSP_SCRIPT_SRC = ("'self'",)           # 2e rempart anti-XSS : seuls les scripts du site sont autorises</pre>
+<p>Un <strong>en-tête HTTP</strong> est une consigne que le serveur joint à chaque réponse pour dire au navigateur comment se comporter. Posés une fois dans <code>settings.py</code>, ces en-têtes ferment des attaques entières : <code>X_FRAME_OPTIONS = "DENY"</code> parade le <strong>clickjacking</strong> (superposer une page piège dans une iframe), et la <strong>CSP</strong> (« politique de sécurité du contenu ») liste les sources de scripts autorisées — un second rempart contre le XSS.</p>
+
+<h3>3. La CSP en report-only d'abord</h3>
+<pre class="pseudo">On déploie la CSP en OBSERVATION (report-only) : elle signale ce qu'elle
+bloquerait, sans rien casser. Une fois les faux positifs traités (scripts
+inline à externaliser), on l'applique pour de bon. La méthode qui la fait adopter.</pre>
+
+<h3>4. Vérifier au clavier</h3>
+<pre class="pseudo">grep -rn "|safe" templates/       # aucun sur du contenu utilisateur
+curl -I http://localhost:8000/    # X-Frame-Options, X-Content-Type-Options présents
+# securityheaders.com / Observatory → une note, des manques</pre>
+
+<h3>5. Le même service pour l'API et les pages</h3>
+<pre class="pseudo">def catalogue(request):   # la vue HTML du catalogue
+    return render(request, "catalogue.html", {"page": ...})   # même services.jeux_louables()
+# une seule logique métier, deux présentations (JSON et HTML) — déjà testée.</pre>
+<div class="warn">Le bouton « Louer » désactivé si <code>not jeu.est_louable</code> est du <strong>confort</strong>, pas de la sécurité : même si un malin soumet le formulaire d'un jeu épuisé (page restée ouverte), le service lève <code>StockInsuffisant</code>. L'affichage guide, la barrière est au service — les deux ensemble.</div>
+<div class="tip">Le frontend hérite gratuitement de l'échappement DTL et des en-têtes posés une fois : XSS et clickjacking sont fermés avant d'exister. Rien n'est « ajouté après » — la sécurité du rendu est là dès le premier template.</div>`,
+  exercises: [
+    { type: "qcm", q: "{{ jeu.titre }} en Django…", opts: ["Exécute le HTML", "Échappe : affiche en texte, n'exécute pas", "Plante", "Ignore"], a: 1, exp: "Protection XSS par défaut." },
+    { type: "qcm", q: "Le danger XSS vient…", opts: ["De {{ }}", "D'un contournement (|safe sur du contenu utilisateur)", "De HTTPS", "Du cache"], a: 1, exp: "À bannir." },
+    { type: "qcm", q: "{% csrf_token %} est…", opts: ["Décoratif", "Obligatoire sur les formulaires POST", "Un cookie", "Un test"], a: 1, exp: "Anti-CSRF." },
+    { type: "qcm", q: "X_FRAME_OPTIONS = \"DENY\" protège de…", opts: ["Le XSS", "Le clickjacking (iframe piège)", "L'injection", "La force brute"], a: 1, exp: "Pas d'encadrement." },
+    { type: "qcm", q: "SECURE_CONTENT_TYPE_NOSNIFF empêche…", opts: ["Le HTTPS", "Le navigateur de deviner les types MIME", "Le CSRF", "Le log"], a: 1, exp: "Anti-confusion de type." },
+    { type: "qcm", q: "La CSP est un rempart contre…", opts: ["L'injection SQL", "Le XSS (2e barrière)", "Le CSRF", "La force brute"], a: 1, exp: "Refuse les scripts non autorisés." },
+    { type: "qcm", q: "La CSP se déploie d'abord…", opts: ["Stricte d'un coup", "En report-only (observation)", "Jamais", "Sans test"], a: 1, exp: "Sinon elle casse et se fait désactiver." },
+    { type: "qcm", q: "Vérifier les en-têtes :", opts: ["curl -I / securityheaders.com", "un ping", "git log", "docker ps"], a: 0, exp: "Note objective." },
+    { type: "qcm", q: "Le même service alimente…", opts: ["Deux bases", "L'API JSON et les pages HTML", "Deux langages", "Rien"], a: 1, exp: "Une logique, deux vues." },
+    { type: "qcm", q: "Le bouton désactivé si non louable est…", opts: ["De la sécurité suffisante", "Du confort ; la barrière est au service", "Inutile", "Interdit"], a: 1, exp: "Affichage guide, service protège." },
+    { type: "vf", q: "Un jeu épuisé soumis quand même est refusé par le service (StockInsuffisant).", a: true, exp: "La vraie barrière." },
+    { type: "qcm", q: "|safe sur une saisie utilisateur…", opts: ["Est sûr", "Ouvre un XSS stocké", "Chiffre", "Valide"], a: 1, exp: "À bannir." },
+    { type: "qcm", q: "Les en-têtes de sécurité sont posés…", opts: ["Après un audit", "Une fois, d'office (settings)", "Jamais", "En prod à la main"], a: 1, exp: "Par conception." },
+    { type: "qcm", q: "report-only signifie que la CSP…", opts: ["Bloque tout", "Signale sans bloquer (le temps d'ajuster)", "Est désactivée", "Chiffre"], a: 1, exp: "Adoption en douceur." },
+    { type: "vf", q: "XSS et clickjacking sont fermés avant d'exister grâce à l'échappement + en-têtes.", a: true, exp: "Sécurité du rendu, dès le départ." }
+  ],
+  final: {
+    title: "Exercice final — Le rendu sécurisé",
+    intro: `<p>On rend le catalogue avec échappement et en-têtes.</p>`,
+    questions: [
+      { type: "qcm", q: "Afficher le titre :", opts: ["{{ jeu.titre }} (échappé)", "{{ jeu.titre|safe }}", "<%= titre %>", "@titre"], a: 0, exp: "Sûr par défaut." },
+      { type: "qcm", q: "Le form « Louer » a besoin de :", opts: ["{% csrf_token %} et method=post", "rien", "un GET", "|safe"], a: 0, exp: "Écriture protégée." },
+      { type: "qcm", q: "Anti-clickjacking :", opts: ["X_FRAME_OPTIONS = 'DENY'", "un cookie", "un log", "HTTPS seul"], a: 0, exp: "Pas d'iframe." },
+      { type: "qcm", q: "La CSP :", opts: ["report-only d'abord, puis appliquée", "stricte d'un coup", "jamais", "sans test"], a: 0, exp: "Sans casser." },
+      { type: "vf", q: "Le bouton désactivé est un confort ; le service reste la barrière.", a: true, exp: "Défense en profondeur." }
+    ],
+    solution: `<pre class="pseudo">{% for jeu in page %}                                {# pour chaque jeu de la page #}
+  <tr><td>{{ jeu.titre }}</td><td>{{ jeu.prix_location }} €</td>   {# titre + prix, echappes par {{ }} #}
+  <td><form method="post" action="{% url 'louer' jeu.id %}">   {# formulaire POST vers « louer » #}
+      {% csrf_token %}                               {# jeton anti-CSRF (obligatoire) #}
+      <button {% if not jeu.est_louable %}disabled{% endif %}>Louer</button>   {# bouton desactive si non louable #}
+  </form></td></tr>                                  {# fin form / cellule / ligne #}
+{% endfor %}                                         {# fin de la boucle #}
+
+# settings.py
+SECURE_CONTENT_TYPE_NOSNIFF = True ; X_FRAME_OPTIONS = "DENY"   # anti-sniff MIME + anti-clickjacking
+CSP_DEFAULT_SRC = ("'self'",) ; CSP_SCRIPT_SRC = ("'self'",)   # report-only d'abord</pre>
+<p>Le rendu est sûr d'office. Demain : les secrets et la configuration.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton template et tes en-têtes…",
+  items: [
+  { id: "proj6py-l13", title: "Le middleware d'en-têtes + test", level: 3,
+    statement: "Configure les en-têtes de sécurité (settings + django-csp en report-only) et écris un test qui vérifie leur présence dans la réponse (X-Frame-Options, X-Content-Type-Options). Écris aussi le test anti-XSS : une description contenant <script> s'affiche échappée. Explique pourquoi tester les en-têtes empêche une régression silencieuse.",
+    hints: [
+      "response = self.client.get('/catalogue/') ; response['X-Frame-Options'] == 'DENY'.",
+      "assertNotContains(response, '<script>vole') — le script est échappé, pas présent tel quel.",
+      "Un test d'en-têtes attrape le jour où quelqu'un retire le middleware « pour déboguer »."
+    ],
+    solution: "# settings.py — en-têtes de sécurité (une fois, d'office)\nSECURE_CONTENT_TYPE_NOSNIFF = True   # le navigateur ne devine pas les types MIME\nX_FRAME_OPTIONS = \"DENY\"   # anti-clickjacking : pas d'affichage en iframe\nSECURE_REFERRER_POLICY = \"strict-origin-when-cross-origin\"   # limite l'info « d'ou vient l'utilisateur » envoyee aux autres sites\n# django-csp (report-only d'abord)\nCONTENT_SECURITY_POLICY_REPORT_ONLY = {   # CSP en OBSERVATION : signale sans bloquer\n    \"DIRECTIVES\": {\"default-src\": [\"'self'\"], \"script-src\": [\"'self'\"]},   # n'autoriser que les ressources et scripts du site\n}   # fin de la config CSP\n\n# tests.py — les en-têtes sont un CONTRAT vérifié\nclass EntetesSecuriteTests(TestCase):   # tests de presence des en-tetes\n    def test_entetes_presents(self):   # les en-tetes attendus doivent etre la\n        r = self.client.get(\"/catalogue/\")   # charger une page\n        self.assertEqual(r[\"X-Frame-Options\"], \"DENY\")   # verifier l'en-tete anti-clickjacking\n        self.assertEqual(r[\"X-Content-Type-Options\"], \"nosniff\")   # verifier l'en-tete anti-sniff MIME\n\n# test anti-XSS (échappement)\nclass XssTests(TestCase):   # tests de l'echappement\n    def test_description_est_echappee(self):   # un titre malicieux doit etre affiche en texte\n        cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        Jeu.objects.create(titre=\"&lt;script&gt;vole()&lt;/script&gt;\", prix_achat=1,   # un jeu au titre piege…\n                           prix_location=1, stock_location=1, categorie=cat)   # …avec du stock\n        r = self.client.get(\"/catalogue/\")   # charger le catalogue\n        self.assertNotContains(r, \"&lt;script&gt;vole()&lt;/script&gt;\")  # échappé, pas exécuté\n        self.assertContains(r, \"&lt;script&gt;\")               # présent en TEXTE\n\n# Pourquoi tester les en-têtes :\n# Un en-tête de sécurité est invisible à l'œil — personne ne remarque sa\n# disparition. Si quelqu'un retire le middleware ou passe X_FRAME_OPTIONS\n# à SAMEORIGIN « pour un test », la protection tombe SANS erreur visible.\n# Le test le rend rouge immédiatement : la sécurité du rendu devient une\n# propriété vérifiée à chaque commit, pas un réglage qu'on espère intact.",
+    note: "Tester les en-têtes de sécurité et l'échappement transforme des protections INVISIBLES en garanties vérifiées : personne ne voit un X-Frame-Options disparaître, mais le test le voit. C'est le réflexe du Niveau 8 poussé jusqu'au bout — même les protections passives (en-têtes, échappement) sont sous surveillance de la CI, donc à l'abri d'une régression silencieuse." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

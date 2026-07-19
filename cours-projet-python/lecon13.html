@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : paiement simulé, stock de vente",
+  subtitle: "Le deuxième stock du modèle Merise prend tout son sens.",
+  theory: `
+<h3>1. Deux stocks, deux opérations</h3>
+<p>Un <strong>stock</strong> est le nombre d'exemplaires disponibles. Depuis Merise, chaque jeu en a <strong>deux, distincts</strong> : <code>stock_location</code> (les exemplaires qui tournent et reviennent) et <code>stock_vente</code> (ceux qui partent définitivement). Louer touche le premier, <strong>acheter</strong> touche le second — et enregistre en plus un <strong>montant</strong> (la somme payée), car un achat laisse une trace financière.</p>
+
+<h3>2. services.acheter : même structure, autre stock</h3>
+<pre class="pseudo">def acheter(client, jeu_id):             # service : le client achète le jeu jeu_id
+    with transaction.atomic():           # tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charge et verrouille le jeu
+        if jeu.stock_vente &lt;= 0:          # plus de stock de VENTE ?
+            raise StockInsuffisant(f"Plus de stock de vente pour {jeu.titre}")   # refus (rollback)
+        achat = Achat.objects.create(     # 1re écriture : crée l'achat…
+            client=client, jeu=jeu,       # …pour ce client et ce jeu…
+            date_achat=timezone.now(),    # …daté de maintenant…
+            montant=jeu.prix_achat)      # prix FIGÉ au moment de l'achat (copié)
+        jeu.stock_vente -= 1             # 2e écriture : on retire 1 au stock de vente
+        jeu.save(update_fields=["stock_vente"])   # enregistre le nouveau stock
+        return achat</pre>
+
+<h3>3. Figer le prix au moment de l'achat</h3>
+<div class="warn">On <strong>copie</strong> le prix dans <code>Achat.montant</code> au lieu de le relire plus tard depuis <code>Jeu.prix_achat</code> : si le vendeur change le prix demain, les achats d'hier gardent leur montant <strong>historique</strong>. Une facture ne change pas rétroactivement.</div>
+
+<h3>4. Le paiement simulé</h3>
+<p>On enregistre le montant sans encaisser : c'est un projet d'école. Un vrai paiement (Stripe, PayPal…) s'appellerait <strong>dans le bloc atomic</strong>, avant la fin : si le paiement échoue, l'exception annule la transaction — pas d'achat sans paiement, pas de paiement sans achat.</p>
+
+<h3>5. La vue et le récapitulatif</h3>
+<pre class="pseudo">@login_required                          # il faut être connecté pour acheter
+def acheter_vue(request, jeu_id):        # vue web : traite la demande d'achat
+    if request.method != "POST":         # on n'accepte QUE le POST…
+        return redirect("catalogue")     # …sinon retour au catalogue
+    try:                                 # on tente l'achat
+        achat = services.acheter(request.user, jeu_id)   # délègue au service (identité = request.user)
+        messages.success(request,        # message de succès…
+            f"{achat.jeu.titre} acheté pour {achat.montant} €")   # …avec le titre et le montant
+    except Jeu.DoesNotExist:             # jeu inexistant…
+        raise Http404                    # …page 404
+    except StockInsuffisant as e:        # plus de stock…
+        messages.error(request, str(e))  # …message d'erreur métier
+    return redirect("mes_achats")        # Post-Redirect-Get : redirige vers « mes achats »</pre>
+<div class="tip">Location et achat partagent la même ossature (atomic, verrou, contrôle de stock, exception métier) : quand une structure se répète, c'est le signe d'une architecture comprise — pas d'un copier-coller à cacher.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter décrémente…", opts: ["stock_location", "stock_vente", "Les deux", "Aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Les deux stocks distincts viennent…", opts: ["D'une mode", "Du modèle Merise conçu en début de formation", "De Django", "Du frontend"], a: 1, exp: "Conception → code." },
+    { type: "qcm", q: "En plus du stock, l'achat enregistre…", opts: ["Un montant", "Une durée", "Un rôle", "Un index"], a: 0, exp: "Trace financière." },
+    { type: "qcm", q: "Le montant vaut…", opts: ["jeu.prix_location", "jeu.prix_achat, copié dans l'Achat", "0", "Un champ du POST"], a: 1, exp: "Jamais une valeur envoyée par le client !" },
+    { type: "qcm", q: "Pourquoi copier le prix dans Achat.montant ?", opts: ["Performance", "Garder le montant historique même si le prix change", "Éviter un JOIN", "Obligation Django"], a: 1, exp: "Une facture ne change pas." },
+    { type: "vf", q: "Si le vendeur change prix_achat, les achats passés changent de montant.", a: false, exp: "Le montant est figé à l'achat." },
+    { type: "qcm", q: "stock_vente nul → le service…", opts: ["Vend quand même", "Lève StockInsuffisant", "Renvoie None", "Puise dans stock_location"], a: 1, exp: "Refus métier." },
+    { type: "vf", q: "Un achat peut puiser dans le stock de location si la vente est épuisée.", a: false, exp: "Deux stocks étanches, par conception." },
+    { type: "qcm", q: "Un vrai paiement externe s'appellerait…", opts: ["Après le bloc atomic", "Dans le bloc atomic, avant la fin", "Dans le template", "Jamais"], a: 1, exp: "Échec → rollback de tout." },
+    { type: "qcm", q: "Si le paiement échoue dans le bloc…", opts: ["L'achat reste", "Tout est annulé (rollback)", "Le stock baisse quand même", "500 sans rollback"], a: 1, exp: "Pas d'achat sans paiement." },
+    { type: "qcm", q: "La structure d'acheter ressemble à louer parce que…", opts: ["Copier-coller honteux", "Les deux partagent les mêmes garanties (atomic, verrou, stock, exception)", "Le hasard", "Django l'impose"], a: 1, exp: "Architecture cohérente." },
+    { type: "qcm", q: "L'acheteur est identifié par…", opts: ["request.user (session)", "?client= dans l'URL", "Un champ du JSON", "Son IP"], a: 0, exp: "Toujours la session." },
+    { type: "qcm", q: "L'achat se fait en…", opts: ["POST avec csrf_token", "GET", "PUT sans token", "HEAD"], a: 0, exp: "Écriture = POST." },
+    { type: "qcm", q: "select_for_update sur l'achat sert à…", opts: ["Trier", "Empêcher deux achats simultanés du dernier exemplaire", "Chiffrer", "Logger"], a: 1, exp: "Même course qu'à la location." },
+    { type: "vf", q: "services.acheter renvoie l'Achat créé pour que la vue affiche le récapitulatif.", a: true, exp: "Le service renvoie, la vue présente." }
+  ],
+  final: {
+    title: "Exercice final — L'achat complet",
+    intro: `<p>On déroule l'achat d'un jeu par un client connecté.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock contrôlé est :", opts: ["stock_vente", "stock_location", "les deux", "aucun"], a: 0, exp: "Achat = vente." },
+      { type: "qcm", q: "Le montant vient de :", opts: ["jeu.prix_achat (copié dans l'achat)", "du POST envoyé par le client", "de la config", "du rôle"], a: 0, exp: "Figé, côté serveur." },
+      { type: "qcm", q: "Les écritures de l'achat :", opts: ["Achat.objects.create + stock_vente -= 1", "un UPDATE seul", "un DELETE", "deux SELECT"], a: 0, exp: "Dans le même atomic." },
+      { type: "qcm", q: "Le verrou est posé par :", opts: ["select_for_update()", "un mutex Python", "le template", "rien"], a: 0, exp: "Jusqu'au commit." },
+      { type: "vf", q: "Louer et acheter suivent la même ossature transactionnelle.", a: true, exp: "Mêmes garanties, stocks différents." }
+    ],
+    solution: `<pre class="pseudo">def acheter(client, jeu_id):             # service d'achat
+    with transaction.atomic():           # tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charge et verrouille le jeu
+        if jeu.stock_vente &lt;= 0:          # stock de vente épuisé ?
+            raise StockInsuffisant(f"Plus de stock de vente pour {jeu.titre}")   # refus (rollback)
+        achat = Achat.objects.create(     # crée l'achat…
+            client=client, jeu=jeu,       # …client et jeu…
+            date_achat=timezone.now(), montant=jeu.prix_achat)   # …maintenant, prix figé
+        jeu.stock_vente -= 1             # retire 1 au stock de vente
+        jeu.save(update_fields=["stock_vente"])   # enregistre le stock
+        return achat</pre>
+<p>Louer et acheter fonctionnent. Demain : donner un visage à tout ça avec les templates.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service d'achat…",
+  items: [
+  { id: "projpython-l13", title: "Le reçu d'achat", level: 2,
+    statement: "Écris la vue mes_achats (connecté : liste des achats de request.user avec le jeu préchargé, total dépensé via aggregate) et le serializer AchatSerializer (id, titre du jeu, montant, date_achat) pour l'API GET /api/mes-achats/ (permission IsAuthenticated, queryset filtré par request.user).",
+    hints: [
+      "achats = Achat.objects.filter(client=request.user).select_related(\"jeu\")",
+      "total = achats.aggregate(total=Sum(\"montant\"))[\"total\"] or 0",
+      "def get_queryset(self): return Achat.objects.filter(client=self.request.user)"
+    ],
+    solution: "@login_required   # réservé aux connectés\ndef mes_achats(request):   # page « mes achats » de l'utilisateur\n    achats = (Achat.objects   # les achats…\n              .filter(client=request.user)   # …de l'utilisateur connecté seulement\n              .select_related(\"jeu\"))   # …avec le jeu préchargé (JOIN, évite le N+1)\n    total = achats.aggregate(total=Sum(\"montant\"))[\"total\"] or 0   # somme des montants (0 si aucun achat)\n    return render(request, \"mes_achats.html\",   # affiche la page…\n                  {\"achats\": achats, \"total\": total})   # …avec la liste et le total\n\n# API\nclass AchatSerializer(serializers.ModelSerializer):   # serializer d'un achat\n    jeu = serializers.CharField(source=\"jeu.titre\")   # le titre du jeu, aplati en texte\n\n    class Meta:   # réglages du serializer\n        model = Achat   # modèle source : Achat\n        fields = [\"id\", \"jeu\", \"montant\", \"date_achat\"]   # champs exposés\n\nclass MesAchatsViewSet(viewsets.ReadOnlyModelViewSet):   # API en lecture seule des achats\n    serializer_class = AchatSerializer   # serializer utilisé\n    permission_classes = [permissions.IsAuthenticated]   # accès réservé aux connectés\n\n    def get_queryset(self):   # limite les résultats visibles…\n        return (Achat.objects   # …aux achats…\n                .filter(client=self.request.user)   # …de l'utilisateur courant uniquement\n                .select_related(\"jeu\"))   # …jeu préchargé (JOIN)",
+    note: "get_queryset filtré par self.request.user est LA façon DRF d'appliquer le droit par ressource : même en devinant des ids, un client ne verra jamais les achats d'un autre. Le total est calculé par MySQL (Sum), pas en Python. Le montant affiché est celui figé à l'achat — la règle de la leçon se voit jusque dans le reçu." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

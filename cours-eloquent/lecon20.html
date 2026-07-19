@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "La couche de persistance de la Ludothèque (synthèse)",
+  subtitle: "Les quatre modèles finaux, leurs relations et les requêtes clés — tout le cours tient sur une page.",
+  theory: `
+<h3>1. Vue d'ensemble : le schéma et ses modèles</h3>
+<p>Dix-neuf leçons ont construit, pièce par pièce, une couche de persistance complète au-dessus du schéma MySQL du Niveau 4. La <strong>couche de persistance</strong>, c'est l'ensemble du code chargé de lire et d'écrire dans la base (analogie : le magasinier qui range et retrouve les objets dans l'entrepôt). La carte du territoire — chaque table du Niveau 4 devient un modèle Eloquent :</p>
+<pre class="pseudo">TABLES (Niveau 4)             MODÈLES ELOQUENT
+jeux (editeur_id)             Jeu
+membres                       Membre
+locations (jeu_id, membre_id) Location   ← N-N enrichi PROMU en modèle
+avis (jeu_id, membre_id)      Avis
+editeurs                      Editeur
+categories + categorie_jeu    Categorie  ← pivot NU, pas de modèle pivot
+carte_fidelites (FK UNIQUE)   CarteFidelite</pre>
+<p>Chaque flèche du diagramme entité-association est devenue une méthode de relation ; chaque règle métier a trouvé son étage : cast, accesseur, scope, event ou transaction.</p>
+
+<h3>2. Jeu et Membre : les deux piliers</h3>
+<pre class="pseudo">// app/Models/Jeu.php
+class Jeu extends Model
+{
+    protected $fillable = ['titre', 'prix_location', 'stock',       // liste blanche : seules ces colonnes sont remplissables en masse
+                           'est_visible', 'editeur_id'];
+    protected $casts = ['prix_location' =&gt; 'decimal:2',             // conversions de type (leçon 18)
+                        'est_visible'   =&gt; 'boolean'];
+
+    public function editeur()    { return $this-&gt;belongsTo(Editeur::class); }      // N-1 : le jeu appartient à un éditeur (FK editeur_id)
+    public function locations()  { return $this-&gt;hasMany(Location::class); }       // 1-N : un jeu a plusieurs locations
+    public function avis()       { return $this-&gt;hasMany(Avis::class); }           // 1-N : un jeu a plusieurs avis
+    public function categories() { return $this-&gt;belongsToMany(Categorie::class); } // N-N : via le pivot categorie_jeu
+
+    public function scopeDisponibles($query)                        // scope métier réutilisable (leçon 19)
+    { return $query-&gt;where('stock', '&gt;', 0)-&gt;where('est_visible', true); }   // en stock ET visible
+}
+
+// app/Models/Membre.php : hasMany locations et avis, hasOne carte,
+// mutateur email (strtolower + trim), accesseur nom_complet ($appends),
+// event creating → génération du code membre.</pre>
+
+<h3>3. Location et Avis : l'association promue et la note</h3>
+<pre class="pseudo">// app/Models/Location.php
+class Location extends Model
+{
+    protected $fillable = ['jeu_id', 'membre_id', 'date_location', 'date_retour'];   // colonnes remplissables
+    protected $casts = ['date_location' =&gt; 'date', 'date_retour' =&gt; 'date'];         // dates → objets Carbon
+
+    public function jeu()    { return $this-&gt;belongsTo(Jeu::class); }      // N-1 : la location porte jeu_id
+    public function membre() { return $this-&gt;belongsTo(Membre::class); }   // N-1 : la location porte membre_id
+
+    public function scopeEnRetard($query)                                 // scope « en retard »
+    { return $query-&gt;whereNull('date_retour')                             // pas encore rendue…
+                    -&gt;where('date_location', '&lt;', now()-&gt;subDays(14)); }   // …et louée il y a plus de 14 jours
+}
+
+// app/Models/Avis.php : belongsTo jeu et membre,
+// $casts = ['note' =&gt; 'integer'], SoftDeletes (la modération garde trace).</pre>
+<p>Location illustre le choix de conception le plus important du cours : un N-N enrichi (dates, retard, règles) mérite un modèle ; le pivot nu categorie_jeu, non.</p>
+
+<h3>4. Les requêtes clés de l'application</h3>
+<pre class="pseudo">// CATALOGUE — filtré, préchargé, paginé, filtres conservés :
+Jeu::disponibles()                                     // scope : en stock + visible
+    -&gt;with('editeur')-&gt;withCount('avis')-&gt;withAvg('avis', 'note')   // précharge l'éditeur, compte et moyenne les avis (anti N+1)
+    -&gt;when($q, function ($query, $q) {                  // when() : n'ajoute le filtre QUE si $q existe
+        $query-&gt;where('titre', 'like', '%' . $q . '%'); // recherche par titre
+    })
+    -&gt;orderBy('titre')-&gt;paginate(15)-&gt;withQueryString();   // tri, 15/page, conserve ?q dans les liens
+
+// FICHE JEU — tout en 1 + relations, 404 automatique :
+Jeu::with(['editeur', 'categories', 'avis.membre'])-&gt;findOrFail($id);   // précharge en cascade ; id inconnu → 404
+
+// TABLEAU DE BORD :
+Jeu::withCount('locations')-&gt;orderByDesc('locations_count')-&gt;take(5)-&gt;get();   // top 5 des jeux les plus loués
+Location::enRetard()-&gt;with(['jeu', 'membre'])-&gt;get();   // les retards, jeu + membre préchargés
+Membre::whereDoesntHave('locations')-&gt;count();          // combien de membres n'ont jamais loué
+Location::selectRaw('jeu_id, COUNT(*) AS nb')          // raw : bindings si valeurs !
+    -&gt;groupBy('jeu_id')-&gt;having('nb', '&gt;=', 5)-&gt;get();  // jeux loués au moins 5 fois</pre>
+
+<h3>5. Le cœur métier : louer, en transaction</h3>
+<pre class="pseudo">DB::transaction(function () use ($jeuId, $membre) {    // bloc tout-ou-rien (leçon 17)
+    $jeu = Jeu::where('id', $jeuId)-&gt;lockForUpdate()-&gt;first();   // lit + verrouille la ligne du jeu
+    if ($jeu-&gt;stock &lt; 1) {                             // plus d'exemplaire ?
+        throw new RuntimeException('Plus aucun exemplaire disponible.');   // → exception = ROLLBACK
+    }
+    $location = Location::create(['jeu_id' =&gt; $jeu-&gt;id,   // écriture 1 : la location
+        'membre_id' =&gt; $membre-&gt;id, 'date_location' =&gt; now()]);
+    $jeu-&gt;decrement('stock');                          // écriture 2 : stock - 1
+    return $location;                                  // valeur renvoyée par DB::transaction
+}, 3);                                                 // 3 tentatives en cas de deadlock
+// Mail de confirmation APRÈS le commit, jamais dedans.</pre>
+<p>Verrou → vérification → écritures → commit : la signature des opérations de guichet. Le retour de jeu suit le même patron (leçon 17). <em>Toute cette architecture se transpose : entités + repositories chez Hibernate/JPA, DbContext chez EF Core, models + managers chez Django — les concepts voyagent, seule la syntaxe change.</em></p>
+<div class="warn">Les quatre pièges mortels du cours, à réciter avant chaque mise en production : ① le N+1 (toute relation lue en boucle exige with/withCount) ; ② l'assignation de masse sans $fillable strict ; ③ la concaténation d'une saisie dans du SQL brut (bindings ? toujours) ; ④ les écritures multiples sans transaction. Un seul des quatre suffit à ruiner une application.</div>
+<div class="tip">Garde cette leçon comme fiche de référence du Niveau 6 : commence ton projet en redessinant la carte des relations DE MÉMOIRE, puis vérifie ici. Si tu sais reconstruire les quatre modèles, leurs scopes et la transaction de location sans regarder, tu es prêt pour l'examen de la leçon 21.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans la couche finale, Location est…", opts: ["Un pivot nu géré par belongsToMany", "Un N-N enrichi promu en modèle, avec deux belongsTo", "Une vue SQL", "Un simple tableau"], a: 1, exp: "Dates, retard, règles métier : la table d'association a une vie propre, donc un modèle." },
+    { type: "qcm", q: "categorie_jeu, à l'inverse, reste…", opts: ["Un modèle CategorieJeu", "Un pivot nu piloté par belongsToMany des deux côtés", "Une table supprimée", "Un JSON"], a: 1, exp: "Deux FK et rien d'autre : aucun modèle, la relation gère tout (leçon 10)." },
+    { type: "qcm", q: "Le 1-1 Membre / CarteFidelite est garanti en base par…", opts: ["hasOne tout seul", "La contrainte UNIQUE sur carte_fidelites.membre_id, doublée du duo hasOne/belongsTo", "Un event", "Un cast"], a: 1, exp: "La relation Eloquent ne remplace jamais la contrainte : les deux se complètent (leçon 11)." },
+    { type: "vf", q: "belongsTo se déclare toujours dans le modèle qui porte la clé étrangère.", a: true, exp: "Location porte jeu_id et membre_id → deux belongsTo ; les miroirs hasMany vivent en face." },
+    { type: "input", q: "Quelle relation permet à Editeur d'atteindre les locations SANS colonne editeur_id dans locations ?", a: ["hasManyThrough", "hasmanythrough", "hasManyThrough()"], ph: "nom de la méthode…", exp: "hasManyThrough(Location::class, Jeu::class) : le chemin editeurs → jeux → locations." },
+    { type: "qcm", q: "Dans la requête catalogue, with('editeur') + withCount('avis') servent à…", opts: ["Trier les jeux", "Éliminer le N+1 : relations et comptes préchargés en un nombre FIXE de requêtes", "Vider le cache", "Paginer"], a: 1, exp: "3-4 requêtes au total, que le catalogue ait 15 ou 3 000 jeux." },
+    { type: "qcm", q: "La fiche jeu utilise findOrFail($id) plutôt que find($id) parce que…", opts: ["C'est plus court", "Un id inexistant devient une 404 propre au lieu d'une erreur sur null", "find n'existe plus", "findOrFail est plus rapide"], a: 1, exp: "Le réflexe contrôleur de la leçon 5, indispensable en production." },
+    { type: "qcm", q: "Jeu::disponibles() encapsule…", opts: ["Un event", "where('stock', '>', 0)->where('est_visible', true) : le scope anti-duplication", "Une transaction", "Un cast"], a: 1, exp: "La règle vit une fois dans le modèle ; les contrôleurs parlent métier (leçon 19)." },
+    { type: "input", q: "Quelle méthode du paginator conserve ?q=catan dans les liens de pages du catalogue ?", a: ["withQueryString", "withQueryString()", "->withQueryString()"], ph: "paginate(15)->…()", exp: "Sans elle, la page 2 perd la recherche — le bug classique de la leçon 16." },
+    { type: "qcm", q: "Dans la transaction de location, lockForUpdate() est placé…", opts: ["Après le decrement", "Sur la LECTURE du jeu, AVANT la vérification du stock", "Sur le mail", "Sur la table membres"], a: 1, exp: "Verrou → vérification → écritures : sinon deux clients lisent stock = 1 en même temps." },
+    { type: "vf", q: "Le mail de confirmation de location s'envoie à l'intérieur de la transaction, avant le commit.", a: false, exp: "Après le commit : pas de verrous pendant un appel lent, pas de mail pour un rollback (leçon 17)." },
+    { type: "qcm", q: "Sur Membre, la règle « email en minuscules » vit dans…", opts: ["Chaque contrôleur", "Un mutateur (set:) du modèle, appliqué sur tous les chemins d'écriture", "La vue", "Un index MySQL"], a: 1, exp: "Le nettoyage dans le modèle : web, import, tinker — même règle partout (leçon 18)." },
+    { type: "qcm", q: "Afficher « en retard » sur une location chargée / lister les retards en SQL :", opts: ["Accesseur pour les deux", "Accesseur est_en_retard pour afficher, scope enRetard() pour filtrer", "Scope pour les deux", "Un event"], a: 1, exp: "La même règle en deux exemplaires synchronisés — PHP pour l'affichage, SQL pour le filtre." },
+    { type: "qcm", q: "Les membres n'ayant JAMAIS loué, pour la relance marketing :", opts: ["Membre::whereDoesntHave('locations')->get()", "Membre::all()->filter(...)", "Location::whereNull('membre_id')", "Membre::has('locations')"], a: 0, exp: "NOT EXISTS corrélé, généré par whereDoesntHave (leçon 14)." },
+    { type: "qcm", q: "Les quatre pièges mortels du cours :", opts: ["N+1, assignation de masse, injection dans le raw, écritures sans transaction", "CSS, HTML, JS, PHP", "find, first, all, get", "Aucun piège en ORM"], a: 0, exp: "with/fillable/bindings/transaction : les quatre réflexes qui sauvent une application." }
+  ],
+  final: {
+    title: "Exercice final — La revue d'architecture",
+    intro: `<p>Dernière répétition générale avant l'examen : tu défends la couche de persistance de la Ludothèque devant un architecte. Chaque choix doit avoir sa justification.</p>`,
+    questions: [
+      { type: "qcm", q: "L'architecte demande pourquoi Location est un modèle alors que categorie_jeu n'en est pas un :", opts: ["Hasard historique", "Locations porte des données et des règles métier propres ; categorie_jeu n'a que deux FK", "Les pivots sont interdits", "Pour faire joli"], a: 1, exp: "Le critère de promotion de la leçon 10 : une vie propre → un modèle." },
+      { type: "qcm", q: "Il pointe la requête catalogue : « pourquoi withAvg plutôt qu'un avg() par jeu ? »", opts: ["C'est pareil", "withAvg calcule en sous-requêtes dans UN SELECT ; avg() en boucle ferait une requête par jeu", "avg() n'existe pas", "withAvg arrondit mieux"], a: 1, exp: "L'agrégat en boucle est le cousin du N+1 (leçon 14)." },
+      { type: "input", q: "Il exige la preuve d'atomicité de la location : quelle façade et méthode cites-tu ? (Façade::méthode)", a: ["DB::transaction", "DB::transaction()", "db::transaction"], ph: "Façade::méthode…", exp: "DB::transaction + lockForUpdate : tout-ou-rien ET anti-concurrence." },
+      { type: "vf", q: "Grâce aux relations Eloquent, les contraintes FK et UNIQUE des migrations deviennent superflues.", a: false, exp: "Jamais : la base reste le dernier rempart (leçons 4, 8, 11) — les relations et les contraintes se complètent." },
+      { type: "qcm", q: "Sa dernière question : « et si demain on migre vers PostgreSQL ? »", opts: ["Tout est à réécrire", "L'essentiel survit : Eloquent abstrait le SQL ; seuls les raw spécifiques MySQL sont à vérifier", "Impossible", "Il faut changer de langage"], a: 1, exp: "L'ORM isole le dialecte SQL — un des arguments de la leçon 1, devenu concret." }
+    ],
+    solution: `<pre class="pseudo">LA COUCHE DE PERSISTANCE FINALE
+Modèles    Jeu · Membre · Location (N-N promu) · Avis
+           + Editeur, Categorie (pivot nu), CarteFidelite (1-1 UNIQUE)
+Relations  belongsTo/hasMany · belongsToMany · hasOne · hasManyThrough
+Typage     casts (dates Carbon, boolean, decimal) · accesseurs · mutateurs
+Vocabulaire disponibles() · enRetard() · events sobres (code membre)
+Requêtes   catalogue = scope + with + withCount/withAvg + paginate + wQS
+           fiche = with imbriqué + findOrFail · stats = whereHas, groupBy
+Cœur       DB::transaction + lockForUpdate + decrement (+ retour de jeu)
+Réflexes   ① with contre N+1 ② fillable ③ bindings ④ transaction</pre>
+<p>La Ludothèque a sa couche de persistance complète, cohérente et défendable. Il ne reste qu'une chose à faire : prouver que tout est là. Leçon 21 — l'examen récapitulatif.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l20", title: "La cinquième entité : les réservations", level: 3,
+    statement: "La Ludothèque ajoute les RÉSERVATIONS : un membre réserve un jeu indisponible ; quand un exemplaire revient, la plus ancienne réservation en attente est convertie en location. Conçois la couche de persistance complète de cette fonctionnalité, en réutilisant TOUT le cours : la migration (colonnes, FK, index), le modèle Reservation (fillable, casts, relations, scope enAttente), les relations à ajouter dans Jeu et Membre, la requête « position dans la file d'attente », et la transaction de conversion réservation → location au retour d'un jeu. Justifie chaque choix en citant la leçon concernée.",
+    hints: [
+      "Réservation ressemble beaucoup à Location : deux belongsTo, des dates, un état (en attente / convertie / annulée) — N-N enrichi, donc modèle promu (leçon 10).",
+      "La file d'attente est un tri : quelle colonne, quel orderBy, et quel count() donne la position d'un membre dans la file du jeu ?",
+      "La conversion au retour touche TROIS lignes (location clôturée, stock, réservation convertie… ou pas de stock à décrémenter si on enchaîne ?) : dessine les écritures avant de coder la transaction, et pense lockForUpdate."
+    ],
+    solution: "MIGRATION (leçon 4) — table reservations :\n  id · foreignId('jeu_id')->constrained() ·\n  foreignId('membre_id')->constrained() ·\n  timestamp('reservee_le') · string('statut') défaut 'en_attente' ·\n  timestamps · index(['jeu_id', 'statut', 'reservee_le'])\n  → l'index sert la file d'attente (tri + filtre fréquents).\n\nMODÈLE Reservation (leçons 3, 8, 18, 19) :\n  $fillable = ['jeu_id', 'membre_id', 'reservee_le', 'statut'];\n  $casts = ['reservee_le' => 'datetime'];\n  jeu() et membre() en belongsTo (les FK vivent ici) ;\n  scopeEnAttente($q) { return $q->where('statut', 'en_attente'); }\n  Jeu et Membre gagnent hasMany(Reservation::class).\n  N-N enrichi (état, dates, règles) → modèle promu, comme Location.\n\nPOSITION DANS LA FILE (leçons 13-14) :\n  $position = Reservation::enAttente()\n      ->where('jeu_id', $jeuId)\n      ->where('reservee_le', '<', $maReservation->reservee_le)\n      ->count() + 1;\n\nCONVERSION AU RETOUR (leçon 17) — une seule transaction :\n  DB::transaction(function () use ($locationId) {\n      $location = Location::where('id', $locationId)\n          ->lockForUpdate()->first();\n      if ($location->date_retour !== null) {\n          throw new RuntimeException('Déjà rendue.');\n      }\n      $location->date_retour = now();\n      $location->save();\n\n      $reservation = Reservation::enAttente()\n          ->where('jeu_id', $location->jeu_id)\n          ->orderBy('reservee_le')->lockForUpdate()->first();\n      if ($reservation) {\n          // l'exemplaire passe direct au réservataire : stock inchangé\n          Location::create(['jeu_id' => $location->jeu_id,\n              'membre_id' => $reservation->membre_id,\n              'date_location' => now()]);\n          $reservation->statut = 'convertie';\n          $reservation->save();\n      } else {\n          $location->jeu()->increment('stock');\n      }\n  }, 3);\n  Notification au réservataire APRÈS le commit.\n\nJustifications transverses : FK + index en base (Niveau 4),\nbelongsTo côté FK (leçon 8), scope contre la duplication (19),\nlockForUpdate contre la double conversion (17), et la file lue\navec orderBy + first plutôt qu'un all() (5, 13).",
+    note: "Tu viens de faire, seul, ce que le cours a fait en vingt leçons : partir d'un besoin métier et dérouler migration → modèle → relations → requêtes → transaction. C'est exactement l'exercice du dossier de conception du Niveau 6 — et la même gymnastique que tu referais avec une entité JPA, un modèle Django ou une entité EF Core. La couche de persistance n'a plus de zone d'ombre : place à l'examen." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

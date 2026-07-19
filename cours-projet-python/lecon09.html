@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs et les trois rôles (groupes)",
+  subtitle: "Client, vendeur, administrateur : les profils du modèle Merise entrent dans l'application.",
+  theory: `
+<h3>1. Qui utilise la Ludothèque ?</h3>
+<p>Le modèle Merise définit trois profils : le <strong>client</strong> (consulte, loue, achète), le <strong>vendeur</strong> (gère catalogue et stocks) et l'<strong>administrateur</strong> (gère les comptes et le reste). Un <strong>utilisateur</strong> (en anglais <em>user</em>) est le compte d'une personne qui se connecte ; un <strong>groupe</strong> (<em>group</em>) est un ensemble d'utilisateurs partageant les mêmes droits — un badge d'accès collectif. <code>django.contrib.auth</code> est le module d'<strong>authentification</strong> de Django (vérifier « qui es-tu ? ») : il fournit déjà les tables <code>User</code> et <code>Group</code>, créées dès le premier <code>migrate</code> (leçon 2).</p>
+
+<h3>2. Les rôles = des groupes</h3>
+<pre class="pseudo"># catalogue/roles.py                                     # ce code vit dans le fichier roles.py
+ROLE_CLIENT = "Client"                                   # constante : le nom exact du groupe Client
+ROLE_VENDEUR = "Vendeur"                                 # constante : le nom exact du groupe Vendeur
+ROLE_ADMIN = "Administrateur"                            # constante : le nom exact du groupe Administrateur
+
+def creer_roles():                                       # fonction qui crée les trois groupes
+    for nom in (ROLE_CLIENT, ROLE_VENDEUR, ROLE_ADMIN):  # pour chacun des trois noms de rôle…
+        Group.objects.get_or_create(name=nom)     # crée le groupe s'il manque, sinon le retrouve (idempotent)</pre>
+<p>Une <strong>constante</strong> est une valeur fixe rangée sous un nom, écrite une seule fois et réutilisée partout. On en préfère à des chaînes recopiées : une faute de frappe dans <code>"Vendeur"</code> serait un bug de sécurité silencieux (la vérification échouerait sans erreur visible). <code>get_or_create</code> est <strong>idempotent</strong> — l'exécuter une fois ou dix fois donne le même résultat : il rend le <strong>seed</strong> (le remplissage initial des données de base) rejouable sans créer de doublon.</p>
+
+<h3>3. Seed via une migration de données</h3>
+<pre class="pseudo">python manage.py makemigrations catalogue --empty -n creer_roles   # crée une migration VIDE, à remplir à la main
+# dans la migration :                                    # …et dedans on écrit :
+operations = [migrations.RunPython(creer_roles_op, migrations.RunPython.noop)]   # exécute creer_roles_op ; noop = rien à défaire</pre>
+<p>Une <strong>migration de données</strong> (ici <code>RunPython</code>) ne change pas la <em>structure</em> des tables mais leur <em>contenu</em> : elle exécute du code Python pour remplir la base. Les rôles arrivent donc <strong>par migration</strong>, exactement comme le schéma : toute nouvelle base (dev, test, prod) les possède d'office, sans intervention manuelle.</p>
+
+<h3>4. L'inscription</h3>
+<pre class="pseudo">def inscrire(email, mot_de_passe):                       # fonction d'inscription d'un nouveau client
+    user = User.objects.create_user(                     # crée le compte utilisateur…
+        username=email, email=email, password=mot_de_passe)  # …le mot de passe est HACHÉ ici (jamais en clair)
+    user.groups.add(Group.objects.get(name=ROLE_CLIENT))     # lui attribue le rôle Client (le moins privilégié)
+    return user                                          # renvoie l'utilisateur créé</pre>
+<p><strong>Hacher</strong> un mot de passe, c'est le transformer par un calcul <em>à sens unique</em> en une empreinte illisible : on peut vérifier qu'un mot de passe correspond, mais pas le retrouver à partir de l'empreinte. <code>create_user</code> s'en charge automatiquement (avec l'algorithme <strong>PBKDF2</strong>) : la base ne contient donc jamais le mot de passe en clair, et même l'administrateur de MySQL ne peut pas le lire. Le nouvel inscrit reçoit le rôle <strong>le moins privilégié</strong> — c'est le principe du moindre privilège.</p>
+
+<h3>5. Interroger les rôles</h3>
+<pre class="pseudo">user.groups.filter(name=ROLE_VENDEUR).exists()   # est-il vendeur ?
+user.groups.add(...)  /  user.groups.remove(...) # promotion / retrait</pre>
+<div class="warn">Ne jamais faire <code>user.password = mdp</code> ni comparer en clair : toujours <code>create_user</code> / <code>set_password</code> / <code>check_password</code> — le hachage n'est pas optionnel.</div>
+<div class="tip">User et Group sont reliés en n-n par une table de liaison (django_auth) — exactement la traduction Merise d'une relation (n,n). Un utilisateur pourrait cumuler des rôles ; la Ludothèque en donne un seul à l'inscription.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les trois profils de la Ludothèque :", opts: ["Client, Vendeur, Administrateur", "Root, user, invité", "Dev, test, prod", "Lecteur, auteur"], a: 0, exp: "Depuis le MCD Merise." },
+    { type: "qcm", q: "Les rôles sont portés par…", opts: ["Une colonne texte maison", "Les groupes de django.contrib.auth", "Un cookie", "Le CSS"], a: 1, exp: "Group, fourni par Django." },
+    { type: "qcm", q: "Pourquoi des constantes ROLE_* ?", opts: ["C'est plus rapide", "Une faute de frappe serait un bug de sécurité silencieux", "Obligatoire", "Pour le style"], a: 1, exp: "\"Vendeur\" ≠ \"vendeur\"." },
+    { type: "qcm", q: "get_or_create rend le seed…", opts: ["Idempotent (rejouable sans doublon)", "Lent", "Dangereux", "Unique à la prod"], a: 0, exp: "Créé une fois, retrouvé ensuite." },
+    { type: "qcm", q: "Les rôles arrivent sur une nouvelle base par…", opts: ["Un clic manuel", "Une migration de données (RunPython)", "L'admin", "Le hasard"], a: 1, exp: "Comme le schéma : versionné." },
+    { type: "qcm", q: "create_user(..., password=mdp) stocke…", opts: ["Le mot de passe en clair", "Un hachage (PBKDF2)", "Un cookie", "Rien"], a: 1, exp: "Irréversible." },
+    { type: "vf", q: "L'administrateur de MySQL peut lire les mots de passe des utilisateurs.", a: false, exp: "Seul le hachage est stocké." },
+    { type: "qcm", q: "Le rôle par défaut d'un inscrit :", opts: ["Client", "Vendeur", "Administrateur", "Aucun"], a: 0, exp: "Le moins privilégié." },
+    { type: "qcm", q: "« Cet utilisateur est-il vendeur ? » :", opts: ["user.groups.filter(name=ROLE_VENDEUR).exists()", "user.role == 2", "user.is_vendeur (magique)", "un SELECT brut"], a: 0, exp: "Via la relation n-n." },
+    { type: "qcm", q: "Promouvoir un client :", opts: ["user.groups.add(groupe_vendeur)", "user.password = ...", "UPDATE role=2", "un claim"], a: 0, exp: "La leçon 16 le réservera à l'admin." },
+    { type: "qcm", q: "user.password = mdp est…", opts: ["Correct", "Interdit : toujours set_password (hachage)", "Plus rapide", "Un test"], a: 1, exp: "Jamais de clair." },
+    { type: "qcm", q: "Vérifier un mot de passe :", opts: ["check_password", "== sur la chaîne", "un SELECT", "un print"], a: 0, exp: "Compare au hachage." },
+    { type: "vf", q: "User et Group sont reliés en n-n, comme une relation (n,n) Merise.", a: true, exp: "Table de liaison." },
+    { type: "qcm", q: "Les tables User/Group ont été créées…", opts: ["À la leçon 2, par le premier migrate", "À la main", "Par le CSS", "Jamais"], a: 0, exp: "django.contrib.auth." },
+    { type: "vf", q: "Un utilisateur peut techniquement appartenir à plusieurs groupes.", a: true, exp: "n-n ; la Ludothèque en donne un à l'inscription." }
+  ],
+  final: {
+    title: "Exercice final — Les comptes de la Ludothèque",
+    intro: `<p>On met en place les rôles et l'inscription.</p>`,
+    questions: [
+      { type: "qcm", q: "Les trois groupes sont créés :", opts: ["Par une migration de données idempotente", "à chaque requête", "à la main en prod", "jamais"], a: 0, exp: "RunPython + get_or_create." },
+      { type: "qcm", q: "Le hachage du mot de passe est fait par :", opts: ["create_user", "la vue", "MySQL", "le navigateur"], a: 0, exp: "PBKDF2 par défaut." },
+      { type: "qcm", q: "Le nouvel inscrit rejoint :", opts: ["Le groupe Client", "Administrateur", "tous les groupes", "aucun"], a: 0, exp: "Moindre privilège." },
+      { type: "qcm", q: "Les constantes ROLE_* évitent :", opts: ["Les fautes de frappe dans des chaînes de sécurité", "les migrations", "le hachage", "les groupes"], a: 0, exp: "Un seul point de vérité." },
+      { type: "vf", q: "Rejouer le seed des rôles ne crée pas de doublons.", a: true, exp: "get_or_create." }
+    ],
+    solution: `<pre class="pseudo">ROLE_CLIENT, ROLE_VENDEUR, ROLE_ADMIN = "Client", "Vendeur", "Administrateur"   # les trois noms de rôle (constantes)
+
+def creer_roles():                                       # crée les trois groupes
+    for nom in (ROLE_CLIENT, ROLE_VENDEUR, ROLE_ADMIN):  # pour chaque nom de rôle…
+        Group.objects.get_or_create(name=nom)            # …crée le groupe s'il manque (sans doublon)
+
+def inscrire(email, mot_de_passe):                       # inscrit un nouveau client
+    user = User.objects.create_user(                     # crée le compte…
+        username=email, email=email, password=mot_de_passe)  # …mot de passe haché
+    user.groups.add(Group.objects.get(name=ROLE_CLIENT))     # rôle Client par défaut
+    return user                                          # renvoie l'utilisateur</pre>
+<p>Les comptes existent, les rôles aussi. Demain : la connexion et la session.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes rôles et ton inscription…",
+  items: [
+  { id: "projpython-l9", title: "L'inscription complète", level: 2,
+    statement: "Écris services.inscrire(email, mot_de_passe) : refuse un email déjà pris (lève ValueError avec un message clair), crée l'utilisateur via create_user (username = email), l'ajoute au groupe Client (constante), et renvoie l'utilisateur. Ajoute la fonction est_vendeur(user) qui teste l'appartenance aux groupes Vendeur OU Administrateur.",
+    hints: [
+      "if User.objects.filter(username=email).exists(): raise ValueError(...)",
+      "user.groups.add(Group.objects.get(name=ROLE_CLIENT))",
+      "return user.groups.filter(name__in=[ROLE_VENDEUR, ROLE_ADMIN]).exists()"
+    ],
+    solution: "def inscrire(email, mot_de_passe):   # inscrit un nouveau client\n    if User.objects.filter(username=email).exists():   # un compte a-t-il déjà cet email ?\n        raise ValueError(\"Un compte existe déjà avec cet email\")   # si oui : on refuse\n    user = User.objects.create_user(   # sinon on crée le compte…\n        username=email, email=email, password=mot_de_passe)  # haché (jamais en clair)\n    user.groups.add(Group.objects.get(name=ROLE_CLIENT))   # rôle Client par défaut\n    return user   # renvoie l'utilisateur créé\n\ndef est_vendeur(user):   # cet utilisateur a-t-il les droits vendeur ?\n    return user.groups.filter(   # vrai s'il appartient…\n        name__in=[ROLE_VENDEUR, ROLE_ADMIN]).exists()   # …au groupe Vendeur OU Administrateur\n\ndef est_admin(user):   # cet utilisateur est-il administrateur ?\n    return user.groups.filter(name=ROLE_ADMIN).exists()   # vrai s'il est dans le groupe Administrateur",
+    note: "est_vendeur inclut l'Administrateur : dans la matrice des droits, l'admin peut tout ce que peut le vendeur — l'encoder ici évite de dupliquer la règle dans chaque vue (leçon 11 s'en servira). L'unicité de l'email est vérifiée avant création ; en défense en profondeur, username est aussi unique en base." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

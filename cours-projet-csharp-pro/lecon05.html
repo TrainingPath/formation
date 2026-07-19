@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Les entités EF Core du catalogue, testées dès l'écriture",
+  subtitle: "La règle métier et son test naissent dans le même commit.",
+  theory: `
+<h3>1. Le vocabulaire métier dans l'entité</h3>
+<p>On ajoute à l'entité des <strong>propriétés calculées</strong> : des valeurs déduites d'autres, qui ne sont pas rangées en base mais recalculées à la demande. La flèche <code>=></code> introduit ici un calcul court (« est égal à ce qui suit »). L'attribut <code>[NotMapped]</code> (« non cartographié ») dit à EF Core de ne PAS créer de colonne pour cette propriété.</p>
+<pre class="pseudo">public class Jeu {                                   // rappel : la classe qui décrit un jeu
+    // ... colonnes (leçon 4) ...                    // (les propriétés Id, Titre, prix, stocks vues hier)
+    [NotMapped] public bool EstLouable   => StockLocation > 0;   // vrai si stock de location > 0 ; PAS une colonne
+    [NotMapped] public bool EstAchetable => StockVente > 0;      // vrai si stock de vente > 0 ; PAS une colonne
+}</pre>
+<p><code>bool</code> est un type qui ne vaut que <em>vrai</em> ou <em>faux</em>. Une règle, <strong>un</strong> endroit : partout ailleurs on lit <code>jeu.EstLouable</code>, jamais <code>jeu.StockLocation > 0</code> recopié dix fois (principe « DRY » : ne jamais répéter la même règle, sinon les copies finissent par diverger).</p>
+
+<h3>2. Une requête métier réutilisable</h3>
+<p>Une <strong>méthode d'extension</strong> est une fonction qu'on « greffe » sur un type existant pour l'appeler comme si elle lui appartenait (le mot-clé <code>this</code> devant le premier paramètre la signale). <code>IQueryable&lt;Jeu&gt;</code> représente une requête vers la base qui n'a pas encore été exécutée. <code>Where</code> est un filtre <strong>LINQ</strong> (le langage de requêtes intégré à C#) : il ne garde que les éléments qui remplissent une condition.</p>
+<pre class="pseudo">public static class JeuQueries {                      // classe "boîte à outils" (static) regroupant des requêtes
+    public static IQueryable&lt;Jeu&gt; Louables(this IQueryable&lt;Jeu&gt; q) =>   // méthode d'extension : ajoute .Louables() aux requêtes de Jeu
+        q.Where(j => j.StockLocation > 0);            // ne garde que les jeux dont le stock de location > 0
+}
+// usage : _db.Jeux.Louables()  — le vocabulaire métier dans la requête     // se lit "les jeux louables"</pre>
+
+<h3>3. Le test, écrit EN MÊME TEMPS</h3>
+<p>Un <strong>test</strong> est un petit programme qui vérifie automatiquement une affirmation. <code>[Fact]</code> marque un test à cas unique ; <code>[Theory]</code> + <code>[InlineData(...)]</code> rejoue le même test avec plusieurs jeux de valeurs. <code>Should().BeFalse()</code> vient de <strong>FluentAssertions</strong>, un outil qui rend les vérifications lisibles comme une phrase.</p>
+<pre class="pseudo">public class JeuTests {                                // classe qui regroupe des tests
+    [Fact] public void Non_louable_si_stock_nul() {    // [Fact] : un test à cas unique
+        var jeu = new Jeu { StockLocation = 0 };       // on crée un jeu sans stock de location
+        jeu.EstLouable.Should().BeFalse();      // FluentAssertions   // on vérifie qu'il n'est PAS louable
+    }
+    [Theory]                                           // [Theory] : un test rejoué avec plusieurs données
+    [InlineData(0, false)] [InlineData(3, true)]       // deux cas : (stock 0 -> false), (stock 3 -> true)
+    public void Louable_selon_stock(int stock, bool attendu) {   // stock et attendu viennent des InlineData
+        new Jeu { StockLocation = stock }.EstLouable.Should().Be(attendu);   // vérifie que EstLouable vaut bien "attendu"
+    }
+}</pre>
+
+<h3>4. Le test d'intégration du DbContext</h3>
+<p>Un <strong>test d'intégration</strong> vérifie que plusieurs briques marchent ensemble — ici le code ET une vraie base. <code>async</code>/<code>await</code> gèrent l'attente : parler à une base prend du temps, <code>await</code> signifie « attends le résultat sans bloquer le reste ». « <strong>seed</strong> » veut dire « ensemencer » : pré-remplir la base avec des données connues avant de tester.</p>
+<pre class="pseudo">[Fact] public async Task Louables_exclut_stock_nul() {   // test asynchrone (async Task) : il interroge la base
+    // seed : 1 jeu stock 0, 1 jeu stock 3 (sur un vrai MySQL en CI)   // on prépare 2 jeux : un non louable, un louable
+    (await _db.Jeux.Louables().CountAsync()).Should().Be(1);   // attend le comptage : on doit trouver 1 seul louable
+}</pre>
+
+<h3>5. « Non testé = non fait »</h3>
+<div class="warn">Au Niveau 6, les tests arrivaient à la semaine 3 — donc souvent jamais. Ici, la règle et son test entrent dans le même commit : la CI les exécute aussitôt, et une régression future devient <strong>rouge à la seconde</strong>. C'est le TDD léger d'une équipe qui a intégré que le code non testé n'est pas fait.</div>
+<div class="tip">Le job de tests de la CI a un service <code>mysql:8.4</code> (cours CI/CD leçon 10) : les tests d'intégration tournent sur une vraie base migrée de zéro, pas une base InMemory qui mentirait sur le comportement SQL réel. Les tests unitaires de propriétés calculées, eux, n'ont besoin de rien.</div>`,
+  exercises: [
+    { type: "qcm", q: "[NotMapped] indique à EF que…", opts: ["La propriété est une colonne", "La propriété calculée n'est PAS une colonne", "Il faut chiffrer", "Rien"], a: 1, exp: "Propriété dérivée." },
+    { type: "qcm", q: "EstLouable est défini…", opts: ["Partout où on en a besoin", "Une seule fois, dans l'entité", "Dans le contrôleur", "En SQL"], a: 1, exp: "Une règle, un endroit." },
+    { type: "qcm", q: "Une méthode d'extension IQueryable (Louables)…", opts: ["Déploie", "Réutilise une requête métier", "Chiffre", "Le CSS"], a: 1, exp: "Vocabulaire dans la requête." },
+    { type: "qcm", q: "[Fact] marque…", opts: ["Une entité", "Un test xUnit", "Un service", "Un contrôleur"], a: 1, exp: "Test unitaire." },
+    { type: "qcm", q: "[Theory] + [InlineData] permet…", opts: ["Un seul cas", "Plusieurs cas de test paramétrés", "De déployer", "De chiffrer"], a: 1, exp: "Tests data-driven." },
+    { type: "qcm", q: "Le test de la règle est écrit…", opts: ["En semaine 3", "En même temps que la règle (même commit)", "Jamais", "En prod"], a: 1, exp: "TDD léger." },
+    { type: "qcm", q: "Les tests d'intégration en CI tournent sur…", opts: ["Une base InMemory", "Un vrai MySQL (service CI)", "Rien", "La prod"], a: 1, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "FluentAssertions (Should().BeFalse()) apporte…", opts: ["Rien", "Des assertions lisibles", "Du chiffrement", "Un cache"], a: 1, exp: "Lisibilité." },
+    { type: "qcm", q: "La base InMemory d'EF…", opts: ["Reflète MySQL fidèlement", "Peut mentir sur le comportement SQL réel", "Est la prod", "Chiffre"], a: 1, exp: "D'où le vrai MySQL." },
+    { type: "qcm", q: "Écrire code + test dans le même commit…", opts: ["Ralentit", "Rend toute régression future immédiatement rouge", "Est interdit", "Est inutile"], a: 1, exp: "Filet permanent." },
+    { type: "vf", q: "Une propriété calculée [NotMapped] n'a pas besoin de base pour être testée.", a: true, exp: "Test unitaire pur." },
+    { type: "qcm", q: "Réécrire StockLocation > 0 partout est…", opts: ["Propre", "Une duplication qui divergera (préférer EstLouable)", "Obligatoire", "Plus rapide"], a: 1, exp: "DRY." },
+    { type: "qcm", q: "La méthode Louables() s'utilise…", opts: ["Seulement en test", "Partout où on requête les jeux louables", "Jamais", "En SQL brut"], a: 1, exp: "Réutilisable." },
+    { type: "qcm", q: "CountAsync() dans le test…", opts: ["Chiffre", "Compte les résultats en base (async)", "Déploie", "Rien"], a: 1, exp: "Vérifie le filtre." },
+    { type: "vf", q: "La règle métier est plus sûre encapsulée dans l'entité que dispersée.", a: true, exp: "Un seul point de vérité." }
+  ],
+  final: {
+    title: "Exercice final — Les entités et leur filet",
+    intro: `<p>Règles + requêtes + tests, ensemble.</p>`,
+    questions: [
+      { type: "qcm", q: "EstLouable est :", opts: ["une propriété [NotMapped] de l'entité, testée", "réécrit partout", "en SQL", "dans le contrôleur"], a: 0, exp: "Une règle, un endroit." },
+      { type: "qcm", q: "La requête réutilisable :", opts: ["une méthode d'extension IQueryable (Louables)", "du SQL copié", "rien", "un cache"], a: 0, exp: "Vocabulaire métier." },
+      { type: "qcm", q: "Le test d'intégration utilise :", opts: ["un vrai MySQL (CI)", "InMemory", "aucune base", "un mock total"], a: 0, exp: "Comportement réel." },
+      { type: "qcm", q: "Le test de la règle est écrit :", opts: ["dans le même commit que la règle", "3 semaines après", "jamais", "en prod"], a: 0, exp: "Non testé = non fait." },
+      { type: "vf", q: "Une régression sur EstLouable deviendra rouge en CI.", a: true, exp: "Le filet est permanent." }
+    ],
+    solution: `<pre class="pseudo">public class Jeu {                                          // l'entité Jeu
+  [NotMapped] public bool EstLouable => StockLocation > 0;  // propriété calculée (pas une colonne)
+}
+public static IQueryable<Jeu> Louables(this IQueryable<Jeu> q) =>   // méthode d'extension de requête
+  q.Where(j => j.StockLocation > 0);                       // filtre : uniquement les jeux louables
+
+[Fact] public void Non_louable_si_stock_nul() {            // test unitaire à cas unique
+  new Jeu { StockLocation = 0 }.EstLouable.Should().BeFalse();   // stock 0 -> pas louable
+}
+// [Fact] async : _db.Jeux.Louables().CountAsync() == 1 (vrai MySQL en CI)   // test d'intégration sur vraie base</pre>
+<p>Les entités sont testées. Demain : la couche service et ses règles, sous CI.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes entités et leurs tests…",
+  items: [
+  { id: "proj6cs-l5", title: "L'entité Jeu, sa règle et son test", level: 2,
+    statement: "Écris les propriétés calculées EstLouable/EstAchetable ([NotMapped]), une méthode d'extension IQueryable Louables(), et des tests xUnit ([Fact]/[Theory]) qui les couvrent. Explique en 2-3 lignes pourquoi écrire le test dans le même commit change la donne, et le rôle de [NotMapped].",
+    hints: [
+      "[NotMapped] public bool EstLouable => StockLocation > 0 (propriété dérivée, pas une colonne).",
+      "[Theory] + [InlineData(0,false)] [InlineData(3,true)] pour couvrir plusieurs cas.",
+      "Méthode d'extension : IQueryable<Jeu> Louables(this IQueryable<Jeu> q)."
+    ],
+    solution: "public class Jeu {\n    public long Id { get; set; }\n    public string Titre { get; set; } = \"\";\n    public int StockVente { get; set; }\n    public int StockLocation { get; set; }\n    // ... prix, categorie ...\n    [NotMapped] public bool EstLouable   => StockLocation > 0;\n    [NotMapped] public bool EstAchetable => StockVente > 0;\n}\n\npublic static class JeuQueries {\n    public static IQueryable<Jeu> Louables(this IQueryable<Jeu> q) =>\n        q.Where(j => j.StockLocation > 0);\n}\n\n// tests/Ludotheque.Tests/JeuTests.cs — ecrit DANS LE MEME COMMIT que la regle\npublic class JeuTests {\n    [Fact] public void Non_louable_si_stock_nul() {\n        new Jeu { StockLocation = 0 }.EstLouable.Should().BeFalse();\n    }\n    [Theory]\n    [InlineData(0, false)]\n    [InlineData(3, true)]\n    public void Louable_selon_stock(int stock, bool attendu) {\n        new Jeu { StockLocation = stock }.EstLouable.Should().Be(attendu);\n    }\n}\n// test d'integration (vrai MySQL en CI) : _db.Jeux.Louables().CountAsync()\n\n// POURQUOI LE TEST DANS LE MEME COMMIT, ROLE DE [NotMapped]\n// La regle et sa preuve entrent ensemble : la CI les execute aussitot, et toute\n// regression future (quelqu'un change EstLouable) devient ROUGE a la seconde.\n// Ecrit trois semaines plus tard, le test n'est souvent jamais ecrit -- et la\n// regression passe en prod. 'Non teste = non fait.'\n// [NotMapped] : sans lui, EF tenterait de mapper EstLouable a une colonne (qui\n// n'existe pas) -> erreur. L'attribut dit clairement 'c'est une propriete calculee'.",
+    note: "L'encapsulation de la règle dans une propriété calculée (une seule définition d'EstLouable) et l'écriture simultanée du test forment le socle du TDD léger de ce cours. [Theory] + [InlineData] d'xUnit rend trivial de couvrir plusieurs cas sans dupliquer le test. Au Niveau 8, sécurité, performance et tests ne sont jamais des étapes séparées : ils naissent avec le code." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

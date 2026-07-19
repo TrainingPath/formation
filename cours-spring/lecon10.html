@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Requêtes dérivées et @Query",
+  subtitle: "Le nom de la méthode DEVIENT la requête. Oui, vraiment.",
+  theory: `
+<h3>1. Les requêtes dérivées : nommer, c'est requêter</h3>
+<p>Une <strong>requête dérivée</strong> (« dérivée » = déduite) est une méthode dont Spring Data lit le NOM pour générer automatiquement la requête correspondante. Tu écris le nom, Spring écrit le SQL :</p>
+<pre class="pseudo">public interface LivreRepository extends JpaRepository&lt;Livre, Long&gt; {  // CRUD hérité + tes méthodes
+
+    List&lt;Livre&gt; findByAuteur(String auteur);        // cherche les livres d'un auteur
+    // → SELECT * FROM livre WHERE auteur = ?
+
+    List&lt;Livre&gt; findByDisponibleTrue();             // les livres dont disponible = true
+    // → ... WHERE disponible = true
+
+    Optional&lt;Livre&gt; findByIsbn(String isbn);        // un seul résultat attendu (isbn unique)
+    // → renvoie un Optional (zéro ou un livre)
+
+    List&lt;Livre&gt; findByTitreContainingIgnoreCase(String morceau);  // titre contenant un morceau, casse ignorée
+    // → ... WHERE LOWER(titre) LIKE LOWER('%morceau%')
+}                                                   // fin de l'interface</pre>
+<h3>2. Le vocabulaire des noms de méthodes</h3>
+<p>Chaque mot-clé du nom déclenche un comportement précis. Voici le petit dictionnaire :</p>
+<pre class="pseudo">findBy<span style="opacity:.6">Champ</span>                      égalité (le champ vaut la valeur donnée)
+...Containing                    LIKE %...% (contient le texte)
+...IgnoreCase                    insensible à la casse (majuscules/minuscules)
+...True / ...False               booléens (vaut vrai / faux)
+...LessThan / ...GreaterThan     &lt; / &gt; (plus petit / plus grand)
+...Between(a, b)                 entre a et b (bornes comprises)
+...And... / ...Or...             combinaisons de conditions
+...OrderByTitreAsc               tri (Asc = croissant)
+countBy...                       COMPTER au lieu de lister
+existsBy...                      true/false (existe-t-il ?)
+long countByAuteur(String a);    // exemple : compte les livres d'un auteur
+boolean existsByIsbn(String isbn);  // exemple : cet isbn existe-t-il déjà ?</pre>
+<div class="warn">Le nom doit correspondre EXACTEMENT aux attributs de l'entité : findByAutheur (avec faute) → échec AU DÉMARRAGE : « No property 'autheur' found for type 'Livre' ». Bonne nouvelle : l'erreur est immédiate, pas enfouie en production.</div>
+<h3>3. Quand le nom devient illisible : @Query</h3>
+<p>Pour les requêtes complexes, on écrit du <strong>JPQL</strong> (<em>Java Persistence Query Language</em>) : comme du SQL, mais qui porte sur les CLASSES et leurs ATTRIBUTS (pas les tables et colonnes). On le fournit dans l'annotation <code>@Query</code> :</p>
+<pre class="pseudo">@Query("SELECT l FROM Livre l WHERE l.disponible = true AND l.auteur = :auteur")  // requête JPQL écrite à la main
+List&lt;Livre&gt; disponiblesDe(@Param("auteur") String auteur);   // :auteur ← lié au paramètre par @Param
+
+@Query("SELECT COUNT(e) FROM Emprunt e WHERE e.dateRetour IS NULL")  // compte les emprunts sans date de retour
+long nbEmpruntsEnCours();                                     // = les emprunts encore en cours</pre>
+<ul>
+<li><code>Livre</code> = la classe (majuscule !), <code>l.auteur</code> = l'attribut Java.</li>
+<li><code>:auteur</code> = paramètre nommé, lié par <code>@Param</code>.</li>
+</ul>
+<h3>4. Trier et paginer</h3>
+<p><strong>Trier</strong> = ranger les résultats dans un ordre (<code>Sort</code>). <strong>Paginer</strong> = découper en pages numérotées (<code>Page</code>) pour ne pas tout renvoyer d'un coup.</p>
+<pre class="pseudo">List&lt;Livre&gt; livres = repo.findAll(Sort.by("titre").ascending());  // tri par titre, ordre croissant
+
+Page&lt;Livre&gt; page = repo.findAll(PageRequest.of(0, 20));   // page 0, 20 éléments par page
+page.getContent();       // les 20 livres de cette page
+page.getTotalElements(); // total en base (toutes pages confondues)
+page.getTotalPages();    // nombre de pages au total</pre>
+<p>Indispensable dès que la table grossit : on ne renvoie JAMAIS 100 000 lignes d'un coup.</p>
+<h3>5. Dans le service</h3>
+<pre class="pseudo">public List&lt;Livre&gt; parAuteur(String auteur) {        // méthode métier : livres d'un auteur
+    return repo.findByAuteur(auteur);               // délègue à la requête dérivée
+}                                                   // fin de la méthode
+public List&lt;Livre&gt; chercher(String morceau) {        // recherche par morceau de titre
+    return repo.findByTitreContainingIgnoreCase(morceau);  // délègue au repository
+}                                                   // fin de la méthode</pre>
+<div class="tip">Règle pratique : requête simple → nom dérivé ; requête à 3 conditions ou plus, jointure, agrégat → @Query. Si le nom de méthode dépasse la largeur de l'écran, c'est le signal.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que génère Spring Data à partir de findByAuteur(String auteur) ?", opts: ["Rien, erreur", "SELECT ... WHERE auteur = ?", "Un tri par auteur", "Une suppression"], a: 1, exp: "Le nom est analysé : findBy + Auteur = filtre d'égalité sur l'attribut auteur." },
+    { type: "qcm", q: "Quel mot-clé du nom de méthode produit un LIKE %...% ?", opts: ["Equals", "Containing", "Like", "Near"], a: 1, exp: "findByTitreContaining(\"dune\") → titre LIKE %dune%." },
+    { type: "qcm", q: "Comment rendre une recherche insensible aux majuscules ?", opts: ["Impossible", "Ajouter IgnoreCase au nom de la méthode", "Tout stocker en minuscules", "Utiliser ==="], a: 1, exp: "findByTitreContainingIgnoreCase — les mots-clés se cumulent." },
+    { type: "qcm", q: "Quel type de retour pour findByIsbn (isbn unique) ?", opts: ["List&lt;Livre&gt;", "Optional&lt;Livre&gt; : zéro ou un résultat", "Livre[]", "int"], a: 1, exp: "Unicité → au plus un résultat → Optional, comme findById." },
+    { type: "qcm", q: "Que fait countByAuteur(\"Herbert\") ?", opts: ["Liste les livres", "Renvoie le NOMBRE de livres de Herbert (long)", "Supprime les livres", "Trie par auteur"], a: 1, exp: "countBy → SELECT COUNT(*) — plus efficace que charger la liste pour la compter." },
+    { type: "qcm", q: "findByAutheur (faute de frappe) : quand l'erreur apparaît-elle ?", opts: ["Jamais", "Au démarrage de l'application : « No property 'autheur' found »", "Au premier appel seulement", "En production dans 6 mois"], a: 1, exp: "Spring valide les noms au démarrage : l'erreur ne peut pas se cacher." },
+    { type: "qcm", q: "En JPQL, on écrit SELECT l FROM Livre l. Que désigne « Livre » ?", opts: ["La table SQL livre", "La CLASSE Java Livre (d'où la majuscule)", "Un fichier", "Une variable"], a: 1, exp: "JPQL parle objets : classes et attributs, pas tables et colonnes." },
+    { type: "qcm", q: "À quoi sert @Param(\"auteur\") ?", opts: ["À valider l'auteur", "À lier le paramètre Java au :auteur de la requête JPQL", "À chiffrer le paramètre", "À le rendre optionnel"], a: 1, exp: "Le lien entre :nom dans la requête et l'argument de la méthode." },
+    { type: "qcm", q: "Quand préférer @Query au nom dérivé ?", opts: ["Toujours", "Quand la requête devient complexe (jointures, agrégats, conditions multiples)", "Jamais", "Pour les findAll"], a: 1, exp: "Nom court → dérivé ; logique riche → @Query lisible." },
+    { type: "qcm", q: "Que renvoie repo.findAll(PageRequest.of(2, 10)) ?", opts: ["Les lignes 2 à 10", "La 3ᵉ page de 10 éléments (pages numérotées depuis 0)", "10 pages", "2 éléments"], a: 1, exp: "page 2 = éléments 21 à 30. La numérotation commence à 0 !" },
+    { type: "qcm", q: "Pourquoi paginer plutôt que renvoyer findAll() sur une grosse table ?", opts: ["Pour le style", "Mémoire et réseau : on ne transfère jamais 100 000 lignes d'un coup", "findAll est interdit", "La pagination est plus jolie"], a: 1, exp: "La pagination est une question de survie en production." },
+    { type: "input", q: "Écris le nom de méthode dérivée qui liste les Livre dont le champ disponible vaut true. (commence par findBy)", a: ["findByDisponibleTrue", "findByDisponibleTrue()"], ph: "findBy...", exp: "findByDisponibleTrue() — le mot-clé True évite même le paramètre." },
+    { type: "qcm", q: "Que fait existsByEmail(\"a@b.be\") ?", opts: ["Crée l'email", "Renvoie true/false selon qu'un membre a cet email", "Renvoie le membre", "Envoie un email"], a: 1, exp: "Parfait pour vérifier un doublon AVANT une inscription." },
+    { type: "qcm", q: "findByAuteurAndDisponibleTrue(\"Herbert\") sélectionne…", opts: ["Les livres de Herbert OU disponibles", "Les livres de Herbert ET disponibles", "Tous les livres", "Les indisponibles"], a: 1, exp: "And combine les deux conditions." },
+    { type: "vf", q: "Page&lt;Livre&gt; contient à la fois les éléments de la page et les métadonnées (total, nombre de pages).", a: true, exp: "getContent(), getTotalElements(), getTotalPages() : tout pour construire une pagination côté client." }
+  ],
+  final: {
+    title: "Exercice final — Le moteur de recherche de la bibliothèque",
+    intro: `<p>Le repository s'enrichit pour alimenter la recherche de l'API :</p>
+<pre class="pseudo">public interface LivreRepository extends JpaRepository&lt;Livre, Long&gt; {  // CRUD + requêtes sur mesure
+    List&lt;Livre&gt; findByTitreContainingIgnoreCase(String q);   // titre contenant q, casse ignorée
+    List&lt;Livre&gt; findByAuteurAndDisponibleTrue(String auteur); // de cet auteur ET disponibles
+    long countByDisponibleFalse();                          // nombre de livres indisponibles
+    boolean existsByIsbn(String isbn);                      // true si l'isbn existe déjà
+
+    @Query("SELECT l FROM Livre l WHERE l.annee BETWEEN :debut AND :fin ORDER BY l.annee")  // requête JPQL
+    List&lt;Livre&gt; parPeriode(@Param("debut") int debut, @Param("fin") int fin);  // livres entre deux années, triés
+}                                                           // fin de l'interface</pre>`,
+    questions: [
+      { type: "qcm", q: "findByTitreContainingIgnoreCase(\"fond\") trouve-t-il « Fondation » ?", opts: ["Non", "Oui : Containing = morceau, IgnoreCase = casse ignorée", "Seulement si écrit « fond »", "Erreur"], a: 1, exp: "LOWER(titre) LIKE '%fond%' → Fondation correspond." },
+      { type: "qcm", q: "Que renvoie countByDisponibleFalse() ?", opts: ["La liste des livres empruntés", "Le nombre de livres actuellement indisponibles (long)", "false", "Une page"], a: 1, exp: "count + condition : le tableau de bord de la bibliothèque." },
+      { type: "qcm", q: "Avant d'ajouter un livre, le service appelle existsByIsbn(dto.getIsbn()). Pourquoi ?", opts: ["Pour ralentir", "Refuser proprement un doublon AVANT l'erreur de contrainte UNIQUE de la base", "Pour compter", "C'est inutile"], a: 1, exp: "Vérification métier en amont = message d'erreur clair pour le client (au lieu d'un 500)." },
+      { type: "qcm", q: "Dans parPeriode, pourquoi @Query plutôt qu'un nom dérivé ?", opts: ["Les noms dérivés ne savent pas faire", "findByAnneeBetweenOrderByAnneeAsc existerait, mais la version @Query est plus lisible et évoluera mieux", "@Query est obligatoire avec les entiers", "Pour éviter Optional"], a: 1, exp: "Les deux fonctionnent — à ce niveau de complexité, @Query devient préférable." },
+      { type: "qcm", q: "parPeriode(1950, 1970) renvoie les livres…", opts: ["De 1950 OU de 1970", "Parus entre 1950 et 1970, triés par année croissante", "Sauf 1950-1970", "Dans un ordre aléatoire"], a: 1, exp: "BETWEEN inclusif + ORDER BY annee." }
+    ],
+    solution: `<pre class="pseudo">// Côté service, tout devient limpide :
+@Service
+public class RechercheService {
+    private final LivreRepository repo;
+    // ... constructeur ...
+
+    public List&lt;Livre&gt; chercher(String q)        { return repo.findByTitreContainingIgnoreCase(q); }  // recherche par titre
+    public List&lt;Livre&gt; disposDe(String auteur)   { return repo.findByAuteurAndDisponibleTrue(auteur); }  // dispo d'un auteur
+    public long nbIndisponibles()                 { return repo.countByDisponibleFalse(); }  // compteur
+    public List&lt;Livre&gt; periode(int a, int b)     { return repo.parPeriode(a, b); }  // par période
+}
+
+// Et côté contrôleur (leçon 5, tout se recolle) :
+// GET /api/livres/recherche?q=fond
+// GET /api/livres/periode?debut=1950&fin=1970</pre>
+<p>Zéro SQL écrit à la main, et pourtant des requêtes précises. Demain, le grand saut : relier les entités entre elles — un emprunt CONCERNE un livre ET un membre.</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-derivees-emprunts", title: "Les requêtes du tableau de bord", level: 2,
+    statement: "Complète <code>EmpruntRepository extends JpaRepository&lt;Emprunt, Long&gt;</code> avec 4 requêtes dérivées : (1) les emprunts en cours (<code>dateRetour</code> null) → <code>findByDateRetourIsNull()</code> à écrire ; (2) les emprunts rendus après une date donnée ; (3) le nombre d'emprunts en cours ; (4) une @Query JPQL qui renvoie les emprunts en retard : en cours ET <code>dateEmprunt</code> antérieure à une date limite passée en paramètre.",
+    hints: [
+      "Pour les null : les mots-clés IsNull / IsNotNull s'ajoutent au nom (findByDateRetourIsNull).",
+      "« Rendus après une date » : le champ dateRetour + le mot-clé After (ou GreaterThan) + un paramètre LocalDate.",
+      "La @Query : SELECT e FROM Emprunt e WHERE e.dateRetour IS NULL AND e.dateEmprunt < :limite"
+    ],
+    solution: "public interface EmpruntRepository extends JpaRepository<Emprunt, Long> {\n\n    // 1) en cours : pas encore de date de retour\n    List<Emprunt> findByDateRetourIsNull();\n\n    // 2) rendus après une date donnée\n    List<Emprunt> findByDateRetourAfter(LocalDate date);\n\n    // 3) combien d'emprunts en cours ?\n    long countByDateRetourIsNull();\n\n    // 4) en retard : en cours ET empruntés avant la date limite\n    @Query(\"SELECT e FROM Emprunt e \" +\n           \"WHERE e.dateRetour IS NULL AND e.dateEmprunt < :limite\")\n    List<Emprunt> enRetard(@Param(\"limite\") LocalDate limite);\n}\n\n// Usage dans le service :\n// List<Emprunt> retards = repo.enRetard(LocalDate.now().minusDays(14));\n// → les livres empruntés depuis plus de 2 semaines et pas rendus",
+    note: "Remarque comme chaque besoin métier (« en cours », « en retard ») devient UNE méthode nommée dans la langue du domaine. Le repository se lit comme une table des matières." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Louer un jeu : transaction et RAII",
+  subtitle: "Deux écritures qui vont ensemble : tout réussit, ou rien — avec un garde RAII qui annule en cas d'exception.",
+  theory: `
+<h3>1. Une opération, deux écritures</h3>
+<p>Louer un jeu, c'est <strong>insérer une location</strong> ET <strong>décrémenter le stock de location</strong> (« décrémenter » = retirer 1). Si la première écriture réussit et la seconde échoue, la base devient <strong>incohérente</strong> : une location enregistrée sans que le stock ait bougé. Ces deux écritures doivent former un <strong>tout indivisible</strong> — soit les deux, soit aucune.</p>
+
+<h3>2. La transaction</h3>
+<p>Une <strong>transaction</strong> est un groupe d'écritures que la base traite comme un seul bloc : c'est le principe d'<strong>atomicité</strong> (« tout ou rien », comme un virement bancaire qui débite ET crédite, jamais l'un sans l'autre).</p>
+<pre class="pseudo">con.setAutoCommit(false);        // on ouvre une transaction
+// ... plusieurs écritures ...
+con.commit();                    // tout est validé d'un coup
+// en cas de problème :
+con.rollback();                  // tout est annulé, base intacte</pre>
+<p>Entre <code>setAutoCommit(false)</code> (« ne valide pas automatiquement chaque écriture ») et <code>commit()</code>, les écritures sont <strong>provisoires</strong>. Le <code>commit</code> les rend définitives <em>ensemble</em> ; le <code>rollback</code> (« retour arrière ») les efface <em>ensemble</em>.</p>
+
+<h3>3. Un garde RAII pour ne jamais oublier le rollback</h3>
+<pre class="pseudo">class TransactionGuard {                        // objet qui gere une transaction (RAII)
+    sql::Connection&amp; con_;                       // reference vers la connexion a piloter
+    bool valide_ = false;                        // a-t-on deja fait commit ? (non au depart)
+public:
+    explicit TransactionGuard(sql::Connection&amp; con) : con_(con) {   // a la creation de l'objet...
+        con_.setAutoCommit(false);               // ...ouvre la transaction (ecritures provisoires)
+    }
+    void commit() { con_.commit(); valide_ = true; }   // valide tout et note que c'est fait
+    ~TransactionGuard() {                       // destructeur
+        if (!valide_) con_.rollback();          // annule si pas de commit
+        con_.setAutoCommit(true);                // remet la connexion en mode normal
+    }
+};</pre>
+<div class="tip">Le <strong>RAII</strong> transforme la transaction en objet. Le <strong>destructeur</strong> (la méthode <code>~TransactionGuard</code>, exécutée automatiquement quand l'objet disparaît) fait le <code>rollback</code> si <code>commit()</code> n'a pas eu lieu. Si une exception remonte avant le <code>commit()</code>, ce destructeur s'exécute et annule tout — impossible d'oublier. C'est un grand avantage sur le C, où il fallait un <code>goto cleanup</code> écrit à la main. Le mot <code>explicit</code> empêche une conversion involontaire du garde.</div>
+
+<h3>4. Le service qui loue</h3>
+<pre class="pseudo">void LocationService::louer(sql::Connection&amp; con, int uid, int jeuId, int jours) {   // loue un jeu a un utilisateur
+    validerDuree(jours);                         // rejette une duree absurde (exception si invalide)
+    Jeu j = JeuRepository::findById(con, jeuId); // charge le jeu concerne
+    if (!CatalogueService::peutLouer(j))         // s'il n'y a plus de stock de location...
+        throw StockInsuffisant("Plus de stock de location");   // ...refuse par une exception
+    TransactionGuard tx(con);                    // ouvre la transaction
+    LocationRepository::inserer(con, uid, jeuId, jours);   // ecriture 1 : enregistre la location
+    JeuRepository::decrementerStockLocation(con, jeuId);   // ecriture 2 : retire un exemplaire du stock
+    tx.commit();                                 // les deux ensemble
+}</pre>
+
+<h3>5. Vérifier puis agir sous transaction</h3>
+<div class="warn">On vérifie le stock <strong>dans la transaction</strong> (idéalement avec un verrou) : entre la lecture et l'écriture, un autre client pourrait louer le dernier exemplaire — c'est un problème de <strong>concurrence</strong> (plusieurs actions au même instant). Un <strong>verrou</strong> réserve temporairement la ligne : <code>SELECT ... FOR UPDATE</code> gère ce cas (au-delà de ce cours). La transaction, elle, garantit déjà l'atomicité.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["une seule écriture", "deux écritures : insérer la location et décrémenter le stock", "aucune écriture", "un SELECT seul"], a: 1, exp: "Elles vont ensemble." },
+    { type: "qcm", q: "Une transaction garantit que…", opts: ["c'est plus rapide", "tout réussit ou rien (atomicité)", "le stock monte", "l'UI s'affiche"], a: 1, exp: "Indivisible." },
+    { type: "qcm", q: "setAutoCommit(false) …", opts: ["valide tout", "ouvre une transaction (écritures provisoires)", "ferme la base", "annule"], a: 1, exp: "Début de transaction." },
+    { type: "qcm", q: "commit() …", opts: ["annule", "rend les écritures définitives ensemble", "ouvre", "affiche"], a: 1, exp: "Validation." },
+    { type: "qcm", q: "rollback() …", opts: ["valide", "annule toutes les écritures de la transaction", "commit", "trie"], a: 1, exp: "Retour arrière." },
+    { type: "qcm", q: "Le garde TransactionGuard fait le rollback…", opts: ["jamais", "dans son destructeur si commit() n'a pas eu lieu", "au démarrage", "manuellement"], a: 1, exp: "RAII." },
+    { type: "qcm", q: "Si une exception remonte avant commit…", opts: ["la base est incohérente", "le destructeur du garde fait rollback : base intacte", "on perd la connexion", "rien"], a: 1, exp: "Exception-safe." },
+    { type: "qcm", q: "Le grand avantage du RAII ici :", opts: ["c'est plus lent", "impossible d'oublier le rollback (vs goto cleanup en C)", "moins de code SQL", "rien"], a: 1, exp: "Automatique." },
+    { type: "qcm", q: "On valide la durée…", opts: ["après le commit", "avant d'ouvrir la transaction", "jamais", "dans le destructeur"], a: 1, exp: "Rejeter tôt." },
+    { type: "qcm", q: "Vérifier le stock se fait idéalement…", opts: ["hors transaction", "dans la transaction (avec verrou pour la concurrence)", "dans l'UI", "après commit"], a: 1, exp: "Cohérence." },
+    { type: "vf", q: "Sans transaction, une location peut être insérée sans que le stock soit décrémenté.", a: true, exp: "Incohérence possible." },
+    { type: "qcm", q: "explicit devant le constructeur du garde…", opts: ["accélère", "empêche une conversion implicite involontaire", "annule", "affiche"], a: 1, exp: "Bonne pratique C++." },
+    { type: "qcm", q: "Entre setAutoCommit(false) et commit, les écritures sont…", opts: ["définitives", "provisoires (annulables)", "perdues", "affichées"], a: 1, exp: "Réversibles." },
+    { type: "qcm", q: "Deux clients louant le dernier exemplaire en même temps :", opts: ["aucun risque", "risque de concurrence, géré par un verrou (FOR UPDATE)", "toujours OK", "impossible"], a: 1, exp: "Concurrence." },
+    { type: "qcm", q: "Le destructeur remet aussi…", opts: ["rien", "setAutoCommit(true) pour la suite", "le stock à zéro", "l'UI"], a: 1, exp: "État propre." }
+  ],
+  final: {
+    title: "Exercice final — Rendre la location atomique",
+    intro: `<p>Une version naïve, sans transaction :</p>
+<pre class="pseudo">void louer(sql::Connection&amp; con, int uid, int jeuId, int jours) {   // version naive (SANS transaction)
+    LocationRepository::inserer(con, uid, jeuId, jours);   // ecriture 1 : enregistre la location
+    JeuRepository::decrementerStockLocation(con, jeuId);  // et si ça lève ?
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Le risque :", opts: ["aucun", "si la 2ᵉ écriture échoue, la 1ʳᵉ reste : base incohérente", "trop lent", "trop long"], a: 1, exp: "Pas atomique." },
+      { type: "qcm", q: "La solution :", opts: ["un printf", "encadrer les deux écritures dans une transaction", "supprimer une écriture", "un sleep"], a: 1, exp: "Tout ou rien." },
+      { type: "qcm", q: "Pour garantir le rollback en cas d'exception :", opts: ["un try/catch partout", "un garde RAII (TransactionGuard)", "rien", "un goto"], a: 1, exp: "Destructeur." },
+      { type: "qcm", q: "commit() est appelé…", opts: ["au début", "après les deux écritures réussies", "jamais", "dans le catch"], a: 1, exp: "À la fin du chemin correct." },
+      { type: "qcm", q: "Si peutLouer est faux, on…", opts: ["insère", "lance StockInsuffisant avant d'ouvrir la transaction", "commit", "rollback"], a: 1, exp: "Refus tôt." }
+    ],
+    solution: `<pre class="pseudo">void LocationService::louer(sql::Connection&amp; con, int uid, int jeuId, int jours) {   // version corrigee (atomique)
+    validerDuree(jours);                         // rejette une duree invalide (exception)
+    Jeu j = JeuRepository::findById(con, jeuId); // charge le jeu concerne
+    if (!CatalogueService::peutLouer(j))         // plus de stock de location ?
+        throw StockInsuffisant("Plus de stock de location");   // refuse avant d'ouvrir la transaction
+    TransactionGuard tx(con);                    // RAII : rollback auto si exception
+    LocationRepository::inserer(con, uid, jeuId, jours);   // ecriture 1 : la location
+    JeuRepository::decrementerStockLocation(con, jeuId);   // ecriture 2 : le stock -1
+    tx.commit();                                 // les deux validées ensemble
+}</pre>
+<p>Les deux écritures forment un tout ; le garde RAII annule en cas de pépin. Atomicité + exception-safety, la marque du C++ moderne. Demain : acheter, avec un prix figé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpp-l12", title: "Un garde de transaction", level: 3,
+    statement: "Écris la classe TransactionGuard : constructeur qui appelle con.setAutoCommit(false), méthode commit() qui appelle con.commit() et mémorise le succès, et destructeur qui fait con.rollback() si commit() n'a pas eu lieu, puis con.setAutoCommit(true).",
+    hints: [
+      "Garde une référence sql::Connection& et un bool valide_ = false.",
+      "commit() : con_.commit(); valide_ = true;",
+      "~TransactionGuard() : if (!valide_) con_.rollback(); con_.setAutoCommit(true);"
+    ],
+    solution: "class TransactionGuard {                     // objet qui gere une transaction (RAII)\n    sql::Connection& con_;                    // reference vers la connexion\n    bool valide_ = false;                     // a-t-on deja fait commit ? (non au depart)\npublic:\n    explicit TransactionGuard(sql::Connection& con) : con_(con) {   // a la creation de l'objet...\n        con_.setAutoCommit(false);   // ouvre la transaction\n    }\n    void commit() {                           // valide toutes les ecritures\n        con_.commit();                        // les rend definitives\n        valide_ = true;                       // note que le commit a eu lieu\n    }\n    ~TransactionGuard() {                      // destructeur : execute automatiquement a la fin\n        if (!valide_) con_.rollback();  // annule si pas de commit\n        con_.setAutoCommit(true);             // remet la connexion en mode normal\n    }\n    TransactionGuard(const TransactionGuard&) = delete;             // interdit la copie (ressource unique)\n    TransactionGuard& operator=(const TransactionGuard&) = delete;  // interdit l'affectation par copie\n};",
+    note: "Le RAII transforme « ne pas oublier le rollback » en garantie du langage : le destructeur s'exécute quoi qu'il arrive, y compris quand une exception remonte. On interdit la copie (= delete) car un garde possède une ressource unique. C'est l'idiome qui remplace le goto cleanup du C." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

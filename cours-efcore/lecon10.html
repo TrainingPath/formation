@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "La relation N-N : les catégories de jeux",
+  subtitle: "Catan est à la fois « stratégie » et « famille » — et EF Core gère la table de jointure pour toi.",
+  theory: `
+<h3>1. Le besoin : plusieurs catégories par jeu, plusieurs jeux par catégorie</h3>
+<p>Jusqu'ici, la Ludothèque ne connaissait que des relations à sens unique : une Location pointe vers UN Jeu et UN Membre (N-1), un Jeu possède PLUSIEURS Avis (1-N). Mais comment classer les jeux ? <strong>Catan</strong> est à la fois « stratégie » et « famille » ; la catégorie « ambiance » regroupe des dizaines de jeux. Un Jeu appartient à <strong>plusieurs</strong> Categories, et une Categorie regroupe <strong>plusieurs</strong> Jeux : c'est une relation <strong>N-N</strong> (many-to-many). Pense à des acteurs et des films : un acteur joue dans plusieurs films, un film réunit plusieurs acteurs.</p>
+<p>Rappelle-toi ton cours de Merise et de SQL Server au Niveau 4 : une association N-N ne peut pas se stocker avec une simple clé étrangère. Tu avais créé une <strong>table d'association</strong> JeuCategorie (une table intermédiaire dont chaque ligne relie un jeu à une catégorie), avec deux clés étrangères formant une clé primaire composée. Cette table existe toujours — la question est : qui l'écrit, toi ou EF Core ?</p>
+<pre class="pseudo">-- Ce que tu écrivais à la main au Niveau 4 :
+CREATE TABLE JeuCategorie (                            -- table d'association entre Jeu et Categorie
+    JeuId       INT NOT NULL REFERENCES Jeu(Id),       -- clé étrangère vers le jeu ; obligatoire (NOT NULL)
+    CategorieId INT NOT NULL REFERENCES Categorie(Id), -- clé étrangère vers la catégorie ; obligatoire
+    PRIMARY KEY (JeuId, CategorieId)                   -- clé primaire COMPOSÉE : un couple (jeu, catégorie) unique
+);</pre>
+
+<h3>2. Les skip navigations : le N-N sans entité de jointure</h3>
+<p>Depuis <strong>EF Core 5</strong>, tu peux déclarer un N-N avec deux simples collections, une de chaque côté. On les appelle des <strong>skip navigations</strong> (« navigations qui sautent ») : elles « sautent » par-dessus la table de jointure, qui devient invisible dans ton code C# — comme un pont qui enjambe la rivière sans que tu voies l'eau.</p>
+<pre class="pseudo">public class Jeu                                       // le moule d'une ligne de la table Jeux
+{
+    public int Id { get; set; }                        // clé primaire
+    public string Titre { get; set; }                  // titre du jeu
+    public List&lt;Categorie&gt; Categories { get; set; } = new();  // skip navigation : les catégories de ce jeu
+}
+
+public class Categorie                                 // le moule d'une ligne de la table Categories
+{
+    public int Id { get; set; }                        // clé primaire
+    public string Nom { get; set; }                    // nom de la catégorie
+    public List&lt;Jeu&gt; Jeux { get; set; } = new();        // skip navigation : les jeux de cette catégorie
+}</pre>
+<p>Aucune classe JeuCategorie, aucune configuration obligatoire : EF Core détecte les deux collections croisées et génère à la migration une table de jointure <strong>implicite</strong> nommée <strong>CategorieJeu</strong> (les deux noms d'entités concaténés par ordre alphabétique), avec les colonnes CategoriesId et JeuxId et la clé primaire composée. Exactement ta table Merise — écrite par l'ORM.</p>
+
+<h3>3. Personnaliser la jointure avec UsingEntity</h3>
+<p>Le nom CategorieJeu ne te plaît pas ? Ta base existante utilise déjà JeuCategorie avec d'autres noms de colonnes ? La Fluent API te laisse la main via <strong>UsingEntity</strong>, dans OnModelCreating de ton LudothequeContext :</p>
+<pre class="pseudo">modelBuilder.Entity&lt;Jeu&gt;()                             // on configure l'entité Jeu…
+    .HasMany(j =&gt; j.Categories)                        // …un Jeu A PLUSIEURS Categories…
+    .WithMany(c =&gt; c.Jeux)                              // …et une Categorie A PLUSIEURS Jeux (relation N-N)
+    .UsingEntity(join =&gt; join.ToTable("JeuCategorie")); // on renomme la table de jointure en "JeuCategorie"</pre>
+<p>UsingEntity accepte des surcharges bien plus riches : renommer les colonnes de clés étrangères, ajouter des index, et même — on y vient — brancher une vraie classe C# sur la jointure.</p>
+
+<h3>4. Quand la jointure doit devenir une entité explicite : le payload</h3>
+<p>La skip navigation suffit tant que l'association est un <strong>pur lien</strong>. Mais dès que l'association <strong>porte des données</strong> (un « payload », littéralement la charge utile transportée par le lien), il te faut une entité de jointure explicite. Exemple : tu veux savoir <strong>quand</strong> un jeu a été rangé dans une catégorie. La date d'ajout n'appartient ni au Jeu ni à la Categorie : elle appartient au <strong>lien</strong> entre les deux.</p>
+<pre class="pseudo">public class JeuCategorie                              // entité de jointure EXPLICITE : le lien devient une vraie classe
+{
+    public int JeuId { get; set; }                     // clé étrangère vers le jeu
+    public Jeu Jeu { get; set; }                        // navigation vers le jeu
+    public int CategorieId { get; set; }               // clé étrangère vers la catégorie
+    public Categorie Categorie { get; set; }           // navigation vers la catégorie
+    public DateTime DateAjout { get; set; }   // le payload   // donnée portée par le lien : quand le jeu a rejoint la catégorie
+}
+
+modelBuilder.Entity&lt;Jeu&gt;()                             // configuration du N-N via une entité explicite…
+    .HasMany(j =&gt; j.Categories)                        // …un Jeu A PLUSIEURS Categories…
+    .WithMany(c =&gt; c.Jeux)                              // …et réciproquement
+    .UsingEntity&lt;JeuCategorie&gt;(                         // en passant par la classe de jointure JeuCategorie
+        j =&gt; j.HasOne(jc =&gt; jc.Categorie).WithMany(),   // chaque lien pointe vers UNE Categorie
+        j =&gt; j.HasOne(jc =&gt; jc.Jeu).WithMany(),         // chaque lien pointe vers UN Jeu
+        j =&gt; j.HasKey(jc =&gt; new { jc.JeuId, jc.CategorieId }));   // clé primaire composée (JeuId, CategorieId)</pre>
+<p>Et regarde ta Ludothèque avec un œil neuf : <strong>Location</strong> est exactement cela ! Entre Membre et Jeu il existe une association N-N (« un membre loue des jeux ») tellement chargée de données (dates, prix, retour…) que tu l'as modélisée dès le départ comme une entité à part entière. Une entité de jointure explicite, c'est une Location en miniature.</p>
+
+<h3>5. Manipuler la relation au quotidien</h3>
+<p>Avec les skip navigations, le code du quotidien est d'une simplicité désarmante : tu manipules des collections C#, EF Core traduit en SQL sur la table de jointure.</p>
+<pre class="pseudo">var jeu = ctx.Jeux.First(j =&gt; j.Titre == "Catan");        // charge le jeu Catan
+var cat = ctx.Categories.First(c =&gt; c.Nom == "Stratégie"); // charge la catégorie Stratégie
+
+jeu.Categories.Add(cat);                                  // relie le jeu à la catégorie (en mémoire)
+ctx.SaveChanges();   // INSERT INTO CategorieJeu (CategoriesId, JeuxId) VALUES (...)   // crée la ligne de jointure
+
+jeu.Categories.Remove(cat);                               // retire le lien (en mémoire)
+ctx.SaveChanges();   // DELETE FROM CategorieJeu WHERE ... (la Categorie survit !)   // supprime SEULEMENT la ligne de jointure</pre>
+<p>Note bien : Remove supprime la <strong>ligne de jointure</strong>, jamais la Categorie elle-même. En une ligne pour ta culture ORM : Hibernate/JPA fait la même chose avec <strong>@ManyToMany</strong> et @JoinTable, Eloquent avec <strong>belongsToMany</strong> et sa table pivot, et Django avec <strong>ManyToManyField</strong> (plus l'option through pour la version explicite avec payload).</p>
+<div class="warn">Une skip navigation ne peut PAS porter de payload : si tu as besoin d'une date, d'une quantité ou d'un commentaire sur le lien lui-même, passe à l'entité de jointure explicite. Migrer après coup d'un modèle à l'autre est possible mais demande une migration soignée — décide-le dès la conception, ton MCD du Niveau 4 te donne déjà la réponse.</div>
+<div class="tip">Astuce mémoire : « l'association porte-t-elle des données ? » Non → skip navigation, code minimal. Oui → entité explicite, comme Location. C'est le même raisonnement qu'en Merise quand tu te demandais si une association devait porter des attributs.</div>`,
+  exercises: [
+    { type: "qcm", q: "La relation entre Jeu et Categorie dans la Ludothèque est de type…", opts: ["1-1", "1-N", "N-N", "N-1 uniquement"], a: 2, exp: "Un jeu a plusieurs catégories ET une catégorie regroupe plusieurs jeux : many-to-many." },
+    { type: "qcm", q: "En relationnel (Niveau 4), une association N-N se traduit par…", opts: ["Une clé étrangère dans chaque table", "Une table d'association avec deux clés étrangères", "Une colonne de type liste", "Une vue SQL"], a: 1, exp: "JeuCategorie : deux FK formant une clé primaire composée." },
+    { type: "qcm", q: "Une skip navigation, c'est…", opts: ["Une collection de chaque côté, sans entité de jointure dans le code", "Une navigation qui ignore SaveChanges", "Un index sur la table de jointure", "Une propriété calculée"], a: 0, exp: "Les deux List croisées « sautent » par-dessus la table de jointure, gérée par EF Core." },
+    { type: "vf", q: "Les skip navigations sont disponibles depuis EF Core 5.", a: true, exp: "Avant EF Core 5, l'entité de jointure explicite était obligatoire." },
+    { type: "qcm", q: "Sans configuration, EF Core nomme la table de jointure Jeu/Categorie…", opts: ["JeuCategorie", "CategorieJeu", "Jointure1", "JeuxCategories"], a: 1, exp: "Concaténation des noms d'entités par ordre alphabétique : Categorie avant Jeu." },
+    { type: "input", q: "Quelle méthode Fluent API permet de personnaliser la table de jointure (nom, colonnes, entité) ?", a: ["UsingEntity", "usingentity"], ph: "Nom de la méthode…", exp: "HasMany().WithMany().UsingEntity(...) : le point d'entrée pour configurer la jointure." },
+    { type: "qcm", q: "Quand DOIS-tu créer une entité de jointure explicite ?", opts: ["Toujours, c'est plus propre", "Quand l'association porte des données (payload)", "Quand il y a plus de 1000 lignes", "Quand les deux tables sont dans des schémas différents"], a: 1, exp: "Une date d'ajout, une quantité… : le payload appartient au lien, donc il faut une classe pour le lien." },
+    { type: "qcm", q: "Dans la Ludothèque, Location est en réalité…", opts: ["Une entité sans aucun lien", "Une skip navigation", "L'association porteuse de données entre Membre et Jeu", "Une table de jointure implicite"], a: 2, exp: "Le lien « un membre loue un jeu » porte dates et prix : c'est une entité de jointure explicite née dès la conception." },
+    { type: "vf", q: "Après jeu.Categories.Add(cat), l'appel à SaveChanges génère un INSERT dans la table de jointure.", a: true, exp: "EF Core traduit la manipulation de la collection en INSERT INTO CategorieJeu." },
+    { type: "qcm", q: "jeu.Categories.Remove(cat) suivi de SaveChanges…", opts: ["Supprime la Categorie de la base", "Supprime seulement la ligne de jointure", "Supprime le Jeu", "Ne fait rien"], a: 1, exp: "DELETE sur CategorieJeu uniquement : la catégorie continue d'exister pour les autres jeux." },
+    { type: "qcm", q: "La table de jointure implicite contient…", opts: ["Les deux clés étrangères, formant la clé primaire composée", "Une colonne Id auto-incrémentée seule", "Toutes les colonnes de Jeu et Categorie", "Une colonne JSON"], a: 0, exp: "Exactement la table d'association que tu écrivais à la main au Niveau 4." },
+    { type: "input", q: "En Hibernate/JPA, quelle annotation déclare un many-to-many ?", a: ["@ManyToMany", "ManyToMany", "@manytomany", "manytomany"], ph: "@…", exp: "@ManyToMany, souvent accompagnée de @JoinTable pour nommer la jointure." },
+    { type: "qcm", q: "L'équivalent Eloquent (Laravel) du N-N est…", opts: ["hasMany", "belongsTo", "belongsToMany", "morphMany"], a: 2, exp: "belongsToMany, avec une table pivot ; withPivot() pour le payload." },
+    { type: "vf", q: "Une entité de jointure explicite empêche d'ajouter des données sur le lien.", a: false, exp: "C'est exactement l'inverse : on la crée POUR porter le payload (DateAjout…)." },
+    { type: "qcm", q: "En Django, un N-N avec payload s'écrit…", opts: ["ManyToManyField avec l'option through", "ForeignKey double", "OneToOneField", "JSONField"], a: 0, exp: "through pointe vers le modèle intermédiaire — l'équivalent de UsingEntity avec une classe." }
+  ],
+  final: {
+    title: "Exercice final — Classer les jeux de la Ludothèque",
+    intro: `<p>Tu ajoutes le classement par catégories à la Ludothèque : List&lt;Categorie&gt; sur Jeu, List&lt;Jeu&gt; sur Categorie, une migration, et quelques ajouts de catégories. Vérifions que chaque décision est comprise.</p>`,
+    questions: [
+      { type: "qcm", q: "Tu déclares seulement les deux collections croisées, sans classe de jointure. La migration crée…", opts: ["Rien : il manque une configuration", "La table CategorieJeu avec PK composée", "Une colonne CategorieId dans Jeu", "Deux tables de jointure"], a: 1, exp: "Les skip navigations suffisent : EF Core génère la table implicite." },
+      { type: "vf", q: "Pour renommer la table de jointure en JeuCategorie, il faut créer une classe C# dédiée.", a: false, exp: "UsingEntity(join => join.ToTable(...)) suffit, sans classe." },
+      { type: "qcm", q: "Le client veut afficher « ajouté à la catégorie le… ». Tu dois…", opts: ["Ajouter DateAjout sur Jeu", "Ajouter DateAjout sur Categorie", "Passer à une entité de jointure explicite avec DateAjout", "Utiliser un trigger SQL"], a: 2, exp: "La date appartient au lien : payload → entité JeuCategorie explicite." },
+      { type: "qcm", q: "Quelle entité de la Ludothèque suit déjà ce modèle « association porteuse » ?", opts: ["Avis", "Location", "Categorie", "ProfilMembre"], a: 1, exp: "Location relie Membre et Jeu en portant dates et prix." },
+      { type: "vf", q: "jeu.Categories.Add(cat) écrit immédiatement dans la base.", a: false, exp: "Rien ne part en SQL avant SaveChanges — le change tracker attend." }
+    ],
+    solution: `<pre class="pseudo">N-N Jeu ↔ Categorie
+  Skip navigations (EF Core 5+) :
+    Jeu.Categories : List&lt;Categorie&gt;
+    Categorie.Jeux : List&lt;Jeu&gt;
+    → table implicite CategorieJeu (2 FK, PK composée)
+  Personnalisation : HasMany().WithMany().UsingEntity(...)
+  Payload (DateAjout…) → entité de jointure EXPLICITE
+    (modèle déjà appliqué : Location entre Membre et Jeu)
+  Quotidien : jeu.Categories.Add(cat) + SaveChanges → INSERT jointure
+              Remove → DELETE jointure, la Categorie survit
+  Ailleurs : @ManyToMany (JPA), belongsToMany (Eloquent),
+             ManyToManyField + through (Django)</pre>
+<p>Ta Ludothèque connaît maintenant toutes les cardinalités… sauf une : le tête-à-tête. Prochaine leçon : la relation 1-1 et les owned types, avec le profil et l'adresse du Membre.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l10", title: "Skip navigation ou entité explicite ?", level: 2,
+    statement: "Trois associations N-N traversent la Ludothèque : Jeu-Categorie (le classement), Membre-Jeu via Location (les locations), et Membre-Jeu via Avis (les notes laissées). Pour chacune des trois, tranche par écrit entre skip navigation et entité de jointure explicite. Justifie chaque choix avec le critère du payload : quelles données porte le lien lui-même ? Termine en expliquant pourquoi deux associations entre les MÊMES entités (Membre et Jeu) peuvent exister sans se confondre.",
+    hints: [
+      "Le critère unique : le lien porte-t-il des données propres ? Liste les attributs de chaque association avant de trancher.",
+      "Location porte dates, prix, état du retour… Avis porte note, commentaire, date. Et Jeu-Categorie, il porte quoi aujourd'hui ?",
+      "Deux associations distinctes entre Membre et Jeu = deux tables distinctes : chacune répond à une question métier différente (louer ≠ noter)."
+    ],
+    solution: "1) Jeu-Categorie : SKIP NAVIGATION.\nLe lien est pur : aucune donnée propre aujourd'hui.\nList de Categorie sur Jeu + List de Jeu sur Categorie → table CategorieJeu implicite.\nSi demain on veut une DateAjout, on migrera vers une entité explicite via UsingEntity.\n\n2) Membre-Jeu via Location : ENTITÉ EXPLICITE (déjà le cas).\nLe lien porte un payload massif : DateDebut, DateRetourPrevue, DateRetourReelle, Prix…\nUne skip navigation serait incapable de stocker tout cela.\nLocation est une association porteuse promue entité à part entière, avec sa propre clé,\ncar un même membre peut louer le même jeu plusieurs fois (la PK composée ne suffirait pas).\n\n3) Membre-Jeu via Avis : ENTITÉ EXPLICITE.\nLe lien porte Note, Commentaire, DatePublication : payload → classe dédiée.\nBonus métier : une PK composée (MembreId, JeuId) imposerait un seul avis par membre et par jeu ;\nà décider selon la règle de gestion du MCD.\n\nConclusion : Membre et Jeu sont reliés par DEUX associations indépendantes (louer, noter).\nChacune devient sa propre table : même paire d'entités, questions métier différentes.\nLe critère de décision reste celui de Merise : une association qui porte des attributs\ndevient une entité (ou une table d'association enrichie).",
+    note: "Ce raisonnement est exactement celui de ton MCD du Niveau 4 : une association porteuse d'attributs se réifie. Hibernate pose le même dilemme (@ManyToMany pur contre entité intermédiaire avec deux @ManyToOne), et Django le résout avec through. Dans ton projet full-stack, prends l'habitude de trancher payload/pas payload dès la conception : c'est la migration la plus pénible à faire après coup." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

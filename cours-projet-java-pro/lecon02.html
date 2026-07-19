@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le squelette Spring Boot dans Docker Compose",
+  subtitle: "Aucune installation sur la machine : l'app et sa base naissent en conteneurs.",
+  theory: `
+<h3>1. Un projet Spring Boot minimal</h3>
+<p>On génère le projet avec <strong>Spring Initializr</strong> (dépendances : Spring Web, Spring Data JPA, MySQL Driver, Validation, Actuator, Flyway). Le point d'entrée est une simple classe annotée <code>@SpringBootApplication</code>. Mais on ne le lance <strong>pas</strong> sur le poste : on le construit et on l'exécute dans un conteneur.</p>
+<p>Posons le vocabulaire. <strong>Spring Boot</strong> est un <em>cadre de travail</em> (framework) : une boîte à outils Java toute prête qui gère à ta place les tâches répétitives — démarrer un serveur web, parler à la base — un peu comme une cuisine déjà équipée où il ne reste qu'à mitonner ta recette. <strong>Spring Initializr</strong> est le formulaire en ligne qui génère le squelette de départ du projet. Une <strong>dépendance</strong> est une brique toute faite qu'on ajoute au projet (par exemple le pilote qui sait dialoguer avec MySQL) au lieu de la réécrire. <strong>JPA</strong> est l'outil qui fait le pont entre les objets Java et les tables de la base. Une <strong>classe</strong> est un plan de construction regroupant du code sous un nom ; une <strong>annotation</strong> (un mot précédé de <code>@</code>) est une étiquette collée sur ce code pour indiquer à Spring comment le traiter — ici <code>@SpringBootApplication</code> signifie « ceci est le point de départ d'une application Spring Boot ».</p>
+<pre class="pseudo">@SpringBootApplication                                       // etiquette : "ceci est le demarrage d'une app Spring Boot" (config automatique)
+public class LudothequeApplication {                         // une classe = un plan de code regroupe sous un nom
+    public static void main(String[] args) {                 // main = LA porte d'entree : l'execution commence toujours ici
+        SpringApplication.run(LudothequeApplication.class, args);   // demarre le serveur Spring Boot (lit la config, ouvre le port 8080)
+    }
+}</pre>
+
+<h3>2. Le Docker Compose de développement</h3>
+<pre class="pseudo">services:                                    # liste des conteneurs a lancer ensemble
+  app:                                       # 1er conteneur : notre application
+    build: .                                 # construit l'image a partir du Dockerfile du dossier courant
+    ports: ["8080:8080"]                     # rend le port 8080 de l'app accessible depuis l'exterieur
+    env_file: .env.docker                    # charge les secrets depuis un fichier garde hors de Git
+    depends_on:                              # l'app depend d'un autre conteneur...
+      bdd: { condition: service_healthy }    # ...et attend que la base soit PRETE (pas seulement demarree)
+  bdd:                                       # 2e conteneur : la base de donnees
+    image: mysql:8.4                         # image officielle de MySQL, version 8.4
+    environment:                             # valeurs passees a MySQL au moment de sa creation
+      MYSQL_DATABASE: ludotheque             # nom de la base a creer automatiquement
+      MYSQL_USER: ludo_app                   # compte applicatif (pas le compte tout-puissant)
+      MYSQL_PASSWORD: \${MYSQL_PASSWORD}      # mot de passe injecte depuis l'environnement, jamais ecrit en dur
+      MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD}   # mot de passe administrateur, injecte lui aussi
+    volumes: ["donnees-mysql:/var/lib/mysql"]  # tiroir externe : les donnees survivent meme si la boite est jetee
+    healthcheck:                             # test de sante repete par Docker
+      test: ["CMD","mysqladmin","ping","-h","localhost"]   # "ping" : la base repond-elle vraiment aux connexions ?
+      interval: 5s                           # refait le test toutes les 5 secondes
+      retries: 10                            # declare la base malade apres 10 echecs de suite
+volumes: { donnees-mysql: {} }               # declare officiellement le tiroir nomme utilise plus haut</pre>
+
+<h3>3. La configuration lit l'environnement</h3>
+<pre class="pseudo"># application.yml                          # fichier central de configuration de l'application
+spring:
+  datasource:                              # coordonnees pour joindre la base de donnees
+    url: \${SPRING_DATASOURCE_URL}        # adresse de la base, lue dans l'environnement (jdbc:mysql://bdd:3306/ludotheque)
+    username: \${SPRING_DATASOURCE_USERNAME}   # identifiant de connexion, injecte depuis l'environnement
+    password: \${SPRING_DATASOURCE_PASSWORD}   # mot de passe de connexion, injecte depuis l'environnement
+management:                                # reglages de la supervision (module Actuator)
+  endpoints:
+    web:
+      exposure:
+        include: health                  # expose l'URL /actuator/health (renseigne l'etat de sante)</pre>
+<p>Petit lexique réseau : un <strong>hôte</strong> est le nom d'une machine sur le réseau. Le <strong>DNS</strong> est l'annuaire qui traduit un nom (comme <code>bdd</code>) en adresse réelle, exactement comme un répertoire transforme un nom en numéro de téléphone. Ici l'hôte <code>bdd</code> est simplement le nom du service : le DNS interne du réseau Compose le résout automatiquement. On n'écrit donc <strong>aucune adresse IP</strong> (le « numéro » d'une machine) en dur.</p>
+
+<h3>4. Démarrer et vérifier</h3>
+<pre class="pseudo">$ docker compose up -d                # lance tous les conteneurs en arriere-plan (-d = detache du terminal)
+$ docker compose logs -f app          # affiche en continu le journal de l'app (on y lit "Started LudothequeApplication")
+$ curl localhost:8080/actuator/health -> {"status":"UP"}   # interroge l'URL de sante ; reponse UP = tout va bien</pre>
+<p><code>curl</code> est un petit outil en ligne de commande qui envoie une requête à une adresse web et affiche la réponse, comme si on tapait l'URL dans un navigateur mais sans fenêtre. Un <strong>endpoint</strong> (« point d'accès ») est une URL que l'application sait traiter. <strong>Actuator</strong> est le module de Spring Boot qui fournit gratuitement des endpoints de surveillance : <code>/actuator/health</code> répond <code>UP</code> lorsque tout fonctionne.</p>
+
+<h3>5. Pourquoi le healthcheck</h3>
+<div class="warn">MySQL « démarré » n'est pas MySQL « prêt » : le conteneur répond avant que la base accepte les connexions. Sans <code>condition: service_healthy</code>, l'app tente de se connecter trop tôt et plante au boot. Le healthcheck + <code>depends_on</code> font attendre l'app que <code>mysqladmin ping</code> réussisse — pas juste que le conteneur existe.</div>
+<div class="tip">Résultat : <code>docker compose up</code> et tout le monde a exactement le même environnement (même version de MySQL, même JDK). Fini « ça marche sur mon poste » — le poste n'exécute plus rien, c'est le conteneur qui travaille (cours Docker).</div>`,
+  exercises: [
+    { type: "qcm", q: "Le projet Spring Boot, on le lance…", opts: ["Sur le poste", "Dans un conteneur (docker compose up)", "En prod direct", "Jamais"], a: 1, exp: "Aucune installation locale." },
+    { type: "qcm", q: "Le point d'entrée est annoté…", opts: ["@Entity", "@SpringBootApplication", "@Service", "@Bean"], a: 1, exp: "main() + SpringApplication.run." },
+    { type: "qcm", q: "L'app trouve MySQL via…", opts: ["Une IP en dur", "Le nom de service 'bdd' (DNS Compose)", "localhost", "Un fichier hosts"], a: 1, exp: "Réseau interne Compose." },
+    { type: "qcm", q: "condition: service_healthy garantit…", opts: ["Que le conteneur existe", "Que MySQL est PRÊT (pas juste démarré)", "Le CSS", "Rien"], a: 1, exp: "mysqladmin ping." },
+    { type: "qcm", q: "Le volume donnees-mysql sert à…", opts: ["Le code", "Persister les données de la base", "Les logs", "Le cache"], a: 1, exp: "Sinon tout est perdu au down." },
+    { type: "qcm", q: "La config de la base vient de…", opts: ["Valeurs en dur dans le code", "Variables d'environnement (application.yml)", "Un QCM", "La RAM"], a: 1, exp: "Par environnement." },
+    { type: "qcm", q: "On vérifie que l'app tourne avec…", opts: ["Un ping DNS", "curl /actuator/health -> UP", "Un reboot", "Rien"], a: 1, exp: "Actuator inclus." },
+    { type: "qcm", q: "MySQL 'démarré' vs 'prêt' :", opts: ["C'est pareil", "Le conteneur répond avant que la base accepte les connexions", "Prêt d'abord", "Sans importance"], a: 1, exp: "D'où le healthcheck." },
+    { type: "qcm", q: "env_file: .env.docker …", opts: ["Committe les secrets", "Injecte la config sans la mettre dans compose.yaml", "Est inutile", "Chiffre"], a: 1, exp: "Secrets hors du fichier versionné." },
+    { type: "qcm", q: "ports: ['8080:8080'] …", opts: ["Ouvre la base", "Publie le port de l'app vers l'hôte", "Chiffre", "Rien"], a: 1, exp: "Accès depuis le navigateur." },
+    { type: "vf", q: "Grâce au conteneur, tous les développeurs ont le même environnement.", a: true, exp: "Reproductibilité (cours Docker)." },
+    { type: "qcm", q: "Le driver MySQL est ajouté…", opts: ["En prod", "Comme dépendance du projet (pom.xml)", "Manuellement sur le serveur", "Jamais"], a: 1, exp: "Géré par Maven." },
+    { type: "qcm", q: "/actuator/health est fourni par…", opts: ["Un contrôleur écrit à la main", "Spring Boot Actuator", "MySQL", "Docker"], a: 1, exp: "Dépendance actuator." },
+    { type: "qcm", q: "Le poste du développeur exécute désormais…", opts: ["Le JDK et MySQL", "Docker (les conteneurs font le travail)", "Rien", "Un IDE seul"], a: 1, exp: "L'environnement est conteneurisé." },
+    { type: "vf", q: "Aucune adresse IP de la base n'est écrite en dur.", a: true, exp: "Le nom de service suffit." }
+  ],
+  final: {
+    title: "Exercice final — Le squelette qui tourne en conteneurs",
+    intro: `<p>App + base, en conteneurs, vérifiés.</p>`,
+    questions: [
+      { type: "qcm", q: "compose.yaml définit :", opts: ["app (build .) + bdd (mysql, healthcheck, volume)", "l'app seule", "la base seule", "rien"], a: 0, exp: "Deux services." },
+      { type: "qcm", q: "L'app attend la base grâce à :", opts: ["depends_on + condition: service_healthy", "un sleep", "la chance", "un cron"], a: 0, exp: "Prête, pas juste démarrée." },
+      { type: "qcm", q: "La connexion à MySQL utilise :", opts: ["l'hôte 'bdd' (DNS interne)", "une IP", "localhost", "un tunnel"], a: 0, exp: "Réseau Compose." },
+      { type: "qcm", q: "On valide le démarrage par :", opts: ["curl /actuator/health = UP", "un screenshot", "l'absence d'erreur visuelle", "rien"], a: 0, exp: "Preuve vérifiable." },
+      { type: "vf", q: "La config de la base vient de l'environnement, pas du code.", a: true, exp: "application.yml lit \${...}." }
+    ],
+    solution: `<pre class="pseudo"># compose.yaml : app + bdd (healthcheck, volume)
+# application.yml : datasource lit \${SPRING_DATASOURCE_*}
+# management.endpoints.web.exposure.include: health
+
+$ docker compose up -d
+$ curl localhost:8080/actuator/health   -> {"status":"UP"}</pre>
+<p>Le squelette tourne en conteneurs. Demain : Git propre et la première CI (Maven).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton compose et ta config…",
+  items: [
+  { id: "proj6java-l2", title: "Le Compose de développement commenté", level: 2,
+    statement: "Écris le compose.yaml de dev (services app et bdd) et l'extrait d'application.yml correspondant, en commentant : le healthcheck (pourquoi 'prêt' ≠ 'démarré'), le volume (persistance), l'injection de la config par l'environnement, et la résolution du nom 'bdd'. Termine par la commande qui prouve que l'app répond.",
+    hints: [
+      "app : build ., ports, env_file, depends_on avec condition: service_healthy.",
+      "bdd : mysql:8.4, environment (mots de passe via \${...}), volume nommé, healthcheck mysqladmin ping.",
+      "Preuve : curl localhost:8080/actuator/health -> {\"status\":\"UP\"}."
+    ],
+    solution: "# compose.yaml (développement)\nservices:\n  app:\n    build: .                         # image construite depuis le Dockerfile\n    ports: [\"8080:8080\"]             # publie le port vers l'hote\n    env_file: .env.docker            # secrets hors du fichier versionne\n    depends_on:\n      bdd: { condition: service_healthy }   # attend que MySQL soit PRET\n  bdd:\n    image: mysql:8.4\n    environment:\n      MYSQL_DATABASE: ludotheque\n      MYSQL_USER: ludo_app\n      MYSQL_PASSWORD: ${MYSQL_PASSWORD}       # injecte, jamais en dur\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}\n    volumes: [\"donnees-mysql:/var/lib/mysql\"] # persiste les donnees\n    healthcheck:\n      test: [\"CMD\",\"mysqladmin\",\"ping\",\"-h\",\"localhost\"]\n      interval: 5s\n      retries: 10\nvolumes: { donnees-mysql: {} }\n\n# application.yml\nspring:\n  datasource:\n    url: ${SPRING_DATASOURCE_URL}        # jdbc:mysql://bdd:3306/ludotheque\n    username: ${SPRING_DATASOURCE_USERNAME}\n    password: ${SPRING_DATASOURCE_PASSWORD}\nmanagement:\n  endpoints: { web: { exposure: { include: health } } }\n\n# POURQUOI\n# - healthcheck : le conteneur MySQL repond avant d'accepter les connexions ;\n#   sans lui, l'app se connecte trop tot et plante au boot.\n# - volume : sans lui, 'docker compose down' effacerait toutes les donnees.\n# - environnement : la meme image tourne en dev/staging/prod, seule la config change.\n# - 'bdd' : le DNS interne du reseau Compose resout le nom de service (pas d'IP).\n\n# Preuve : docker compose up -d && curl localhost:8080/actuator/health -> UP",
+    note: "Ce compose est le socle de tout le cours : à partir d'ici, plus rien ne s'installe sur le poste. Le healthcheck est le détail que tout le monde oublie et qui provoque les « ça plante un boot sur deux » : dépendre de l'état 'healthy' plutôt que 'started' rend le démarrage déterministe. C'est exactement le genre de rigueur qui distingue un projet d'équipe d'un projet d'école." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

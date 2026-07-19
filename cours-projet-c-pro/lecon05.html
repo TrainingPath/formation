@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Le modèle en struct et le DAO, testés dès l'écriture",
+  subtitle: "Écrire le mapping et son test en même temps : le réflexe « testé dès l'écriture ».",
+  theory: `
+<h3>1. Isoler le mapping pour le tester</h3>
+<p>Rappelons quelques mots. Une <strong>struct</strong> (structure) est une fiche qui regroupe plusieurs informations liées sous un seul nom — par exemple un <em>Jeu</em> réunit un id, un nom, un prix. Le <strong>DAO</strong> (Data Access Object, « objet d'accès aux données ») est la couche de code qui va chercher ces fiches dans la base. Le <strong>mapping</strong> est l'opération de traduction : convertir les valeurs brutes d'une ligne de la base (toujours du texte) en une fiche struct bien remplie. Ce mapping est du <strong>code pur</strong> : il ne dépend de rien d'extérieur (ni base, ni écran, ni réseau), il transforme juste des entrées en sorties — on peut donc le tester tout seul, sans base. C'est la clé pour tester le DAO sans dépendre d'un serveur. Petit rappel : <code>NULL</code> représente l'<em>absence</em> de valeur (une case vide) ; et <code>const char *</code> désigne un texte que la fonction promet de ne pas modifier.</p>
+<pre class="pseudo">/* fonction pure, sans MySQL */
+Jeu jeu_from_fields(const char *id, const char *nom, const char *prix) {  // reçoit 3 textes, renvoie une fiche Jeu
+    Jeu j = {0};                                    // crée une fiche Jeu vide (tous les champs mis à 0)
+    j.id = atoi(id);                                // atoi = "ASCII to integer" : convertit le texte "7" en nombre 7
+    snprintf(j.nom, sizeof(j.nom), "%s", nom ? nom : "");  // copie le nom sans dépasser sa taille ; si nom vaut NULL, copie "" (vide)
+    j.prix_location = atof(prix);                   // atof = "ASCII to float" : convertit le texte "5.0" en nombre à virgule 5.0
+    return j;                                        // renvoie la fiche remplie
+}</pre>
+
+<h3>2. Le test, écrit en même temps</h3>
+<p>Un <strong>test</strong> est un petit bout de code qui vérifie automatiquement qu'une fonction se comporte comme prévu. <code>CHECK(...)</code> est une <strong>assertion</strong> : elle affirme « ceci doit être vrai » ; si la condition entre parenthèses est fausse, le test échoue et le signale. Le symbole <code>==</code> compare deux valeurs (« sont-elles égales ? »), à ne pas confondre avec <code>=</code> qui affecte. Une <strong>régression</strong> est un bug qui casse quelque chose qui marchait : les tests l'attrapent aussitôt.</p>
+<pre class="pseudo">CHECK(jeu_from_fields("7", "Catan", "5.0").id == 7);              // vérifie que l'id "7" devient bien le nombre 7
+CHECK(jeu_from_fields("7", "Catan", "5.0").prix_location == 5.0); // vérifie que le prix "5.0" devient bien 5.0
+CHECK(jeu_from_fields("7", NULL, "0").nom[0] == '\\0');   // cas limite : nom NULL → nom vide ('\0' = marqueur de fin de texte, donc chaîne vide)</pre>
+<div class="warn">« Testé dès l'écriture » ne veut pas dire « tester à la fin ». On écrit la fonction et son test <strong>ensemble</strong> : le test documente le comportement attendu et attrape immédiatement une régression.</p></div>
+
+<h3>3. Le DAO utilise le mapping</h3>
+<p>Ici, <code>res</code> est le <em>résultat</em> renvoyé par la base après une requête (l'ensemble des lignes trouvées). <code>mysql_fetch_row</code> en extrait la ligne suivante à chaque tour ; quand il n'y a plus de ligne, il renvoie « rien » et la boucle s'arrête. Chaque <code>row</code> (ligne) est un tableau de textes : <code>row[0]</code>, <code>row[1]</code>, <code>row[2]</code> en sont les colonnes.</p>
+<pre class="pseudo">while ((row = mysql_fetch_row(res))) {              // tant qu'il reste une ligne à lire : la ranger dans "row"
+    tab[n++] = jeu_from_fields(row[0], row[1], row[2]);   // convertit la ligne en fiche Jeu, la range dans tab ; n++ passe à la case suivante
+}</pre>
+<p>Le DAO se réduit à « exécuter la requête + appeler le mapping testé ». La partie fragile (conversion, NULL, bornes) est déjà couverte par des tests rapides.</p>
+
+<h3>4. Le job de test en CI</h3>
+<pre class="pseudo"># ci.yml
+  test:                            # un job nommé "test"
+    runs-on: ubuntu-latest         # exécuté sur un runner Linux Ubuntu
+    steps:                         # ses étapes
+      - uses: actions/checkout@v4  # récupère le code du dépôt
+      - run: sudo apt-get install -y libmysqlclient-dev   # installe la bibliothèque MySQL
+      - run: make test        # compile ET exécute le harnais (l'ensemble des tests) ; échoue si un test rate</pre>
+<div class="tip">Séparer le pur (mapping, calculs) de l'impur (MySQL, écran) rend le cœur du projet testable en millisecondes. La CI exécute ces tests à chaque push : une conversion cassée est signalée avant même la revue.</div>
+<h3>Aller plus loin — pré-incrément (++i) et post-incrément (i++)</h3>
+<p>Les deux écritures ajoutent 1 à la variable ; la différence n'apparaît que lorsqu'on <strong>lit la valeur au moment même</strong> de l'incrémentation. La formule à retenir : <code>i++</code> « donne sa valeur, PUIS grandit » ; <code>++i</code> « grandit, PUIS donne sa valeur ».</p>
+<pre class="pseudo">int a = 5;        // a vaut 5
+int b = a++;      // POST-increment : b prend l'ANCIENNE valeur -> b = 5, et ENSUITE a passe a 6
+int c = 5;        // c vaut 5
+int d = ++c;      // PRE-increment : c passe d'abord a 6, PUIS d prend la NOUVELLE valeur -> d = 6</pre>
+<p>Dans une boucle <code>for (i = 0; i &lt; 5; i++)</code>, on ne lit pas le résultat de <code>i++</code> : on veut seulement « ajouter 1 ». C'est pourquoi <code>i++</code> et <code>++i</code> y donnent exactement la même boucle et sont interchangeables.</p>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi isoler le mapping dans une fonction pure ?", opts: ["pour la vitesse d'affichage", "pour le tester sans base", "par obligation", "sans raison"], a: 1, exp: "Testable sans MySQL." },
+    { type: "qcm", q: "« Testé dès l'écriture » signifie…", opts: ["tester à la fin", "écrire la fonction et son test ensemble", "ne pas tester", "tester en prod"], a: 1, exp: "Simultanément." },
+    { type: "qcm", q: "Le test d'un mapping vérifie notamment…", opts: ["la vitesse", "les conversions et la gestion du NULL", "le réseau", "le rôle"], a: 1, exp: "Les cas fragiles." },
+    { type: "qcm", q: "jeu_from_fields(..., NULL, ...) doit…", opts: ["planter", "gérer le NULL (nom vide)", "renvoyer -1", "ignorer"], a: 1, exp: "Protéger contre le NULL." },
+    { type: "qcm", q: "Le DAO, après isolation, se réduit à…", opts: ["tout faire", "exécuter la requête + appeler le mapping testé", "afficher", "chiffrer"], a: 1, exp: "La logique fragile est testée à part." },
+    { type: "qcm", q: "Les tests purs s'exécutent en…", opts: ["minutes", "millisecondes", "heures", "jours"], a: 1, exp: "Rapides, sans dépendance." },
+    { type: "qcm", q: "La CI exécute les tests…", opts: ["une fois par an", "à chaque push", "jamais", "en prod"], a: 1, exp: "make test dans le pipeline." },
+    { type: "qcm", q: "Séparer pur et impur permet…", opts: ["moins de code", "de tester le cœur sans base ni écran", "plus de secrets", "rien"], a: 1, exp: "Testabilité." },
+    { type: "qcm", q: "Un test qui échoue en CI…", opts: ["est ignoré", "rend le pipeline rouge (bloque)", "déploie", "chiffre"], a: 1, exp: "make test renvoie 1." },
+    { type: "qcm", q: "Le mapping convertit row[0] (chaîne) en id via…", opts: ["strcpy", "atoi", "snprintf", "printf"], a: 1, exp: "Chaîne → entier." },
+    { type: "vf", q: "Écrire les tests après tout le code est aussi efficace que « dès l'écriture ».", a: false, exp: "Faux : tester tôt attrape les régressions immédiatement et guide la conception." },
+    { type: "qcm", q: "snprintf dans le mapping sert à…", opts: ["afficher", "copier le nom en bornant la taille", "trier", "compiler"], a: 1, exp: "Copie sûre." },
+    { type: "qcm", q: "Le job test dépend de…", opts: ["rien", "la compilation (build) et des dépendances installées", "la prod", "un secret"], a: 1, exp: "Enchaînement CI." },
+    { type: "qcm", q: "Un mapping bien testé rend le DAO…", opts: ["plus fragile", "plus fiable (la partie risquée est couverte)", "inutile", "plus lent"], a: 1, exp: "Confiance dans les conversions." },
+    { type: "qcm", q: "Le test documente…", opts: ["rien", "le comportement attendu de la fonction", "le réseau", "le Dockerfile"], a: 1, exp: "Spécification exécutable." }
+  ],
+  final: {
+    title: "Exercice final — Rendre un DAO testable",
+    intro: `<p>Ce DAO mêle SQL et conversions, difficile à tester. Analyse :</p>
+<pre class="pseudo">int jeu_lister(MYSQL *c, Jeu tab[], int max) {       // remplit tab (max cases) avec les jeux ; c = connexion à la base
+    mysql_query(c, "SELECT id,nom,prix_location FROM jeu");   // envoie la requête SQL (résultat non vérifié : à interroger…)
+    MYSQL_RES *res = mysql_store_result(c);          // récupère l'ensemble des lignes trouvées
+    MYSQL_ROW row; int n = 0;                        // "row" = une ligne ; n = compteur de jeux ajoutés
+    while ((row = mysql_fetch_row(res)) && n < max) {   // tant qu'il reste une ligne ET qu'il reste de la place
+        tab[n].id = atoi(row[0]);                    // convertit la colonne 0 (texte) en id (nombre)
+        strcpy(tab[n].nom, row[1]);                  // copie le nom SANS limite de taille ni gestion du NULL (à interroger…)
+        tab[n].prix_location = atof(row[2]);         // convertit la colonne 2 en prix à virgule
+        n++;                                         // une fiche de plus
+    }
+    return n;                                        // renvoie le nombre de jeux lus (res jamais libéré : à interroger…)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi est-ce dur à tester ?", opts: ["c'est facile", "la conversion est mêlée aux appels MySQL (il faut une base)", "trop court", "rien"], a: 1, exp: "Extraire le mapping." },
+      { type: "qcm", q: "Bug potentiel — <code>strcpy(tab[n].nom, row[1])</code> :", opts: ["aucun", "débordement si le nom dépasse, et plantage si row[1] est NULL", "trop lent", "rien"], a: 1, exp: "snprintf + test NULL." },
+      { type: "qcm", q: "Manque — le MYSQL_RES :", opts: ["rien", "mysql_free_result(res) (fuite sinon)", "un printf", "un COMMIT"], a: 1, exp: "Libérer le résultat." },
+      { type: "qcm", q: "La bonne refactorisation :", opts: ["tout laisser", "extraire jeu_from_fields (pur, testé) et l'appeler dans la boucle", "supprimer les tests", "coder en dur"], a: 1, exp: "Séparer pur/impur." },
+      { type: "qcm", q: "Après refactor, la CI teste…", opts: ["rien", "le mapping en millisecondes, sans base", "seulement la prod", "les secrets"], a: 1, exp: "Cœur testable." }
+    ],
+    solution: `<pre class="pseudo">/* pur, testé dès l'écriture */
+Jeu jeu_from_fields(const char *id, const char *nom, const char *prix) {  // convertit 3 textes en une fiche Jeu
+    Jeu j = {0};                                    // fiche vide (champs à 0)
+    j.id = atoi(id);                                // texte → entier
+    snprintf(j.nom, sizeof(j.nom), "%s", nom ? nom : "");   // copie bornée ; si nom est NULL, met "" (vide)
+    j.prix_location = atof(prix);                   // texte → nombre à virgule
+    return j;                                        // renvoie la fiche
+}
+/* DAO : requête + mapping testé + libération */
+int jeu_lister(MYSQL *c, Jeu tab[], int max) {       // lit les jeux de la base dans tab
+    if (mysql_query(c, "SELECT id,nom,prix_location FROM jeu")) return -1;  // envoie la requête ; si elle échoue, sort avec -1 (erreur)
+    MYSQL_RES *res = mysql_store_result(c);          // récupère toutes les lignes
+    if (!res) return -1;                             // si aucun résultat récupéré, sort avec -1
+    MYSQL_ROW row; int n = 0;                        // ligne courante ; compteur
+    while ((row = mysql_fetch_row(res)) &amp;&amp; n &lt; max)  // tant qu'il reste une ligne ET de la place dans tab
+        tab[n++] = jeu_from_fields(row[0], row[1], row[2]);   // convertit la ligne via le mapping testé, puis passe à la case suivante
+    mysql_free_result(res);                          // LIBÈRE la mémoire du résultat (évite une fuite mémoire : mémoire réservée mais jamais rendue)
+    return n;                                        // renvoie le nombre de jeux lus
+}</pre>
+<p>Le mapping devient pur et testé ; le DAO l'orchestre. Demain : la couche service, sous CI.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projcpro-l05", title: "Mapping pur + son test", level: 3,
+    statement: "Écris une fonction pure utilisateur_from_fields(const char *id, const char *login, const char *role) qui construit un Utilisateur (id via atoi, login via snprintf borné, role via (Role)atoi). Ajoute deux assertions CHECK qui la testent (dont un cas login NULL).",
+    hints: [
+      "Utilisateur u = {0}; puis remplir chaque champ.",
+      "snprintf(u.login, sizeof(u.login), \"%s\", login ? login : \"\").",
+      "CHECK(...id == ...); CHECK(...login NULL -> chaîne vide)."
+    ],
+    solution: "#include <stdlib.h>   // pour atoi (texte -> nombre)\n#include <stdio.h>    // pour snprintf (copie de texte bornee)\n\nUtilisateur utilisateur_from_fields(const char *id, const char *login, const char *role) {  // 3 textes -> une fiche Utilisateur\n    Utilisateur u = {0};                    // fiche vide (tous les champs a 0)\n    u.id = atoi(id);                        // convertit le texte id en entier\n    snprintf(u.login, sizeof(u.login), \"%s\", login ? login : \"\");   // copie le login sans depasser sa taille ; si NULL, met une chaine vide\n    u.role = (Role)atoi(role);              // convertit le texte role en nombre, puis en type Role\n    return u;                               // renvoie la fiche remplie\n}\n\n// tests (harnais CHECK)\n// CHECK(utilisateur_from_fields(\"3\", \"aya\", \"2\").id == 3);       // l'id \"3\" devient 3\n// CHECK(utilisateur_from_fields(\"3\", \"aya\", \"2\").role == ADMIN);  // le role \"2\" correspond a ADMIN\n// CHECK(utilisateur_from_fields(\"3\", NULL, \"0\").login[0] == '\\0');  // login NULL -> chaine vide",
+    note: "La fonction est pure (aucun MySQL), donc testable en millisecondes et exécutable en CI. Écrire les CHECK en même temps documente le comportement, y compris le cas limite du login NULL." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

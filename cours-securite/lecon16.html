@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Sécurité des conteneurs et de l'infrastructure",
+  subtitle: "La même infra que le cours Docker, regardée avec les yeux d'un attaquant.",
+  theory: `
+<h3>1. Un autre regard sur ce qu'on a déjà durci</h3>
+<p>Un <strong>conteneur</strong> est une boîte isolée qui fait tourner une application avec juste ce qu'il lui faut (voir le cours Docker). L'<strong>infrastructure</strong>, c'est l'ensemble des machines, réseaux et services qui font tourner ton site. Le cours Docker a déjà durci l'image. Ici, la question change de point de vue : <strong>que puis-je atteindre depuis l'extérieur, et jusqu'où puis-je aller si j'entre ?</strong> C'est l'audit d'infrastructure vu par un attaquant.</p>
+
+<h3>2. Le conteneur : moindre privilège</h3>
+<p>Le <strong>moindre privilège</strong> consiste à ne donner à chaque composant que les droits strictement nécessaires. <strong>root</strong> est le compte tout-puissant d'un système ; faire tourner un conteneur en <strong>non-root</strong> limite les dégâts si un attaquant s'en échappe (une « évasion » de conteneur).</p>
+<pre class="pseudo">user: ...                       # tourner en NON-root (Docker l.16) : une evasion ne donne pas root
+read_only: true                 # systeme de fichiers non modifiable -> un malware ne peut rien y installer
+tmpfs: [/tmp]                    # sauf /tmp, qui vit en memoire vive (temporaire)
+cap_drop: [ALL]                 # retire toutes les "capacites" du noyau (droits speciaux) superflues
+security_opt: [no-new-privileges:true]   # interdit de gagner de nouveaux droits pendant l'execution
+# JAMAIS : --privileged, montage du socket Docker (= donner le controle de l'hote)</pre>
+<p>Une <strong>capacité</strong> (capability) est un droit précis accordé par le noyau du système ; en retirer le maximum réduit ce qu'un intrus peut faire. L'<strong>hôte</strong> est la machine physique qui héberge les conteneurs. Le <strong>socket Docker</strong> est le point de commande de Docker : le monter dans un conteneur revient à lui confier les clés de toute la machine.</p>
+
+<h3>3. La surface réseau : un seul point d'entrée</h3>
+<p>Un <strong>port publié</strong> est une porte réseau ouverte vers l'extérieur. Moins il y en a, mieux c'est : idéalement, un seul point d'entrée public.</p>
+<pre class="pseudo">proxy : SEUL conteneur publie (443, HTTPS) -> le point d'entree unique   # 443 = le port standard du HTTPS
+app   : PAS de port public -> joignable seulement par le proxy (reseau interne)   # invisible depuis Internet
+bdd   : AUCUN port (Docker l.9) -> invisible de l'exterieur              # la base ne s'expose jamais
+# on ne peut pas attaquer une porte qui n'existe pas.                    # la meilleure porte est celle qui n'existe pas</pre>
+
+<h3>4. La segmentation</h3>
+<p>La <strong>segmentation</strong> consiste à découper le réseau en zones cloisonnées, pour qu'un composant compromis ne puisse pas atteindre tout le reste. On appelle « rayon d'explosion » (blast radius) l'étendue des dégâts possibles depuis un point d'entrée.</p>
+<pre class="pseudo">Reseaux separes : le proxy parle a l'app, l'app parle a la base,        # chacun ne voit que son voisin direct
+mais le proxy ne parle PAS directement a la base.                       # pas de raccourci vers les donnees
+-> si le proxy est compromis, il n'atteint pas directement les donnees. # le cloisonnement contient l'intrusion
+Principe : cloisonner pour limiter la propagation (blast radius).       # reduire le rayon d'explosion</pre>
+
+<h3>5. La moindre surface, partout</h3>
+<p><strong>phpMyAdmin</strong> (ou adminer) est un outil web pratique pour gérer une base — mais l'exposer en production, c'est offrir un accès direct à toutes les données. La <strong>moindre surface</strong> : ne laisser ouvert que l'indispensable. Un « bucket » est un espace de stockage de fichiers dans le cloud ; laissé public par erreur, il expose tout son contenu.</p>
+<pre class="pseudo">✘ un phpMyAdmin expose "pour deboguer" = porte ouverte permanente       # un outil de debug n'a rien a faire en prod
+✘ un service en plus "au cas ou" = surface d'attaque en plus            # chaque service ajoute est une cible de plus
+✘ des images non officielles/non scannees (leçon 12)                    # code d'origine incertaine
+✔ images officielles epinglees + scannees, rien d'expose sans raison,   # ne garder que le necessaire, verifie
+  chaque port/capacite/service justifie                                 # tout ce qui reste doit avoir une raison
+La securite de l'infra = refermer ce qu'on n'utilise pas.               # le principe central</pre>
+<div class="warn">Le socle du cloud/conteneur n'est jamais « sécurisé par défaut » : un bucket de stockage public, un port de base de données ouvert sur Internet, un panneau d'admin par défaut — ce sont les fuites les plus massives de l'histoire, et toutes évitables. Vérifier ce qui est exposé fait partie de chaque déploiement.</div>
+<div class="tip">Cette leçon ne réécrit pas le cours Docker : elle le relit en se demandant « et si j'étais l'attaquant ? ». Le durcissement de l'image (moyen) et la moindre surface réseau (accès) se combinent : difficile d'entrer, et peu à atteindre si on entre.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'angle de cette leçon :", opts: ["Réécrire Docker", "Que puis-je atteindre de l'extérieur, jusqu'où si j'entre ?", "Le CSS", "Rien"], a: 1, exp: "Regard d'attaquant." },
+    { type: "qcm", q: "Un conteneur non-root fait qu'une évasion…", opts: ["Donne root sur l'hôte", "Ne donne pas directement root", "Est impossible", "Chiffre"], a: 1, exp: "Moindre privilège (Docker l.16)." },
+    { type: "qcm", q: "read_only: true empêche…", opts: ["La lecture", "La modification du système de fichiers du conteneur", "Le réseau", "Les logs"], a: 1, exp: "Un malware ne s'installe pas." },
+    { type: "qcm", q: "cap_drop: [ALL] :", opts: ["Ajoute des capacités", "Retire les capacités noyau superflues", "Ouvre des ports", "Chiffre"], a: 1, exp: "Surface réduite." },
+    { type: "qcm", q: "--privileged ou le socket Docker monté…", opts: ["Sont anodins", "Donnent le contrôle de l'hôte : à proscrire", "Accélèrent", "Chiffrent"], a: 1, exp: "Danger maximal." },
+    { type: "qcm", q: "Le seul conteneur publié devrait être…", opts: ["La base", "Le proxy (443, HTTPS)", "Tous", "L'app directement"], a: 1, exp: "Point d'entrée unique." },
+    { type: "qcm", q: "MySQL en production est…", opts: ["Publié sur 3306", "Sans port public : invisible de l'extérieur (Docker l.9)", "Sur Internet", "En latest"], a: 1, exp: "Pas de porte." },
+    { type: "qcm", q: "La segmentation réseau limite…", opts: ["La vitesse", "La propagation si un composant est compromis (blast radius)", "Le CSS", "Les logs"], a: 1, exp: "Cloisonner." },
+    { type: "qcm", q: "Si le proxy est compromis et bien segmenté…", opts: ["Il atteint tout", "Il n'atteint pas directement la base", "Rien ne change", "L'app tombe"], a: 1, exp: "Cloisonnement." },
+    { type: "qcm", q: "Un phpMyAdmin exposé « pour déboguer » est…", opts: ["Pratique et sûr", "Une porte ouverte permanente", "Recommandé", "Chiffré"], a: 1, exp: "Surface en trop." },
+    { type: "qcm", q: "Un service « au cas où » ajoute…", opts: ["De la sécurité", "De la surface d'attaque", "De la vitesse", "Rien"], a: 1, exp: "Moindre surface." },
+    { type: "qcm", q: "Les images utilisées doivent être…", opts: ["N'importe lesquelles", "Officielles, épinglées, scannées (leçon 12)", "En latest", "Non vérifiées"], a: 1, exp: "Chaîne d'appro." },
+    { type: "vf", q: "Le cloud/conteneur est « sécurisé par défaut ».", a: false, exp: "Buckets publics, ports ouverts : à vérifier." },
+    { type: "qcm", q: "La sécurité de l'infra se résume à…", opts: ["Ouvrir plus de ports", "Refermer ce qu'on n'utilise pas (moindre surface)", "Plus de services", "Le hasard"], a: 1, exp: "Le principe central." },
+    { type: "vf", q: "Durcir l'image (moyen) et réduire la surface (accès) se combinent.", a: true, exp: "Difficile d'entrer, peu à atteindre." }
+  ],
+  final: {
+    title: "Exercice final — L'audit d'infrastructure",
+    intro: `<p>On repasse l'infra de la Ludothèque au crible sécurité.</p>`,
+    questions: [
+      { type: "qcm", q: "Le conteneur app :", opts: ["non-root, read_only, cap_drop ALL, no-new-privileges", "root pour simplifier", "--privileged", "socket Docker monté"], a: 0, exp: "Moindre privilège." },
+      { type: "qcm", q: "La base :", opts: ["Aucun port public (réseau interne)", "publiée sur 3306", "sur Internet", "en latest"], a: 0, exp: "Invisible." },
+      { type: "qcm", q: "Le point d'entrée :", opts: ["Le proxy seul, en 443", "chaque conteneur", "la base", "aucun"], a: 0, exp: "Surface minimale." },
+      { type: "qcm", q: "Les services en plus :", opts: ["Retirés s'ils ne sont pas justifiés", "ajoutés au cas où", "tous exposés", "ignorés"], a: 0, exp: "Moindre surface." },
+      { type: "vf", q: "On ne peut pas attaquer une porte qui n'existe pas.", a: true, exp: "Le principe." }
+    ],
+    solution: `<pre class="pseudo"># Conteneur app — moindre privilege (Docker l.16)
+    user: ...            read_only: true      tmpfs: [/tmp]           # non-root + FS non modifiable + /tmp en memoire
+    cap_drop: [ALL]      security_opt: [no-new-privileges:true]        # capacites retirees + pas d'escalade de droits
+    # jamais --privileged ni socket Docker                            # sinon = controle total de l'hote
+
+# Surface reseau (Docker l.9)
+    proxy : 443 publie (seul point d'entree, HTTPS)                    # l'unique porte publique
+    app   : pas de port public                                        # joignable seulement en interne
+    bdd   : aucun port -> invisible                                   # la base ne s'expose jamais
+
+# Segmentation : proxy -> app -> base, pas de raccourci                # cloisonner les zones reseau
+# Images officielles epinglees + scannees (leçon 12) ; rien d'expose sans raison   # moindre surface</pre>
+<p>L'infra est refermée. Demain : la sécurité dans le pipeline — DevSecOps.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton audit d'infrastructure…",
+  items: [
+  { id: "secu-l16", title: "L'audit d'exposition", level: 3,
+    statement: "Conduis l'audit d'exposition de l'infrastructure de la Ludothèque : 1) l'inventaire de ce qui est joignable de l'extérieur (ports publiés, services), 2) pour chacun, la question « est-ce justifié ? », 3) la vérification du durcissement des conteneurs (commandes docker inspect), 4) les corrections d'au moins deux problèmes trouvés (ex. base exposée, service de debug), et la règle du moindre privilège/moindre surface.",
+    hints: [
+      "Lister les ports publiés : docker compose config | grep ports, et un scan de ports du serveur.",
+      "docker inspect --format pour vérifier Privileged, ReadonlyRootfs, User.",
+      "Deux classiques à corriger : un -p 3306 traînant, un adminer/phpMyAdmin exposé."
+    ],
+    solution: "AUDIT D'EXPOSITION — infrastructure Ludothèque\n\n1. INVENTAIRE DE L'EXPOSITION EXTERNE\ndocker compose config | grep -A2 ports        # ports publiés déclarés\nss -tlnp / nmap depuis l'extérieur            # ce qui répond vraiment\n-> trouvé : proxy 443 (OK), MAIS bdd 3306 publié (✘), adminer 8081 exposé (✘)\n\n2. JUSTIFICATION\n- proxy 443       : OUI, point d'entrée public légitime\n- bdd 3306        : NON, aucune raison d'exposer la base -> à fermer\n- adminer 8081    : NON, outil de debug -> jamais en production\n\n3. DURCISSEMENT DES CONTENEURS (vérification)\ndocker inspect app --format \\\n  'priv={{.HostConfig.Privileged}} ro={{.HostConfig.ReadonlyRootfs}} user={{.Config.User}}'\n-> priv=false ro=true user=ludo   (conforme, Docker l.16)\ndocker inspect app --format '{{.HostConfig.CapDrop}}'   -> [ALL] (OK)\n\n4. CORRECTIONS\n# a. base : retirer le mapping de port (elle reste sur le réseau interne)\n#    compose.yaml -> supprimer 'ports: [\"3306:3306\"]' du service bdd\n# b. adminer : le retirer de la prod (compose.override de dev uniquement)\n# c. re-scanner de l'extérieur : seul 443 doit répondre\n\nRÈGLE : moindre surface (rien d'exposé sans justification) + moindre\nprivilège (non-root, capacités retirées). Chaque port ouvert est une\ndette de sécurité à justifier, sinon à fermer.",
+    note: "Le scan depuis l'EXTÉRIEUR (nmap) est essentiel : le compose déclare une intention, mais seul un scan réel montre ce qui répond vraiment — un port oublié, un service de debug laissé en prod. Les deux classiques corrigés ici (base exposée, adminer) sont responsables d'innombrables fuites réelles : la moindre surface n'est pas de la théorie, c'est la première chose qu'un attaquant énumère." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "La couche service et les règles métier",
+  subtitle: "Le cœur de l'application : où vivent les décisions.",
+  theory: `
+<h3>1. Le rôle du service</h3>
+<p>Le <strong>service</strong> est la couche qui contient la <strong>logique métier</strong> : les décisions et les règles propres à l'activité (peut-on louer ? reste-t-il du stock ? quel prix ?), indépendamment de la façon dont elles sont demandées (web) ou stockées (base). C'est le cerveau de l'application. Il utilise le <code>DbContext</code> pour lire/écrire et applique les règles de la Ludothèque.</p>
+<pre class="pseudo">public class CatalogueService {                     // classe service : le cerveau du catalogue
+    private readonly AppDbContext _db;              // référence vers la base ; "readonly" = fixée une fois, ne change plus
+    public CatalogueService(AppDbContext db) =&gt; _db = db;  // constructeur : reçoit le DbContext et le range dans _db
+    // méthodes métier…                             // (les décisions viendront ici)
+}</pre>
+<p>Le <strong>constructeur</strong> est la méthode spéciale exécutée à la création de l'objet, comme le formulaire rempli à l'ouverture d'un compte. Ici il reçoit le <code>AppDbContext</code> tout prêt et le garde dans le champ <code>_db</code>. Le mot <code>private</code> veut dire « réservé à l'intérieur de la classe » (personne dehors n'y touche) ; <code>readonly</code> (« en lecture seule ») garantit qu'une fois reçu, ce lien vers la base ne sera plus remplacé.</p>
+
+<h3>2. L'injection de dépendances</h3>
+<p>On ne fabrique pas le service à la main : on le déclare une fois, et ASP.NET Core le fournit automatiquement là où il faut (c'est l'<strong>injection de dépendances</strong>).</p>
+<pre class="pseudo">// Program.cs                                       // fichier de démarrage de l'application
+builder.Services.AddScoped&lt;CatalogueService&gt;();     // enregistre le service dans le conteneur d'injection</pre>
+<p>On enregistre le service ; ASP.NET Core l'injecte ensuite dans les contrôleurs qui en ont besoin. <code>AddScoped</code> signifie « <strong>une instance par requête HTTP</strong> » (une <strong>instance</strong> = un exemplaire de l'objet créé en mémoire) : chaque demande d'un utilisateur reçoit son propre service tout neuf, réutilisé pendant toute la durée de cette demande, exactement comme le DbContext.</p>
+
+<h3>3. Des méthodes qui portent le sens métier</h3>
+<p>On nomme les méthodes avec le vocabulaire du métier, pour que le code se lise comme une phrase :</p>
+<pre class="pseudo">public Task&lt;List&lt;Jeu&gt;&gt; JeuxLouablesAsync() =&gt;                 // méthode "les jeux louables" ; renvoie (plus tard) une liste de Jeu
+    _db.Jeux.Where(j =&gt; j.StockLocation &gt; 0).ToListAsync();  // filtre ceux dont le stock de location > 0, puis exécute
+
+public async Task&lt;Jeu&gt; ParIdAsync(int id) =&gt;                 // méthode "le jeu par son numéro (id)"
+    await _db.Jeux.FindAsync(id)                            // cherche le jeu par sa clé primaire
+        ?? throw new KeyNotFoundException("Jeu introuvable");  // s'il n'existe pas (résultat vide), lève une erreur explicite</pre>
+<p>Un <strong>Task</strong> est une « promesse de résultat » pour un travail asynchrone : la méthode promet de fournir plus tard une <code>List&lt;Jeu&gt;</code> ou un <code>Jeu</code>. La flèche <code>=&gt;</code> ici est un raccourci d'écriture (méthode « sur une expression ») : le corps de la méthode tient en une seule expression. <code>FindAsync(id)</code> cherche une fiche par sa <strong>clé primaire</strong> et renvoie « rien » (null) si elle n'existe pas. L'opérateur <code>??</code> se lit « sinon » : « prends le jeu trouvé, <em>sinon</em> lève une exception ». Une <strong>exception</strong> est un signal d'erreur qui interrompt le cours normal, comme tirer la sonnette d'alarme quand quelque chose cloche.</p>
+
+<h3>4. Une transaction quand plusieurs écritures sont liées</h3>
+<pre class="pseudo">public async Task AjouterStockLocationAsync(int id, int quantite) {   // ajoute "quantite" au stock de location du jeu "id"
+    var jeu = await _db.Jeux.FindAsync(id) ?? throw new KeyNotFoundException();  // récupère le jeu, ou erreur s'il est absent
+    jeu.StockLocation += quantite;                                   // augmente son stock de location (+= : ajoute à l'existant)
+    await _db.SaveChangesAsync();   // transaction implicite                     // enregistre le changement en base
+}</pre>
+<p>Une <strong>transaction</strong> regroupe des écritures qui doivent réussir ensemble ou pas du tout. Pour une seule opération, <code>SaveChangesAsync</code> suffit (il crée une transaction <em>implicite</em>, automatique). <code>+=</code> est un raccourci : <code>jeu.StockLocation += quantite</code> veut dire <code>jeu.StockLocation = jeu.StockLocation + quantite</code>. Pour plusieurs écritures liées (louer, acheter), on ouvrira une transaction <strong>explicite</strong> (leçon 12).</p>
+
+<h3>5. Pourquoi pas dans le controller ?</h3>
+<div class="warn">Mettre la logique dans le <strong>controller</strong> (la couche d'accueil des requêtes web) le rendrait gros, non réutilisable et difficile à tester. En isolant les règles dans le service, on peut le tester sans passer par le web (leçon 17) et le réutiliser depuis l'API <em>et</em> depuis les pages du site.</div>
+<div class="tip">Règle simple : le controller traduit HTTP ↔ appels de méthodes ; le service décide ; le DbContext persiste (enregistre durablement). Les durées de vie (<code>Scoped</code> = « par requête ») garantissent une cohérence à l'intérieur de chaque requête.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Le service contient…", opts: ["Le HTML", "La logique métier", "Le SQL brut", "La configuration réseau"], a: 1, exp: "Les décisions." },
+    { type: "qcm", q: "Le DbContext arrive au service par…", opts: ["un new", "injection (constructeur)", "une variable globale", "un fichier"], a: 1, exp: "DI." },
+    { type: "qcm", q: "Enregistrer le service :", opts: ["builder.Services.AddScoped<CatalogueService>()", "new Service()", "static", "rien"], a: 0, exp: "Conteneur DI." },
+    { type: "qcm", q: "AddScoped signifie…", opts: ["Une instance globale", "Une instance par requête HTTP", "Jamais instancié", "Un singleton"], a: 1, exp: "Portée requête." },
+    { type: "qcm", q: "ParIdAsync lève une exception si…", opts: ["Le jeu existe", "Le jeu est introuvable", "Toujours", "Jamais"], a: 1, exp: "?? throw." },
+    { type: "qcm", q: "Pour UNE écriture, il suffit de…", opts: ["Une transaction explicite", "SaveChangesAsync (transaction implicite)", "rien", "un cache"], a: 1, exp: "Implicite." },
+    { type: "qcm", q: "Pour plusieurs écritures liées, on ouvrira…", opts: ["Rien", "Une transaction explicite (leçon 12)", "un cache", "un index"], a: 1, exp: "Transaction." },
+    { type: "qcm", q: "JeuxLouablesAsync traduit…", opts: ["Une requête HTTP", "L'intention métier « les jeux qu'on peut louer »", "Un DTO", "Un test"], a: 1, exp: "Sens métier." },
+    { type: "qcm", q: "Mettre le métier dans le controller…", opts: ["Est idéal", "Le rend gros, non réutilisable, dur à tester", "Accélère", "Sécurise"], a: 1, exp: "Anti-pattern." },
+    { type: "qcm", q: "Le service peut alimenter…", opts: ["Seulement l'API", "L'API et les pages web", "Rien", "La base seule"], a: 1, exp: "Réutilisable." },
+    { type: "vf", q: "Isoler le métier permet de le tester sans HTTP.", a: true, exp: "Testabilité." },
+    { type: "qcm", q: "readonly AppDbContext _db …", opts: ["Est inutile", "Est injecté et ne change plus", "Crée la base", "Trie"], a: 1, exp: "Dépendance injectée." },
+    { type: "vf", q: "AddScoped crée une instance par requête, comme le DbContext.", a: true, exp: "Cohérence par requête." },
+    { type: "qcm", q: "Le controller, lui, se contente d'…", opts: ["Écrire en base", "Appeler les méthodes du service", "Faire du SQL", "Gérer les transactions"], a: 1, exp: "HTTP ↔ service." },
+    { type: "qcm", q: "FindAsync(id) …", opts: ["Trie", "Cherche par clé primaire (null si absent)", "Supprime", "Compte"], a: 1, exp: "Recherche par PK." }
+  ],
+  final: {
+    title: "Exercice final — Le CatalogueService",
+    intro: `<p>On construit le service du catalogue.</p>`,
+    questions: [
+      { type: "qcm", q: "Recevoir le DbContext :", opts: ["new AppDbContext()", "par le constructeur (injection)", "static", "un fichier"], a: 1, exp: "Injection." },
+      { type: "qcm", q: "L'enregistrer :", opts: ["builder.Services.AddScoped<CatalogueService>()", "rien", "new", "static"], a: 0, exp: "DI." },
+      { type: "qcm", q: "Renvoyer les jeux louables :", opts: ["_db.Jeux.Where(j => j.StockLocation > 0).ToListAsync()", "_db.Jeux.All()", "SELECT", "rien"], a: 0, exp: "LINQ." },
+      { type: "qcm", q: "Persister une modif de stock :", opts: ["await _db.SaveChangesAsync()", "_db.Flush()", "rien", "Commit manuel"], a: 0, exp: "SaveChanges." },
+      { type: "vf", q: "Isoler le métier dans le service permet de le tester sans HTTP ni base réelle.", a: true, exp: "Testabilité." }
+    ],
+    solution: `<pre class="pseudo">public class CatalogueService {                       // service : le cerveau du catalogue
+    private readonly AppDbContext _db;                // accès à la base, injecté et fixé
+    public CatalogueService(AppDbContext db) =&gt; _db = db;  // constructeur : reçoit le DbContext
+
+    public Task&lt;List&lt;Jeu&gt;&gt; JeuxLouablesAsync() =&gt;                 // "les jeux louables"
+        _db.Jeux.Where(j =&gt; j.StockLocation &gt; 0).ToListAsync();  // filtre stock location > 0
+
+    public async Task&lt;Jeu&gt; ParIdAsync(int id) =&gt;                 // "le jeu par son id"
+        await _db.Jeux.FindAsync(id) ?? throw new KeyNotFoundException();  // trouvé, sinon erreur
+
+    public async Task AjouterStockLocationAsync(int id, int quantite) {  // ajoute du stock de location
+        var jeu = await ParIdAsync(id);              // récupère le jeu (ou erreur)
+        jeu.StockLocation += quantite;               // augmente son stock de location
+        await _db.SaveChangesAsync();                // enregistre en base
+    }
+}
+// Program.cs : builder.Services.AddScoped&lt;CatalogueService&gt;();   // enregistre le service (une instance par requête)</pre>
+<p>Le cœur métier est en place. Demain : l'exposer via une API REST.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service métier…",
+  items: [
+  { id: "projcsharp-l6", title: "Le service de gestion des stocks", level: 3,
+    statement: "Écris un StockService (injecté avec AppDbContext) avec deux méthodes async : AjouterStockVenteAsync(id, quantite) et AjouterStockLocationAsync(id, quantite), qui modifient le bon stock du jeu et sauvegardent. Lève une exception si le jeu est introuvable. Indique la ligne d'enregistrement dans Program.cs.",
+    hints: [
+      "public StockService(AppDbContext db) => _db = db;",
+      "var jeu = await _db.Jeux.FindAsync(id) ?? throw new KeyNotFoundException();",
+      "jeu.StockVente += quantite; await _db.SaveChangesAsync(); ; builder.Services.AddScoped<StockService>()."
+    ],
+    solution: "public class StockService {                       // service dedie a la gestion des stocks\n    private readonly AppDbContext _db;            // acces a la base, injecte et fixe\n    public StockService(AppDbContext db) => _db = db;   // constructeur : recoit le DbContext\n\n    public async Task AjouterStockVenteAsync(int id, int quantite) {   // ajoute du stock de vente\n        var jeu = await _db.Jeux.FindAsync(id)    // cherche le jeu par sa cle primaire\n            ?? throw new KeyNotFoundException(\"Jeu introuvable\");   // sinon : erreur explicite\n        jeu.StockVente += quantite;               // augmente le stock de vente\n        await _db.SaveChangesAsync();             // enregistre en base (transaction implicite)\n    }\n\n    public async Task AjouterStockLocationAsync(int id, int quantite) {   // ajoute du stock de location\n        var jeu = await _db.Jeux.FindAsync(id)    // cherche le jeu par sa cle primaire\n            ?? throw new KeyNotFoundException(\"Jeu introuvable\");   // sinon : erreur explicite\n        jeu.StockLocation += quantite;            // augmente le stock de location\n        await _db.SaveChangesAsync();             // enregistre en base\n    }\n}\n\n// Program.cs\n// builder.Services.AddScoped<StockService>();   // enregistre le service (une instance par requete)",
+    note: "Le service isole les deux stocks distincts de la Ludothèque. EF Core suit les modifications de l'entité chargée ; SaveChangesAsync génère l'UPDATE en une transaction implicite. Enregistré en Scoped, le service (et son DbContext) partage la même portée que la requête HTTP. Il servira l'espace vendeur (leçon 16)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

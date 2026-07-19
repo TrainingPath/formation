@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Déploiement automatisé : staging, production, santé",
+  subtitle: "Le serveur se met à jour tout seul — et on le vérifie.",
+  theory: `
+<h3>1. La route de santé</h3>
+<p>La <strong>route de santé</strong> (<em>health check</em>) est une URL spéciale (<code>/health</code>) qu'un outil interroge pour vérifier que l'application va bien. Ici elle exécute <code>select 1</code> — une mini-requête qui traverse jusqu'à la base — et renvoie le code <strong>200</strong> (« tout va bien ») si ça répond, ou <strong>503</strong> (« service indisponible ») sinon. C'est le stéthoscope du serveur.</p>
+<pre class="pseudo">// routes/web.php
+Route::get('/health', function () {                     // GET /health : vérifie que l'app va bien
+    try { DB::select('select 1'); return response()->json(['statut' => 'ok']); }   // ESSAIE d'interroger la base ; si ok -> {"statut":"ok"} (200)
+    catch (\\Throwable $e) { return response()->json(['statut' => 'ko'], 503); }    // sinon -> {"statut":"ko"} avec le code 503 (indisponible)
+});                                                     // fin de la route
+// traverse jusqu'à la base : 200 si tout répond, 503 sinon</pre>
+
+<h3>2. Le job de déploiement (SSH)</h3>
+<p><strong>Déployer</strong>, c'est mettre la nouvelle version en service sur le serveur. Le pipeline s'y connecte par <strong>SSH</strong> (un canal chiffré d'administration à distance) à l'aide d'une <strong>clé privée</strong> stockée en secret ; <code>chmod 600</code> restreint les droits sur ce fichier de clé. <code>StrictHostKeyChecking=accept-new</code> mémorise l'empreinte du serveur au premier contact et refuse tout changement ensuite — une protection contre l'attaque de <strong>l'homme du milieu</strong> (<em>MITM</em>, quelqu'un qui se ferait passer pour le serveur). Sur place, le pipeline rejoue les gestes du cours Docker : <code>compose pull</code> (télécharger la nouvelle image), <code>up -d</code> (relancer), <code>migrate --force</code> (appliquer les migrations sans confirmation, car un pipeline n'a pas de clavier), <code>config:cache</code> (optimiser).</p>
+<pre class="pseudo">  deployer-production:                     # job de déploiement en production
+    needs: publier                         # ne démarre qu'après le job "publier" (image au registre)
+    environment: production                # approbation humaine requise
+    steps:                                 # ses étapes
+      - run: echo "\${{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # écrit la clé SSH secrète et restreint ses droits
+      - run: |                             # se connecte au serveur et y exécute les commandes
+          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '
+            cd /srv/ludotheque &&          # va dans le dossier du projet
+            echo "VERSION=\${GITHUB_REF_NAME#v}" > .env.version &&   # note la version à déployer (lue par le compose)
+            docker compose pull &&         # télécharge la nouvelle image du registre
+            docker compose up -d &&        # relance les conteneurs avec cette image
+            docker compose exec -T app php artisan migrate --force &&   # applique les migrations (sans confirmation)
+            docker compose exec -T app php artisan config:cache'   # met la config en cache (perf prod)
+      - run: sleep 10 && curl -fs https://ludotheque.example.com/health   # attend puis vérifie la santé (rouge si KO)</pre>
+<p>Le serveur ne fait que <code>pull</code>, <code>up -d</code>, <code>migrate --force</code> — ce que tu ferais à la main, exécuté par un robot avec une clé qui ne sait <strong>que</strong> déployer.</p>
+
+<h3>3. Deux environnements</h3>
+<p>Deux <strong>environnements</strong> se partagent le travail. Le <strong>staging</strong> (préproduction) reçoit <em>automatiquement</em> chaque merge sur main : c'est la répétition générale, là où les problèmes doivent survenir avant les vrais clients. La <strong>production</strong> (le site réel) exige, elle, un <em>tag</em> de version ET une <strong>approbation</strong> humaine — un clic de validation — avant tout déploiement.</p>
+<pre class="pseudo">merge sur main -> deployer-staging (automatique) -> recette
+tag v1.0.0     -> publier -> ⏸ approbation -> deployer-production
+# staging reçoit tout, tout de suite ; la prod exige un tag ET un clic humain.</pre>
+
+<h3>4. Vérifier — sinon ce n'est pas déployé</h3>
+<p>Déployer sans vérifier, ce n'est pas déployer. <code>curl -fs …/health</code> interroge la route de santé ; l'option <code>-f</code> fait <em>échouer</em> la commande (et donc rendre le job rouge) si la réponse n'est pas un succès (code 2xx). Un déploiement raté n'est ainsi jamais silencieux : l'équipe est prévenue.</p>
+<pre class="pseudo">curl -fs .../health     # -f échoue si != 2xx -> le job devient rouge
+# un déploiement raté n'est pas silencieux : l'équipe est notifiée.</pre>
+
+<h3>5. Le serveur n'a besoin que de peu</h3>
+<div class="warn"><code>migrate --force</code> autorise la migration en production sans confirmation interactive (le pipeline n'a pas de terminal). <code>StrictHostKeyChecking=accept-new</code> accepte la clé du serveur au premier contact mais refuse tout changement ultérieur (anti-MITM). La clé SSH appartient à un utilisateur <code>deploy</code> qui ne peut que lancer compose — pas root.</div>
+<div class="tip">De <code>git push origin v1.0.0</code> au site à jour et vérifié : zéro connexion manuelle au serveur. Le déploiement rejoue au robot le geste du cours Docker (pull, up, migrate), avec la vérification <code>/health</code> qui transforme « c'est parti » en « c'est en ligne et ça répond ».</div>`,
+  exercises: [
+    { type: "qcm", q: "La route /health vérifie…", opts: ["Le CSS", "Que la base répond (select 1) -> 200 ou 503", "Le hachage", "Le registre"], a: 1, exp: "Traverse jusqu'à la base." },
+    { type: "qcm", q: "Le job de déploiement dépend de…", opts: ["Rien", "needs: publier (image au registre d'abord)", "needs: tests", "main"], a: 1, exp: "L'ordre." },
+    { type: "qcm", q: "Sur le serveur, le job fait…", opts: ["Un rebuild complet", "pull, up -d, migrate --force", "rm -rf", "git clone"], a: 1, exp: "Le geste Docker, robotisé." },
+    { type: "qcm", q: "migrate --force sert à…", opts: ["Supprimer la base", "Migrer en prod sans confirmation interactive", "Chiffrer", "Rien"], a: 1, exp: "Le pipeline n'a pas de terminal." },
+    { type: "qcm", q: "La clé SSH appartient à…", opts: ["root", "un utilisateur deploy limité à compose", "l'admin GitHub", "tout le monde"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "config:cache après déploiement…", opts: ["Ralentit", "Met la config en cache (perf prod)", "Supprime .env", "Chiffre"], a: 1, exp: "Optimisation prod." },
+    { type: "qcm", q: "StrictHostKeyChecking=accept-new…", opts: ["Accepte tout, toujours", "Accepte la clé au 1er contact, refuse tout changement", "Refuse tout", "Désactive SSH"], a: 1, exp: "Anti-MITM." },
+    { type: "qcm", q: "Staging se déploie…", opts: ["Sur approbation", "Automatiquement au merge sur main", "Sur tag", "Jamais"], a: 1, exp: "Répétition générale." },
+    { type: "qcm", q: "La production se déploie…", opts: ["À chaque commit", "Sur tag, APRÈS approbation humaine", "Jamais", "La nuit"], a: 1, exp: "environment production." },
+    { type: "qcm", q: "curl -fs /health …", opts: ["Ignore l'échec", "Échoue si != 2xx -> job rouge", "Chiffre", "Accélère"], a: 1, exp: "Déployé = vérifié." },
+    { type: "vf", q: "Un déploiement raté par le pipeline passe inaperçu.", a: false, exp: "Job rouge + notification." },
+    { type: "qcm", q: "Le serveur a besoin de…", opts: ["PHP + code source", "Docker + compose.yaml + .env (l'image vient du registre)", "Un IDE", "Le dépôt complet"], a: 1, exp: "pull + up -d." },
+    { type: "qcm", q: "La version déployée change en…", opts: ["Rebuild serveur", "Changeant .env.version (lu par le compose) + pull/up", "Éditant l'image", "Reboot"], a: 1, exp: "image: ...:${VERSION}." },
+    { type: "qcm", q: "De git push origin v1.0.0 au site à jour :", opts: ["Une soirée", "Zéro connexion manuelle au serveur", "Un admin la nuit", "Un ftp"], a: 1, exp: "Automatisé." },
+    { type: "vf", q: "Le déploiement rejoue au robot le geste du cours Docker (pull, up, migrate).", a: true, exp: "Automatisation." }
+  ],
+  final: {
+    title: "Exercice final — Le serveur qui se met à jour seul",
+    intro: `<p>Le tag poussé, l'image publiée, et le serveur suit — tout seul.</p>`,
+    questions: [
+      { type: "qcm", q: "La route de santé :", opts: ["select 1 -> 200 / 503", "un ping", "le CSS", "rien"], a: 0, exp: "Base incluse." },
+      { type: "qcm", q: "Le job dépend de :", opts: ["needs: publier", "rien", "needs: tests", "main"], a: 0, exp: "Image d'abord." },
+      { type: "qcm", q: "Sur le serveur :", opts: ["pull -> up -d -> migrate --force", "rebuild", "rsync du code", "réinstallation"], a: 0, exp: "Le geste Docker." },
+      { type: "qcm", q: "La preuve du succès :", opts: ["curl -fs /health en 200", "l'absence d'erreur ssh", "un sentiment", "les logs du lendemain"], a: 0, exp: "Vérifié." },
+      { type: "vf", q: "La prod exige un tag ET une approbation ; staging se met à jour au merge.", a: true, exp: "Deux environnements." }
+    ],
+    solution: `<pre class="pseudo">Route::get('/health', fn() => ... DB::select('select 1') ... 200 / 503);   // route de santé : la base répond ?
+
+  deployer-production:                     # job de déploiement production
+    needs: publier                         # après la publication de l'image
+    environment: production        # approbation requise
+    steps:
+      - run: echo "\${{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # clé SSH secrète, droits restreints
+      - run: ssh -i cle deploy@... 'cd /srv/ludotheque && docker compose pull &&
+             docker compose up -d && docker compose exec -T app php artisan migrate --force'   # pull + up + migrate sur le serveur
+      - run: sleep 10 && curl -fs https://ludotheque.example.com/health   # vérifie la santé après déploiement</pre>
+<p>Le site suit les tags, tout seul. Demain : observer, sauvegarder, protéger, revenir.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton déploiement et sa vérification…",
+  items: [
+  { id: "proj6php-l19", title: "Le déploiement à deux environnements", level: 3,
+    statement: "Écris la route /health, le job deployer-staging (auto au merge sur main) et deployer-production (sur tag, avec approbation), et la vérification curl avec retries (pas un sleep aveugle). Explique pourquoi staging reçoit tout automatiquement mais la prod exige un tag ET une approbation.",
+    hints: [
+      "if: github.ref == 'refs/heads/main' pour staging.",
+      "environment: production avec required reviewers pour l'approbation.",
+      "Retry : for i in seq 1 12; curl && break; sleep 5 (patient, pas aveugle)."
+    ],
+    solution: "// routes/web.php — route de sante\nRoute::get('/health', function () {                     // GET /health : verifie que l'app va bien\n    try { DB::select('select 1'); return response()->json(['statut' => 'ok']); }   // base ok -> {\"statut\":\"ok\"} (200)\n    catch (\\Throwable $e) { return response()->json(['statut' => 'ko'], 503); }    // sinon -> {\"statut\":\"ko\"} (503)\n});\n\n# ci.yml — staging au merge\n  deployer-staging:                        # deploiement automatique en preproduction\n    if: github.ref == 'refs/heads/main'    # seulement pour la branche main\n    environment: staging                   # environnement de preproduction\n    needs: [tests, qualite, securite, image]   # apres les jobs verts\n    steps: [ ...ssh staging.ludotheque... pull/up/migrate --force... ]   # meme geste que la prod\n\n# release.yml — production sur tag + approbation\n  deployer-production:                     # deploiement en production\n    needs: publier                         # apres la publication de l'image\n    environment: production          # required reviewers -> approbation humaine\n    steps:\n      - run: echo \"${{ secrets.SSH_PRIVATE_KEY }}\" > cle && chmod 600 cle   # cle SSH secrete, droits restreints\n      - run: |                             # se connecte au serveur et deploie\n          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '\n            cd /srv/ludotheque && echo \"VERSION=${GITHUB_REF_NAME#v}\" > .env.version &&\n            docker compose pull && docker compose up -d &&\n            docker compose exec -T app php artisan migrate --force &&\n            docker compose exec -T app php artisan config:cache'\n      - name: Verifier la sante (patient, pas aveugle)\n        run: |                             # boucle de verification, plutot qu'un sleep aveugle\n          for i in $(seq 1 12); do         # jusqu'a 12 tentatives\n            curl -fs https://ludotheque.example.com/health && exit 0   # succes -> on sort (vert)\n            sleep 5                        # sinon on attend 5 s et on reessaie\n          done\n          exit 1        # rouge seulement apres ~60 s d'echecs repetes\n\n# POURQUOI CETTE ASYMETRIE STAGING/PROD\n# Staging est la scene de REPETITION : il recoit chaque merge automatiquement,\n# pour que les surprises s'y produisent AVANT les clients. La production, elle,\n# touche de vrais utilisateurs et de vraies donnees : elle exige une DECISION\n# (un tag = 'cette version est prete') ET une APPROBATION ('deployons maintenant,\n# quelqu'un surveille'). L'automatisation execute ; l'humain decide du moment.",
+    note: "Le retry patient (boucle curl) plutôt qu'un sleep aveugle évite le faux positif qui ruine la confiance dans le pipeline : l'app met parfois quelques secondes de plus à répondre (migration, démarrage PHP-FPM, config:cache). L'asymétrie staging/production incarne le principe : automatiser tout ce qui peut l'être, réserver à l'humain les seules VRAIES décisions — le moment de livrer aux clients." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

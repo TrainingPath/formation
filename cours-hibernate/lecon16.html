@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Pagination et tri",
+  subtitle: "500 jeux au catalogue, 20 par page : découper proprement, sans jamais tout charger.",
+  theory: `
+<h3>1. Pourquoi paginer ?</h3>
+<p><strong>Paginer</strong>, c'est découper un gros résultat en « pages » de quelques lignes. Le catalogue de la Ludothèque grossit : 500 jeux aujourd'hui, peut-être 5 000 demain. Charger toute la table pour n'afficher que 20 lignes gaspille mémoire, réseau et patience de l'utilisateur — et le contexte de persistance surveillerait 5 000 entités pour rien. La règle : <strong>la base filtre, trie et découpe ; Java n'affiche que la page</strong>. Surtout pas de subList() en Java après un getResultList() complet !</p>
+
+<h3>2. Trier : ORDER BY en JPQL</h3>
+<p>Le tri se demande dans la requête, comme au Niveau 4 : <strong>ORDER BY</strong>, sur des attributs d'entité, avec ASC (croissant, défaut) ou DESC (décroissant), et plusieurs clés si besoin.</p>
+<pre class="pseudo">"SELECT j FROM Jeu j ORDER BY j.titre ASC"                       -- trier par titre croissant (ASC = ascending)
+"SELECT j FROM Jeu j ORDER BY j.prixLocation DESC, j.titre ASC"  -- prix décroissant, puis titre croissant en cas d'égalité
+// Sans ORDER BY, l'ordre des lignes n'est PAS garanti (rappel Niveau 4) :
+// paginer sans trier = des jeux qui changent de page à chaque visite.</pre>
+
+<h3>3. Découper : setFirstResult et setMaxResults</h3>
+<p>JPQL n'a pas de mot-clé LIMIT : le découpage se règle sur l'objet requête, et Hibernate le traduit dans le dialecte de ta base — <strong>LIMIT ... OFFSET</strong> pour MySQL (OFFSET = combien de lignes sauter, LIMIT = combien en garder).</p>
+<pre class="pseudo">List&lt;Jeu&gt; page = em.createQuery(                       // requête typée renvoyant des Jeu
+        "SELECT j FROM Jeu j ORDER BY j.titre", Jeu.class)  // JPQL trié par titre (tri indispensable pour paginer)
+    .setFirstResult(40)      // sauter les 40 premiers résultats (→ OFFSET 40)
+    .setMaxResults(20)       // en prendre 20 au plus (→ LIMIT 20)
+    .getResultList();        // exécuter → la page de 20 jeux
+// SQL MySQL généré : SELECT ... ORDER BY j.titre LIMIT 20 OFFSET 40
+// (sur un autre SGBD, Hibernate écrirait la syntaxe locale : portable !)</pre>
+
+<h3>4. La formule de la page N</h3>
+<p>L'utilisateur raisonne en pages (1, 2, 3...), la base en décalage de lignes. La conversion tient en une formule à connaître par cœur :</p>
+<pre class="pseudo">int taille = 20;                          // nombre de jeux par page
+int firstResult = (page - 1) * taille;    // page 1 → 0, page 2 → 20, page 3 → 40
+
+List&lt;Jeu&gt; jeux = em.createQuery(                      // requête typée renvoyant des Jeu
+        "SELECT j FROM Jeu j ORDER BY j.titre", Jeu.class)  // JPQL trié par titre
+    .setFirstResult((page - 1) * taille)              // combien de lignes sauter (OFFSET)
+    .setMaxResults(taille)                            // taille de la page (LIMIT)
+    .getResultList();                                 // exécuter → la page demandée</pre>
+<p>Le piège du débutant : oublier le <em>-1</em> et servir la page 2 quand on demande la page 1.</p>
+
+<h3>5. Le COUNT séparé et le lien avec Spring Data</h3>
+<p>Pour afficher « page 3 sur 25 », il faut le <strong>nombre total</strong> de jeux — que la page de 20 ne donne pas. D'où une <strong>seconde requête COUNT</strong>, avec les mêmes filtres mais sans tri ni découpage :</p>
+<pre class="pseudo">long total = em.createQuery("SELECT COUNT(j) FROM Jeu j", Long.class)  // compter TOUS les jeux (mêmes filtres que la page)
+               .getSingleResult();                                     // un agrégat → un seul résultat
+int nbPages = (int) Math.ceil((double) total / taille);   // arrondi au SUPÉRIEUR : 500 / 20 → 25 pages</pre>
+<p>Ce trio — requête de page, formule, COUNT — est <strong>exactement</strong> ce que Spring Data JPA emballe dans <strong>Pageable</strong> et <strong>Page</strong> : <em>repo.findAll(PageRequest.of(page - 1, 20, Sort.by("titre")))</em> exécute les deux requêtes et te rend getTotalPages() tout calculé. Le voile se lève encore. Ailleurs : Skip/Take en EF Core, paginate() d'Eloquent, Paginator de Django — même mécanique partout.</p>
+<div class="warn">Une pagination SANS ORDER BY est un bug silencieux : MySQL ne garantit aucun ordre, donc un même jeu peut apparaître page 2 ET page 3, ou disparaître. Toute requête paginée DOIT porter un tri stable — idéalement avec l'id en dernière clé de tri pour départager les ex æquo.</div>
+<div class="tip">Garde les MÊMES conditions WHERE dans la requête de page et dans le COUNT (une recherche « stratégie » paginée compte les jeux de stratégie, pas tout le catalogue). Factorise la clause commune dans une constante ou une méthode pour que les deux ne divergent jamais.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi ne pas charger les 500 jeux puis découper avec subList() en Java ?", opts: ["subList() n'existe pas", "On transfère et surveille 500 entités pour en afficher 20 : gaspillage mémoire et réseau", "MySQL l'interdit", "Ça ne compile pas"], a: 1, exp: "La base sait trier et découper : c'est elle qui doit le faire (LIMIT/OFFSET)." },
+    { type: "qcm", q: "Le tri d'une requête JPQL s'exprime avec…", opts: ["setSort()", "ORDER BY dans la requête", "Collections.sort côté Java obligatoirement", "@OrderColumn sur l'EntityManager"], a: 1, exp: "ORDER BY j.titre ASC/DESC, comme en SQL au Niveau 4." },
+    { type: "vf", q: "Sans ORDER BY, MySQL garantit quand même l'ordre d'insertion des lignes.", a: false, exp: "Aucun ordre n'est garanti sans ORDER BY : paginer sans trier rend les pages incohérentes." },
+    { type: "qcm", q: "La méthode JPA qui limite le nombre de résultats retournés :", opts: ["setLimit", "setMaxResults", "setFetchSize", "setPageSize"], a: 1, exp: "setMaxResults(20) → LIMIT 20 en MySQL." },
+    { type: "input", q: "Quelle méthode JPA indique combien de lignes SAUTER avant de lire ?", a: ["setFirstResult", "setFirstResult()", "setfirstresult"], ph: "nom de la méthode…", exp: "setFirstResult(40) → OFFSET 40 : on saute les 40 premières lignes." },
+    { type: "qcm", q: "setFirstResult(40).setMaxResults(20) devient en SQL MySQL…", opts: ["LIMIT 40 OFFSET 20", "LIMIT 20 OFFSET 40", "TOP 20 SKIP 40", "FETCH 40 ROWS"], a: 1, exp: "MaxResults → LIMIT, FirstResult → OFFSET : attention à ne pas les inverser." },
+    { type: "qcm", q: "Qui traduit setMaxResults vers la syntaxe LIMIT propre à MySQL ?", opts: ["Le driver JDBC seul", "Toi, dans la chaîne JPQL", "Hibernate, selon le dialecte configuré", "Le système d'exploitation"], a: 2, exp: "C'est l'intérêt : le même code Java reste portable d'un SGBD à l'autre." },
+    { type: "vf", q: "JPQL possède un mot-clé LIMIT qu'on écrit directement dans la chaîne de requête.", a: false, exp: "Pas de LIMIT en JPQL standard : le découpage passe par setFirstResult/setMaxResults." },
+    { type: "qcm", q: "Avec 20 jeux par page, le firstResult de la page 3 vaut…", opts: ["60", "20", "3", "40"], a: 3, exp: "(page - 1) * taille = (3 - 1) * 20 = 40." },
+    { type: "input", q: "Complète la formule : firstResult = (page - 1) * ____", a: ["taille", "taille de page", "taillePage", "la taille", "size"], ph: "… de page", exp: "(page - 1) * taille : page 1 → 0, page 2 → 20, etc." },
+    { type: "qcm", q: "Oublier le « -1 » dans la formule provoque…", opts: ["Une exception JPA", "Un décalage : la page 1 affiche en réalité la page 2", "Un tri inversé", "Un COUNT faux"], a: 1, exp: "firstResult vaudrait 20 au lieu de 0 : les 20 premiers jeux deviennent invisibles." },
+    { type: "qcm", q: "Pour afficher « page X sur Y », le nombre total d'éléments s'obtient par…", opts: ["La taille de la page retournée", "Une requête COUNT séparée avec les mêmes filtres", "getMaxResults()", "Le fichier de configuration"], a: 1, exp: "La page de 20 ne dit rien du total : SELECT COUNT(j) FROM Jeu j (mêmes WHERE)." },
+    { type: "qcm", q: "500 jeux, 20 par page : nombre de pages ?", opts: ["24", "26", "25", "20"], a: 2, exp: "ceil(500 / 20) = 25 ; avec 501 jeux, ceil donnerait 26." },
+    { type: "qcm", q: "Dans Spring Data JPA, le trio page + formule + COUNT est encapsulé par…", opts: ["Pageable et Page", "@Entity et @Id", "ddl-auto", "EntityTransaction"], a: 0, exp: "findAll(PageRequest.of(n, 20, Sort.by(\"titre\"))) fait les deux requêtes pour toi." },
+    { type: "vf", q: "PageRequest.of(0, 20) de Spring Data correspond à la page 1 de l'utilisateur : l'index commence à zéro.", a: true, exp: "Spring compte les pages à partir de 0 — le même « -1 » que dans ta formule, déjà intégré." }
+  ],
+  final: {
+    title: "Exercice final — Le catalogue page par page",
+    intro: `<p>Le site affiche le catalogue trié par titre, 20 jeux par page, avec la barre « page X sur Y ». L'utilisateur demande la page 4. Assemble toutes les pièces.</p>`,
+    questions: [
+      { type: "input", q: "Page 4, taille 20 : quelle valeur passer à setFirstResult ?", a: ["60", "soixante"], ph: "un nombre…", exp: "(4 - 1) * 20 = 60 : on saute les 60 premiers jeux." },
+      { type: "qcm", q: "La requête de page complète et correcte :", opts: ["\"SELECT j FROM Jeu j\" + setFirstResult(60) + setMaxResults(20)", "\"SELECT j FROM Jeu j ORDER BY j.titre\" + setFirstResult(60) + setMaxResults(20)", "\"SELECT j FROM Jeu j LIMIT 20 OFFSET 60\"", "em.find(Jeu.class, 60)"], a: 1, exp: "ORDER BY obligatoire pour des pages stables ; LIMIT ne s'écrit pas en JPQL." },
+      { type: "qcm", q: "Le SQL MySQL généré pour cette page :", opts: ["SELECT ... ORDER BY titre LIMIT 20 OFFSET 60", "SELECT ... ORDER BY titre LIMIT 60 OFFSET 20", "SELECT ... WHERE id BETWEEN 60 AND 80", "SELECT COUNT(*) FROM jeu"], a: 0, exp: "MaxResults(20) → LIMIT 20, FirstResult(60) → OFFSET 60." },
+      { type: "vf", q: "Le nombre total de pages se calcule avec Math.ceil((double) total / taille), le total venant d'un COUNT séparé.", a: true, exp: "503 jeux → ceil(503/20) = 26 pages ; la division entière en donnerait 25 à tort." },
+      { type: "qcm", q: "L'équivalent Spring Data de tout cet exercice :", opts: ["repo.findAll(PageRequest.of(3, 20, Sort.by(\"titre\")))", "repo.findAll().subList(60, 80)", "repo.count().page(4)", "em.createNativeQuery(\"LIMIT\")"], a: 0, exp: "Page 4 utilisateur = index 3 (base zéro) ; Page&lt;Jeu&gt; rend même getTotalPages()." }
+    ],
+    solution: `<pre class="pseudo">int page = 4, taille = 20;                            // on veut la page 4, 20 jeux par page
+
+// 1. La page demandée : tri stable + découpage traduit en LIMIT/OFFSET
+List&lt;Jeu&gt; jeux = em.createQuery(                      // requête typée renvoyant des Jeu
+        "SELECT j FROM Jeu j ORDER BY j.titre, j.id", Jeu.class)  // tri par titre PUIS id (départage les ex æquo)
+    .setFirstResult((page - 1) * taille)     // (4-1)*20 = 60 → OFFSET 60
+    .setMaxResults(taille)                    // 20 → LIMIT 20
+    .getResultList();                         // exécuter la requête
+// SQL : SELECT ... ORDER BY titre, id LIMIT 20 OFFSET 60
+
+// 2. Le total pour la barre de pagination : COUNT séparé, mêmes filtres
+long total = em.createQuery("SELECT COUNT(j) FROM Jeu j", Long.class)  // compter tous les jeux
+               .getSingleResult();                                     // un seul résultat
+int nbPages = (int) Math.ceil((double) total / taille);   // arrondi supérieur → nombre de pages
+
+// 3. Ce que Spring Data condense en une ligne :
+// Page&lt;Jeu&gt; p = repo.findAll(PageRequest.of(page - 1, taille, Sort.by("titre")));</pre>
+<p>Ton catalogue défile proprement, page après page. Mais chaque page déclenche des écritures et des lectures qu'il faut sécuriser : demain, on encadre tout ça dans des transactions — ACID côté ORM, begin, commit, rollback.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l16", title: "Paginer la recherche filtrée", level: 2,
+    statement: "Combine les leçons 14 à 16 : conçois en pseudo-code Java la méthode rechercherJeux(categorie, prixMax, page, taille) qui retourne un objet PageResultat contenant la liste des jeux de la page ET le nombre total de pages. Rédige les deux requêtes JPQL (page + COUNT), la formule de conversion, et justifie par écrit : pourquoi deux requêtes, pourquoi les filtres doivent être identiques dans les deux, pourquoi le tri est obligatoire, et ce qui se passerait si l'utilisateur demandait la page 999.",
+    hints: [
+      "Écris d'abord la clause commune \"FROM Jeu j WHERE j.categorie.nom = :cat AND j.prixLocation <= :max\" : les deux requêtes doivent la partager.",
+      "La requête COUNT porte-t-elle le ORDER BY ? A-t-elle besoin de setFirstResult/setMaxResults ?",
+      "Page 999 sur 25 : que retourne un OFFSET au-delà de la dernière ligne en MySQL — une erreur ou autre chose ?"
+    ],
+    solution: "rechercherJeux(cat, max, page, taille) :\n  clauseCommune = \"FROM Jeu j WHERE j.categorie.nom = :cat\n                   AND j.prixLocation <= :max\"   // UNE seule source de vérité\n\n  // Requête 1 : la page (tri + découpage)\n  jeux = em.createQuery(\"SELECT j \" + clauseCommune\n                        + \" ORDER BY j.titre, j.id\", Jeu.class)\n           .setParameter(\"cat\", cat).setParameter(\"max\", max)\n           .setFirstResult((page - 1) * taille)\n           .setMaxResults(taille)\n           .getResultList()\n\n  // Requête 2 : le total (mêmes filtres, SANS tri ni découpage)\n  total = em.createQuery(\"SELECT COUNT(j) \" + clauseCommune, Long.class)\n            .setParameter(\"cat\", cat).setParameter(\"max\", max)\n            .getSingleResult()\n\n  nbPages = ceil(total / (double) taille)\n  retourner new PageResultat(jeux, page, nbPages, total)\n\nJustifications :\n- Deux requêtes : la page de 20 lignes ne peut pas connaître le total ;\n  le COUNT est la seule façon d'afficher « page X sur Y ».\n- Filtres identiques (clause factorisée) : sinon on compte tout le\n  catalogue mais on affiche une recherche filtrée → nbPages faux.\n- Tri obligatoire (titre PUIS id pour départager les ex æquo) : sans\n  ORDER BY, MySQL ne garantit rien, un jeu peut changer de page.\n- Page 999 : OFFSET 19960 dépasse la table → MySQL renvoie simplement\n  0 ligne, pas d'erreur. À l'appli de détecter page > nbPages et de\n  rediriger vers la dernière page.",
+    note: "Tu viens de réécrire à la main l'objet Page&lt;T&gt; de Spring Data JPA : au Niveau 6, PageRequest.of(page - 1, taille, Sort.by(\"titre\")) exécutera ces deux requêtes exactes pour ton API REST du catalogue. Skip/Take d'EF Core et paginate() d'Eloquent cachent le même duo requête + COUNT." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

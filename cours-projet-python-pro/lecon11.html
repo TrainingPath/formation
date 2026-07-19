@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Louer un jeu : transaction et test d'intégration",
+  subtitle: "Le cœur métier, écrit atomique et prouvé de bout en bout.",
+  theory: `
+<h3>1. Louer = deux écritures indissociables</h3>
+<p>Louer, c'est deux écritures qui doivent aller ensemble : créer la <code>Location</code> ET diminuer <code>stock_location</code>. Si l'une réussit sans l'autre, la base <em>ment</em>. Une <strong>transaction</strong> est un groupe d'opérations traité en « <strong>tout ou rien</strong> » (on dit <strong>atomique</strong>) : soit tout est validé ensemble, soit tout est annulé (« rollback »). <code>select_for_update</code> pose un <strong>verrou</strong> sur la ligne du jeu le temps de la transaction, pour éviter la <strong>course</strong> — deux clients qui saisiraient le dernier exemplaire au même instant.</p>
+
+<h3>2. Le service</h3>
+<pre class="pseudo">from django.db import transaction   # importer l'outil de transaction
+def louer(client, jeu_id, nb_jours=7):   # enregistre une location (7 jours par defaut)
+    with transaction.atomic():   # ouvrir une transaction : tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charger le jeu ET verrouiller sa ligne
+        if jeu.stock_location <= 0:   # plus d'exemplaire louable ?…
+            raise StockInsuffisant("Plus de stock de location")   # …refuser (annule la transaction)
+        loc = Location.objects.create(client=client, jeu=jeu,   # ecriture 1 : creer la location…
+                                      date_debut=timezone.now(), nb_jours=nb_jours)   # …datee de maintenant
+        jeu.stock_location -= 1   # diminuer le stock d'un exemplaire
+        jeu.save(update_fields=["stock_location"])   # ecriture 2 : enregistrer UNIQUEMENT cette colonne
+        return loc   # renvoyer la location creee</pre>
+
+<h3>3. La vue, protégée (POST + login + csrf)</h3>
+<pre class="pseudo">@login_required   # la vue exige un utilisateur connecte
+def louer_vue(request, jeu_id):   # traite la demande de location
+    if request.method != "POST": return redirect("catalogue")   # une action modifiante se fait en POST, pas en GET
+    try:   # tenter la location
+        services.louer(request.user, jeu_id)   # appeler le service (identite = utilisateur connecte)
+        messages.success(request, "Jeu loué pour 7 jours !")   # message de succes affiche a la page suivante
+    except StockInsuffisant as e:   # si plus de stock…
+        messages.error(request, str(e))   # …message d'erreur
+    return redirect("mes_locations")     # Post-Redirect-Get : rediriger pour eviter une re-soumission au F5</pre>
+
+<h3>4. Le test d'intégration, sur un vrai MySQL (CI)</h3>
+<pre class="pseudo">def test_louer_decremente(self):   # louer doit creer la location ET baisser le stock
+    self.client.login(username="c@ludo.fr", password="Mdp8carac!")   # se connecter
+    r = self.client.post(f"/louer/{self.jeu.id}/")   # envoyer la demande en POST
+    self.assertEqual(r.status_code, 302)                 # Post-Redirect-Get : 302 = redirection
+    self.jeu.refresh_from_db()   # recharger le jeu depuis la base (etat reel)
+    self.assertEqual(self.jeu.stock_location, 2)         # 3 - 1
+    self.assertEqual(Location.objects.count(), 1)        # les DEUX écritures ont bien eu lieu
+
+def test_louer_sans_connexion_redirige(self):   # sans connexion, louer doit etre refuse
+    r = self.client.post(f"/louer/{self.jeu.id}/")   # POST sans etre connecte
+    self.assertEqual(r.status_code, 302)                 # → connexion (redirection)
+    self.assertEqual(Location.objects.count(), 0)   # aucune location creee</pre>
+<p>Ce test traverse tout : routage, décorateur, service, transaction, base. Il vérifie l'<strong>état réel</strong> après l'appel — pas une variable en mémoire.</p>
+
+<h3>5. La règle la plus précieuse, verrouillée</h3>
+<div class="warn">Ce test échouerait si quelqu'un retirait <code>@login_required</code>, cassait la transaction, ou n'écrivait qu'une des deux lignes. En CI, sur un vrai MySQL, il devient une garantie permanente : la fonctionnalité la plus importante du projet ne peut pas régresser sans un job rouge.</div>
+<div class="tip">Même code qu'au Niveau 6 (atomic + verrou), mais écrit d'emblée avec son test d'intégration qui tourne à chaque commit. La transaction n'est pas ajoutée « quand on aura le temps » : elle naît avec la fonctionnalité, prouvée.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["Une écriture", "Deux écritures indissociables (Location + stock)", "Une lecture", "Un DELETE"], a: 1, exp: "Tout ou rien." },
+    { type: "qcm", q: "Le « tout ou rien » vient de…", opts: ["transaction.atomic()", "un if", "le template", "la pagination"], a: 0, exp: "Atomicité." },
+    { type: "qcm", q: "select_for_update() sert à…", opts: ["Trier", "Verrouiller la ligne (course au stock)", "Cacher", "Paginer"], a: 1, exp: "Un seul obtient le dernier." },
+    { type: "qcm", q: "L'action « louer » se fait en…", opts: ["GET", "POST (+ csrf, + login)", "PUT sans token", "HEAD"], a: 1, exp: "Écriture = POST." },
+    { type: "qcm", q: "Après le POST réussi, la vue…", opts: ["render direct", "redirect (Post-Redirect-Get)", "un print", "un sleep"], a: 1, exp: "F5 ne reloue pas." },
+    { type: "qcm", q: "Le test d'intégration vérifie…", opts: ["Une variable en mémoire", "L'état réel de la base après l'appel HTTP", "Le CSS", "Le hachage"], a: 1, exp: "refresh_from_db." },
+    { type: "qcm", q: "Il traverse…", opts: ["Seulement la vue", "Routage, décorateur, service, transaction, base", "Rien", "Le CSS"], a: 1, exp: "Le vrai pipeline." },
+    { type: "qcm", q: "Louer sans connexion doit…", opts: ["Réussir", "Rediriger (302) vers la connexion, aucune location créée", "500", "201"], a: 1, exp: "@login_required." },
+    { type: "qcm", q: "Le test tourne en CI sur…", opts: ["La prod", "Un vrai MySQL (service)", "SQLite caché", "Aucune base"], a: 1, exp: "Réaliste." },
+    { type: "qcm", q: "L'identité du loueur vient…", opts: ["De request.user", "Du POST", "De l'URL", "D'un cookie maison"], a: 0, exp: "Jamais de la requête." },
+    { type: "vf", q: "Le test échouerait si on retirait @login_required.", a: true, exp: "La sécurité est testée." },
+    { type: "qcm", q: "Deux clients louent le dernier exemplaire :", opts: ["Les deux réussissent", "Le verrou fait qu'un seul réussit", "Stock -1", "MySQL plante"], a: 1, exp: "Concurrence maîtrisée." },
+    { type: "qcm", q: "update_fields=[\"stock_location\"] :", opts: ["UPDATE de tout", "UPDATE ciblé sur cette colonne", "DELETE", "SELECT"], a: 1, exp: "Écriture minimale." },
+    { type: "qcm", q: "La règle métier la plus précieuse est…", opts: ["Non testée", "Verrouillée par le test d'intégration en CI", "En prod seulement", "Optionnelle"], a: 1, exp: "Garantie permanente." },
+    { type: "vf", q: "La transaction naît avec la fonctionnalité, prouvée — pas ajoutée après.", a: true, exp: "Le réflexe du Niveau 8." }
+  ],
+  final: {
+    title: "Exercice final — La location atomique et prouvée",
+    intro: `<p>On écrit le service, la vue et le test d'intégration.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service commence par :", opts: ["with transaction.atomic():", "try:", "commit()", "un lock Python"], a: 0, exp: "Transaction." },
+      { type: "qcm", q: "Le jeu est chargé par :", opts: ["select_for_update().get(pk=...)", "un filter simple", "l'admin", "un cache"], a: 0, exp: "Ligne verrouillée." },
+      { type: "qcm", q: "Le test vérifie :", opts: ["Le stock -1 ET la Location créée", "juste le code HTTP", "le CSS", "rien"], a: 0, exp: "Les deux écritures." },
+      { type: "qcm", q: "Louer sans connexion :", opts: ["302 + 0 location", "200", "201", "500"], a: 0, exp: "Protégé." },
+      { type: "vf", q: "Le test tourne sur un vrai MySQL à chaque commit.", a: true, exp: "Service CI." }
+    ],
+    solution: `<pre class="pseudo">def louer(client, jeu_id, nb_jours=7):   # enregistre une location
+    with transaction.atomic():   # transaction : tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charger + verrouiller le jeu
+        if jeu.stock_location <= 0:   # plus de stock ?…
+            raise StockInsuffisant("Plus de stock de location")   # …refuser (rollback)
+        loc = Location.objects.create(client=client, jeu=jeu,   # ecriture 1 : la location…
+                                      date_debut=timezone.now(), nb_jours=nb_jours)   # …datee de maintenant
+        jeu.stock_location -= 1   # baisser le stock
+        jeu.save(update_fields=["stock_location"])   # ecriture 2 : enregistrer la colonne
+        return loc   # renvoyer la location
+
+def test_louer_decremente(self):   # louer cree la location ET baisse le stock
+    self.client.login(...); self.client.post(f"/louer/{self.jeu.id}/")   # se connecter puis louer
+    self.jeu.refresh_from_db(); self.assertEqual(self.jeu.stock_location, 2)   # stock passe de 3 a 2
+    self.assertEqual(Location.objects.count(), 1)   # une location bien creee</pre>
+<p>Le cœur métier bat, prouvé. Demain : acheter, prix figé et couverture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service de location et son test…",
+  items: [
+  { id: "proj6py-l11", title: "Rendre un jeu, testé de bout en bout", level: 3,
+    statement: "Écris services.rendre(location_id) (transaction, refuse le double-rendu via une exception DejaRendue, pose date_retour, ré-incrémente le stock) et le test d'intégration complet : louer via HTTP, rendre, vérifier stock +1 et date_retour posée, puis re-rendre et vérifier le refus (DejaRendue) ET que le stock n'a pas été gonflé. Explique pourquoi vérifier l'effet du refus, pas seulement l'exception.",
+    hints: [
+      "class DejaRendue(Exception): pass ; if location.date_retour is not None: raise.",
+      "select_related('jeu') pour modifier le jeu dans la même transaction.",
+      "Après le double-rendu refusé : jeu.refresh_from_db() ; stock inchangé (pas +2)."
+    ],
+    solution: "class DejaRendue(Exception): pass   # exception metier : la location est deja rendue\n\ndef rendre(location_id):   # enregistre le retour d'une location\n    with transaction.atomic():   # transaction : tout ou rien\n        loc = (Location.objects.select_for_update()   # charger + verrouiller la location…\n               .select_related(\"jeu\").get(pk=location_id))   # …avec son jeu (pour le modifier dans la meme transaction)\n        if loc.date_retour is not None:   # deja rendue ?…\n            raise DejaRendue(\"Location déjà rendue\")   # …refuser (annule tout)\n        loc.date_retour = timezone.now()   # marquer la date de retour\n        loc.save(update_fields=[\"date_retour\"])   # ecriture 1 : enregistrer cette colonne\n        loc.jeu.stock_location += 1   # remettre un exemplaire en stock\n        loc.jeu.save(update_fields=[\"stock_location\"])   # ecriture 2 : enregistrer le stock\n        return loc   # renvoyer la location rendue\n\n# test d'intégration — le cycle complet + l'EFFET du refus\nclass RendreTests(TestCase):   # tests du retour de location\n    def setUp(self):   # donnees communes avant chaque test\n        self.cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        self.jeu = Jeu.objects.create(titre=\"Catan\", prix_achat=30, prix_location=5,   # un jeu…\n                                      stock_location=1, categorie=self.cat)   # …avec 1 exemplaire louable\n        self.u = User.objects.create_user(\"c@ludo.fr\", \"c@ludo.fr\", \"Mdp8carac!\")   # un client\n\n    def test_rendre_puis_double_rendu_refuse(self):   # cycle : louer, rendre, re-rendre (refuse)\n        loc = services.louer(self.u, self.jeu.id)   # louer le jeu\n        self.jeu.refresh_from_db(); self.assertEqual(self.jeu.stock_location, 0)   # stock tombe a 0\n\n        services.rendre(loc.id)   # rendre la location\n        self.jeu.refresh_from_db(); self.assertEqual(self.jeu.stock_location, 1)   # stock revient a 1\n        loc.refresh_from_db(); self.assertIsNotNone(loc.date_retour)   # date_retour bien posee\n\n        with self.assertRaises(services.DejaRendue):   # un 2e rendu doit lever DejaRendue…\n            services.rendre(loc.id)   # …tentative de double-rendu\n        self.jeu.refresh_from_db()   # recharger le jeu\n        self.assertEqual(self.jeu.stock_location, 1)   # PAS gonflé à 2\n\n# Pourquoi vérifier l'EFFET du refus :\n# assertRaises confirme que l'exception part, mais pas que rien n'a été écrit.\n# Vérifier « stock toujours à 1 » prouve que le rollback a bien tout annulé —\n# sans quoi un double-rendu pourrait lever l'exception APRÈS avoir incrémenté.\n# Le test attrape ainsi une régression subtile que l'exception seule masquerait.",
+    note: "Vérifier l'effet du refus (le stock n'a pas bougé) et pas seulement l'exception est ce qui distingue un test d'intégration sérieux : il prouve que le rollback a fonctionné. Sur un vrai MySQL en CI, ce test verrouille à la fois la règle métier (pas de double-rendu) et son atomicité (rien d'écrit en cas de refus) — deux garanties pour le prix d'un test." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

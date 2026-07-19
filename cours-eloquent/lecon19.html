@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Scopes, events et bonnes pratiques de modèle",
+  subtitle: "Un vocabulaire métier pour tes requêtes, des réflexes automatiques pour tes modèles.",
+  theory: `
+<h3>1. Les scopes locaux : nommer les filtres</h3>
+<p>Le filtre « jeux disponibles » (stock &gt; 0) apparaît dans quatre contrôleurs. Copié-collé quatre fois, il divergera un jour. Un <strong>scope local</strong> lui donne un nom, une seule fois, dans le modèle (analogie : enregistrer un raccourci « jeux dispo » au lieu de retaper la même recherche partout). Le <strong>$query</strong> qu'il reçoit est le <em>query builder</em> — l'objet qui construit la requête SQL méthode après méthode :</p>
+<pre class="pseudo">// app/Models/Jeu.php
+public function scopeDisponibles($query)       // scope : le nom commence par « scope »
+{
+    return $query-&gt;where('stock', '&gt;', 0);      // ajoute WHERE stock &gt; 0 à la requête, puis la retourne
+}
+
+// Utilisation : préfixe scope RETIRÉ, initiale en minuscule
+Jeu::disponibles()-&gt;orderBy('titre')-&gt;get();    // WHERE stock &gt; 0 ORDER BY titre
+Jeu::disponibles()-&gt;count();                    // SELECT COUNT(*) … WHERE stock &gt; 0</pre>
+<p>Convention : méthode <strong>scopeXxx($query)</strong> dans le modèle, appel <strong>Xxx()</strong> dans le code. Le scope retourne le builder : tout reste chaînable — where, with, paginate, autres scopes.</p>
+
+<h3>2. Scopes paramétrés et composables</h3>
+<p>Un scope peut recevoir des arguments (après $query) et plusieurs scopes s'enchaînent comme des briques :</p>
+<pre class="pseudo">// Jeu.php
+public function scopeMoinsCherQue($query, $max)   // $query d'abord, puis le paramètre $max
+{
+    return $query-&gt;where('prix_location', '&lt;=', $max);   // WHERE prix_location &lt;= $max
+}
+
+// Location.php — LE scope métier de la Ludothèque :
+public function scopeEnRetard($query)             // « locations en retard »
+{
+    return $query-&gt;whereNull('date_retour')        // pas encore rendue (date_retour IS NULL)
+                  -&gt;where('date_location', '&lt;', now()-&gt;subDays(14));   // ET louée il y a plus de 14 jours
+}
+
+// Et ça se lit comme une phrase :
+Jeu::disponibles()-&gt;moinsCherQue(5)-&gt;orderBy('titre')-&gt;paginate(15);   // dispo + &lt; 5 € + triés + paginés
+Location::enRetard()-&gt;with(['jeu', 'membre'])-&gt;get();                 // les retards, avec jeu et membre préchargés</pre>
+<p>Souviens-toi de la leçon 18 : l'accesseur est_en_retard AFFICHE l'état d'une location déjà chargée ; le scope enRetard() FILTRE en SQL avant de charger. Deux exemplaires de la même règle, à garder synchronisés.</p>
+
+<h3>3. Les global scopes : le filtre permanent</h3>
+<p>Un <strong>global scope</strong> s'applique à TOUTES les requêtes du modèle sans qu'on le demande (analogie : un filtre à café posé en permanence — tout ce qui passe est filtré, sans y penser). Tu en utilises déjà un sans le savoir : <strong>SoftDeletes</strong> (leçon 6) est un global scope qui ajoute WHERE deleted_at IS NULL partout. On peut créer le sien (par exemple, ne montrer que les jeux visibles) dans la méthode <strong>booted()</strong>, un point d'accroche appelé une fois au démarrage du modèle :</p>
+<pre class="pseudo">// Dans Jeu.php, méthode booted :
+protected static function booted()             // booted() : s'exécute une fois, à l'éveil du modèle
+{
+    static::addGlobalScope('visibles', function ($query) {   // enregistre un scope global nommé « visibles »
+        $query-&gt;where('est_visible', true);    // ajoute WHERE est_visible = 1 à TOUTES les requêtes
+    });
+}
+
+// Toutes les requêtes filtrent désormais… et pour débrayer :
+Jeu::withoutGlobalScope('visibles')-&gt;get();   // retire ce filtre pour cette requête : l'admin voit tout</pre>
+<p>Puissant mais invisible : à réserver aux règles vraiment universelles, sinon tu chercheras longtemps pourquoi « il manque des lignes ».</p>
+
+<h3>4. Les events de modèle : réagir au cycle de vie</h3>
+<p>Un modèle émet des <strong>events</strong> (événements) à chaque étape de sa vie : <strong>creating / created, updating / updated, saving / saved, deleting / deleted</strong>. Le participe présent (creating, « en train de créer ») se déclenche AVANT l'écriture — on peut encore modifier l'objet ; le participe passé (created, « créé »), APRÈS. <strong>Str::random(8)</strong> génère une chaîne aléatoire de 8 caractères ; strtoupper la met en majuscules.</p>
+<pre class="pseudo">// Membre.php
+protected static function booted()
+{
+    static::creating(function ($membre) {              // s'exécute JUSTE AVANT l'INSERT du membre
+        $membre-&gt;code = strtoupper(Str::random(8));    // génère un code unique en majuscules avant l'écriture
+    });
+}
+
+// Pour un modèle très écouté, un Observer regroupe tout :
+class JeuObserver                                       // classe dédiée : une méthode par event
+{
+    public function deleted(Jeu $jeu) { /* purger un cache, logger… */ }   // réagit après la suppression d'un jeu
+}
+// Enregistrement dans AppServiceProvider::boot() :
+Jeu::observe(JeuObserver::class);                       // branche l'observateur sur le modèle Jeu</pre>
+<p><em>Ailleurs : @PrePersist / @PreUpdate chez JPA, les signaux pre_save / post_save chez Django, les interceptors de SaveChanges chez EF Core.</em></p>
+
+<h3>5. La checklist du bon modèle</h3>
+<pre class="pseudo">LE MODÈLE ELOQUENT BIEN ÉLEVÉ
+① $fillable strict (liste blanche, leçon 3)
+② $casts complet : booleans, dates, decimals, JSON (leçon 18)
+③ relations nommées métier : membre(), avis(), categories()
+④ scopes pour tout filtre utilisé deux fois : disponibles(), enRetard()
+⑤ events SOBRES : générer un code, purger un cache — pas de logique lourde
+⑥ écritures multiples → transaction (leçon 17), PAS un event caché
+⑦ requêtes complexes dans le modèle ou un scope, pas dans la vue</pre>
+<p>La philosophie « fat models, skinny controllers » (modèles gras, contrôleurs maigres) : le contrôleur orchestre, le modèle sait. Un contrôleur qui aligne huit where connaît trop le schéma ; un scope bien nommé remet la connaissance à sa place.</p>
+<div class="warn">Les écritures de MASSE contournent les events : Jeu::where('stock', 0)-&gt;update(['est_visible' =&gt; false]) part directement en SQL — aucun modèle chargé, donc aucun event updating/updated déclenché (et pas de mutateurs non plus !). Si ta logique repose sur un event, les updates de masse la sautent silencieusement. Sache-le avant d'y cacher une règle critique.</div>
+<div class="tip">Le test du scope : si un même where apparaît dans DEUX contrôleurs, ou si tu dois expliquer un filtre avec une phrase métier (« les locations en retard »), c'est un scope. Ton code se met à se lire à voix haute : Jeu::disponibles()-&gt;moinsCherQue(5) — et l'examen comme le Niveau 6 adorent ça.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un scope local sert à…", opts: ["Créer une table", "Donner un nom réutilisable et chaînable à un filtre de requête", "Cacher une colonne", "Accélérer MySQL"], a: 1, exp: "scopeDisponibles → Jeu::disponibles() : le filtre vit une seule fois, dans le modèle." },
+    { type: "qcm", q: "La méthode scopeDisponibles($query) s'appelle dans le code avec…", opts: ["Jeu::scopeDisponibles()", "Jeu::disponibles()", "Jeu::Disponibles()", "scope(Jeu::class)"], a: 1, exp: "Préfixe scope retiré, initiale en minuscule : la convention des scopes." },
+    { type: "input", q: "Quel préfixe obligatoire porte la méthode d'un scope local dans le modèle ?", a: ["scope", "scope…", "scopeXxx"], ph: "public function …Disponibles($query)", exp: "scopeDisponibles, scopeEnRetard : Eloquent reconnaît le préfixe et fait le reste." },
+    { type: "qcm", q: "Un scope paramétré (prix max) se déclare…", opts: ["public function scopeMoinsCherQue($query, $max)", "public function moinsCherQue($max)", "static function scope($max)", "Impossible"], a: 0, exp: "$query d'abord, puis les paramètres : Jeu::moinsCherQue(5)." },
+    { type: "vf", q: "Un scope retourne le query builder : on peut chaîner d'autres scopes, where, with et paginate derrière.", a: true, exp: "Jeu::disponibles()->moinsCherQue(5)->paginate(15) : tout reste composable." },
+    { type: "qcm", q: "Le scope enRetard() de Location combine…", opts: ["whereNull('date_retour') et une condition sur date_location", "orderBy et limit", "un cast et un accesseur", "sync et attach"], a: 0, exp: "Pas rendu ET emprunté depuis plus de 14 jours : la règle métier en SQL." },
+    { type: "qcm", q: "La différence entre l'accesseur est_en_retard et le scope enRetard() :", opts: ["Aucune", "L'accesseur calcule en PHP pour AFFICHER une ligne chargée ; le scope FILTRE en SQL avant chargement", "Le scope est plus lent", "L'accesseur filtre en SQL"], a: 1, exp: "Deux exemplaires de la même règle : un pour la lecture, un pour la requête — à garder synchronisés." },
+    { type: "qcm", q: "Un global scope…", opts: ["S'applique à toutes les requêtes du modèle sans être appelé", "Doit être appelé explicitement", "Ne marche qu'en production", "Remplace les migrations"], a: 0, exp: "Comme SoftDeletes et son WHERE deleted_at IS NULL permanent." },
+    { type: "vf", q: "SoftDeletes (leçon 6) fonctionne grâce à un global scope.", a: true, exp: "Le WHERE deleted_at IS NULL ajouté partout : tu utilisais déjà un global scope sans le savoir." },
+    { type: "input", q: "Quelle méthode retire un global scope nommé pour une requête (ex : l'admin voit tout) ?", a: ["withoutGlobalScope", "withoutGlobalScope()", "->withoutGlobalScope()"], ph: "Jeu::…('visibles')->get()", exp: "withoutGlobalScope('visibles') — et withoutGlobalScopes() pour tous d'un coup." },
+    { type: "qcm", q: "L'event creating se déclenche…", opts: ["Après l'INSERT", "AVANT l'INSERT : on peut encore modifier l'objet (générer un code…)", "À la lecture", "Au rollback"], a: 1, exp: "Participe présent = avant, participe passé (created) = après : la règle mnémotechnique." },
+    { type: "qcm", q: "Pour regrouper tous les events d'un modèle dans une classe dédiée :", opts: ["Un Observer, enregistré avec Jeu::observe(JeuObserver::class)", "Un contrôleur", "Une migration", "Un middleware"], a: 0, exp: "L'Observer : une méthode par event (created, deleted…), le modèle reste léger." },
+    { type: "qcm", q: "Jeu::where('stock', 0)->update(['est_visible' => false]) et les events :", opts: ["Tous les events se déclenchent", "AUCUN event (ni mutateur) : l'update de masse part en SQL sans charger de modèles", "Seul created se déclenche", "Ça dépend du cast"], a: 1, exp: "Le piège des écritures de masse : la logique cachée dans les events est silencieusement sautée." },
+    { type: "qcm", q: "« Fat models, skinny controllers » signifie…", opts: ["Des modèles lents", "La connaissance du schéma et des règles vit dans les modèles ; les contrôleurs orchestrent", "Des contrôleurs vides", "Un modèle par contrôleur"], a: 1, exp: "Un contrôleur qui aligne huit where en sait trop : un scope remet la logique à sa place." },
+    { type: "qcm", q: "L'équivalent des events de modèle chez JPA :", opts: ["@PrePersist / @PreUpdate", "Include()", "annotate()", "FromSqlRaw"], a: 0, exp: "@PrePersist chez JPA, signaux pre_save/post_save chez Django, interceptors chez EF Core." }
+  ],
+  final: {
+    title: "Exercice final — Le grand ménage des contrôleurs",
+    intro: `<p>Audit de la Ludothèque : des where dupliqués partout, un code membre généré dans trois endroits différents. Scopes et events vont remettre chaque chose à sa place.</p>`,
+    questions: [
+      { type: "qcm", q: "where('stock', '>', 0) apparaît dans 4 contrôleurs. La bonne réponse :", opts: ["Un commentaire", "Un scope scopeDisponibles($query) dans Jeu, appelé Jeu::disponibles()", "Un global scope obligatoire", "Un trait PHP"], a: 1, exp: "Le filtre vit une fois dans le modèle ; les contrôleurs parlent métier." },
+      { type: "input", q: "Dans quelle méthode statique du modèle enregistre-t-on static::creating(...) ?", a: ["booted", "booted()", "protected static function booted"], ph: "protected static function …()", exp: "booted() : le point d'accroche des events et global scopes du modèle." },
+      { type: "qcm", q: "Générer le code membre unique à l'inscription, au bon endroit :", opts: ["Dans chaque contrôleur", "static::creating(function ($membre) { $membre->code = …; }) dans Membre", "Dans la vue", "En SQL brut"], a: 1, exp: "L'event creating garantit le code sur TOUS les chemins de création — contrôleur, import, tinker." },
+      { type: "vf", q: "Une règle critique placée dans un event updated s'exécutera aussi lors d'un update de masse via le query builder.", a: false, exp: "L'update de masse ne charge aucun modèle : aucun event. Le piège à connaître avant d'y cacher une règle." },
+      { type: "qcm", q: "Le tableau « locations en retard avec jeu et membre », en une ligne lisible :", opts: ["Location::enRetard()->with(['jeu', 'membre'])->get()", "Location::all()->filter(...)", "8 where dans le contrôleur", "DB::select('...')"], a: 0, exp: "Scope + eager loading : la phrase métier parfaite, et zéro N+1." }
+    ],
+    solution: `<pre class="pseudo">SCOPES LOCAUX   scopeXxx($query, …params) → Modele::xxx()
+                chaînables : Jeu::disponibles()-&gt;moinsCherQue(5)-&gt;paginate(15)
+                accesseur = AFFICHER (PHP) · scope = FILTRER (SQL)
+GLOBAL SCOPES   addGlobalScope dans booted() · retirés par withoutGlobalScope
+                SoftDeletes en est un !
+EVENTS          creating/created, updating/updated, deleting/deleted
+                participe présent = AVANT (modifiable) · Observer pour regrouper
+                ⚠ update/delete de MASSE : aucun event, aucun mutateur
+CHECKLIST       fillable strict · casts complets · relations métier ·
+                scopes anti-doublon · events sobres · transactions explicites</pre>
+<p>Ta boîte à outils est complète : modèles, relations, requêtes, transactions, typage, vocabulaire métier. Leçon 20 : on assemble TOUT — la couche de persistance finale de la Ludothèque, celle que tu emporteras au Niveau 6.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l19", title: "L'audit scopes et events", level: 3,
+    statement: "Audit de code : le contrôleur CatalogueController répète where('stock', '>', 0)->where('est_visible', true) dans trois méthodes ; RetardController contient whereNull('date_retour')->where('date_location', '<', now()->subDays(14)) deux fois ; l'inscription génère le code membre dans le contrôleur web ET dans l'import CSV (avec deux algorithmes différents !) ; enfin, quelqu'un propose de décrémenter le stock dans un event created de Location « pour ne plus y penser ». Rédige ton rapport : les scopes à créer (code complet), l'event à instaurer pour le code membre, et ton verdict argumenté sur la proposition du stock dans l'event — en citant le piège des écritures de masse et la leçon 17.",
+    hints: [
+      "Deux filtres dupliqués = deux scopes : nomme-les métier (disponibles, enRetard) et réécris les appels des contrôleurs.",
+      "Deux algorithmes de code membre = des données incohérentes : quel event garantit UN algorithme sur TOUS les chemins de création ?",
+      "Pour le stock dans l'event : que devient l'atomicité si le create réussit hors transaction ? Et que se passe-t-il si une location est créée par insert de masse ou seedée en lot ?"
+    ],
+    solution: "1) Scopes à créer\n   // Jeu.php\n   public function scopeDisponibles($query) {\n       return $query->where('stock', '>', 0)\n                    ->where('est_visible', true);\n   }\n   // Location.php\n   public function scopeEnRetard($query) {\n       return $query->whereNull('date_retour')\n                    ->where('date_location', '<', now()->subDays(14));\n   }\n   Contrôleurs réécrits : Jeu::disponibles()->paginate(15);\n   Location::enRetard()->with(['jeu', 'membre'])->get();\n   → une seule définition, trois duplications supprimées, le jour où\n   la règle change (visible OU stock), un seul fichier bouge.\n\n2) Code membre → event creating dans Membre::booted()\n   static::creating(function ($membre) {\n       if ($membre->code === null) {\n           $membre->code = strtoupper(Str::random(8));\n       }\n   });\n   UN algorithme, appliqué au web, à l'import CSV et à tinker ;\n   les deux versions divergentes des contrôleurs sont supprimées.\n\n3) Stock décrémenté dans created de Location : REFUSÉ.\n   - Atomicité : l'event s'exécute après l'INSERT ; sans la\n     transaction de la leçon 17 autour des DEUX écritures, un échec\n     du décrément laisse une location sans baisse de stock — la\n     règle serait cachée ET fragile.\n   - Écritures de masse : Location::insert(...) et les seeders ne\n     déclenchent AUCUN event → stock silencieusement faux.\n   - Lisibilité : celui qui lit le contrôleur ne voit plus qu'une\n     écriture ; le décrément devient invisible.\n   Verdict : le duo création + décrément reste EXPLICITE, dans le\n   DB::transaction du service de location. Les events servent aux\n   à-côtés sobres (code, cache, log), pas aux règles comptables.",
+    note: "Cet arbitrage — règle critique explicite contre automatisme caché — est un débat permanent dans toutes les équipes, et la réponse des seniors est remarquablement constante d'un framework à l'autre : les signaux Django, les @PrePersist JPA et les events Eloquent portent les mêmes avertissements dans leurs documentations. Au Niveau 6, ton service de location écrit noir sur blanc dans une transaction sera un argument de soutenance." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

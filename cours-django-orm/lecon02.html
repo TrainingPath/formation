@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Configuration MySQL, le shell et le SQL généré",
+  subtitle: "Avant d'écrire le moindre modèle, on branche Django sur ta base du Niveau 4 — et on apprend à voir le SQL qu'il fabrique.",
+  theory: `
+<h3>1. Le connecteur : la prise entre Django et MySQL</h3>
+<p>Bonne nouvelle : la base <strong>ludotheque</strong> existe déjà sur ton serveur MySQL — tu l'as créée au Niveau 4, avec Workbench (l'outil graphique pour manipuler MySQL). Mais Python ne sait pas parler à MySQL tout seul : il lui faut un <strong>connecteur</strong> (aussi appelé <em>pilote</em> ou <em>driver</em>), une petite bibliothèque qui ouvre la « ligne téléphonique » entre les deux logiciels. Sans elle, Python et MySQL sont deux personnes qui ne partagent aucun câble. Le connecteur officiel recommandé par Django s'appelle <strong>mysqlclient</strong>, et il s'installe comme n'importe quel <strong>paquet</strong> (un paquet = un morceau de code réutilisable partagé par d'autres développeurs) avec la commande <code>pip install</code>, dans le <strong>venv</strong> de ton projet. Le <strong>venv</strong> (environnement virtuel) est un dossier isolé qui contient les bibliothèques d'un seul projet, pour ne pas les mélanger entre projets — le réflexe pris au cours Django du Niveau 3 :</p>
+<pre class="pseudo">(venv) pip install mysqlclient          # pip = l'installateur de paquets Python ; ici on installe le connecteur MySQL
+Successfully installed mysqlclient-2.2.x  # message de succes : le paquet est en place dans le venv</pre>
+<p>Sur certaines machines, mysqlclient refuse de s'installer (il doit se <em>compiler</em>, c'est-à-dire se traduire en langage machine, contre les « en-têtes » MySQL, des fichiers pas toujours présents). Solution de dépannage : <strong>pymysql</strong>, un connecteur écrit à 100 % en Python, un peu moins rapide mais qui s'installe partout sans compilation. Retiens surtout : un seul connecteur suffit, et sans connecteur, aucune commande Django ne pourra toucher la base.</p>
+
+<h3>2. settings.py : la carte d'identité de la base</h3>
+<p>Django lit sa configuration de base de données dans le <strong>dictionnaire</strong> <strong>DATABASES</strong> du fichier <em>settings.py</em>. Un <strong>dictionnaire</strong> Python est une liste d'associations <em>clé → valeur</em> (comme un vrai dictionnaire associe un mot à sa définition). La clé <em>'default'</em> décrit la connexion principale — et chaque champ te rappelle exactement ce que tu tapais dans Workbench pour te connecter :</p>
+<pre class="pseudo">import os                                    # module standard Python : donne acces au systeme (dont les variables d'environnement)
+
+DATABASES = {                                # dictionnaire qui regroupe toutes les connexions du projet
+    'default': {                             # 'default' = la connexion principale (celle utilisee par defaut)
+        'ENGINE': 'django.db.backends.mysql',   # ENGINE = le "dialecte" a parler : ici le backend MySQL de Django
+        'NAME': 'ludotheque',                   # NAME = le nom de la base : celle creee au Niveau 4
+        'USER': 'ludo_user',                    # USER = l'identifiant du compte MySQL
+        'PASSWORD': os.environ.get('LUDO_DB_PASSWORD'),   # PASSWORD lu dans une variable d'environnement (jamais ecrit en clair)
+        'HOST': '127.0.0.1',                    # HOST = l'adresse du serveur ; 127.0.0.1 = "ma propre machine" (localhost)
+        'PORT': '3306',                         # PORT = la "porte" du serveur ; 3306 est le port standard de MySQL
+    }
+}</pre>
+<p>Remarque la ligne PASSWORD : le mot de passe ne s'écrit <strong>pas en clair</strong> dans le fichier, il est lu dans une <strong>variable d'environnement</strong> — une valeur rangée dans le système d'exploitation, en dehors du code, comme un coffre-fort séparé. Pourquoi ? Parce que <em>settings.py</em> est du code, et que le code part dans <strong>Git</strong> (l'outil qui archive l'historique du projet) : un mot de passe « commité » (enregistré dans Git) est un mot de passe public. La variable d'environnement vit sur ta machine, pas dans le dépôt.</p>
+
+<h3>3. Deux shells pour deux mondes : dbshell et shell</h3>
+<p>Comment prouver que la connexion marche ? Django t'offre deux portes d'entrée. Un <strong>shell</strong> est un « terminal interactif » : tu tapes une ligne, il répond aussitôt. La première, <strong>dbshell</strong>, te ramène en terrain connu : c'est ton client <em>mysql</em> du Niveau 4, lancé automatiquement avec les identifiants de DATABASES. La seconde, <strong>shell</strong>, ouvre un interpréteur Python avec ton projet Django déjà chargé — ce sera <strong>le laboratoire de tout ce cours</strong>.</p>
+<pre class="pseudo">(venv) python manage.py dbshell      # manage.py = le couteau suisse du projet ; dbshell ouvre le client mysql du Niveau 4
+mysql&gt; SHOW TABLES;                  -- commande SQL : liste les tables ; si ca repond, la connexion marche
+mysql&gt; exit                          -- quitte le client mysql et revient au terminal
+
+(venv) python manage.py shell        # shell = interpreteur Python avec le projet Django charge (le laboratoire du Niveau 5)
+&gt;&gt;&gt; from django.db import connection  # on importe l'objet "connection" qui represente la connexion active a la base
+&gt;&gt;&gt; connection.ensure_connection()   # force l'ouverture de la connexion : aucune erreur affichee = connexion OK
+&gt;&gt;&gt;                                   # l'invite &gt;&gt;&gt; attend la commande Python suivante</pre>
+<p>La différence est capitale : dans dbshell tu parles <strong>SQL</strong> directement à MySQL ; dans shell tu parles <strong>Python</strong>, et c'est l'ORM qui traduira. Si dbshell affiche <em>Access denied</em> (« accès refusé »), c'est un problème d'USER/PASSWORD ; s'il affiche <em>Unknown database</em> (« base inconnue »), le NAME ne correspond à aucune base existante.</p>
+
+<h3>4. Le réflexe fondateur du cours : print(qs.query) et connection.queries</h3>
+<p>La leçon 1 t'a prévenu : le grand danger de l'ORM, c'est le <strong>SQL caché</strong>. Voici les deux outils qui le rendent visible — prends-les en main dès aujourd'hui, tu t'en serviras à chaque leçon. Un <strong>QuerySet</strong> (littéralement « ensemble de requête ») est l'objet Django qui représente une requête et son futur résultat ; on l'abrège souvent <code>qs</code>. D'abord <strong>print(qs.query)</strong> affiche le SQL <em>prévu</em> par un QuerySet, sans rien exécuter — comme lire une recette avant de cuisiner. Ensuite <strong>connection.queries</strong> liste les requêtes <em>réellement parties</em> vers MySQL (il exige DEBUG=True dans settings.py, l'interrupteur du « mode développement ») :</p>
+<pre class="pseudo">&gt;&gt;&gt; from ludotheque.models import Jeu     # on importe la classe Jeu (nos modeles arrivent a la lecon 3)
+&gt;&gt;&gt; qs = Jeu.objects.filter(disponible=True)   # on construit un QuerySet : "les jeux disponibles" (rien n'est encore execute)
+&gt;&gt;&gt; print(qs.query)                       # affiche le SQL PREVU par ce QuerySet, sans toucher la base
+SELECT ... FROM ludotheque_jeu WHERE disponible = 1   -- le SQL que l'ORM enverra (table nommee app_modele)
+
+&gt;&gt;&gt; from django.db import connection      # on importe connection pour consulter son journal
+&gt;&gt;&gt; list(qs)                              # list() force l'evaluation : LA, la requete part vraiment vers MySQL
+&gt;&gt;&gt; connection.queries                    # journal des requetes REELLEMENT executees pendant la session
+[{'sql': 'SELECT ... FROM ludotheque_jeu WHERE disponible = 1',   # le texte SQL parti
+  'time': '0.001'}]                       # 'time' = duree de la requete en secondes</pre>
+<p>Prévu d'un côté, exécuté de l'autre : ces deux points de vue se complètent. Toute la discipline du cours tient dans ce réflexe — <em>je ne crois pas l'ORM sur parole, je lis son SQL</em> — et ton Niveau 4 te permet de juger ce que tu lis.</p>
+
+<h3>5. django-debug-toolbar : le compteur de requêtes</h3>
+<p>Au Niveau 3, tu as installé <strong>django-debug-toolbar</strong> (une barre d'outils de débogage qui s'affiche sur le côté de tes pages) pour inspecter tes vues. Redécouvre-la avec des yeux de développeur ORM : son panneau <strong>SQL</strong> affiche, pour chaque page, le nombre de requêtes exécutées, leur texte et leur durée. C'est connection.queries en version graphique, et ce sera ton <strong>radar anti-N+1</strong> à la leçon 18 (le N+1 = une requête qui en déclenche des dizaines d'autres sans qu'on le voie). Ailleurs, même besoin, mêmes outils : chaîne de connexion + DbContext chez <strong>EF Core</strong> (C#), configuration de la datasource chez <strong>Hibernate/JPA</strong> (Java/Spring), fichier .env + config/database.php chez <strong>Eloquent/Laravel</strong> (PHP).</p>
+<div class="warn">Des identifiants MySQL en clair dans <em>settings.py</em> ne doivent <strong>jamais</strong> partir dans Git : un dépôt cloné, forké ou rendu public expose ta base à quiconque le lit. Mot de passe = variable d'environnement, toujours — et si un secret a déjà été commité, change-le, car l'historique Git s'en souvient.</div>
+<div class="tip">Ouvre <em>python manage.py shell</em> maintenant… et garde-le ouvert en permanence pendant tout le cours. Chaque notion des 19 prochaines leçons se teste en trois lignes de shell, avec print(qs.query) comme juge de paix.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le connecteur MySQL recommandé par Django s'installe avec…", opts: ["pip install django-mysql", "pip install mysqlclient", "pip install workbench", "apt install mysql-server"], a: 1, exp: "mysqlclient est le pilote officiel ; il s'installe dans le venv du projet." },
+    { type: "qcm", q: "Dans DATABASES, la valeur de 'ENGINE' pour MySQL est…", opts: ["django.db.backends.mysql", "mysqlclient", "mysql://localhost", "django.mysql"], a: 0, exp: "ENGINE désigne le backend Django, pas le paquet pip." },
+    { type: "input", q: "Commande manage.py (un seul mot) qui ouvre le client mysql avec les identifiants du projet :", a: ["dbshell"], ph: "python manage.py …", exp: "dbshell te ramène au client mysql du Niveau 4, connecté à la base de DATABASES." },
+    { type: "qcm", q: "Dans notre projet, la clé 'NAME' de DATABASES vaut…", opts: ["'127.0.0.1'", "'ludotheque_jeu'", "'ludotheque'", "'mysql'"], a: 2, exp: "NAME est le nom de la base : celle créée au Niveau 4, qui existe déjà." },
+    { type: "vf", q: "Si le dépôt Git est privé, on peut laisser le mot de passe MySQL en clair dans settings.py.", a: false, exp: "Un dépôt privé se partage, se fork, devient public : un secret commité reste dans l'historique. Variable d'environnement, toujours." },
+    { type: "qcm", q: "Pour lire le mot de passe depuis une variable d'environnement en Python :", opts: ["input('password')", "os.environ.get('LUDO_DB_PASSWORD')", "settings.PASSWORD", "git secret pull"], a: 1, exp: "os.environ.get() lit l'environnement de ta machine ; rien ne part dans le dépôt." },
+    { type: "qcm", q: "print(qs.query) affiche…", opts: ["Le résultat de la requête", "Le nombre de lignes retournées", "Une erreur si la base est vide", "Le SQL prévu, sans l'exécuter"], a: 3, exp: "C'est une lecture de la description du QuerySet : zéro requête envoyée à MySQL." },
+    { type: "input", q: "Complète l'import pour consulter le journal des requêtes : from django.db import …", a: ["connection"], ph: "un mot…", exp: "connection.queries liste les requêtes réellement exécutées pendant la session." },
+    { type: "qcm", q: "connection.queries ne se remplit que si…", opts: ["DEBUG=True dans settings.py", "La base est PostgreSQL", "On utilise dbshell", "On a installé pymysql"], a: 0, exp: "Ce journal est un outil de développement : en production (DEBUG=False), Django ne le tient pas." },
+    { type: "vf", q: "python manage.py shell ouvre un interpréteur Python avec le projet Django chargé (settings, apps, modèles).", a: true, exp: "Contrairement à python tout seul : c'est le laboratoire du cours, à garder ouvert en permanence." },
+    { type: "qcm", q: "La différence entre dbshell et shell :", opts: ["dbshell est plus rapide", "dbshell parle SQL à MySQL, shell parle Python via l'ORM", "shell ne peut pas toucher la base", "Aucune, ce sont deux alias"], a: 1, exp: "Deux portes vers la même base : l'une en SQL direct, l'autre à travers l'ORM." },
+    { type: "qcm", q: "Le panneau SQL de django-debug-toolbar montre…", opts: ["Le schéma des tables", "Les erreurs 404", "Le nombre, le texte et la durée des requêtes d'une page", "Le contenu de settings.py"], a: 2, exp: "C'est connection.queries en version graphique — ton futur radar anti-N+1 (leçon 18)." },
+    { type: "qcm", q: "L'équivalent de DATABASES chez EF Core (C#/ASP.NET Core) :", opts: ["Un fichier models.py", "La chaîne de connexion branchée sur le DbContext", "La table django_migrations", "Le venv"], a: 1, exp: "Même besoin partout : datasource chez Hibernate/JPA, .env + config/database.php chez Eloquent." },
+    { type: "qcm", q: "Le port par défaut de MySQL, à mettre dans 'PORT' :", opts: ["'8000'", "'5432'", "'3306'", "'80'"], a: 2, exp: "3306 pour MySQL ; 5432 est le port de PostgreSQL, 8000 celui du runserver Django." },
+    { type: "qcm", q: "mysqlclient refuse de s'installer sur ta machine (erreur de compilation). Le dépannage vu en cours :", opts: ["pymysql, connecteur 100 % Python", "Passer à SQLite définitivement", "Réinstaller Windows", "Se passer de connecteur"], a: 0, exp: "pymysql s'installe partout ; moins rapide, mais parfait pour débloquer la situation." }
+  ],
+  final: {
+    title: "Exercice final — La connexion prouvée",
+    intro: `<p>Avant de créer le premier modèle, on vérifie que tu sais brancher Django sur MySQL et surtout regarder le SQL qui circule.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre logique de mise en route :", opts: ["Installer le connecteur → remplir DATABASES → vérifier avec dbshell/shell", "Remplir DATABASES → créer la base → installer Python", "Lancer dbshell → installer mysqlclient → écrire les modèles", "Commiter le mot de passe → tester → corriger"], a: 0, exp: "La prise, la carte d'identité, la preuve — dans cet ordre." },
+      { type: "qcm", q: "dbshell répond « Unknown database 'ludotheque' ». Le problème vient de…", opts: ["ENGINE", "NAME : aucune base de ce nom sur le serveur", "Le venv", "django-debug-toolbar"], a: 1, exp: "Access denied = USER/PASSWORD ; Unknown database = NAME. Deux messages, deux diagnostics." },
+      { type: "input", q: "L'attribut d'un QuerySet qu'on imprime pour lire le SQL prévu sans l'exécuter :", a: ["query", ".query", "qs.query"], ph: "print(qs.…)", exp: "print(qs.query) — LE réflexe fondateur, à dégainer à chaque leçon." },
+      { type: "vf", q: "print(qs.query) montre le SQL prévu ; connection.queries montre les requêtes réellement exécutées.", a: true, exp: "Deux points de vue complémentaires : avant et après l'envoi vers MySQL." },
+      { type: "qcm", q: "La bonne pratique pour le mot de passe MySQL du projet :", opts: ["En clair dans settings.py, c'est plus simple", "Dans un commentaire du code", "Dans une variable d'environnement lue par os.environ", "Dans le README du dépôt"], a: 2, exp: "Le code part dans Git, pas les secrets." }
+    ],
+    solution: `<pre class="pseudo">Connecteur : pip install mysqlclient (dans le venv) — pymysql en dépannage   # la "prise" entre Python et MySQL
+DATABASES  : ENGINE django.db.backends.mysql · NAME 'ludotheque' (base du Niveau 4)   # la carte d'identite de la base
+             USER · PASSWORD via os.environ (JAMAIS en clair dans Git)      # le secret reste hors du code
+             HOST '127.0.0.1' · PORT '3306'                                 # ma machine, port standard MySQL
+Vérifier   : manage.py dbshell  → le client mysql du Niveau 4 répond        # preuve cote SQL
+             manage.py shell    → le laboratoire Python du cours            # preuve cote Python/ORM
+Voir le SQL: print(qs.query)        = SQL prévu (0 requête)                 # lire la recette avant de cuisiner
+             connection.queries     = requêtes exécutées (DEBUG=True)       # le journal du reel
+             django-debug-toolbar   = le compteur graphique (Niveau 3)      # le meme journal, en visuel</pre>
+<p>La ligne est ouverte entre Django et MySQL — mais la base n'a encore rien à dire à l'ORM. Leçon 3 : <strong>Le premier modèle : models.Model et les champs</strong> — la classe Jeu entre en scène.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l2", title: "Brancher la Ludothèque et le prouver", level: 1,
+    statement: "Scénario : tu récupères un projet Django tout neuf (créé au Niveau 3) et tu dois le brancher sur la base MySQL ludotheque conçue au Niveau 4, puis PROUVER que la connexion fonctionne. Rédige la checklist complète, commande par commande : préparation du venv et installation du connecteur, remplissage de DATABASES (avec la gestion propre du mot de passe), vérification par dbshell, vérification par shell, et enfin le réflexe print(qs.query) pour lire un premier SQL généré. Pour chaque étape, indique ce que tu observes si tout va bien. Termine par deux diagnostics : que se passe-t-il exactement (message, cause, remède) si le mot de passe est faux ? Et si la base ludotheque n'existe pas sur le serveur ?",
+    hints: [
+      "Suis l'ordre de la leçon : la prise (connecteur), la carte d'identité (DATABASES), la preuve (dbshell puis shell) — chaque étape a sa commande et son signe de réussite.",
+      "Pour le mot de passe : où vit une variable d'environnement, et pourquoi n'apparaît-elle jamais dans le dépôt Git ?",
+      "Les deux pannes donnent deux messages MySQL différents, déjà croisés au Niveau 4 : l'un parle d'accès, l'autre de base inconnue — associe chacun à la bonne clé de DATABASES."
+    ],
+    solution: "Checklist de branchement\n1. Activer le venv du projet, puis : pip install mysqlclient\n   Signe de réussite : Successfully installed mysqlclient.\n   (Si la compilation échoue : pip install pymysql en dépannage.)\n2. settings.py → DATABASES['default'] :\n   ENGINE 'django.db.backends.mysql', NAME 'ludotheque',\n   USER 'ludo_user', PASSWORD os.environ.get('LUDO_DB_PASSWORD'),\n   HOST '127.0.0.1', PORT '3306'.\n   Le mot de passe vit dans une variable d'environnement de MA machine,\n   jamais dans le fichier → jamais dans Git.\n3. python manage.py dbshell\n   Signe de réussite : l'invite mysql> s'ouvre ; SHOW TABLES; répond\n   (les tables du Niveau 4, ou une liste vide : peu importe, la connexion vit).\n4. python manage.py shell\n   >>> from django.db import connection\n   >>> connection.ensure_connection()   # aucune exception = OK\n5. Dès qu'un modèle existera (leçon 3) :\n   >>> qs = Jeu.objects.filter(disponible=True)\n   >>> print(qs.query)\n   SELECT ... FROM ludotheque_jeu WHERE disponible = 1\n   → je LIS le SQL que l'ORM fabrique : le réflexe est pris.\n\nDiagnostic 1 — mot de passe faux\n   Message : Access denied for user 'ludo_user'@'localhost'.\n   Cause : USER/PASSWORD ne correspondent pas au compte MySQL.\n   Remède : corriger la variable d'environnement (ou les droits du compte),\n   sans jamais écrire le mot de passe dans settings.py.\n\nDiagnostic 2 — base absente\n   Message : Unknown database 'ludotheque'.\n   Cause : NAME pointe vers une base qui n'existe pas sur ce serveur.\n   Remède : recréer la base du Niveau 4 (Workbench ou CREATE DATABASE),\n   puis relancer dbshell pour re-vérifier.",
+    note: "Cette checklist réunit tes trois acquis : le venv et settings.py viennent du cours Django du Niveau 3, le client mysql et les messages d'erreur viennent du Niveau 4, et le réflexe print(qs.query) est la nouveauté fondatrice de ce Niveau 5. Au Niveau 6, brancher le projet full-stack sur sa base sera ta toute première tâche — cette page sera ton mode d'emploi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

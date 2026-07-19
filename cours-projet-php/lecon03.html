@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Du MCD Merise aux migrations Laravel",
+  subtitle: "Traduire le modèle conçu en Merise en un schéma MySQL versionné.",
+  theory: `
+<h3>1. Les migrations : le schéma en PHP, versionné</h3>
+<p>Le <strong>schéma</strong> d'une base de données est le plan de ses tables et de leurs colonnes — l'équivalent des rubriques vides d'un formulaire papier avant qu'on le remplisse. Une <strong>table</strong> est un tableau (lignes et colonnes) qui stocke un type d'information, par exemple tous les jeux. Une <strong>migration</strong> est un fichier PHP qui décrit une modification de ce schéma (créer une table, ajouter une colonne…). Comme elle est <strong>versionnée</strong> dans Git (son historique est conservé) et <strong>rejouable</strong> avec <code>php artisan migrate</code>, elle rend la base <strong>reproductible</strong> : chacun peut recréer exactement la même structure sur sa machine, comme une recette qui donne toujours le même gâteau.</p>
+<pre class="pseudo">php artisan make:migration create_jeux_table   # génère un fichier de migration vide nommé "create_jeux_table"</pre>
+
+<h3>2. Traduire le MCD Merise</h3>
+<p>Le <strong>MCD</strong> (Modèle Conceptuel de Données), dessiné en Merise, est le schéma sur papier des données et de leurs liens. On le traduit en code. Une <strong>colonne</strong> est une rubrique d'une table (le titre, le prix…). Une <strong>clé primaire</strong> est le numéro unique qui identifie chaque ligne sans ambiguïté (comme un numéro de dossier) ; <strong>auto-incrémentée</strong> veut dire que la base attribue toute seule le numéro suivant à chaque nouvelle ligne. Une <strong>clé étrangère</strong> est une colonne qui pointe vers la clé primaire d'une autre table pour créer un lien (par exemple relier un jeu à sa catégorie), comme un renvoi « voir fiche n° … ».</p>
+<pre class="pseudo">// database/migrations/xxxx_create_jeux_table.php    (fichier généré par la commande précédente)
+public function up(): void {                          // up() = "monter" : le code exécuté quand on applique la migration
+    Schema::create('jeux', function (Blueprint $table) {  // crée la table "jeux" ; $table sert à décrire ses colonnes
+        $table->id();                                   // colonne "id" : clé primaire, un numéro unique auto-incrémenté
+        $table->string('titre');                        // colonne "titre" : un texte court (type VARCHAR)
+        $table->decimal('prix_achat', 6, 2);            // prix d'achat : nombre décimal exact (6 chiffres dont 2 après la virgule)
+        $table->decimal('prix_location', 6, 2);         // prix de location : même type décimal exact
+        $table->unsignedInteger('stock_vente')->default(0);      // stock de vente : entier positif, valeur 0 par défaut
+        $table->unsignedInteger('stock_location')->default(0);   // stock de location : entier positif, 0 par défaut
+        $table->foreignId('categorie_id')->constrained();        // clé étrangère : relie chaque jeu à une ligne de "categories"
+        $table->foreignId('fournisseur_id')->nullable()->constrained();  // clé étrangère vers "fournisseurs", nullable = peut rester vide
+        $table->timestamps();                           // ajoute created_at et updated_at (dates de création et de modification)
+    });                                                 // fin de la description des colonnes
+}                                                        // fin de la méthode up()</pre>
+<p><code>$table->id()</code> crée l'identifiant auto-incrémenté ; <code>foreignId(...)->constrained()</code> crée à la fois la colonne <em>et</em> la contrainte de clé étrangère (la règle qui interdit de pointer vers une ligne inexistante). <code>nullable()</code> autorise l'absence de valeur (« null » = vide). Deux stocks distincts, un fournisseur relié au jeu : c'est fidèlement le MCD.</p>
+
+<h3>3. Types Laravel ↔ MySQL</h3>
+<p>Chaque méthode de <code>$table</code> correspond à un <strong>type</strong> de colonne côté MySQL (la nature de la donnée stockée). Voici les principales correspondances :</p>
+<pre class="pseudo">$table->string('x')       → VARCHAR (texte court)
+$table->decimal('x',6,2)  → DECIMAL (prix exact : jamais float)
+$table->unsignedInteger   → INT UNSIGNED (entier ≥ 0, ex. les stocks)
+$table->boolean('x')      → TINYINT(1) (vrai/faux)
+$table->timestamps()      → created_at / updated_at</pre>
+<p>On évite le type <strong>float</strong> (nombre à virgule <em>approché</em>) pour les prix, car il commet de minuscules erreurs d'arrondi ; <strong>DECIMAL</strong> stocke le montant de façon exacte, au centime près. <strong>UNSIGNED</strong> (« sans signe ») veut dire « jamais négatif », logique pour un stock. Un <strong>booléen</strong> (boolean) ne peut valoir que vrai ou faux, comme un interrupteur.</p>
+
+<h3>4. Appliquer et annuler</h3>
+<pre class="pseudo">php artisan migrate            # applique les migrations pas encore exécutées
+php artisan migrate:rollback   # annule le dernier "lot" (batch) de migrations appliquées
+php artisan migrate:fresh      # efface TOUT et recrée le schéma (développement seulement : perte des données)</pre>
+<p>Un <strong>lot</strong> (batch) regroupe les migrations lancées ensemble ; <code>rollback</code> défait ce dernier groupe pour revenir en arrière, comme la touche « annuler ».</p>
+<div class="warn">Comme avec l'outil Flyway, on ne modifie jamais une migration déjà partagée : on en crée une nouvelle. En production (le site réellement en ligne), jamais de <code>migrate:fresh</code> — il détruit toutes les données des utilisateurs.</div>
+
+<h3>5. Peupler avec des seeders</h3>
+<div class="tip">Un <strong>seeder</strong> (de l'anglais <em>seed</em>, « semer ») est un fichier qui insère des données initiales (catégories, jeux de démonstration) via <code>php artisan db:seed</code>. Migrations + seeders : un <code>git clone</code> (copie du projet depuis Git) suivi de quelques commandes reconstruit une base identique et déjà remplie. La conception Merise, le SQL et le code PHP sont ainsi reliés par un pont fiable.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Une migration décrit…", opts: ["Une vue", "Une modification du schéma, en PHP versionné", "Un test", "Un contrôleur"], a: 1, exp: "Schéma reproductible." },
+    { type: "qcm", q: "Créer une migration :", opts: ["php artisan make:migration create_jeux_table", "new migration", "composer migrate", "npm migrate"], a: 0, exp: "make:migration." },
+    { type: "qcm", q: "Créer un id auto-incrémenté :", opts: ["$table->id()", "$table->key()", "$table->auto()", "$table->pk()"], a: 0, exp: "->id()." },
+    { type: "qcm", q: "Créer une colonne + clé étrangère :", opts: ["$table->foreignId('categorie_id')->constrained()", "$table->fk()", "$table->relation()", "$table->link()"], a: 0, exp: "foreignId + constrained." },
+    { type: "qcm", q: "Le type d'un prix :", opts: ["float", "decimal(6,2)", "integer", "string"], a: 1, exp: "DECIMAL exact." },
+    { type: "qcm", q: "Un stock jamais négatif :", opts: ["integer", "unsignedInteger", "string", "boolean"], a: 1, exp: "INT UNSIGNED." },
+    { type: "qcm", q: "Appliquer les migrations :", opts: ["php artisan migrate", "artisan run", "composer db", "npm db"], a: 0, exp: "migrate." },
+    { type: "qcm", q: "Annuler le dernier lot :", opts: ["migrate:rollback", "migrate:delete", "undo", "reset"], a: 0, exp: "rollback." },
+    { type: "qcm", q: "migrate:fresh en production…", opts: ["Est recommandé", "Est à proscrire (efface les données)", "Accélère", "Sécurise"], a: 1, exp: "Destructif." },
+    { type: "qcm", q: "timestamps() crée…", opts: ["Une clé", "created_at et updated_at", "Un index", "Un stock"], a: 1, exp: "Horodatage auto." },
+    { type: "vf", q: "On crée une nouvelle migration plutôt que de modifier une migration partagée.", a: true, exp: "Migrations figées." },
+    { type: "qcm", q: "Insérer des données initiales :", opts: ["Un seeder (db:seed)", "Une vue", "Un contrôleur", "Un test"], a: 0, exp: "Seeders." },
+    { type: "vf", q: "Migrations + seeders reconstruisent une base identique et remplie.", a: true, exp: "Reproductibilité." },
+    { type: "qcm", q: "foreignId('fournisseur_id')->nullable() signifie…", opts: ["Obligatoire", "Le fournisseur est optionnel", "Interdit", "Un doublon"], a: 1, exp: "Relation optionnelle." },
+    { type: "qcm", q: "Les migrations se trouvent dans…", opts: ["resources/views", "database/migrations", "app/Models", "routes"], a: 1, exp: "Dossier dédié." }
+  ],
+  final: {
+    title: "Exercice final — La table jeux",
+    intro: `<p>On crée le schéma initial de la Ludothèque via une migration.</p>`,
+    questions: [
+      { type: "qcm", q: "L'identifiant auto :", opts: ["$table->id()", "$table->auto()", "$table->pk()", "$table->key()"], a: 0, exp: "->id()." },
+      { type: "qcm", q: "Le prix de location :", opts: ["$table->decimal('prix_location', 6, 2)", "$table->float('prix')", "$table->string('prix')", "$table->int('prix')"], a: 0, exp: "DECIMAL." },
+      { type: "qcm", q: "La clé étrangère vers categories :", opts: ["$table->foreignId('categorie_id')->constrained()", "$table->link('categorie')", "$table->fk()", "rien"], a: 0, exp: "foreignId + constrained." },
+      { type: "qcm", q: "Appliquer :", opts: ["php artisan migrate", "migrate:fresh en prod", "composer install", "npm build"], a: 0, exp: "migrate." },
+      { type: "vf", q: "Un seeder peut remplir la base de catégories et jeux de démonstration.", a: true, exp: "Données initiales." }
+    ],
+    solution: `<pre class="pseudo">public function up(): void {                          // code exécuté quand on applique la migration
+    Schema::create('jeux', function (Blueprint $table) {  // crée la table "jeux" ; $table décrit ses colonnes
+        $table->id();                                   // clé primaire : numéro unique auto-incrémenté
+        $table->string('titre');                        // titre du jeu : texte court (VARCHAR)
+        $table->decimal('prix_location', 6, 2);         // prix de location : décimal exact (6 chiffres, 2 décimales)
+        $table->unsignedInteger('stock_vente')->default(0);      // stock de vente : entier positif, 0 par défaut
+        $table->unsignedInteger('stock_location')->default(0);   // stock de location : entier positif, 0 par défaut
+        $table->foreignId('categorie_id')->constrained();        // clé étrangère reliant le jeu à sa catégorie
+        $table->timestamps();                           // created_at et updated_at (dates auto)
+    });                                                 // fin de la description des colonnes
+}</pre>
+<p>Le schéma est versionné et reproductible. Demain : les modèles Eloquent.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta migration Laravel…",
+  items: [
+  { id: "projphp-l3", title: "La migration des locations", level: 3,
+    statement: "Écris la méthode up() d'une migration create_locations_table : id auto, client_id (clé étrangère vers users), jeu_id (clé étrangère vers jeux), date_debut (date), nb_jours (entier), un booléen 'rendue' à false par défaut, et les timestamps.",
+    hints: [
+      "php artisan make:migration create_locations_table.",
+      "$table->foreignId('client_id')->constrained('users'); $table->foreignId('jeu_id')->constrained('jeux');",
+      "$table->date('date_debut'); $table->unsignedInteger('nb_jours'); $table->boolean('rendue')->default(false);"
+    ],
+    solution: "public function up(): void {                                   // code exécuté lors de la migration\n    Schema::create('locations', function (Blueprint $table) {  // crée la table locations\n        $table->id();                                          // clé primaire auto-incrémentée\n        $table->foreignId('client_id')->constrained('users'); // clé étrangère vers users (le client qui loue)\n        $table->foreignId('jeu_id')->constrained('jeux');     // clé étrangère vers jeux (le jeu loué)\n        $table->date('date_debut');                            // date de début de la location\n        $table->unsignedInteger('nb_jours');                   // durée en jours (entier positif)\n        $table->boolean('rendue')->default(false);             // vrai/faux : rendue ou non, faux par défaut\n        $table->timestamps();                                  // created_at et updated_at\n    });                                                        // fin des colonnes\n}",
+    note: "La table locations relie un client (users) à un jeu (jeux) par deux clés étrangères, avec la durée et un indicateur de retour. constrained('users') précise la table cible quand le nom ne se déduit pas automatiquement. C'est l'intégrité référentielle du MCD, appliquée par InnoDB via Laravel." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

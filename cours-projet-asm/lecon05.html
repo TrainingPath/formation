@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Parcourir le tampon : compter et sommer",
+  subtitle: "Le cœur de l'analyse : un seul passage qui reconnaît les nombres, les compte et les additionne.",
+  theory: `
+<h3>1. L'idée : un automate à un seul drapeau</h3>
+<p>On dispose maintenant du texte brut dans <code>buf[0..r13)</code> (leçon 3) et on sait reconnaître un chiffre et l'accumuler (leçon 4). Il reste à <strong>parcourir</strong> tout le tampon, octet par octet, pour compter les nombres et les additionner en un seul passage. Pour cela on utilise un petit <strong>automate</strong> : une machine imaginaire qui n'est, à tout instant, que dans l'un de deux <strong>états</strong> — « je suis en train de lire un nombre » ou « je suis entre deux nombres ». On mémorise cet état dans un <strong>drapeau</strong> (en anglais <em>flag</em>) : une simple variable qui vaut 0 ou 1, comme un petit fanion qu'on lève ou qu'on baisse.</p>
+<p>La règle est simple : tant qu'on voit des chiffres, on accumule et on lève le drapeau. Dès qu'on passe d'un chiffre à un séparateur, c'est qu'un nombre vient de se <strong>terminer</strong> : on l'ajoute au total, on incrémente le compteur, on remet l'accumulateur à zéro et on baisse le drapeau. Cette <strong>transition</strong> « chiffre → séparateur » est le moment-clé de tout le mécanisme.</p>
+
+<h3>2. Les registres de travail</h3>
+<pre class="pseudo">r12 = somme            ; le total des prix (callee-saved : survit aux appels)
+r14 = nombre de jeux   ; le compteur d'entiers rencontres (callee-saved)
+rbx = index dans buf   ; la position courante de lecture dans le tampon (0, 1, 2, ...)
+r15 = nombre courant   ; l'accumulateur atoi (le nombre en train d'etre lu)
+r8  = drapeau          ; 0 = hors d'un nombre, 1 = en train de lire un nombre</pre>
+<p>Chaque registre a un rôle fixe pendant tout le parcours. On place les valeurs qui doivent durer (la somme, le compteur) dans des registres <strong>callee-saved</strong> (rappel leçon 3 : ils survivent aux appels de routines), car on s'en servira ensuite pour l'affichage.</p>
+
+<h3>3. La boucle de parcours</h3>
+<pre class="pseudo">    xor r12, r12          ; somme = 0
+    xor r14, r14          ; nombre de jeux = 0
+    xor rbx, rbx          ; index = 0 (on commence au debut du tampon)
+    xor r15, r15          ; accumulateur = 0
+    xor r8, r8            ; drapeau = 0 (on n'est pas encore dans un nombre)
+.parse:                   ; debut de la boucle
+    cmp rbx, r13          ; a-t-on atteint la fin des donnees lues ?
+    jge .parse_end        ; jge = "jump if >=" : si index >= total lu, on sort de la boucle
+    movzx rax, byte [buf + rbx]  ; charge l'octet courant (zero-extended)
+    cmp al, 48            ; est-il < '0' ?
+    jb .sep               ; oui -> c'est un separateur
+    cmp al, 57            ; est-il > '9' ?
+    ja .sep               ; oui -> c'est un separateur
+    ; --- ici : c'est un chiffre ---
+    imul r15, r15, 10     ; accumulateur x 10 (schema de Horner)
+    sub al, 48            ; code du chiffre -> valeur 0..9
+    movzx rax, al         ; re-etend la valeur sur 64 bits proprement
+    add r15, rax          ; ajoute le chiffre a l'accumulateur
+    mov r8, 1             ; leve le drapeau : on est dans un nombre
+    jmp .suivant          ; passe a l'octet suivant
+.sep:                     ; --- ici : c'est un separateur ---
+    cmp r8, 0             ; etait-on dans un nombre ?
+    je .suivant           ; non (drapeau baisse) : rien a faire, on continue
+    add r12, r15          ; oui : un nombre se termine -> somme += nombre courant
+    inc r14               ; inc = +1 : un jeu de plus compte
+    xor r15, r15          ; remet l'accumulateur a zero pour le prochain nombre
+    xor r8, r8            ; baisse le drapeau : on sort du nombre
+.suivant:
+    inc rbx               ; avance d'un octet
+    jmp .parse            ; recommence la boucle
+.parse_end:               ; fin du parcours</pre>
+<p>Nouveaux sauts utilisés : <code>jge</code> (« <em>jump if greater or equal</em> », saute si supérieur ou égal) sert de condition d'arrêt ; <code>je</code> (« <em>jump if equal</em> », saute si égal) teste le drapeau ; <code>inc</code> ajoute 1 (l'inverse de <code>dec</code>). L'ensemble réalise, en un seul passage, la reconnaissance des nombres, leur comptage et leur addition.</p>
+
+<h3>4. Le piège du dernier nombre</h3>
+<pre class="pseudo">    cmp r8, 0             ; en sortant de la boucle : etait-on encore dans un nombre ?
+    je .apres             ; non : rien a rattraper
+    add r12, r15          ; oui : le dernier nombre n'a pas eu de separateur -> on l'ajoute
+    inc r14               ; et on le compte
+.apres:</pre>
+<div class="warn">Piège classique. Si l'entrée se termine par un chiffre <strong>sans</strong> saut de ligne final (par exemple <code>10 20 30</code> tout au bout du fichier), la transition « chiffre → séparateur » n'a jamais lieu pour le dernier nombre : la boucle s'arrête « au milieu » d'un nombre. On ajoute donc, <strong>après</strong> la boucle, le nombre en cours si le drapeau est encore levé. Sans ce test, le dernier nombre serait purement et simplement <strong>perdu</strong> (compté ni dans le total, ni dans le nombre de jeux).</div>
+
+<h3>5. Résultat, et coût</h3>
+<div class="tip">Après ce passage unique, <code>r14</code> contient le nombre de jeux et <code>r12</code> le total. On n'a lu chaque octet qu'<strong>une seule fois</strong> : le travail grandit proportionnellement à la taille de l'entrée, ce qu'on note <strong>O(n)</strong> — une <strong>complexité linéaire</strong>, la plus économique possible pour devoir tout regarder. Il ne reste qu'à afficher ces deux valeurs. Mais attention : ce sont des <em>nombres</em> (dans des registres), et <code>write</code> ne sait envoyer que des <em>caractères</em>. Il faudra donc les reconvertir en texte — c'est <code>itoa</code>, l'objet de la leçon 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le drapeau r8 indique…", opts: ["la fin du fichier", "si on est en train de lire un nombre", "une erreur", "le total"], a: 1, exp: "Automate à un drapeau." },
+    { type: "qcm", q: "Un nombre se termine quand…", opts: ["on lit un chiffre", "on passe d'un chiffre à un séparateur", "au début", "jamais"], a: 1, exp: "Transition chiffre→séparateur." },
+    { type: "qcm", q: "À la fin d'un nombre, on…", opts: ["ne fait rien", "ajoute r15 au total et incrémente le compteur", "efface buf", "quitte"], a: 1, exp: "Comptabiliser." },
+    { type: "qcm", q: "La somme est accumulée dans…", opts: ["rax", "r12 (callee-saved)", "rbx", "r8"], a: 1, exp: "Total." },
+    { type: "qcm", q: "Le nombre de jeux est dans…", opts: ["r12", "r14", "rbx", "r15"], a: 1, exp: "Compteur." },
+    { type: "qcm", q: "La condition d'arrêt de la boucle :", opts: ["rbx == 0", "rbx >= r13 (fin des données)", "r12 == 0", "jamais"], a: 1, exp: "Parcours complet." },
+    { type: "qcm", q: "Sur un séparateur alors qu'on n'est pas dans un nombre, on…", opts: ["ajoute quand même", "ne fait rien (continue)", "quitte", "efface"], a: 1, exp: "Éviter de compter du vide." },
+    { type: "qcm", q: "Après avoir compté un nombre, r15 doit être…", opts: ["laissé tel quel", "remis à zéro", "doublé", "affiché"], a: 1, exp: "Prêt pour le suivant." },
+    { type: "qcm", q: "Si l'entrée finit par un chiffre sans saut de ligne…", opts: ["rien à faire", "il faut ajouter le dernier nombre après la boucle", "on perd le premier", "erreur"], a: 1, exp: "Piège du dernier nombre." },
+    { type: "qcm", q: "La complexité de ce parcours est…", opts: ["quadratique", "linéaire (un seul passage)", "constante", "exponentielle"], a: 1, exp: "O(n)." },
+    { type: "vf", q: "Sans le test après la boucle, un dernier nombre non suivi d'un séparateur serait perdu.", a: true, exp: "Transition manquante." },
+    { type: "qcm", q: "imul r15, r15, 10 puis add r15, chiffre réalise…", opts: ["une division", "l'accumulation atoi", "une comparaison", "un affichage"], a: 1, exp: "×10 + chiffre." },
+    { type: "qcm", q: "movzx rax, byte [buf + rbx] charge…", opts: ["4 octets", "l'octet courant, zero-extended", "l'adresse", "rien"], a: 1, exp: "Un caractère." },
+    { type: "qcm", q: "Après le parcours, pour \"44 12 39 20\" : r14 =", opts: ["1", "4", "115", "0"], a: 1, exp: "Quatre nombres." },
+    { type: "qcm", q: "…et r12 =", opts: ["4", "115", "20", "0"], a: 1, exp: "44+12+39+20." }
+  ],
+  final: {
+    title: "Exercice final — Débusquer le bug du dernier nombre",
+    intro: `<p>Un stagiaire écrit la boucle sans traiter le nombre final. Sur l'entrée <code>10 20 30</code> (sans saut de ligne à la fin), le programme affiche « 2 jeux, total 30 ». Analyse.</p>`,
+    questions: [
+      { type: "qcm", q: "Combien de nombres réels ?", opts: ["2", "3 (10, 20, 30)", "1", "30"], a: 1, exp: "Trois valeurs." },
+      { type: "qcm", q: "Pourquoi seulement 2 comptés ?", opts: ["bug de read", "le 3e (30) n'est suivi d'aucun séparateur", "erreur d'affichage", "hasard"], a: 1, exp: "Transition manquante." },
+      { type: "qcm", q: "Le total 30 au lieu de 60 confirme…", opts: ["rien", "que 30 n'a pas été ajouté (10+20)", "un bug de write", "un overflow"], a: 1, exp: "Dernier nombre perdu." },
+      { type: "qcm", q: "La correction :", opts: ["boucler deux fois", "après la boucle, si drapeau levé, ajouter le nombre courant", "ignorer", "changer read"], a: 1, exp: "Traiter le reste." },
+      { type: "qcm", q: "Le drapeau à tester après la boucle :", opts: ["r12", "r8 (encore dans un nombre ?)", "r13", "rbx"], a: 1, exp: "État final." }
+    ],
+    solution: `<pre class="pseudo">.parse_end:
+    cmp r8, 0              ; étions-nous encore dans un nombre ?
+    je .apres
+    add r12, r15          ; oui : ajouter le dernier nombre (30)
+    inc r14               ; et le compter
+.apres:
+    ; pour "10 20 30" : r14 = 3, r12 = 60</pre>
+<p>Le nombre final, non suivi d'un séparateur, ne déclenche pas la transition « chiffre → séparateur ». On le comptabilise après la boucle si le drapeau est encore levé. Résultat correct : 3 jeux, total 60. Demain : reconvertir un nombre en texte (itoa) pour l'afficher.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur ici…",
+  items: [
+  { id: "projasm-l05", title: "Le passage compter + sommer", level: 3,
+    statement: "Écris la boucle qui parcourt buf[0..r13) et calcule dans r14 le nombre d'entiers et dans r12 leur somme, en utilisant un accumulateur r15 et un drapeau r8. N'oublie pas de comptabiliser le dernier nombre après la boucle.",
+    hints: [
+      "Chiffre (48..57) : imul r15,10 ; add le chiffre ; r8 = 1.",
+      "Séparateur : si r8 != 0, add r12,r15 ; inc r14 ; remettre r15 et r8 à 0.",
+      "Après la boucle : si r8 != 0, ajouter le dernier nombre."
+    ],
+    solution: "    xor r12, r12             ; somme\n    xor r14, r14             ; nombre\n    xor rbx, rbx             ; index\n    xor r15, r15             ; accumulateur\n    xor r8, r8               ; drapeau \"dans un nombre\"\n.parse:\n    cmp rbx, r13\n    jge .parse_end\n    movzx rax, byte [buf + rbx]\n    cmp al, 48\n    jb .sep\n    cmp al, 57\n    ja .sep\n    imul r15, r15, 10        ; chiffre\n    sub al, 48\n    movzx rax, al\n    add r15, rax\n    mov r8, 1\n    jmp .suivant\n.sep:\n    cmp r8, 0                ; separateur\n    je .suivant\n    add r12, r15             ; fin d'un nombre\n    inc r14\n    xor r15, r15\n    xor r8, r8\n.suivant:\n    inc rbx\n    jmp .parse\n.parse_end:\n    cmp r8, 0                ; dernier nombre ?\n    je .apres\n    add r12, r15\n    inc r14\n.apres:",
+    note: "C'est le cœur de ludostat : un automate à un drapeau qui, en un seul passage linéaire, compte les nombres et les additionne. Le point délicat est le nombre final non suivi d'un séparateur, qu'on traite après la boucle. On accumule dans r12/r14 (callee-saved) pour que les totaux survivent aux appels d'affichage suivants." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

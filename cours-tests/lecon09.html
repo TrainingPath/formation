@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Les doubles de test : stubs, fakes et mocks",
+  subtitle: "Pour tester une pièce, débranche-la du reste — et branche une doublure.",
+  theory: `
+<h3>1. Pourquoi isoler ?</h3>
+<p>Tu veux tester <code>prix_de_vente</code>, qui interroge l'<strong>API</strong> de cotation des jeux (une <strong>API</strong> est un service qu'un programme met à disposition pour que d'autres l'interrogent, comme un guichet qui répond à des demandes précises), ou la règle « un jeu déjà loué ne peut pas l'être à nouveau », qui lit la base. Si le test appelle la <strong>vraie</strong> API et la <strong>vraie</strong> base, il devient <strong>lent</strong> (réseau, MySQL), <strong>fragile</strong> (l'API est en panne → ton test échoue alors que ton code est bon) et <strong>non répétable</strong> (la cotation de Catan change chaque semaine, la date du jour change chaque nuit). Un test unitaire doit remplacer ces dépendances par des objets contrôlés : les <strong>doubles de test</strong>.</p>
+
+<h3>2. La famille des doubles</h3>
+<p>Le terme vient des <strong>doublures de cinéma</strong> (Gerard Meszaros) : un objet qui prend la place de la vraie dépendance le temps du test. On distingue cinq rôles :</p>
+<pre class="pseudo">dummy : remplit un paramètre exigé, jamais réellement utilisé
+stub  : renvoie des réponses préparées d'avance
+fake  : implémentation simplifiée mais qui marche (ex. en mémoire)
+spy   : enregistre les appels reçus, pour les inspecter après coup
+mock  : vérifie que LES BONNES interactions ont eu lieu</pre>
+<p>Dans la pratique on dit souvent « mock » pour tout ; mais connaître les nuances t'aide à choisir le bon outil — et à comprendre tes collègues Java (Mockito) ou C# (Moq), qui utilisent le même vocabulaire.</p>
+
+<h3>3. Le stub : des réponses préparées</h3>
+<p>Un <strong>stub</strong> répond toujours la même chose, sans logique. Idéal pour les <strong>requêtes</strong> : « donne-moi la cotation de ce jeu ».</p>
+<pre class="pseudo">class CatalogueStub:                       # DEFINIT une classe (un moule a objets) qui imite le vrai catalogue
+    def cotation(self, nom):               # methode appelee pour connaitre le prix ; self = l'objet, nom = le jeu vise
+        return 40.00   # toujours la même réponse, zéro réseau
+
+def test_prix_de_vente_applique_la_marge():  # le test : la fonction applique-t-elle bien la marge ?
+    prix = prix_de_vente(CatalogueStub(), "Catan")  # on appelle la fonction avec la DOUBLURE au lieu du vrai catalogue
+    assert prix == 48.00   # cotation 40.00 + 20 pour cent de marge</pre>
+<p>Le test est instantané, répétable, et il échoue <strong>uniquement</strong> si le calcul de marge est faux — pas si l'API tousse.</p>
+
+<h3>4. Le fake : une vraie implémentation, en plus simple</h3>
+<p>Un <strong>fake</strong> marche vraiment, mais en version allégée. L'exemple classique : un dépôt de jeux <strong>en mémoire</strong>, avec un simple dict, à la place de MySQL.</p>
+<pre class="pseudo">class DepotJeuxEnMemoire:                  # une fausse base de donnees, rangee en memoire vive (pas sur disque)
+    def __init__(self):                    # __init__ = le constructeur : code lance a la creation de l'objet
+        self.jeux = {}                     # cree un dictionnaire vide : un annuaire "nom du jeu -> objet jeu"
+    def ajouter(self, jeu):                # methode pour ranger un jeu dans le depot
+        self.jeux[jeu.nom] = jeu           # range le jeu dans l'annuaire, a la case portant son nom
+    def trouver(self, nom):                # methode pour retrouver un jeu par son nom
+        return self.jeux.get(nom)          # renvoie le jeu correspondant, ou None (rien) s'il est absent
+
+def test_jeu_deja_loue_refuse_la_location():   # test de la regle metier : pas de double location
+    depot = DepotJeuxEnMemoire()           # on cree une doublure de depot, vide au depart
+    depot.ajouter(Jeu(nom="Catan", loue=True))  # on y range "Catan" DEJA marque comme loue (loue=True)
+    with pytest.raises(JeuIndisponible):   # on EXIGE que le bloc suivant leve l'exception JeuIndisponible
+        louer(depot, "Catan", client)      # louer Catan (deja pris) DOIT echouer -> sinon le test est rouge</pre>
+<p>La règle métier est testée pour de vrai, mais sans base : le test tourne en millisecondes.</p>
+
+<h3>5. Le mock : vérifier les interactions</h3>
+<p>Parfois le résultat n'est pas une valeur mais un <strong>effet</strong> : « au retour en retard, un email est envoyé ». On ne peut pas l'affirmer avec un assert sur l'état ; on vérifie que la <strong>bonne interaction</strong> a eu lieu. C'est la différence entre <strong>tester l'état</strong> (le résultat, les données) et <strong>tester le comportement</strong> (les appels effectués).</p>
+<pre class="pseudo">from unittest.mock import Mock            # on importe l'outil Mock, fourni de base par Python (module unittest.mock)
+
+def test_retour_en_retard_envoie_un_email():   # test : un retour en retard declenche-t-il bien un email ?
+    mails = Mock()                        # cree un faux notifieur ; il note tous les appels qu'il recoit
+    enregistrer_retour(location_en_retard, notifieur=mails)   # on execute l'action en lui donnant le faux notifieur
+    mails.envoyer.assert_called_once()    # on VERIFIE que la methode "envoyer" a ete appelee exactement une fois</pre>
+<p>Équivalents dans les autres langages : <strong>Mockito</strong> en Java, <strong>Moq</strong> en C#, <code>createMock</code> dans PHPUnit — mêmes concepts, autre syntaxe.</p>
+<div class="warn">Trop de mocks = tests <strong>couplés à l'implémentation</strong> : tu renommes une méthode interne, dix tests cassent alors que le comportement n'a pas changé. Mocke les frontières (réseau, base, email), pas ta propre logique.</div>
+<div class="tip">Repère pratique : <strong>fake</strong> pour le stockage, <strong>stub</strong> pour les requêtes, <strong>mock</strong> pour les effets de bord (email, paiement). Et teste l'état chaque fois que c'est possible : c'est plus robuste.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un test unitaire qui appelle la vraie API de cotation est…", opts: ["Parfait, c'est réaliste", "Lent, fragile et non répétable : il dépend du réseau", "Plus précis", "Obligatoire en pytest"], a: 1, exp: "L'API en panne ferait échouer un test alors que ton code est bon." },
+    { type: "qcm", q: "Le terme générique pour tous ces objets de remplacement :", opts: ["Double de test", "Clone", "Snapshot", "Plugin"], a: 0, exp: "Comme les doublures de cinéma (Gerard Meszaros)." },
+    { type: "qcm", q: "Un stub…", opts: ["Vérifie les interactions", "Renvoie des réponses préparées d'avance", "Est une vraie base de données", "Mesure la couverture"], a: 1, exp: "Toujours la même réponse, zéro logique, zéro réseau." },
+    { type: "qcm", q: "Un fake…", opts: ["Ne fait jamais rien", "Plante volontairement", "Est une implémentation simplifiée qui fonctionne vraiment (ex. dict en mémoire)", "Appelle le vrai réseau"], a: 2, exp: "DepotJeuxEnMemoire : ça marche, mais sans MySQL." },
+    { type: "qcm", q: "Un mock sert d'abord à…", opts: ["Accélérer MySQL", "Générer des données aléatoires", "Remplacer pytest", "Vérifier que les bonnes interactions ont eu lieu"], a: 3, exp: "mails.envoyer.assert_called_once() : le comportement, pas l'état." },
+    { type: "qcm", q: "Un dummy…", opts: ["Remplit un paramètre exigé mais jamais utilisé dans le cas testé", "Enregistre les appels", "Simule le réseau", "Teste l'interface graphique"], a: 0, exp: "Il est là pour que la signature soit satisfaite, rien de plus." },
+    { type: "qcm", q: "Un spy…", opts: ["Renvoie du JSON", "Enregistre les appels reçus pour les inspecter après coup", "Supprime la base de test", "Chiffre les tests"], a: 1, exp: "On regarde ensuite ce qui lui est arrivé." },
+    { type: "qcm", q: "Tester l'ÉTAT, c'est…", opts: ["Vérifier le résultat ou les données après l'action", "Vérifier quelles méthodes ont été appelées", "Tester en production", "Lire les logs"], a: 0, exp: "assert prix == 48.00 : on regarde le résultat." },
+    { type: "qcm", q: "Tester le COMPORTEMENT (les interactions) se justifie surtout…", opts: ["Partout, tout le temps", "Jamais", "Pour les effets de bord : email envoyé, paiement déclenché", "Pour les calculs purs"], a: 2, exp: "Quand il n'y a pas d'état observable à vérifier." },
+    { type: "qcm", q: "L'équivalent Java de unittest.mock est fourni par…", opts: ["JUnitZip", "Moqueur", "Mockito", "PHPUnit"], a: 2, exp: "Mockito en Java, Moq en C#, createMock en PHPUnit." },
+    { type: "vf", q: "Un CatalogueStub qui renvoie toujours 40,00 rend le test répétable.", a: true, exp: "Même entrée, même sortie, aujourd'hui comme dans un an." },
+    { type: "vf", q: "Plus une suite contient de mocks, plus elle résiste aux refactors.", a: false, exp: "C'est l'inverse : les mocks couplent les tests à l'implémentation." },
+    { type: "vf", q: "Moq (C#) et createMock de PHPUnit répondent au même besoin que unittest.mock.", a: true, exp: "Chaque écosystème a sa boîte à doubles." },
+    { type: "input", q: "Le double qui renvoie des réponses préparées d'avance :", a: ["stub", "le stub", "un stub"], ph: "un mot…", exp: "Idéal pour les requêtes : cotation, catalogue…" },
+    { type: "input", q: "Le double implémenté comme un vrai dépôt, mais en mémoire :", a: ["fake", "le fake", "un fake"], ph: "un mot…", exp: "Une implémentation simplifiée qui marche vraiment." }
+  ],
+  final: {
+    title: "Exercice final — Choisir le bon double",
+    intro: `<p>Pour chaque besoin de la Ludothèque, choisis la doublure adaptée.</p>`,
+    questions: [
+      { type: "qcm", q: "Remplacer le dépôt MySQL par un dict en mémoire pour tester la règle « jeu déjà loué » :", opts: ["Dummy", "Fake", "Mock", "Vraie base"], a: 1, exp: "Une implémentation simplifiée qui fonctionne : le fake." },
+      { type: "qcm", q: "Faire répondre 40,00 à toute demande de cotation :", opts: ["Stub", "Spy", "Dummy", "Fixture"], a: 0, exp: "Réponse préparée d'avance : le stub." },
+      { type: "qcm", q: "Vérifier qu'un email part bien lors d'un retour en retard :", opts: ["Stub", "Fake", "Dummy", "Mock"], a: 3, exp: "Un effet de bord : on vérifie l'interaction avec le notifieur." },
+      { type: "vf", q: "Grâce aux doubles, un test unitaire peut tourner sans réseau ni base de données.", a: true, exp: "C'est tout l'intérêt : rapide, stable, répétable." },
+      { type: "input", q: "assert_called_once vérifie l'état ou le comportement ?", a: ["comportement", "le comportement", "les interactions"], ph: "état ou comportement…", exp: "On vérifie qu'un appel a eu lieu, pas une valeur." }
+    ],
+    solution: `<pre class="pseudo">Pourquoi isoler : vraie base / vrai réseau / vraie horloge
+                  → lent, fragile, non répétable
+
+dummy : bouche-trou de paramètre     stub : réponses préparées
+fake  : version simplifiée qui marche
+spy   : enregistre les appels        mock : vérifie les interactions
+
+Repère : fake = stockage, stub = requêtes, mock = effets de bord
+État quand tu peux, comportement quand tu dois.
+Ailleurs : Mockito (Java), Moq (C#), createMock (PHPUnit)</pre>
+<p>Écrire un stub à la main, ça va cinq minutes. Prochaine leçon : unittest.mock et patch pour remplacer l'horloge, le réseau et la base en une ligne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l9", title: "La bonne doublure pour chaque scène", level: 2,
+    statement: "Cinq besoins de test pour la Ludothèque : a) prix_de_vente a besoin d'une cotation de l'API externe ; b) la règle « un jeu déjà loué ne peut pas l'être à nouveau » a besoin d'un dépôt de jeux ; c) il faut prouver qu'un reçu est envoyé par email après chaque retour ; d) la fonction testée exige un paramètre journal (logger) qui n'est pas utilisé dans le cas testé ; e) on veut savoir combien de fois le cache de cotations est interrogé pendant un calcul. Pour chaque besoin, choisis le double de test adapté (dummy, stub, fake, spy, mock), justifie en une ou deux lignes, et précise si tu testes l'état ou le comportement.",
+    hints: [
+      "Demande-toi d'abord : ce besoin porte-t-il sur une valeur renvoyée (état) ou sur des appels effectués (comportement) ?",
+      "Le dépôt de jeux doit se souvenir des ajouts entre deux appels : une simple réponse figée ne suffit pas.",
+      "Compter des appels sans imposer d'attente stricte, c'est le territoire du spy ; imposer « exactement cet appel », c'est le mock."
+    ],
+    solution: "Besoin | Double | Justification                              | On teste\n-------+--------+--------------------------------------------+-------------\na      | stub   | réponse de cotation figée (ex. 40,00),     | l'état\n       |        | zéro réseau, test répétable                |\nb      | fake   | dépôt en mémoire (dict) : il doit vraiment | l'état\n       |        | stocker et retrouver les jeux              |\nc      | mock   | l'email est un effet de bord :             | le comportement\n       |        | envoyer.assert_called_once()               |\nd      | dummy  | le journal n'est jamais utilisé ici :      | rien (bouche-trou)\n       |        | un objet vide suffit                       |\ne      | spy    | on enregistre les appels au cache puis     | le comportement\n       |        | on compte, sans attente rigide             |\n\nRègle générale : état quand c'est possible (a, b),\ncomportement quand il le faut (c, e).",
+    note: "Ce réflexe de classement te servira tel quel dans le capstone Ludothèque et dans les autres langages du cursus : Mockito et Moq utilisent exactement ces cinq rôles. Et une suite bien isolée reste rapide — condition indispensable pour la lancer à chaque push dans le pipeline CI/CD du cours suivant." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

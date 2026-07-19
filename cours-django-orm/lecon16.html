@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Pagination : Paginator",
+  subtitle: "400 jeux au catalogue, 20 par page : Paginator découpe, compte et numérote — toi, tu affiches.",
+  theory: `
+<h3>1. Le besoin : personne ne lit 400 lignes</h3>
+<p>Le catalogue de la Ludothèque a grossi : <strong>400 jeux</strong>. Pas question d'envoyer au navigateur une page de 400 lignes — lente à générer, lourde à transférer, illisible. La <strong>pagination</strong>, c'est justement découper une longue liste en « pages » de taille fixe (comme les pages d'un livre). Tu sais déjà découper avec le slicing de la leçon 13 : <em>Jeu.objects.order_by('titre')[40:60]</em> devient un LIMIT/OFFSET (prends 20 lignes en sautant les 40 premières). Mais une vraie pagination demande plus : le <strong>nombre total de pages</strong>, les liens <strong>précédent/suivant</strong>, la gestion d'un numéro de page invalide… Réinventer tout cela à la main serait pénible ; Django fournit l'outil :</p>
+<pre class="pseudo">from django.core.paginator import Paginator   # on importe l'outil de pagination
+
+# slicing (leçon 13)  : le découpage brut, LIMIT/OFFSET à la main   # a toi de tout gerer
+# Paginator           : découpage + comptage + navigation, clé en main   # l'outil complet</pre>
+
+<h3>2. L'objet Paginator : compter et découper</h3>
+<p>On construit un <strong>Paginator</strong> (« pagineur ») avec deux arguments : un QuerySet <strong>ordonné</strong> (trié) et le nombre d'objets par page.</p>
+<pre class="pseudo">&gt;&gt;&gt; from django.core.paginator import Paginator   # import de l'outil
+&gt;&gt;&gt; p = Paginator(Jeu.objects.order_by('titre'), 20)   # 1er arg : le QuerySet trie ; 2e arg : 20 par page
+&gt;&gt;&gt; p.count          # SELECT COUNT(*) FROM ludotheque_jeu   # nombre total d'objets
+400                   # il y a 400 jeux
+&gt;&gt;&gt; p.num_pages      # 400 / 20   # nombre de pages (arrondi au superieur)
+20                    # donc 20 pages de 20 jeux
+&gt;&gt;&gt; list(p.page_range)   # la liste des numeros de page disponibles
+[1, 2, 3, ..., 20]       # de 1 a 20</pre>
+<p>Pourquoi <strong>ordonné</strong> ? Sans ORDER BY, MySQL ne garantit <strong>aucun ordre</strong> : le jeu affiché en page 2 aujourd'hui pourrait resurgir en page 3 à la requête suivante. Django te prévient d'ailleurs avec un <em>UnorderedObjectListWarning</em> (« avertissement : liste non ordonnée ») si tu paginés un QuerySet non trié — un avertissement à prendre au sérieux, pas à faire taire.</p>
+
+<h3>3. L'objet Page : une tranche prête à afficher</h3>
+<p><em>p.page(2)</em> renvoie un objet <strong>Page</strong> : la tranche de résultats, plus tout ce qu'il faut pour naviguer.</p>
+<pre class="pseudo">&gt;&gt;&gt; page = p.page(2)               # on demande la page numero 2
+&gt;&gt;&gt; page.object_list          # les 20 jeux de la page 2   # la liste des objets de cette page
+&gt;&gt;&gt; for jeu in page:          # itérable directement, sans object_list   # on peut boucler sur la page
+...     print(jeu.titre)          # affiche le titre de chaque jeu de la page
+&gt;&gt;&gt; page.number               # 2   # le numero de la page courante
+&gt;&gt;&gt; page.has_next()           # True   # existe-t-il une page suivante ?
+&gt;&gt;&gt; page.has_previous()       # True   # existe-t-il une page precedente ?
+&gt;&gt;&gt; page.next_page_number()   # 3   # le numero de la page suivante
+
+# Côté MySQL, DEUX requêtes en tout :
+# SELECT COUNT(*) FROM ludotheque_jeu               ← p.count   -- 1) le total
+# SELECT ... ORDER BY titre LIMIT 20 OFFSET 20      ← la page 2   -- 2) la tranche (saute 20, prend 20)</pre>
+<p>Retrouve ton Niveau 4 : un COUNT(*) pour connaître le total, puis un LIMIT 20 OFFSET 20 pour la tranche. Le QuerySet reste paresseux jusqu'au bout : la requête de la tranche ne part que quand la page est réellement parcourue.</p>
+
+<h3>4. Les erreurs : EmptyPage, PageNotAnInteger… et get_page()</h3>
+<p>Que se passe-t-il si on demande une page qui n'existe pas ? La méthode stricte <em>page()</em> lève des exceptions ; la méthode tolérante <em>get_page()</em> encaisse tout :</p>
+<pre class="pseudo">&gt;&gt;&gt; p.page(999)                    # on demande une page inexistante (il n'y en a que 20)
+EmptyPage: That page contains no results   # exception : "cette page ne contient aucun resultat"
+&gt;&gt;&gt; p.page('abc')                  # on demande une page avec un texte
+PageNotAnInteger: That page number is not an integer   # exception : "le numero n'est pas un entier"
+
+&gt;&gt;&gt; p.get_page(999)      # → retombe sur la DERNIÈRE page (20)   # tolerant : borne au maximum
+&gt;&gt;&gt; p.get_page('abc')    # → retombe sur la page 1   # tolerant : texte -> page 1
+&gt;&gt;&gt; p.get_page(None)     # → page 1 aussi (paramètre absent de l'URL)   # None -> page 1</pre>
+<p><em>get_page()</em> est taillée pour les paramètres d'URL : le numéro de page viendra de l'utilisateur, et un utilisateur finit toujours par taper n'importe quoi. Plutôt que trois try/except, une méthode qui choisit une page raisonnable.</p>
+
+<h3>5. Dans une vraie vue Django (retour au Niveau 3)</h3>
+<p>Assemblons tout dans la vue du catalogue, avec le <em>request.GET</em> (les paramètres de l'URL) que tu connais du cours Django :</p>
+<pre class="pseudo">from django.core.paginator import Paginator   # l'outil de pagination
+from django.shortcuts import render           # render() = fabrique la reponse HTML
+from .models import Jeu                        # notre modele Jeu
+
+def catalogue(request):                        # une vue = une fonction qui recoit la requete
+    jeux = Jeu.objects.order_by('titre')        # QuerySet TRIE (indispensable pour paginer)
+    paginator = Paginator(jeux, 20)             # 20 jeux par page
+    numero = request.GET.get('page')            # /catalogue/?page=3 → '3'   # lit le parametre ?page
+    page_obj = paginator.get_page(numero)       # tolérant, toujours une page valide
+    return render(request, 'catalogue.html', {'page_obj': page_obj})   # envoie la page au template
+
+# Dans le template : boucler sur page_obj, et des liens
+# « précédent / suivant » avec has_previous, has_next, page_obj.number   # navigation dans le HTML</pre>
+<p>Sache enfin que la vue générique <strong>ListView</strong> (Niveau 3) fait tout cela toute seule avec un simple attribut <em>paginate_by = 20</em> — simple mention. Ailleurs : Skip/Take et les PagedList d'EF Core, <em>paginate()</em> chez Eloquent (avec liens HTML tout faits), setFirstResult/setMaxResults chez JPA.</p>
+<div class="warn">Paginer un QuerySet <strong>non trié</strong> = pages incohérentes d'une requête à l'autre : MySQL ne garantit aucun ordre sans ORDER BY, un même jeu peut apparaître sur deux pages ou disparaître. Toujours un order_by() AVANT le Paginator — l'UnorderedObjectListWarning est là pour ça.</div>
+<div class="tip">Dans une vue, préfère get_page() à page() : le numéro vient de l'URL, donc de l'utilisateur, donc il sera un jour absurde (?page=999, ?page=abc, page absente). get_page() retombe sur une page valide sans un seul try/except.</div>`,
+  exercises: [
+    { type: "qcm", q: "Paginator s'importe depuis…", opts: ["django.db.models", "django.core.paginator", "django.shortcuts", "django.views"], a: 1, exp: "from django.core.paginator import Paginator — ce n'est pas un objet de requête mais un utilitaire." },
+    { type: "qcm", q: "Dans Paginator(Jeu.objects.order_by('titre'), 20), le 20 est…", opts: ["Le nombre total de pages", "Le numéro de la page courante", "Le nombre d'objets par page", "Un OFFSET"], a: 2, exp: "20 jeux par page ; le nombre de pages se déduit de p.count." },
+    { type: "input", q: "L'attribut du Paginator qui donne le nombre total de pages :", a: ["num_pages", "p.num_pages", ".num_pages"], ph: "p.…", exp: "num_pages = count divisé par la taille de page, arrondi au supérieur." },
+    { type: "qcm", q: "p.count déclenche côté MySQL…", opts: ["Un SELECT COUNT(*)", "Un SELECT * complet", "Rien du tout", "Un UPDATE"], a: 0, exp: "Le total s'obtient par un COUNT(*), pas en rapatriant les 400 jeux." },
+    { type: "vf", q: "Le QuerySet passé à Paginator doit être ordonné (order_by), sous peine d'un UnorderedObjectListWarning et de pages incohérentes.", a: true, exp: "Sans ORDER BY, MySQL ne garantit aucun ordre : le découpage change d'une requête à l'autre." },
+    { type: "qcm", q: "p.page(2) renvoie…", opts: ["Une liste Python", "Un objet Page", "Un QuerySet brut", "Un dictionnaire"], a: 1, exp: "L'objet Page porte la tranche (object_list) et la navigation (number, has_next…)." },
+    { type: "qcm", q: "Avec 20 jeux par page, le SQL de la page 2 est…", opts: ["LIMIT 2 OFFSET 20", "LIMIT 20 OFFSET 40", "LIMIT 20 OFFSET 20", "LIMIT 40 OFFSET 2"], a: 2, exp: "On saute les 20 jeux de la page 1 (OFFSET 20) et on en prend 20 — le slicing [20:40] de la leçon 13." },
+    { type: "qcm", q: "p.page(999) alors qu'il n'y a que 20 pages…", opts: ["Renvoie une page vide", "Renvoie la page 20", "Lève EmptyPage", "Boucle sur la page 1"], a: 2, exp: "page() est stricte : hors bornes, exception EmptyPage." },
+    { type: "qcm", q: "p.page('abc') lève…", opts: ["EmptyPage", "ValueError", "TypeError", "PageNotAnInteger"], a: 3, exp: "Le numéro doit être un entier ; 'abc' venu d'une URL déclenche PageNotAnInteger." },
+    { type: "input", q: "La méthode tolérante du Paginator qui retombe sur une page valide au lieu de lever une exception :", a: ["get_page", "get_page()", ".get_page()"], ph: "p.…(numero)", exp: "get_page() : page 1 si le numéro est invalide, dernière page s'il est trop grand." },
+    { type: "qcm", q: "p.get_page(999) avec 20 pages renvoie…", opts: ["La page 1", "La dernière page (20)", "Une EmptyPage", "None"], a: 1, exp: "Trop grand → dernière page ; non entier ou absent → page 1." },
+    { type: "vf", q: "Pour boucler sur les jeux d'une page, il faut obligatoirement passer par page.object_list.", a: false, exp: "L'objet Page est itérable directement : for jeu in page suffit ; object_list existe mais n'est pas obligatoire." },
+    { type: "qcm", q: "Dans la vue, on récupère le numéro de page demandé par l'utilisateur avec…", opts: ["request.GET.get('page')", "request.page", "Paginator.number", "settings.PAGE"], a: 0, exp: "Le paramètre d'URL ?page=3, exactement le request.GET du Niveau 3." },
+    { type: "qcm", q: "Avec la vue générique ListView (Niveau 3), la pagination s'active via l'attribut…", opts: ["page_size", "paginator_class", "paginate_by", "max_pages"], a: 2, exp: "paginate_by = 20 : ListView construit le Paginator et le page_obj pour toi." },
+    { type: "qcm", q: "L'équivalent du couple LIMIT/OFFSET chez EF Core (C#) :", opts: ["Skip et Take", "GroupBy", "Include", "SaveChanges"], a: 0, exp: "Skip(20).Take(20) ; chez Eloquent, paginate() livre même les liens HTML ; chez JPA : setFirstResult/setMaxResults." }
+  ],
+  final: {
+    title: "Exercice final — Le catalogue en pages",
+    intro: `<p>La vue catalogue de la Ludothèque part en production : vérifions le circuit complet, de l'URL au LIMIT/OFFSET.</p>`,
+    questions: [
+      { type: "qcm", q: "La construction correcte du paginateur du catalogue :", opts: ["Paginator(Jeu.objects.all(), 20) sans tri", "Paginator(Jeu.objects.order_by('titre'), 20)", "Paginator(20, Jeu.objects.order_by('titre'))", "Jeu.objects.paginate(20)"], a: 1, exp: "QuerySet ordonné d'abord, taille de page ensuite — l'ordre garantit des pages stables." },
+      { type: "qcm", q: "Afficher la page 3 (20 jeux par page) coûte à MySQL…", opts: ["Une seule requête", "Un COUNT(*) et un SELECT LIMIT 20 OFFSET 40", "400 requêtes", "Un SELECT complet filtré en Python"], a: 1, exp: "Le total d'un côté, la tranche de l'autre : deux requêtes, pas une de plus." },
+      { type: "vf", q: "Avec get_page(), un ?page=abc dans l'URL fait planter la vue avec PageNotAnInteger.", a: false, exp: "C'est page() qui lève l'exception ; get_page('abc') retombe silencieusement sur la page 1." },
+      { type: "input", q: "L'avertissement émis par Django quand on pagine un QuerySet non ordonné :", a: ["UnorderedObjectListWarning", "unorderedobjectlistwarning"], ph: "Nom de l'avertissement…", exp: "Le signal qu'il manque un order_by — à corriger, pas à ignorer." },
+      { type: "qcm", q: "Dans le template, pour proposer un lien « page suivante » seulement quand elle existe, on teste…", opts: ["page_obj.has_next", "page_obj.count", "paginator.num_pages == 0", "request.GET"], a: 0, exp: "has_next/has_previous et next_page_number pilotent la navigation." }
+    ],
+    solution: `<pre class="pseudo">Import      : from django.core.paginator import Paginator             # l'outil de pagination
+Construire  : p = Paginator(Jeu.objects.order_by('titre'), 20)   ← QuerySet ORDONNÉ   # trie + taille de page
+Compter     : p.count (COUNT(*)) · p.num_pages · p.page_range         # total, nb de pages, liste des pages
+Une page    : page = p.page(2) → itérable, page.number,              # la tranche + le numero
+              has_next()/has_previous(), next_page_number()          # de quoi naviguer
+SQL         : 1 COUNT(*) + 1 SELECT ... LIMIT 20 OFFSET 20            # deux requetes en tout
+Erreurs     : page(999) → EmptyPage · page('abc') → PageNotAnInteger  # page() est stricte
+Tolérant    : get_page(n) → page 1 ou dernière page, jamais d'exception   # pour les entrees utilisateur
+Dans la vue : numero = request.GET.get('page') ; page_obj = paginator.get_page(numero)   # ?page de l'URL
+Raccourci   : ListView + paginate_by = 20                            # la vue generique fait tout
+Ailleurs    : Skip/Take (EF Core) · paginate() (Eloquent) · setFirstResult/setMaxResults (JPA)   # equivalents</pre>
+<p>Le catalogue s'affiche proprement. Mais louer un jeu, c'est écrire à DEUX endroits à la fois — et si le serveur tombe entre les deux ? Leçon 17 : <strong>Les transactions : atomic</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l16", title: "La pagination du catalogue, de l'URL au SQL", level: 2,
+    statement: "Tu dois livrer la pagination du catalogue de la Ludothèque : 20 jeux par page, triés par titre. Rédige ton analyse en trois parties. 1) Écris la vue Django complète (imports, tri, Paginator, lecture du paramètre ?page, get_page, render avec page_obj) en justifiant chaque choix en une phrase. 2) Prédis les requêtes SQL EXACTES envoyées à MySQL pour afficher la page 3 : combien de requêtes, avec quel COUNT, quel LIMIT et quel OFFSET ? 3) Compare le comportement de page() et de get_page() face à ?page=999 (le catalogue n'a que 20 pages) et à ?page=abc : exceptions levées, page réellement servie, conséquence pour l'utilisateur. Conclus en une phrase : laquelle des deux méthodes appartient à une vue, et pourquoi ?",
+    hints: [
+      "La vue suit toujours le même squelette : QuerySet ordonné → Paginator(qs, 20) → request.GET.get('page') → get_page(numero) → render. Sans le order_by, que garantit MySQL ?",
+      "Pour la page 3 : combien de jeux faut-il SAUTER avant d'en prendre 20 ? C'est ton slicing [40:60] de la leçon 13 — plus la requête du total.",
+      "page() est stricte (deux exceptions différentes selon le cas), get_page() choisit une page de repli : laquelle pour 999, laquelle pour 'abc' ?"
+    ],
+    solution: "1) La vue :\nfrom django.core.paginator import Paginator\nfrom django.shortcuts import render\nfrom .models import Jeu\n\ndef catalogue(request):\n    jeux = Jeu.objects.order_by('titre')      # ORDONNÉ : pages stables, pas de warning\n    paginator = Paginator(jeux, 20)           # 20 jeux par page\n    numero = request.GET.get('page')          # peut valoir '3', 'abc' ou None\n    page_obj = paginator.get_page(numero)     # tolérant : toujours une page valide\n    return render(request, 'catalogue.html', {'page_obj': page_obj})\n\n2) SQL de la page 3 — DEUX requêtes :\nSELECT COUNT(*) FROM ludotheque_jeu;                          ← paginator.count\nSELECT ... FROM ludotheque_jeu ORDER BY titre LIMIT 20 OFFSET 40;\n(page 3 = sauter les 40 jeux des pages 1 et 2, en prendre 20 — le [40:60] de la leçon 13)\n\n3) Numéros absurdes :\n?page=999 : page(999) lève EmptyPage → erreur 500 si rien n'est attrapé ;\n            get_page(999) sert la DERNIÈRE page (20).\n?page=abc : page('abc') lève PageNotAnInteger → même risque de 500 ;\n            get_page('abc') sert la page 1.\n(?page absent : get_page(None) → page 1 aussi.)\n\nConclusion : dans une vue, get_page() — le numéro vient de l'URL, donc de\nl'utilisateur : la vue doit servir une page raisonnable, jamais planter.",
+    note: "Cette vue boucle la chaîne complète : le request.GET et les templates du Niveau 3 en façade, le COUNT(*) et le LIMIT/OFFSET du Niveau 4 en coulisses, et le QuerySet paresseux de la leçon 7 entre les deux. Au Niveau 6, chaque liste de ton projet full-stack (catalogue, historique des locations, résultats de recherche) réutilisera exactement ce squelette — souvent via ListView et paginate_by." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Secrets et configuration par environnement (.env, config)",
+  subtitle: "Rien de sensible dans le dépôt ni l'image — et un scan qui le prouve.",
+  theory: `
+<h3>1. La config lit l'environnement</h3>
+<p>L'<strong>environnement</strong> désigne le contexte dans lequel tourne l'application (poste de dev, préproduction, production), avec ses réglages propres. Le fichier <strong>.env</strong> regroupe ces réglages et les <strong>secrets</strong> (mots de passe, clés), et reste <em>hors</em> du dépôt Git. L'<strong>APP_KEY</strong> est une clé secrète que Laravel utilise pour chiffrer cookies et sessions ; <code>php artisan key:generate</code> la fabrique. Point clé : le code appelle <code>config('…')</code>, jamais <code>env('…')</code> directement — seuls les fichiers <code>config/*</code> lisent l'environnement. Ainsi la même image tourne partout, et seul l'environnement change.</p>
+<pre class="pseudo"># .env — les secrets, HORS Git
+APP_KEY=base64:...          # clé de chiffrement de l'app, générée par php artisan key:generate
+DB_PASSWORD=...             # mot de passe de la base (valeur réelle ici, jamais commitée)
+# config/database.php lit env('DB_PASSWORD') ; le CODE n'appelle jamais env() directement</pre>
+<p>Le code ne lit que <code>config('database.connections...')</code> ; seuls les fichiers <code>config/*</code> appellent <code>env()</code>. La même image tourne en dev, staging, prod — seul l'environnement change.</p>
+
+<h3>2. Pourquoi env() seulement dans config/*</h3>
+<p>En production, <code>php artisan config:cache</code> regroupe toute la configuration dans un fichier unique pour aller plus vite — et, ce faisant, Laravel n'appelle <em>plus</em> <code>env()</code> ailleurs. Un <code>env()</code> resté dans un contrôleur renverrait alors <code>null</code> : un bug silencieux, très difficile à diagnostiquer. D'où la règle stricte : <code>env()</code> uniquement dans <code>config/*</code>.</p>
+<pre class="pseudo"># en production : php artisan config:cache
+# -> Laravel met en cache la config ET n'appelle PLUS env() ailleurs
+# un env() dans un contrôleur renverrait alors null : bug silencieux</pre>
+
+<h3>3. Rien de sensible dans Git ni l'image</h3>
+<p>Trois fichiers verrouillent la sortie des secrets : <code>.gitignore</code> empêche Git de suivre <code>.env</code> et les clés ; <code>.dockerignore</code> empêche l'image Docker de les embarquer (une image se partage : elle ne doit contenir aucun secret) ; <code>.env.example</code>, lui, est versionné et sert de modèle — il liste les <em>clés</em> attendues, sans jamais les <em>valeurs</em>.</p>
+<pre class="pseudo">.gitignore     : /.env, /storage/*.key, /vendor
+.dockerignore  : .env, .git — l'image ne doit PAS embarquer de secret
+.env.example   : versionné, les CLÉS sans les VALEURS
+# APP_KEY et secrets arrivent par variables d'environnement au démarrage du conteneur</pre>
+
+<h3>4. Le scan de secrets dans la CI</h3>
+<p><strong>gitleaks</strong> est un outil qui fouille le code à la recherche de secrets oubliés (mots de passe, clés) et rend le job <em>rouge</em> s'il en trouve. <code>fetch-depth: 0</code> demande à la CI de récupérer <em>tout</em> l'historique Git, pas seulement le dernier commit, car un secret supprimé reste visible dans les commits passés.</p>
+<pre class="pseudo"># ci.yml — job securite
+  securite:                                 # un job nommé "securite"
+    steps:                                  # ses étapes
+      - uses: actions/checkout@v4           # récupère le code…
+        with: { fetch-depth: 0 }              # tout l'historique
+      - run: gitleaks detect --source . --redact --exit-code 1   # cherche des secrets ; échoue (exit 1) s'il en trouve</pre>
+<p><code>gitleaks</code> parcourt le code ET l'historique : un <code>APP_KEY</code> ou mot de passe commité (même supprimé depuis) rend le job <strong>rouge</strong>.</p>
+
+<h3>5. La procédure de rotation</h3>
+<p>La <strong>rotation</strong> d'un secret consiste à le remplacer par un nouveau et à invalider l'ancien. Dès qu'un secret a fuité (apparu dans un commit, un log, une capture d'écran), il est considéré comme <strong>compromis</strong> pour toujours : impossible de savoir qui l'a copié. La seule réponse sûre est donc de le faire tourner, en cinq étapes :</p>
+<pre class="pseudo">Un secret a fuité (commit, log, capture) ? Il est COMPROMIS, point.
+1. RÉVOQUER l'ancien (le désactiver côté fournisseur)
+2. RÉGÉNÉRER un nouveau (php artisan key:generate pour APP_KEY)
+3. REPOSER dans le coffre / les variables d'environnement
+4. VÉRIFIER que tout fonctionne
+5. AUDITER : qui a pu le voir, sur quelle période ?</pre>
+<div class="warn">Un secret dans l'historique Git n'est PAS effacé par un simple commit de suppression : il reste dans les commits passés, clonables par quiconque. La seule réponse sûre est la <strong>rotation</strong>, pas la réécriture d'historique. D'où <code>fetch-depth: 0</code> : gitleaks scanne tout le passé.</div>
+<div class="tip"><strong>Fin de semaine 2.</strong> L'application est complète, testée ET sécurisée : entrées validées, auth durcie, autorisation anti-IDOR, transactions verrouillées, rendu échappé, secrets hors du code et scannés. On n'a jamais eu à « rattraper » la sécurité — elle a poussé avec le code.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les secrets vivent dans…", opts: ["Le code", ".env (hors Git et hors image)", "config/*.php en dur", "Le README"], a: 1, exp: "Jamais de valeur dans le code." },
+    { type: "qcm", q: "Le code lit la config via…", opts: ["env() partout", "config('...') ; env() seulement dans config/*", "Des constantes", "La base"], a: 1, exp: "Compatible config:cache." },
+    { type: "qcm", q: "Après config:cache, env() ailleurs…", opts: ["Marche", "Renvoie null (bug silencieux)", "Chiffre", "Déploie"], a: 1, exp: "D'où env() dans config/* seulement." },
+    { type: "qcm", q: "La même image en dev/prod change par…", opts: ["Un rebuild", "L'environnement (variables)", "Le code", "Le CSS"], a: 1, exp: "Config externalisée." },
+    { type: "qcm", q: "L'image Docker doit…", opts: ["Contenir .env", "NE PAS embarquer de secret", "Chiffrer le code", "Ignorer .dockerignore"], a: 1, exp: "Secrets par l'environnement." },
+    { type: "qcm", q: "gitleaks scanne…", opts: ["Le CSS", "Le code ET l'historique Git", "La RAM", "Le réseau"], a: 1, exp: "fetch-depth: 0." },
+    { type: "qcm", q: "Un secret commité puis supprimé…", opts: ["Est effacé", "Reste dans l'historique (compromis)", "Est chiffré", "Disparaît"], a: 1, exp: "Clonable dans les vieux commits." },
+    { type: "qcm", q: "La seule réponse sûre à une fuite :", opts: ["Réécrire l'historique", "La rotation (révoquer + régénérer)", "Ignorer", "Chiffrer après coup"], a: 1, exp: "Le secret est compromis." },
+    { type: "qcm", q: "La rotation commence par…", opts: ["Régénérer", "Révoquer l'ancien", "Auditer", "Reposer"], a: 1, exp: "Désactiver d'abord." },
+    { type: "qcm", q: ".env.example est…", opts: ["Un secret", "Versionné : les clés SANS les valeurs", "Inutile", "L'image"], a: 1, exp: "Documente la config." },
+    { type: "vf", q: "gitleaks rouge bloque le merge.", a: true, exp: "Barrière." },
+    { type: "qcm", q: "APP_KEY se régénère avec…", opts: ["Un cron", "php artisan key:generate", "Un reboot", "Rien"], a: 1, exp: "Rotation Laravel." },
+    { type: "qcm", q: "fetch-depth: 0 permet à gitleaks…", opts: ["D'aller plus vite", "De scanner tout l'historique", "De déployer", "De chiffrer"], a: 1, exp: "Pas juste le dernier commit." },
+    { type: "qcm", q: "En fin de semaine 2, l'app est…", opts: ["À sécuriser plus tard", "Complète, testée ET sécurisée", "Sans tests", "En prod"], a: 1, exp: "Sécurité intégrée." },
+    { type: "vf", q: "On n'a jamais eu à « rattraper » la sécurité.", a: true, exp: "Elle a poussé avec le code." }
+  ],
+  final: {
+    title: "Exercice final — Secrets dehors, scannés",
+    intro: `<p>Config par environnement + gitleaks + rotation.</p>`,
+    questions: [
+      { type: "qcm", q: "Les secrets vivent :", opts: ["dans .env (hors Git/image)", "dans le code", "dans l'image", "dans le README"], a: 0, exp: "config lit env()." },
+      { type: "qcm", q: "env() ne doit être appelé que :", opts: ["dans config/*.php", "partout", "dans les contrôleurs", "jamais"], a: 0, exp: "Compatible config:cache." },
+      { type: "qcm", q: "Un secret commité est :", opts: ["compromis (à faire tourner)", "effaçable par un commit", "sûr", "chiffré"], a: 0, exp: "Rotation obligatoire." },
+      { type: "qcm", q: "La rotation :", opts: ["révoquer + régénérer + reposer + vérifier + auditer", "réécrire l'historique", "ignorer", "chiffrer"], a: 0, exp: "5 étapes." },
+      { type: "vf", q: "Fin de semaine 2 : l'app est complète, testée et sécurisée.", a: true, exp: "Sécurité intégrée." }
+    ],
+    solution: `<pre class="pseudo"># .env (hors Git) : APP_KEY, DB_PASSWORD... ; config/* lit env() ; code lit config()
+# .gitignore + .dockerignore : .env ; .env.example versionné (clés sans valeurs)
+
+# ci.yml job securite :
+  - uses: actions/checkout@v4                # récupère le code…
+    with: { fetch-depth: 0 }                 # …avec tout l'historique
+  - run: gitleaks detect --source . --redact --exit-code 1   # scan de secrets (rouge si fuite)
+
+# Rotation : révoquer -> régénérer (key:generate) -> reposer -> vérifier -> auditer</pre>
+<p>Semaine 2 bouclée : app sécurisée par conception. Demain : recherche, pagination et qualité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta config par environnement et ton scan…",
+  items: [
+  { id: "proj6php-l14", title: "Secrets externalisés, scannés, et la rotation", level: 2,
+    statement: "Écris l'organisation de la config (.env hors Git, config/* qui lit env(), .env.example, .dockerignore), le job gitleaks (fetch-depth: 0), et la procédure de rotation en 5 étapes. Explique en 3-4 lignes pourquoi n'appeler env() que dans config/*, et pourquoi un commit de suppression ne suffit pas.",
+    hints: [
+      "config/database.php lit env('DB_PASSWORD') ; le code lit config('...').",
+      "gitleaks a besoin de fetch-depth: 0 pour scanner l'historique complet.",
+      "Rotation : révoquer -> régénérer -> reposer -> vérifier -> auditer."
+    ],
+    solution: "# .env (HORS Git) — les secrets\nAPP_KEY=base64:...          # cle de chiffrement de l'app (php artisan key:generate)\nDB_PASSWORD=...             # mot de passe de la base (valeur reelle, jamais commitee)\n# config/database.php : 'password' => env('DB_PASSWORD')\n# le CODE lit config('database.connections.mysql.password'), jamais env()\n\n# .gitignore : /.env  /storage/*.key  /vendor\n# .dockerignore : .env  .git   -> l'image n'embarque JAMAIS de secret\n# .env.example (versionne) : les CLES sans les VALEURS\n\n# ci.yml — job securite\n  securite:                              # job de securite\n    steps:                               # ses etapes\n      - uses: actions/checkout@v4        # recupere le code...\n        with: { fetch-depth: 0 }         # ...avec tout l'historique, pas juste HEAD\n      - run: gitleaks detect --source . --redact --exit-code 1   # scan : rouge si un secret est trouve\n\n# PROCEDURE DE ROTATION (un secret a fuite)\n1. REVOQUER l'ancien secret cote fournisseur (il devient inutilisable)\n2. REGENERER un nouveau (php artisan key:generate pour APP_KEY)\n3. REPOSER dans le coffre / les variables d'environnement (jamais dans le code)\n4. VERIFIER que l'application fonctionne avec le nouveau\n5. AUDITER : depuis quand expose, qui a pu le lire, quels acces surveiller\n\n# POURQUOI env() SEULEMENT DANS config/*\n# En prod on lance 'php artisan config:cache' pour la performance : Laravel met la\n# config en cache et N'APPELLE PLUS env() ailleurs. Un env() dans un controleur\n# renverrait alors null -> bug silencieux tres difficile a diagnostiquer. La regle\n# 'env() uniquement dans config/*' evite ce piege.\n#\n# POURQUOI UN COMMIT DE SUPPRESSION NE SUFFIT PAS\n# Git garde TOUT l'historique : un secret ajoute au commit A puis 'supprime' au\n# commit B reste lisible dans A par quiconque clone le depot. Comme on ne peut pas\n# garantir que personne ne l'a copie, il est DEFINITIVEMENT compromis -> rotation.",
+    note: "L'externalisation des secrets et leur scan automatique ferment l'une des fuites les plus fréquentes (APP_KEY ou mot de passe commité). Deux réflexes propres à Laravel méritent d'être retenus : n'appeler env() que dans config/* (sinon config:cache casse tout), et faire tourner APP_KEY comme n'importe quel secret. Le principe universel — un secret exposé est compromis pour toujours — vaut pour toute la carrière, bien au-delà de ce projet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

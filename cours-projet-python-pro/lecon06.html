@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "La couche service et les règles métier, sous CI",
+  subtitle: "Isoler les décisions dans du Python pur — testable en millisecondes.",
+  theory: `
+<h3>1. Les décisions au centre</h3>
+<p>Les règles de la Ludothèque (deux stocks, refus si nul, tarif de prolongation) vivent dans un fichier <code>services.py</code> — ni dans les <strong>vues</strong> (le code qui répond aux requêtes web), ni dans les <strong>templates</strong> (les pages HTML à trous). C'est du <strong>Python pur</strong> : des fonctions ordinaires, sans <code>request</code> (l'objet qui représente la requête HTTP du navigateur) ni accès obligatoire à la base. Isoler ainsi les décisions dans une <strong>couche service</strong> les rend testables <strong>sans MySQL</strong>, en millisecondes.</p>
+
+<h3>2. Le service</h3>
+<pre class="pseudo"># catalogue/services.py   # le fichier qui regroupe les regles metier (Python pur)
+from decimal import Decimal   # importer Decimal : nombres a virgule exacts, pour l'argent
+class StockInsuffisant(Exception):   # notre exception metier : un type d'erreur nomme
+    """Levée quand une opération dépasse le stock disponible."""   # docstring : explique quand on la leve
+
+def jeux_louables():   # renvoie la liste des jeux louables, triee
+    return Jeu.objects.louables().order_by("titre")   # reutilise le filtre metier louables(), trie par titre
+
+def verifier_stock_location(jeu):   # verifie qu'un jeu a du stock de location
+    if jeu.stock_location <= 0:   # s'il n'en reste pas (0 ou moins)…
+        raise StockInsuffisant(f"Plus de stock de location pour {jeu.titre}")   # …lever l'exception avec un message clair
+
+def prix_location(jeu, nb_jours=7):   # calcule le prix d'une location (7 jours par defaut)
+    base = jeu.prix_location   # tarif de base du jeu
+    return base if nb_jours <= 7 else base + (nb_jours - 7) * Decimal("0.50")   # <=7j : tarif de base ; au-dela : +0,50 € par jour supplementaire</pre>
+
+<h3>3. Tester sans base = CI rapide</h3>
+<pre class="pseudo">class ServicesTests(SimpleTestCase):        # SimpleTestCase : PAS de base (tests ultra-rapides)
+    def test_tarif_standard(self):   # tarif normal pour 7 jours ou moins
+        jeu = Jeu(prix_location=Decimal("5.00"))   # un Jeu en memoire (non sauvegarde : aucun acces base)
+        self.assertEqual(services.prix_location(jeu, 7), Decimal("5.00"))   # 7 jours -> tarif de base 5,00 €
+    def test_tarif_prolongation(self):   # tarif avec prolongation au-dela de 7 jours
+        jeu = Jeu(prix_location=Decimal("5.00"))   # meme jeu en memoire
+        self.assertEqual(services.prix_location(jeu, 10), Decimal("6.50"))   # 10 j : 5,00 + 3×0,50 = 6,50 €
+    def test_stock_nul_refuse(self):   # verifie que le refus se declenche bien
+        with self.assertRaises(StockInsuffisant):   # on ATTEND que l'exception soit levee…
+            services.verifier_stock_location(Jeu(stock_location=0))   # …sur un jeu sans stock</pre>
+<p>Ces tests ne créent aucune ligne : ils s'exécutent en <strong>millisecondes</strong>. Un pipeline rapide (&lt; 10 min) est un pipeline qu'on garde — un pipeline lent se contourne (cours CI/CD).</p>
+
+<h3>4. Decimal, l'argent qui ne flotte pas</h3>
+<pre class="pseudo">0.1 + 0.2 == 0.3        # False : les flottants (float) stockent 0,1 de facon approchee
+Decimal("0.50")         # on passe la CHAINE, pas le flottant 0.5 -> valeur exacte</pre>
+
+<h3>5. Le sens des dépendances</h3>
+<p>Une <strong>dépendance</strong> est le fait qu'un module en utilise (importe) un autre. Ce sens doit rester <strong>unique</strong> : les vues appellent les services, qui appellent les modèles — jamais l'inverse. Un modèle qui importerait <code>services</code> créerait un <strong>cycle</strong> (A dépend de B qui dépend de A), difficile à démêler : c'est un signal d'alarme.</p>
+<pre class="pseudo">vues → services → modèles    (sens unique)
+Un modèle qui importerait services créerait un cycle : signal d'alarme.
+Le service ne connaît ni HTTP ni templates → réutilisable par l'API et les pages.</pre>
+<div class="warn">Si le tarif passe un jour à 0,60 €/jour, on modifie <strong>une ligne</strong> de <code>services.py</code> — et le test correspondant, qui devient rouge jusqu'à ce qu'on l'ajuste, garantit qu'on n'a rien oublié ailleurs. La couche service + ses tests, c'est la spécification exécutable du métier.</div>
+<div class="tip"><code>SimpleTestCase</code> (sans base) pour la logique pure, <code>TestCase</code> (avec base) pour ce qui touche l'ORM : choisir le plus léger des deux garde la suite rapide. La vitesse de la CI est une fonctionnalité, pas un détail.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les règles métier vivent dans…", opts: ["Les vues", "services.py (Python pur)", "Les templates", "urls.py"], a: 1, exp: "Décisions isolées." },
+    { type: "qcm", q: "services.py peut être testé…", opts: ["Seulement avec MySQL", "Sans base, en millisecondes", "En prod", "Jamais"], a: 1, exp: "Python pur." },
+    { type: "qcm", q: "StockInsuffisant est…", opts: ["Un modèle", "Une exception métier nommée", "Une vue", "Un template"], a: 1, exp: "Vocabulaire explicite." },
+    { type: "qcm", q: "prix_location(jeu, 10) avec base 5 € :", opts: ["5 €", "6,50 € (5 + 3×0,50)", "10 €", "0"], a: 1, exp: "3 jours au-delà de 7." },
+    { type: "qcm", q: "SimpleTestCase vs TestCase :", opts: ["Identiques", "SimpleTestCase = sans base (plus rapide)", "L'inverse", "Aucun ne teste"], a: 1, exp: "Choisir le plus léger." },
+    { type: "qcm", q: "Un pipeline lent…", opts: ["Est plus rigoureux", "Se contourne (« je merge, on verra »)", "Est idéal", "N'existe pas"], a: 1, exp: "La vitesse protège l'adoption." },
+    { type: "qcm", q: "Decimal(\"0.50\") avec la chaîne…", opts: ["Hérite de l'erreur binaire", "Est exact (pas de flottant)", "Est plus lent", "Est identique à 0.5"], a: 1, exp: "L'argent ne flotte pas." },
+    { type: "qcm", q: "Le sens des dépendances :", opts: ["vues → services → modèles", "modèles → services → vues", "tous vers tous", "aucun"], a: 0, exp: "Sens unique." },
+    { type: "qcm", q: "Un modèle qui importe services.py…", opts: ["Est normal", "Crée un cycle : signal d'alarme", "Accélère", "Chiffre"], a: 1, exp: "Dépendances propres." },
+    { type: "qcm", q: "Vérifier qu'une exception est levée :", opts: ["with self.assertRaises(StockInsuffisant)", "try sans catch", "un if", "print"], a: 0, exp: "Le refus se teste aussi." },
+    { type: "vf", q: "Le service ne connaît ni HTTP ni templates.", a: true, exp: "Réutilisable par API et pages." },
+    { type: "qcm", q: "Changer le tarif à 0,60 €/jour touche…", opts: ["Une ligne de services.py (+ son test)", "toutes les vues", "les templates", "la base"], a: 0, exp: "Un point de vérité." },
+    { type: "qcm", q: "Le test du tarif qui devient rouge après le changement…", opts: ["Est un bug", "Garantit qu'on ajuste bien la règle", "Est ignoré", "Chiffre"], a: 1, exp: "Spécification exécutable." },
+    { type: "qcm", q: "Des tests sans base rendent la CI…", opts: ["Lente", "Rapide (millisecondes)", "Inutile", "Fausse"], a: 1, exp: "< 10 min : adoptable." },
+    { type: "vf", q: "La couche service et ses tests forment la spécification exécutable du métier.", a: true, exp: "Le cœur du projet." }
+  ],
+  final: {
+    title: "Exercice final — Le métier isolé et testé",
+    intro: `<p>On écrit les règles et leurs tests rapides.</p>`,
+    questions: [
+      { type: "qcm", q: "L'exception métier :", opts: ["class StockInsuffisant(Exception)", "raise 404", "return -1", "print()"], a: 0, exp: "Nommée." },
+      { type: "qcm", q: "Le supplément de tarif :", opts: ["(nb_jours - 7) × 0,50 €", "nb_jours × 0,50", "7 × 0,50", "rien"], a: 0, exp: "Au-delà de 7 jours." },
+      { type: "qcm", q: "Le type du tarif :", opts: ["Decimal", "float", "int", "str"], a: 0, exp: "L'argent ne flotte pas." },
+      { type: "qcm", q: "Les tests de logique pure utilisent :", opts: ["SimpleTestCase (sans base)", "TestCase toujours", "la prod", "aucun"], a: 0, exp: "Rapides." },
+      { type: "vf", q: "Le service se teste en millisecondes, gardant la CI rapide.", a: true, exp: "Vitesse = adoption." }
+    ],
+    solution: `<pre class="pseudo">class StockInsuffisant(Exception): pass   # exception metier nommee (corps vide)
+
+def verifier_stock_location(jeu):   # refuse si plus de stock de location
+    if jeu.stock_location <= 0:   # aucun exemplaire disponible…
+        raise StockInsuffisant(f"Plus de stock pour {jeu.titre}")   # …lever l'exception
+
+def prix_location(jeu, nb_jours=7):   # prix d'une location (7 jours par defaut)
+    base = jeu.prix_location   # tarif de base
+    return base if nb_jours <= 7 else base + (nb_jours - 7) * Decimal("0.50")   # +0,50 € par jour au-dela de 7
+
+class ServicesTests(SimpleTestCase):     # sans base → millisecondes
+    def test_tarif_prolongation(self):   # verifie le tarif d'une prolongation
+        self.assertEqual(services.prix_location(Jeu(prix_location=Decimal("5.00")), 10),   # 10 jours…
+                         Decimal("6.50"))   # …doit couter 6,50 € (5 + 3×0,50)</pre>
+<p>Le métier est isolé et testé vite. Demain : l'API et le job de tests au vert.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service et ses tests rapides…",
+  items: [
+  { id: "proj6py-l6", title: "Le devis, avec tests sans base", level: 3,
+    statement: "Écris services.devis_location(jeu, nb_jours) : refuse nb_jours < 1 (ValueError), renvoie un dict {titre, nb_jours, prix} via prix_location. Écris ses tests en SimpleTestCase (sans base) : un devis standard, un devis prolongé, un nb_jours invalide. Explique pourquoi le service prend un jeu (pas un id) pour rester sans base.",
+    hints: [
+      "def devis_location(jeu, nb_jours=7): if nb_jours < 1: raise ValueError(...).",
+      "Prendre un objet Jeu (pas jeu_id) évite un accès base -> testable en SimpleTestCase.",
+      "3 tests : standard (7j), prolongé (10j → +1,50 €), invalide (0j → ValueError)."
+    ],
+    solution: "# services.py — prend un JEU (objet), pas un id : reste sans base\ndef devis_location(jeu, nb_jours=7):   # construit un devis de location\n    if nb_jours < 1:   # une duree de moins d'un jour n'a pas de sens…\n        raise ValueError(\"La durée minimale est de 1 jour\")   # …erreur explicite\n    return {   # renvoyer un dictionnaire (table cle -> valeur) resumant le devis\n        \"titre\": jeu.titre,   # le titre du jeu\n        \"nb_jours\": nb_jours,   # la duree demandee\n        \"prix\": prix_location(jeu, nb_jours),   # le prix calcule par le service dedie\n    }   # fin du dictionnaire\n\n# tests.py — SimpleTestCase : aucun accès base, millisecondes\nfrom decimal import Decimal   # type exact pour l'argent\nfrom django.test import SimpleTestCase   # classe de test SANS base\n\nclass DevisTests(SimpleTestCase):   # tests du devis, sans base\n    def _jeu(self):   # petite fabrique : un Jeu en memoire (non sauvegarde)\n        return Jeu(titre=\"Catan\", prix_location=Decimal(\"5.00\"))   # jeu de test a 5,00 €\n\n    def test_devis_standard(self):   # cas 1 : devis de 7 jours\n        d = services.devis_location(self._jeu(), 7)   # calcule le devis\n        self.assertEqual(d[\"prix\"], Decimal(\"5.00\"))   # prix attendu : 5,00 €\n        self.assertEqual(d[\"titre\"], \"Catan\")   # le titre est bien repercute\n\n    def test_devis_prolonge(self):   # cas 2 : devis de 10 jours (prolongation)\n        d = services.devis_location(self._jeu(), 10)   # calcule le devis\n        self.assertEqual(d[\"prix\"], Decimal(\"6.50\"))   # 5 + 3×0,50 = 6,50 €\n\n    def test_duree_invalide(self):   # cas 3 : duree invalide\n        with self.assertRaises(ValueError):   # on ATTEND une ValueError…\n            services.devis_location(self._jeu(), 0)   # …car 0 jour est refuse\n\n# Pourquoi un objet Jeu et pas jeu_id :\n# devis_location ne fait QUE calculer -> il ne doit pas toucher la base.\n# En recevant un Jeu déjà chargé (Jeu(...) non sauvegardé suffit), le test\n# reste en SimpleTestCase, sans MySQL, donc quasi instantané. La couche\n# au-dessus (vue) chargera le jeu et le passera au service.",
+    note: "Concevoir un service pour qu'il soit testable sans base est un choix d'architecture, pas un hasard : en recevant un objet plutôt qu'un id, devis_location reste pur et rapide. Multipliez ce réflexe sur des dizaines de services et la suite de tests reste sous la barre des quelques secondes — ce qui garde le pipeline rapide, donc utilisé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

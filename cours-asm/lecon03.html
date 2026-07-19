@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Afficher du texte (syscall write)",
+  subtitle: "Écrire à l'écran en demandant au noyau : l'appel système write, et la section .data.",
+  theory: `
+<h3>1. Il n'y a pas de printf</h3>
+<p>Dans un langage comme le C, on affiche du texte avec une fonction toute prête (<code>printf</code>). En assembleur, rien de tel : il faut demander directement au <strong>noyau</strong> (le cœur du système d'exploitation, seul autorisé à toucher l'écran) d'écrire des <strong>octets</strong> (un octet = 8 bits, ici chaque octet représente un caractère). Cette demande s'appelle un <strong>appel système</strong> (syscall) : le programme confie une tâche au noyau. Ici, l'appel système <strong>write</strong> (« écrire »). On lui donne trois informations : où écrire (le <strong>descripteur de fichier</strong>, un numéro qui désigne une destination : écran, fichier…), l'<strong>adresse</strong> du texte (le numéro de la case mémoire où commence le texte) et le nombre d'octets à écrire.</p>
+<pre class="pseudo">write(fd, adresse, longueur)     ; write attend 3 infos : le descripteur, l'adresse du texte, la longueur
+  fd = 1  → sortie standard (l'écran)   ; le descripteur 1 désigne la « sortie standard », c.-à-d. l'écran</pre>
+
+<h3>2. Ranger le texte en mémoire (.data)</h3>
+<p>La <strong>section</strong> <code>.data</code> est la zone du programme où l'on range les données qui ont une valeur de départ (ici, notre texte). On y déclare le message avec la directive <code>db</code>.</p>
+<pre class="pseudo">section .data                     ; ouvre la section des données initialisées
+    msg db "La Ludotheque", 10    ; db = define bytes : range les caractères en mémoire ; 10 = code du saut de ligne (\n)
+    len equ $ - msg               ; len = constante = (adresse courante $) moins (adresse de msg) = longueur du message</pre>
+<p><code>db</code> (define bytes) réserve des octets en mémoire (ici les caractères du texte + un saut de ligne). <code>$</code> est un symbole spécial qui désigne l'<strong>adresse courante</strong> (l'endroit où l'assembleur est arrivé) ; comme <code>$</code> se trouve juste après le message, <code>$ - msg</code> donne exactement le nombre d'octets du message. <code>equ</code> définit une constante calculée au moment de l'assemblage (pas à l'exécution).</p>
+
+<h3>3. L'appel write</h3>
+<pre class="pseudo">section .text                     ; ouvre la section du code (les instructions)
+    global _start                 ; rend _start visible du lieur comme point d'entrée
+_start:                           ; ici commence l'exécution
+    mov rax, 1          ; met 1 dans rax = numéro du syscall write (écrire)
+    mov rdi, 1          ; met 1 dans rdi = fd 1 = sortie standard (l'écran)
+    mov rsi, msg        ; met l'adresse du texte (msg) dans rsi = 2e argument de write
+    mov rdx, len        ; met la longueur (len) dans rdx = 3e argument de write (nombre d'octets)
+    syscall             ; déclenche l'appel système : le noyau écrit le texte à l'écran
+    ; puis exit…        ; il restera à terminer le programme proprement avec exit</pre>
+<div class="warn">Chaque argument a sa place fixe : <code>rax</code> = numéro du syscall, puis <code>rdi</code>, <code>rsi</code>, <code>rdx</code>, <code>r10</code>, <code>r8</code>, <code>r9</code> pour les arguments. Pour write : rdi=fd, rsi=adresse, rdx=longueur. C'est la <strong>convention des appels système</strong> Linux x86-64 (une règle fixe indiquant quel registre porte quel argument).</div>
+
+<h3>4. Programme complet</h3>
+<pre class="pseudo">section .data                     ; section des données initialisées
+    msg db "La Ludotheque", 10    ; le texte suivi du saut de ligne (10)
+    len equ $ - msg               ; longueur du message calculée à l'assemblage
+section .text                     ; section du code
+    global _start                 ; point d'entrée visible du lieur
+_start:                           ; début de l'exécution
+    mov rax, 1          ; numéro du syscall write
+    mov rdi, 1          ; fd 1 = sortie standard (écran)
+    mov rsi, msg        ; adresse du texte à écrire
+    mov rdx, len        ; nombre d'octets à écrire
+    syscall             ; le noyau affiche le texte
+    mov rax, 60         ; numéro du syscall exit (terminer)
+    mov rdi, 0          ; code de retour 0 (tout s'est bien passé)
+    syscall             ; déclenche exit : le programme se termine</pre>
+
+<h3>5. Les trois cibles</h3>
+<pre class="pseudo">NASM   mov rax,1 ; mov rdi,1 ; mov rsi,msg ; mov rdx,len ; syscall
+AT&amp;T   movq $1,%rax ; movq $1,%rdi ; lea msg(%rip),%rsi ; movq $len,%rdx ; syscall
+ARM64  mov x8,64 ; mov x0,1 ; ldr x1,=msg ; mov x2,len ; svc 0   (write = 64)</pre>
+<div class="tip">write manipule des <strong>octets bruts</strong> : aucune notion de « chaîne » ou de format, juste une adresse et une longueur. Tout le confort d'un <code>printf</code> (formater un nombre, gérer <code>%d</code>…) devra être codé à la main — ou délégué à la libc (leçon 16).</div>`,
+  exercises: [
+    { type: "qcm", q: "Pour afficher du texte, l'assembleur…", opts: ["utilise printf", "demande au noyau via le syscall write", "utilise cout", "ne peut pas"], a: 1, exp: "Écriture d'octets bruts." },
+    { type: "qcm", q: "Le numéro du syscall write (x86-64) est…", opts: ["0", "1", "60", "10"], a: 1, exp: "rax = 1." },
+    { type: "qcm", q: "Le fd de la sortie standard (l'écran) est…", opts: ["0", "1", "2", "60"], a: 1, exp: "rdi = 1." },
+    { type: "qcm", q: "write a besoin de… (dans l'ordre)", opts: ["fd, adresse, longueur", "longueur, fd, adresse", "adresse seule", "rien"], a: 0, exp: "rdi, rsi, rdx." },
+    { type: "qcm", q: "<code>db</code> sert à…", opts: ["exécuter", "réserver des octets en mémoire (define bytes)", "additionner", "sauter"], a: 1, exp: "Dans section .data." },
+    { type: "qcm", q: "Que vaut 10 dans <code>msg db \"...\", 10</code> ?", opts: ["le chiffre dix affiché", "le code du saut de ligne", "la longueur", "une erreur"], a: 1, exp: "'\\n' = 10." },
+    { type: "qcm", q: "<code>$ - msg</code> calcule…", opts: ["une adresse", "la longueur du message", "un registre", "0"], a: 1, exp: "$ = adresse courante." },
+    { type: "qcm", q: "L'adresse du texte va dans…", opts: ["rax", "rsi (2e argument de write)", "rdx", "rbp"], a: 1, exp: "rsi = adresse." },
+    { type: "qcm", q: "La longueur va dans…", opts: ["rdi", "rdx (3e argument)", "rsi", "rax"], a: 1, exp: "rdx = nombre d'octets." },
+    { type: "qcm", q: "L'ordre des registres d'arguments (Linux x86-64) :", opts: ["rax, rbx, rcx", "rdi, rsi, rdx, r10, r8, r9", "rsp, rbp", "au hasard"], a: 1, exp: "Convention des syscalls." },
+    { type: "vf", q: "write écrit des octets bruts, sans notion de format.", a: true, exp: "Pas de %d ni de chaîne." },
+    { type: "qcm", q: "En ARM64, write est le syscall…", opts: ["1", "64 (x8=64)", "60", "0"], a: 1, exp: "Numéros différents." },
+    { type: "qcm", q: "Que déclenche l'appel une fois les registres remplis ?", opts: ["mov", "syscall (ou svc 0 en ARM)", "add", "ret"], a: 1, exp: "L'instruction de trappe." },
+    { type: "qcm", q: "section .data contient…", opts: ["le code", "les données initialisées (textes, constantes)", "la pile", "rien"], a: 1, exp: "Le message y est." },
+    { type: "qcm", q: "Le confort d'un printf (formater %d)…", opts: ["existe en assembleur", "doit être codé à la main ou délégué à la libc", "est automatique", "est interdit"], a: 1, exp: "write ne formate rien." }
+  ],
+  final: {
+    title: "Exercice final — Corriger un affichage",
+    intro: `<p>Analyse ce write :</p>
+<pre class="pseudo">section .data                     ; section des données
+    msg db "Bonjour", 10          ; le texte + saut de ligne
+    len equ $ - msg               ; longueur du message
+section .text                     ; section du code
+    global _start                 ; point d'entrée
+_start:                           ; début de l'exécution
+    mov rax, 1          ; syscall write (correct)
+    mov rdi, msg        ; ERREUR : rdi devrait être le fd (1), pas l'adresse
+    mov rsi, 1          ; ERREUR : rsi devrait être l'adresse (msg), pas 1
+    mov rdx, len        ; longueur (correct)
+    syscall             ; déclenche l'appel (mais rdi/rsi sont inversés)</pre>`,
+    questions: [
+      { type: "qcm", q: "Erreur — rdi et rsi sont inversés :", opts: ["correct", "rdi doit être le fd (1) et rsi l'adresse (msg)", "il faut rax=0", "rien"], a: 1, exp: "rdi=fd, rsi=adresse." },
+      { type: "qcm", q: "rdi devrait valoir…", opts: ["msg", "1 (fd sortie standard)", "len", "60"], a: 1, exp: "Le descripteur." },
+      { type: "qcm", q: "rsi devrait valoir…", opts: ["1", "msg (l'adresse du texte)", "len", "0"], a: 1, exp: "L'adresse." },
+      { type: "qcm", q: "rax = 1 est-il correct ?", opts: ["non", "oui, c'est le syscall write", "il faut 60", "il faut 0"], a: 1, exp: "write = 1." },
+      { type: "qcm", q: "Que manque-t-il à la fin du programme ?", opts: ["rien", "l'appel exit (rax=60)", "un add", "un ret"], a: 1, exp: "Se terminer proprement." }
+    ],
+    solution: `<pre class="pseudo">section .data                     ; section des données initialisées
+    msg db "Bonjour", 10          ; le texte suivi du saut de ligne (10)
+    len equ $ - msg               ; longueur du message (calculée à l'assemblage)
+section .text                     ; section du code
+    global _start                 ; point d'entrée visible du lieur
+_start:                           ; début de l'exécution
+    mov rax, 1          ; numéro du syscall write
+    mov rdi, 1          ; fd = 1 = sortie standard (écran)
+    mov rsi, msg        ; adresse du texte à écrire (2e argument)
+    mov rdx, len        ; longueur = nombre d'octets (3e argument)
+    syscall             ; le noyau affiche « Bonjour »
+    mov rax, 60         ; numéro du syscall exit
+    mov rdi, 0          ; code de retour 0
+    syscall             ; déclenche exit : le programme se termine</pre>
+<p>rdi = fd, rsi = adresse, rdx = longueur : chaque argument à sa place. Et on n'oublie pas l'exit final. Demain : mov, add, sub — les instructions de base.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur (NASM) ici…",
+  items: [
+  { id: "asm-l03", title: "Afficher la bannière", level: 2,
+    statement: "Écris un programme NASM x86-64 complet qui affiche « La Ludotheque\\n » avec le syscall write, puis se termine proprement avec exit. Déclare le texte en section .data et calcule sa longueur avec $ - msg.",
+    hints: [
+      "section .data : msg db \"La Ludotheque\", 10 ; len equ $ - msg.",
+      "write : rax=1, rdi=1, rsi=msg, rdx=len, syscall.",
+      "Puis exit : rax=60, rdi=0, syscall."
+    ],
+    solution: "section .data\n    msg db \"La Ludotheque\", 10     ; range le texte + 10 = saut de ligne en memoire\n    len equ $ - msg               ; longueur du message = adresse courante ($) - adresse de msg\n\nsection .text\n    global _start\n_start:\n    mov rax, 1          ; numero du syscall write\n    mov rdi, 1          ; fd = 1 = sortie standard (ecran)\n    mov rsi, msg        ; adresse du texte a ecrire\n    mov rdx, len        ; longueur = nombre d'octets a ecrire\n    syscall             ; le noyau affiche le texte\n\n    mov rax, 60         ; numero du syscall exit\n    mov rdi, 0          ; code de retour 0\n    syscall             ; declenche exit : le programme se termine\n; nasm -f elf64 b.asm -o b.o && ld b.o -o b && ./b   # assemble, lie puis execute le programme",
+    note: "write écrit exactement len octets à partir de l'adresse msg : aucune notion de chaîne, juste une adresse et une longueur. $ - msg laisse l'assembleur calculer la longueur, ce qui évite les erreurs si on modifie le texte." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

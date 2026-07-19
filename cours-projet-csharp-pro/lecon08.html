@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Validation (DataAnnotations) et gestion des erreurs",
+  subtitle: "Blinder les entrées et traduire les échecs — sécurité et robustesse d'un même geste.",
+  theory: `
+<h3>1. Toute entrée est hostile</h3>
+<p><strong>Valider</strong> une entrée, c'est vérifier qu'une donnée reçue respecte des règles avant de l'utiliser. L'API va bientôt écrire (créer un jeu, louer). Avant cela, on pose la règle de sécurité n°1 : <strong>aucune donnée entrante n'est de confiance</strong>. On valide en <em>liste d'autorisation</em> (on décrit ce qui est permis et on rejette tout le reste), et non en liste d'interdiction (impossible d'énumérer tout ce qui est dangereux).</p>
+
+<h3>2. DataAnnotations sur un DTO de requête</h3>
+<p>Les <strong>DataAnnotations</strong> sont des <strong>attributs</strong> — de petites étiquettes entre crochets <code>[ ]</code> posées sur une propriété — qui déclarent ses règles. Exemples : <code>[Required]</code> (obligatoire), <code>[StringLength(200)]</code> (200 caractères max), <code>[Range(a, b)]</code> (valeur comprise entre a et b).</p>
+<pre class="pseudo">public record CreerJeuDto(                                    // DTO d'ENTRÉE : ce que le client envoie pour créer un jeu
+    [Required, StringLength(200)] string Titre,               // Titre obligatoire, 200 caractères maximum
+    [Range(0.01, 9999)] decimal PrixAchat,                    // prix d'achat compris entre 0,01 et 9999
+    [Range(0.01, 9999)] decimal PrixLocation,                 // prix de location dans la même plage
+    [Range(0, int.MaxValue)] int StockVente,                  // stock de vente >= 0 (jamais négatif)
+    [Range(0, int.MaxValue)] int StockLocation,               // stock de location >= 0
+    [Required] long CategorieId);                             // la catégorie est obligatoire
+
+[HttpPost] public async Task&lt;IActionResult&gt; Creer(CreerJeuDto dto) { ... }   // POST /api/jeux : reçoit le DTO et crée le jeu
+// [ApiController] renvoie 400 AUTOMATIQUEMENT si ModelState est invalide      // si une règle ci-dessus échoue, l'action n'est même pas exécutée</pre>
+<p><strong>POST</strong> est le type de requête web qui <em>envoie</em> des données (par opposition à GET qui lit). <code>ModelState</code> est le bilan de validation d'ASP.NET ; s'il est invalide, <code>[ApiController]</code> renvoie tout seul un <strong>code HTTP 400</strong> (« mauvaise requête ») avant même d'entrer dans la méthode.</p>
+
+<h3>3. Traduire les exceptions, sans fuite</h3>
+<p>Un <strong>middleware</strong> est un maillon placé sur le trajet de chaque requête, qui peut l'inspecter ou la transformer — comme un poste de contrôle sur une route. Ici, un middleware attrape toutes les exceptions non gérées et les traduit en code HTTP propre.</p>
+<pre class="pseudo">// middleware global (Program.cs)                            // maillon qui intercepte chaque requête
+app.UseExceptionHandler(a => a.Run(async ctx => {            // installe un attrape-tout des exceptions non gérées
+    var ex = ctx.Features.Get&lt;IExceptionHandlerFeature&gt;()?.Error;   // récupère l'exception qui a été levée
+    var (code, msg) = ex switch {                            // choisit un code HTTP + un message selon le TYPE d'exception
+        StockInsuffisantException e => (409, e.Message),     // stock épuisé -> 409 (conflit), avec son message
+        KeyNotFoundException        => (404, "Introuvable"), // ressource absente -> 404
+        _                           => (500, "Erreur interne")   // tout le reste (_) -> 500, message neutre
+    };
+    ctx.Response.StatusCode = code;                          // pose le code HTTP de la réponse
+    await ctx.Response.WriteAsJsonAsync(new { erreur = msg });   // renvoie un petit JSON { erreur: ... } — message neutre
+}));</pre>
+<p>Le <code>ex switch { … }</code> est une <strong>expression switch</strong> : selon le type de l'exception, elle produit un couple (code, message). Le tiret bas <code>_</code> attrape « tous les autres cas ».</p>
+
+<h3>4. Jamais de détail technique en prod</h3>
+<pre class="pseudo">// en Development : page d'exception détaillée (pratique)
+// en Production : app.UseExceptionHandler(...) -> message neutre + détail dans les logs
+// une stack trace renvoyée révèle la techno, les chemins, le schéma (cours Sécurité l.14)</pre>
+<p>Une <strong>stack trace</strong> est la liste des appels de code au moment d'une erreur : très utile pour un développeur, mais renvoyée à un inconnu elle dévoile le fonctionnement interne. Le mode <strong>Development</strong> l'affiche (confort) ; le mode <strong>Production</strong> la cache (sécurité).</p>
+
+<h3>5. Un test par branche d'erreur</h3>
+<pre class="pseudo">[Fact] public async Task Refuse_titre_vide() {              // test : un titre vide doit être rejeté
+    var r = await _client.PostAsJsonAsync("/api/jeux",       // envoie une requête POST avec un corps au format JSON
+        new { titre = "", prixLocation = 5m, categorieId = 1 });   // corps volontairement invalide : titre vide
+    r.StatusCode.Should().Be(HttpStatusCode.BadRequest);   // 400   // on attend bien un code 400 (mauvaise requête)
+}</pre>
+<div class="warn">Une gestion d'erreurs centralisée (middleware) évite le piège des <code>try/catch</code> dispersés qui finissent par diverger. Un seul endroit décide comment chaque exception devient un code HTTP — cohérent, testable, sans fuite technique. En prod, <code>ASPNETCORE_ENVIRONMENT=Production</code> masque tout détail.</div>
+<div class="tip">La validation n'est pas une commodité, c'est la première ligne de défense (cours Sécurité). Écrite maintenant, avec des attributs de plage (liste d'autorisation) et des messages neutres, elle ferme d'emblée l'injection et la fuite d'information. Chaque cas d'erreur a son test.</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle de sécurité n°1 sur les entrées :", opts: ["Elles sont sûres", "Toute entrée est hostile (à valider)", "On filtre le mal connu", "On ignore"], a: 1, exp: "Liste d'autorisation." },
+    { type: "qcm", q: "[ApiController] avec un DTO annoté…", opts: ["Ne fait rien", "Renvoie 400 automatiquement si ModelState invalide", "Chiffre", "Déploie"], a: 1, exp: "Requête invalide bloquée." },
+    { type: "qcm", q: "[Range(0.01, 9999)] sur un prix garantit…", opts: ["Un texte", "Une valeur dans une plage autorisée", "Rien", "Un tableau"], a: 1, exp: "Contrainte déclarative." },
+    { type: "qcm", q: "Valider en liste d'autorisation, c'est…", opts: ["Interdire le mal connu", "Autoriser explicitement ce qui est permis", "Tout accepter", "Chiffrer"], a: 1, exp: "Plus sûr que la liste noire." },
+    { type: "qcm", q: "Le middleware d'exception centralise…", opts: ["Les entités", "La traduction des exceptions en HTTP", "Le CSS", "La base"], a: 1, exp: "Un seul endroit." },
+    { type: "qcm", q: "StockInsuffisantException devient…", opts: ["500", "409 (Conflict)", "200", "301"], a: 1, exp: "Conflit d'état métier." },
+    { type: "qcm", q: "KeyNotFoundException devient…", opts: ["404", "200", "403", "500"], a: 0, exp: "Ressource absente." },
+    { type: "qcm", q: "En production, on ne renvoie JAMAIS…", opts: ["Un message neutre", "La stack trace / le détail technique", "Un code HTTP", "Un log serveur"], a: 1, exp: "Anti-fuite d'information." },
+    { type: "qcm", q: "ASPNETCORE_ENVIRONMENT=Production…", opts: ["Affiche la page d'exception détaillée", "Masque le détail (message neutre)", "Chiffre", "Déploie"], a: 1, exp: "Pas de fuite en prod." },
+    { type: "qcm", q: "Chaque branche d'erreur a…", opts: ["Rien", "Son test (verrouillé par la CI)", "Un TODO", "Un email"], a: 1, exp: "Robustesse vérifiable." },
+    { type: "vf", q: "Des try/catch dispersés finissent par diverger.", a: true, exp: "D'où la gestion centralisée." },
+    { type: "qcm", q: "Une requête invalide…", opts: ["Atteint le métier", "N'atteint jamais le métier (400 en amont)", "Plante la base", "Est loggée puis exécutée"], a: 1, exp: "[ApiController] valide avant." },
+    { type: "qcm", q: "[Range(0, int.MaxValue)] convient à…", opts: ["Un prix", "Un stock (>= 0)", "Un titre", "Un id"], a: 1, exp: "Stock non négatif." },
+    { type: "qcm", q: "La validation est…", opts: ["Une commodité", "La première ligne de défense", "Optionnelle", "Décorative"], a: 1, exp: "Sécurité par conception." },
+    { type: "vf", q: "Un DTO invalide dans une action [ApiController] renvoie un 400.", a: true, exp: "Automatique." }
+  ],
+  final: {
+    title: "Exercice final — Entrées sûres, erreurs traduites",
+    intro: `<p>Validation + middleware + tests d'erreur.</p>`,
+    questions: [
+      { type: "qcm", q: "La validation se déclare :", opts: ["par attributs ([Required], [Range]) sur un DTO", "à la main partout", "en SQL", "jamais"], a: 0, exp: "DataAnnotations." },
+      { type: "qcm", q: "Les exceptions -> HTTP sont gérées :", opts: ["dans un middleware global", "en try/catch dispersés", "en prod", "au hasard"], a: 0, exp: "Centralisé." },
+      { type: "qcm", q: "StockInsuffisant ->", opts: ["409", "200", "500", "302"], a: 0, exp: "Conflit métier." },
+      { type: "qcm", q: "En prod, la stack trace :", opts: ["masquée (Environment=Production)", "affichée au client", "loggée dans l'URL", "publique"], a: 0, exp: "Anti-fuite." },
+      { type: "vf", q: "Chaque cas d'erreur est couvert par un test.", a: true, exp: "Verrouillé en CI." }
+    ],
+    solution: `<pre class="pseudo">record CreerJeuDto([Required, StringLength(200)] string Titre,   // DTO d'entrée validé par attributs
+    [Range(0.01,9999)] decimal PrixLocation,                    // prix dans une plage autorisée
+    [Range(0,int.MaxValue)] int StockVente,                     // stock >= 0
+    [Required] long CategorieId);                               // catégorie obligatoire
+// [ApiController] -> 400 auto si ModelState invalide            // requête invalide bloquée en amont
+
+app.UseExceptionHandler(a => a.Run(async ctx => {               // middleware attrape-tout des exceptions
+  var ex = ctx.Features.Get<IExceptionHandlerFeature>()?.Error; // récupère l'exception levée
+  var (code,msg) = ex switch { StockInsuffisantException e => (409,e.Message),   // exception métier -> 409
+    KeyNotFoundException => (404,"Introuvable"), _ => (500,"Erreur interne") };   // absent -> 404 ; reste -> 500 neutre
+  ctx.Response.StatusCode = code; await ctx.Response.WriteAsJsonAsync(new { erreur = msg });   // renvoie le code + un JSON neutre
+}));</pre>
+<p>Les entrées sont sûres. Demain : les comptes et l'authentification durcie (Identity).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta validation et ta gestion d'erreurs…",
+  items: [
+  { id: "proj6cs-l8", title: "Validation + gestion d'erreurs centralisée", level: 2,
+    statement: "Écris le record CreerJeuDto annoté (DataAnnotations), le contrôleur POST ([ApiController]), et le middleware UseExceptionHandler qui traduit StockInsuffisant->409, KeyNotFound->404 avec messages génériques. Ajoute un test qui refuse un titre vide (400). Explique en 2-3 lignes pourquoi centraliser et pourquoi Environment=Production.",
+    hints: [
+      "[Required], [Range(0.01,9999)] pour les prix, [Range(0,int.MaxValue)] pour les stocks.",
+      "[ApiController] renvoie 400 automatiquement si ModelState invalide.",
+      "Middleware : ex switch { StockInsuffisantException => 409, KeyNotFound => 404, _ => 500 }."
+    ],
+    solution: "public record CreerJeuDto(\n    [Required, StringLength(200)] string Titre,\n    [Range(0.01, 9999)] decimal PrixAchat,\n    [Range(0.01, 9999)] decimal PrixLocation,\n    [Range(0, int.MaxValue)] int StockVente,\n    [Range(0, int.MaxValue)] int StockLocation,\n    [Required] long CategorieId);\n\n[ApiController, Route(\"api/jeux\")]\npublic class JeuxApiController : ControllerBase {\n    [HttpPost] public async Task<IActionResult> Creer(CreerJeuDto dto) {\n        // [ApiController] a deja renvoye 400 si dto invalide -> on est en terrain sur\n        var jeu = await _service.CreerAsync(dto);\n        return CreatedAtAction(nameof(Lister), new { id = jeu.Id }, null);\n    }\n}\n\n// Program.cs — middleware global, sans fuite\napp.UseExceptionHandler(a => a.Run(async ctx => {\n    var ex = ctx.Features.Get<IExceptionHandlerFeature>()?.Error;\n    var (code, msg) = ex switch {\n        StockInsuffisantException e => (409, e.Message),\n        KeyNotFoundException        => (404, \"Introuvable\"),\n        _                           => (500, \"Erreur interne\")\n    };\n    ctx.Response.StatusCode = code;\n    await ctx.Response.WriteAsJsonAsync(new { erreur = msg });\n}));\n\n[Fact] public async Task Refuse_titre_vide() {\n    var r = await _client.PostAsJsonAsync(\"/api/jeux\",\n        new { titre = \"\", prixLocation = 5m, prixAchat = 30m, categorieId = 1L });\n    r.StatusCode.Should().Be(HttpStatusCode.BadRequest);\n}\n\n// POURQUOI CENTRALISER, POURQUOI Environment=Production\n// Centraliser : un seul endroit decide exception -> code HTTP. Des try/catch\n// disperses divergent (un 500 ici, un 404 la pour le meme cas) et sont impossibles\n// a tester uniformement.\n// Environment=Production : en Development, ASP.NET affiche une page d'exception\n// detaillee (stack trace, code source) tres pratique... et catastrophique si\n// exposee. En Production, le middleware renvoie un message NEUTRE ; le vrai detail\n// reste dans les logs serveur. Le reglage de l'environnement est donc critique.",
+    note: "La validation et la gestion d'erreurs sont deux faces d'une même exigence de sécurité : ne jamais faire confiance à l'entrée, ne jamais trahir l'intérieur. [ApiController] rend la validation quasi gratuite (400 automatique sur ModelState invalide). Et le réglage ASPNETCORE_ENVIRONMENT est le plus critique et le plus souvent négligé : une app .NET en Development exposée publiquement fuit sa stack trace à chaque erreur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

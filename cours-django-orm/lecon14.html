@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "F, Q et les requêtes complexes",
+  subtitle: "Comparer deux colonnes entre elles, écrire un vrai OU, incrémenter sans race condition : F et Q débloquent le reste du SQL.",
+  theory: `
+<h3>1. La limite des lookups simples</h3>
+<p>Depuis la leçon 12, tous tes filtres comparent un champ à une <strong>constante</strong> (une valeur fixe fournie par ton code Python) : filter(prix__lte=30), filter(note__range=(3, 5))… Mais deux questions de la Ludothèque résistent. Un : comment comparer <strong>deux champs entre eux</strong> — les locations facturées plus cher que le prix du jeu (prix_location &gt; prix), ou un stock inférieur au nombre de locations en cours ? Deux : comment écrire un vrai <strong>OU</strong>, alors que filter(a, b) ne sait dire que AND ? Django fournit deux outils, à importer une fois pour toutes :</p>
+<pre class="pseudo">from django.db.models import F, Q          # on importe F et Q depuis django.db.models
+
+# F("champ")  → une référence à une COLONNE, utilisable dans la requête   # F = "la valeur de cette colonne, cote base"
+# Q(condition) → une condition EMBALLÉE, combinable avec | (OU), &amp; (ET), ~ (NON)   # Q = une condition qu'on peut combiner</pre>
+
+<h3>2. F : parler d'une colonne dans la requête</h3>
+<p><strong>F("champ")</strong> ne contient aucune valeur Python : c'est un <em>renvoi</em> vers une colonne, que MySQL résoudra lui-même ligne par ligne. On peut donc enfin mettre un champ à droite du lookup — y compris un champ d'une table liée, JOIN compris :</p>
+<pre class="pseudo">&gt;&gt;&gt; Location.objects.filter(prix_location__gt=F("jeu__prix"))   # locations facturees + cher que le prix du jeu
+&gt;&gt;&gt; print(qs.query)                                             # afficher le SQL prevu
+# SELECT ... FROM ludotheque_location                           -- lire dans la table location
+# INNER JOIN ludotheque_jeu ON (location.jeu_id = jeu.id)       -- jointure vers le jeu (pour F("jeu__prix"))
+# WHERE location.prix_location &gt; jeu.prix                        -- comparaison COLONNE contre COLONNE</pre>
+<p>Aucune donnée n'a transité par Python : la comparaison colonne contre colonne se fait <strong>entièrement dans MySQL</strong>, exactement comme le WHERE a.col1 &gt; b.col2 que tu écrivais au Niveau 4.</p>
+
+<h3>3. F pour les mises à jour atomiques</h3>
+<p>Un membre loue Catan, il faut <em>décrémenter</em> le stock (le diminuer de 1). La version naïve lit la valeur en Python puis la réécrit — et c'est une <strong>race condition</strong> (« situation de compétition ») : entre la lecture et l'écriture, une autre requête a pu passer et écraser ton calcul. « Atomique » signifie « en un seul bloc indivisible ».</p>
+<pre class="pseudo"># FRAGILE : lire puis écrire
+&gt;&gt;&gt; catan = Jeu.objects.get(titre="Catan")   # stock lu : 5   # on lit la valeur actuelle en Python
+# ... au même instant, un autre client loue aussi Catan ...     # une autre requete lit AUSSI 5
+&gt;&gt;&gt; catan.stock = catan.stock - 1            # calcul en Python : 4   # 5 - 1 = 4, calcule cote Python
+&gt;&gt;&gt; catan.save()                             # écrit 4 — l'autre décrément est PERDU   # ecrase la mise a jour concurrente
+
+# SÛR : le calcul se fait dans MySQL
+&gt;&gt;&gt; Jeu.objects.filter(pk=catan.pk).update(stock=F("stock") - 1)   # "stock = stock - 1" execute par la base
+# UPDATE ludotheque_jeu SET stock = stock - 1 WHERE id = 3          -- MySQL lit ET ecrit dans la meme instruction
+&gt;&gt;&gt; catan.refresh_from_db()                  # relire la vraie valeur   # resynchronise l'objet Python avec la base
+&gt;&gt;&gt; catan.stock                              # on relit l'attribut
+4                                            # la valeur reelle apres l'UPDATE</pre>
+<p>Avec F, l'UPDATE dit « stock = stock - 1 » et c'est <strong>MySQL</strong> qui lit et écrit dans la même instruction : deux locations simultanées donnent bien -2, jamais -1. Après coup, l'objet Python n'est pas au courant : <strong>refresh_from_db()</strong> (« recharge depuis la base ») le resynchronise.</p>
+
+<h3>4. Q : le OU, le ET, le NON</h3>
+<p><strong>Q(...)</strong> emballe une condition (même syntaxe de lookups que filter) pour la rendre <strong>combinable</strong> : <strong>|</strong> (la barre verticale, « pipe ») pour OR, <strong>&amp;</strong> (esperluette) pour AND, <strong>~</strong> (tilde) pour NOT. C'est la porte d'entrée du OU, impossible jusqu'ici :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(Q(prix__lt=20) | Q(disponible=False))   # prix < 20 OU indisponible
+# SELECT ... FROM ludotheque_jeu                                -- lire les jeux
+# WHERE (prix &lt; 20.00 OR NOT disponible)                        -- le OU enferme dans des parentheses
+
+&gt;&gt;&gt; Jeu.objects.filter(~Q(editeur="Asmodee"))          # NOT (…)   # tous SAUF l'editeur Asmodee
+&gt;&gt;&gt; Jeu.objects.filter(Q(prix__lt=20) &amp; Q(stock__gt=0)) # AND explicite   # prix < 20 ET stock > 0</pre>
+<p>Parenthèse importante, au sens propre : | et &amp; ont des priorités d'opérateurs Python. Dès que tu mélanges, <strong>parenthèse chaque groupe</strong> — (Q(a) | Q(b)) &amp; Q(c) ne dit pas la même chose que Q(a) | (Q(b) &amp; Q(c)), exactement comme dans un WHERE du Niveau 4.</p>
+
+<h3>5. Mélanger Q et arguments nommés : la recherche multi-critères</h3>
+<p>Un filter() accepte des Q et des <strong>kwargs</strong> (arguments nommés, du type disponible=True) ensemble, à une règle de syntaxe Python près : <strong>les Q d'abord, les arguments nommés ensuite</strong> — dans l'autre ordre, SyntaxError. L'exemple complet : la recherche avancée du catalogue, « le mot apparaît dans le titre OU chez l'éditeur, ET le jeu est disponible ».</p>
+<pre class="pseudo">&gt;&gt;&gt; mot = "aventure"                          # le mot recherche
+&gt;&gt;&gt; qs = Jeu.objects.filter(                   # un seul filter...
+...     Q(titre__icontains=mot) | Q(editeur__icontains=mot),   # ...le bloc Q (le OU) EN PREMIER
+...     disponible=True)                       # ...puis le kwarg (relie par AND via la virgule)
+&gt;&gt;&gt; print(qs.query)                            # afficher le SQL prevu
+# SELECT ... FROM ludotheque_jeu               -- lire les jeux
+# WHERE (titre LIKE '%aventure%' OR editeur LIKE '%aventure%')   -- le OU parenthese
+#   AND disponible = 1                         -- ET disponible (la virgule = AND)</pre>
+<p>La virgule entre le bloc Q et les kwargs vaut toujours AND : le OU reste bien enfermé dans ses parenthèses. En une ligne, les équivalents ailleurs : l'API Criteria et les Specifications chez Hibernate/JPA, les expressions lambda combinées en LINQ (EF Core), orWhere et les closures chez Eloquent.</p>
+<div class="warn">Sans F, le motif lire-modifier-écrire <strong>perd des mises à jour</strong> dès que deux requêtes arrivent en même temps : deux locations simultanées de Catan, deux « stock - 1 » calculés depuis la même lecture, et une décrémentation disparaît sans erreur ni trace. Tout compteur (stock, solde, vues) doit être incrémenté <strong>côté base</strong>, avec F dans un update().</div>
+<div class="tip">Après un update(stock=F("stock") - 1), l'objet Python en mémoire est périmé : son .stock date d'avant l'UPDATE. Un <em>refresh_from_db()</em> avant toute réutilisation de jeu.stock, et tu ne raisonneras jamais sur une valeur fantôme.</div>`,
+  exercises: [
+    { type: "qcm", q: "filter(prix__lte=30) compare le champ prix à…", opts: ["Une constante fournie par Python", "Une autre colonne", "Un F() implicite", "Le résultat d'une sous-requête"], a: 0, exp: "C'est la limite des lookups simples : pour comparer deux colonnes, il faut F." },
+    { type: "qcm", q: "L'import correct des deux outils du jour :", opts: ["import F, Q", "from django.db.models import F, Q", "from ludotheque.models import F, Q", "from django.shortcuts import F, Q"], a: 1, exp: "F et Q vivent dans django.db.models, comme les champs de modèles." },
+    { type: "qcm", q: "Location.objects.filter(prix_location__gt=F('jeu__prix'))…", opts: ["Compare prix_location à une constante", "Compare deux colonnes dans MySQL, avec un JOIN vers ludotheque_jeu", "Charge tous les jeux en Python pour comparer", "Lève une erreur : gt n'accepte pas F"], a: 1, exp: "F('jeu__prix') référence la colonne liée ; la comparaison se fait ligne par ligne côté base." },
+    { type: "input", q: "La classe qui référence une colonne à l'intérieur d'une requête :", a: ["F", "F()", "F('champ')"], ph: "Une lettre…", exp: "F('stock') dit « la colonne stock », résolue par MySQL et non par Python." },
+    { type: "qcm", q: "Pourquoi catan.stock = catan.stock - 1 puis save() est-il fragile ?", opts: ["save() ne gère pas les entiers", "Entre la lecture et l'écriture, une autre requête peut modifier le stock : race condition", "Le stock devient négatif", "PositiveIntegerField est en lecture seule"], a: 1, exp: "Deux clients simultanés lisent 5, écrivent 4 : une décrémentation est perdue." },
+    { type: "qcm", q: "Jeu.objects.filter(pk=catan.pk).update(stock=F('stock') - 1) génère…", opts: ["SELECT puis UPDATE en deux requêtes", "UPDATE ludotheque_jeu SET stock = stock - 1 WHERE id = …", "DELETE puis INSERT", "Un verrou de table complet"], a: 1, exp: "Une seule instruction : MySQL lit et écrit atomiquement, sûr en concurrence." },
+    { type: "vf", q: "Après update(stock=F('stock') - 1), l'attribut catan.stock en mémoire contient déjà la nouvelle valeur.", a: false, exp: "L'objet Python est périmé : refresh_from_db() pour relire la vraie valeur." },
+    { type: "input", q: "La méthode qui resynchronise un objet Python avec sa ligne MySQL :", a: ["refresh_from_db", "refresh_from_db()", ".refresh_from_db()"], ph: "catan.…", exp: "Elle relance un SELECT et met à jour tous les attributs de l'objet." },
+    { type: "qcm", q: "Q(prix__lt=20) | Q(disponible=False) se traduit en SQL par…", opts: ["AND", "OR", "NOT", "XOR"], a: 1, exp: "Le pipe | est LE moyen d'écrire un OU, impossible avec filter(a, b)." },
+    { type: "qcm", q: "L'opérateur qui nie une condition Q :", opts: ["not Q(…)", "!Q(…)", "~Q(…)", "Q.not(…)"], a: 2, exp: "Le tilde : ~Q(editeur='Asmodee') → WHERE NOT (editeur = 'Asmodee')." },
+    { type: "qcm", q: "Dans (Q(a) | Q(b)) &amp; Q(c), les parenthèses servent à…", opts: ["Faire joli", "Maîtriser la priorité : le OU est évalué avant le ET", "Éviter une requête supplémentaire", "Déclencher l'évaluation du QuerySet"], a: 1, exp: "Comme dans un WHERE du Niveau 4 : sans parenthèses, la condition change de sens." },
+    { type: "vf", q: "filter(disponible=True, Q(prix__lt=20)) est une syntaxe valide.", a: false, exp: "SyntaxError : en Python, les arguments positionnels (les Q) passent AVANT les arguments nommés." },
+    { type: "qcm", q: "filter(Q(titre__icontains=mot) | Q(editeur__icontains=mot), disponible=True) génère…", opts: ["WHERE (titre LIKE … OR editeur LIKE …) AND disponible = 1", "WHERE titre LIKE … OR (editeur LIKE … AND disponible = 1)", "Deux requêtes réunies en Python", "WHERE … OR … OR disponible = 1"], a: 0, exp: "La virgule vaut AND ; le OU reste enfermé dans le bloc Q parenthésé." },
+    { type: "qcm", q: "Chez Eloquent (Laravel), le OU d'une requête s'écrit…", opts: ["orWhere(…)", "Q(…)", "F(…)", "UNION obligatoire"], a: 0, exp: "orWhere et les closures ; LINQ combine des lambdas, JPA passe par Criteria/Specifications." },
+    { type: "vf", q: "Jeu.objects.filter(prix__lt=20).filter(disponible=False) équivaut au OU de Q(prix__lt=20) | Q(disponible=False).", a: false, exp: "Chaîner des filter = AND. Le OU n'existe qu'avec Q et son pipe |." }
+  ],
+  final: {
+    title: "Exercice final — Concurrence et conditions composées",
+    intro: `<p>Deux locations de Catan partent à la même seconde, et le moteur de recherche doit dire OU : on vérifie que F et Q sont bien en place.</p>`,
+    questions: [
+      { type: "qcm", q: "Deux clients louent Catan (stock 5) au même instant, chacun via catan.stock = catan.stock - 1 puis save(). Stock final probable :", opts: ["3, tout va bien", "4 : une décrémentation est perdue", "5 : rien n'est écrit", "Une exception est levée"], a: 1, exp: "Les deux lisent 5 et écrivent 4 : la race condition perd une mise à jour, sans erreur." },
+      { type: "qcm", q: "La correction sûre :", opts: ["Jeu.objects.filter(pk=catan.pk).update(stock=F('stock') - 1)", "catan.save() deux fois", "time.sleep(1) entre les deux", "stock = models.SafeIntegerField()"], a: 0, exp: "UPDATE … SET stock = stock - 1 : MySQL fait le calcul, atomiquement." },
+      { type: "input", q: "L'opérateur qui combine deux objets Q en OU :", a: ["|"], ph: "Q(…) … Q(…)", exp: "Le pipe. &amp; fait un ET, ~ un NON — en parenthésant chaque groupe." },
+      { type: "vf", q: "Dans un filter() qui mélange Q et arguments nommés, les Q doivent être écrits en premier.", a: true, exp: "Règle Python : positionnels avant nommés, sinon SyntaxError." },
+      { type: "qcm", q: "« Le mot dans le titre OU chez l'éditeur, ET disponible » s'écrit…", opts: ["filter(titre__icontains=mot, editeur__icontains=mot, disponible=True)", "filter(Q(titre__icontains=mot) | Q(editeur__icontains=mot), disponible=True)", "filter(disponible=True, Q(titre__icontains=mot) | Q(editeur__icontains=mot))", "exclude(titre__icontains=mot)"], a: 1, exp: "Le OU dans un bloc Q, le AND par la virgule — et les Q avant les kwargs." }
+    ],
+    solution: `<pre class="pseudo">Limite       : les lookups simples comparent un champ à une CONSTANTE      # une valeur fixe seulement
+Import       : from django.db.models import F, Q                          # les deux outils du jour
+F("champ")   : référence de colonne, résolue par MySQL (JOIN possible :   # parler d'une colonne dans la requete
+               prix_location__gt=F("jeu__prix"))                          # colonne contre colonne
+F + update   : update(stock=F("stock") - 1) → SET stock = stock - 1       # calcul cote base = atomique
+               atomique, sûr en concurrence · puis refresh_from_db()      # resynchroniser l'objet Python
+Q(cond)      : condition emballée · | = OR · &amp; = AND · ~ = NOT            # combiner des conditions
+               parenthéser chaque groupe pour maîtriser la priorité       # eviter les surprises
+Mélange      : filter(Q(…) | Q(…), kwarg=…) — les Q d'abord, virgule = AND  # Q avant kwargs
+Ailleurs     : Criteria/Specifications (JPA) · lambdas LINQ (EF Core) · orWhere (Eloquent)   # equivalents</pre>
+<p>Filtrer colonne contre colonne, dire OU, incrémenter sans se faire doubler : le WHERE est complet. Prochaine étape, faire calculer MySQL : <strong>Agrégats et annotations : Count, Sum, Avg</strong> — leçon 15.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l14", title: "La race condition du samedi après-midi", level: 2,
+    statement: "Le samedi, deux bénévoles de la Ludothèque encodent les locations en même temps, et voici le code actuel de louer_jeu : jeu = Jeu.objects.get(pk=jeu_id) ; jeu.stock = jeu.stock - 1 ; jeu.save() ; Location.objects.create(jeu=jeu, membre=membre, prix_location=jeu.prix / 10). Première partie : décris le scénario précis où deux locations simultanées de Catan (stock 5) laissent la base dans un état faux — qui lit quoi, qui écrit quoi, quel stock final, pourquoi aucune erreur n'apparaît. Réécris ensuite la décrémentation avec F, prédis l'UPDATE généré, et explique le rôle de refresh_from_db si la suite du code affiche jeu.stock. Deuxième partie : écris la recherche avancée du catalogue — le mot saisi apparaît dans le titre OU chez l'éditeur, ET le prix ne dépasse pas un maximum donné, SAUF les jeux indisponibles — avec Q (et un exclude ou un ~Q pour l'indisponibilité), puis prédis le SQL complet avec ses parenthèses.",
+    hints: [
+      "Déroule les deux exécutions ligne par ligne, en colonnes parallèles : bénévole A lit stock=5, bénévole B lit stock=5… qui écrit en dernier, et qu'écrase-t-il ?",
+      "La version F tient en une ligne : filter(pk=…).update(stock=F('stock') - 1) — demande-toi ensuite ce que vaut jeu.stock en mémoire juste après.",
+      "Pour la recherche : un seul filter avec le bloc Q(…) | Q(…) d'abord et prix__lte ensuite, puis .exclude(disponible=False) — vérifie mentalement où le SQL posera ses parenthèses."
+    ],
+    solution: "Première partie — le scénario de la perte :\nA : jeu = get(pk=3)      → lit stock = 5\nB : jeu = get(pk=3)      → lit stock = 5 (même valeur !)\nA : jeu.stock = 5 - 1 = 4 ; jeu.save()   → la base contient 4\nB : jeu.stock = 5 - 1 = 4 ; jeu.save()   → la base contient… 4\nDeux jeux sont sortis, le stock n'a baissé que de 1 : la mise à jour de A\nest écrasée par celle de B. Aucune exception : chaque save() est valide.\n\nCorrection avec F :\nJeu.objects.filter(pk=jeu_id).update(stock=F('stock') - 1)\nSQL : UPDATE ludotheque_jeu SET stock = stock - 1 WHERE id = 3\nLe calcul se fait DANS MySQL : deux exécutions simultanées donnent 5 → 4 → 3.\nMais l'objet jeu en mémoire affiche encore l'ancien stock :\njeu.refresh_from_db() relit la ligne avant tout affichage de jeu.stock.\n\nDeuxième partie — la recherche avancée :\nqs = (Jeu.objects\n        .filter(Q(titre__icontains=mot) | Q(editeur__icontains=mot),\n                prix__lte=prix_max)\n        .exclude(disponible=False))    # ou : .filter(~Q(disponible=False))\n\nSQL prédit (print(qs.query)) :\nSELECT ... FROM ludotheque_jeu\nWHERE (titre LIKE '%aventure%' OR editeur LIKE '%aventure%')\n  AND prix <= 30.00\n  AND NOT (disponible = 0)\nLe OU reste parenthésé dans son bloc Q ; la virgule et l'exclude ajoutent des AND.",
+    note: "La race condition corrigée ici est un classique que ton cours MySQL du Niveau 4 annonçait avec les transactions — et la leçon 17 (atomic) complétera F pour les opérations à plusieurs requêtes ; côté Niveau 3, c'est la vue « louer un jeu » qui appellera ce code. Dans le projet full-stack du Niveau 6, tout compteur partagé (stock, panier, statistiques) devra passer par un update(F(…)) : c'est souvent LA question piège des revues de code en entreprise." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

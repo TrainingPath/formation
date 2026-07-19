@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Tester une API à la main : curl et clients REST",
+  subtitle: "Avant d'écrire une ligne de client, un pro parle à son API en direct.",
+  theory: `
+<h3>1. Le réflexe professionnel</h3>
+<p>Tu viens d'écrire un endpoint. Un <strong>endpoint</strong> (« point d'accès ») est une URL précise de ton API qui répond à une requête — par exemple <code>/jeux/5</code>. Fonctionne-t-il ? Ne réponds pas « je crois » : <strong>envoie-lui une vraie requête et lis la vraie réponse</strong>. Tester chaque endpoint à la main — avant d'écrire le front (l'interface visible par l'utilisateur), avant d'accuser le framework — est le réflexe qui sépare le débutant du professionnel. L'outil universel pour ça : <strong>curl</strong>, un petit programme qui s'utilise en <strong>ligne de commande</strong> (une fenêtre où l'on tape des ordres au clavier, sans souris), présent sur Linux, macOS et Windows. Son nom se lit « kurl ».</p>
+
+<h3>2. curl : lire une ressource</h3>
+<p>La forme la plus simple : le mot <code>curl</code> suivi de l'URL à interroger. Le symbole <code>→</code> ci-dessous n'est pas tapé : il représente ce que le serveur <em>renvoie</em>.</p>
+<pre class="pseudo">curl https://api.ludotheque.example/jeux                                        # demande la LISTE des jeux (curl fait un GET par défaut)
+→ [ { "id": 5, "titre": "Catan", … }, { "id": 6, "titre": "Les Aventuriers du Rail", … } ]   # réponse : un tableau JSON [ … ] contenant deux objets-jeux
+
+curl https://api.ludotheque.example/jeux/5                                      # demande UN seul jeu : celui dont l'id vaut 5
+→ { "id": 5, "titre": "Catan", "prix_location": 3.50, "disponible": true }      # réponse : un objet JSON { … } décrivant le jeu 5</pre>
+<p>Sans option, curl fait un <strong>GET</strong> (la méthode « lire ») et affiche le <strong>corps</strong> de la réponse — c'est-à-dire les données. Une <strong>option</strong> (ou <em>flag</em>) est un réglage ajouté à la commande, toujours précédé d'un tiret. Mais le corps ne dit pas tout : ajoute <strong><code>-i</code></strong> (pour <em>include</em>) pour voir aussi la <strong>ligne de statut</strong> (le code résultat) et les <strong>en-têtes</strong> — indispensable pour vérifier le code et le <code>Content-Type</code> (l'en-tête qui annonce le format des données) :</p>
+<pre class="pseudo">curl -i https://api.ludotheque.example/jeux/5   # -i = « include » : afficher AUSSI le statut et les en-têtes, pas seulement le corps
+HTTP/1.1 200 OK                                 # ligne de statut : 200 = succès (la ressource a été trouvée et renvoyée)
+Content-Type: application/json                  # en-tête : le corps qui suit est du JSON
+Content-Length: 178                             # en-tête : le corps fait 178 octets
+                                                # ligne vide = séparateur entre les en-têtes et le corps
+{ "id": 5, "titre": "Catan", … }               # le corps de la réponse : l'objet JSON du jeu 5</pre>
+
+<h3>3. Les trois options qui font tout</h3>
+<p><strong><code>-X</code></strong> choisit la méthode (<em>eXtended request</em>), <strong><code>-H</code></strong> ajoute un en-tête (<em>Header</em>), <strong><code>-d</code></strong> fournit le corps de la requête (<em>data</em>, les données envoyées). Créons un jeu (commande sur une seule ligne) :</p>
+<pre class="pseudo">curl -i -X POST https://api.ludotheque.example/jeux -H "Content-Type: application/json" -d '{ "titre": "Azul", "editeur": "Next Move", "annee": 2017, "categorie": "abstrait", "prix_location": 3.00, "prix_vente": 44.90 }'   # -i (voir statut+en-têtes) ; -X POST (méthode « créer ») ; -H annonce que le corps est du JSON ; -d = le corps JSON du nouveau jeu
+
+HTTP/1.1 201 Created                            # 201 = créé avec succès (une nouvelle ressource existe désormais)
+Location: /jeux/9                               # en-tête Location : l'URL du jeu tout juste créé (il a reçu l'id 9)</pre>
+<p>Note le duo inséparable : <strong>dès qu'il y a un <code>-d</code> avec du JSON, il faut le <code>-H "Content-Type: application/json"</code></strong> — sinon curl annonce un format de formulaire et le serveur répond 400 (requête mal formée) ou 415 (format non supporté). Autres exemples :</p>
+<pre class="pseudo">curl -i -X PATCH https://api.ludotheque.example/jeux/9 -H "Content-Type: application/json" -d '{ "disponible": false }'   # PATCH = retoucher ; on ne change QUE le champ « disponible »
+→ HTTP/1.1 200 OK                               # 200 = la modification a réussi
+
+curl -i -X DELETE https://api.ludotheque.example/jeux/9   # DELETE = supprimer le jeu 9
+→ HTTP/1.1 204 No Content                       # 204 = succès, mais aucun contenu à renvoyer (le jeu n'existe plus)</pre>
+<p>Un en-tête <code>-H</code> par information : <code>-H "Accept: application/json"</code> (l'en-tête <code>Accept</code> dit le format que le client souhaite recevoir), <code>-H "Authorization: Bearer …"</code> (l'en-tête d'authentification qui transporte un <strong>token</strong> — un jeton secret prouvant ton identité, leçon 16)… On peut répéter <code>-H</code> autant de fois que nécessaire.</p>
+
+<h3>4. Lire la réponse comme un pro</h3>
+<p>Face à une réponse, toujours le même balayage, dans l'ordre :</p>
+<pre class="pseudo">1. le CODE        200 ? 201 ? 404 ? → il oriente tout (leçon 5)              # d'abord le code de statut : il te dit si ça a marché et pourquoi
+2. les EN-TÊTES   Content-Type: application/json ? Location présent ?        # ensuite les en-têtes : bon format ? URL du créé présente ?
+3. le CORPS       le JSON attendu ? les bons types ? (leçon 3)               # enfin le corps : les bonnes données, avec les bons types ?</pre>
+<p>Un code inattendu se lit avec la grille de la leçon 5 : 404 (introuvable) → vérifie l'URL, 405 (méthode non autorisée) → vérifie le <code>-X</code>, 400/415 → vérifie le <code>-d</code> et son <code>Content-Type</code>, 401 (non authentifié) → il manque l'<code>Authorization</code>, 500 (erreur serveur) → va lire les logs du serveur (les journaux d'événements enregistrés par le serveur).</p>
+
+<h3>5. Les alternatives confortables</h3>
+<p>curl est universel mais spartiate. Selon les goûts et les contextes :</p>
+<pre class="pseudo">HTTPie      en ligne de commande, syntaxe douce, JSON par défaut :         # variante de curl plus lisible ; annee:=2017 force un NOMBRE (pas du texte)
+            http POST api.ludotheque.example/jeux titre=Azul annee:=2017
+Postman     interface graphique complète : collections de requêtes,       # application à fenêtres : on clique au lieu de taper
+            variables d'environnement, partage en équipe
+Insomnia    même famille que Postman, plus épuré                          # concurrent de Postman, interface simplifiée
+REST Client extension VS Code : les requêtes s'écrivent dans un fichier    # dans l'éditeur VS Code : les requêtes vivent dans un fichier
+            .http versionné avec le projet — Git adore                    # fichier .http rangé dans Git à côté du code du projet</pre>
+<p>Tous fabriquent la même chose : la requête texte de la leçon 2. Maîtrise curl d'abord — présent sur tous les serveurs où tu te connecteras en SSH (une connexion sécurisée à distance à un serveur), cité dans toutes les documentations — puis adopte le confort qui te convient. Une collection Postman ou un fichier <code>.http</code> pour l'API Ludothèque deviendra vite la mémoire vivante de ton projet.</p>
+<div class="warn">Le piège classique du POST avec curl : envoyer du JSON via <code>-d</code> <strong>sans</strong> l'en-tête <code>Content-Type: application/json</code>. Le serveur reçoit alors un prétendu formulaire, la <strong>désérialisation</strong> (la transformation du texte reçu en données utilisables) échoue, et tu perds une heure à chercher un bug… qui est dans ta commande.</div>
+<div class="tip">Garde un fichier de commandes curl (ou un fichier .http) à la racine de chaque projet d'API : une commande par endpoint, prête à rejouer. C'est ta documentation vivante, ton outil de débogage, et l'embryon de tes futurs tests automatisés en CI/CD (l'intégration et le déploiement continus : une chaîne qui teste et publie ton code automatiquement).</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans aucune option, curl https://api.ludotheque.example/jeux effectue…", opts: ["Un POST", "Un GET et affiche le corps de la réponse", "Un DELETE", "Rien"], a: 1, exp: "GET est la méthode par défaut de curl." },
+    { type: "qcm", q: "L'option qui affiche la ligne de statut et les en-têtes de la réponse :", opts: ["-i", "-X", "-d", "-H"], a: 0, exp: "curl -i : indispensable pour vérifier le code." },
+    { type: "qcm", q: "L'option qui choisit la méthode HTTP :", opts: ["-m", "-H", "-X", "-d"], a: 2, exp: "Exemple : curl -X DELETE …/jeux/9." },
+    { type: "qcm", q: "L'option qui fournit le corps de la requête :", opts: ["-b", "-d", "-i", "-c"], a: 1, exp: "-d pour data ; avec du JSON, toujours accompagné du bon Content-Type." },
+    { type: "qcm", q: "Tu envoies du JSON avec -d. Quel -H est obligatoire ?", opts: ["-H \"Accept: text/html\"", "-H \"Host: localhost\"", "-H \"Content-Length: 0\"", "-H \"Content-Type: application/json\""], a: 3, exp: "Sinon curl annonce un formulaire → 400/415." },
+    { type: "qcm", q: "Après un curl -i -X POST …/jeux réussi, tu dois voir…", opts: ["HTTP/1.1 204", "HTTP/1.1 201 Created et un en-tête Location", "HTTP/1.1 304", "Uniquement du HTML"], a: 1, exp: "La création renvoie 201 + l'URL du nouveau jeu." },
+    { type: "qcm", q: "curl -i -X DELETE …/jeux/9 réussit. Réponse typique :", opts: ["200 avec le jeu", "201 Created", "204 No Content, sans corps", "301"], a: 2, exp: "Succès silencieux : rien à renvoyer." },
+    { type: "qcm", q: "Ta commande curl reçoit un 405. Le premier réflexe :", opts: ["Vérifier la méthode passée à -X", "Changer d'ordinateur", "Vider le cache du navigateur", "Réinstaller curl"], a: 0, exp: "405 = méthode non autorisée sur cette ressource (leçon 5)." },
+    { type: "qcm", q: "L'outil graphique avec collections partagées et variables d'environnement :", opts: ["curl", "Postman", "le Bloc-notes", "ping"], a: 1, exp: "Insomnia joue dans la même famille, plus épuré." },
+    { type: "qcm", q: "L'extension VS Code qui exécute des requêtes écrites dans un fichier .http :", opts: ["Live Server", "Prettier", "REST Client", "GitLens"], a: 2, exp: "Le fichier .http se versionne avec le projet." },
+    { type: "vf", q: "Pour envoyer deux en-têtes avec curl, on répète l'option -H.", a: true, exp: "-H \"Content-Type: …\" -H \"Authorization: …\" : un -H par en-tête." },
+    { type: "vf", q: "Postman fabrique des requêtes fondamentalement différentes de celles de curl.", a: false, exp: "Tous les clients produisent le même texte HTTP de la leçon 2." },
+    { type: "vf", q: "Il vaut mieux écrire tout le front-end d'abord, puis tester l'API à la fin.", a: false, exp: "Endpoint écrit = endpoint testé à la main, tout de suite." },
+    { type: "input", q: "Quel outil en ligne de commande, présent partout, sert à envoyer des requêtes HTTP ?", a: ["curl"], ph: "Un outil…", exp: "L'outil universel des documentations d'API." },
+    { type: "input", q: "Quelle option de curl affiche les en-têtes de la réponse ?", a: ["-i"], ph: "Une option…", exp: "curl -i pour voir code + en-têtes + corps." }
+  ],
+  final: {
+    title: "Exercice final — La séance de test de la Ludothèque",
+    intro: `<p>Tu testes l'API de la Ludothèque fraîchement déployée (« déployée » = mise en service sur un serveur). Analyse chaque situation.</p>`,
+    questions: [
+      { type: "qcm", q: "La commande correcte pour lire les en-têtes de la fiche de Catan :", opts: ["curl -d https://api.ludotheque.example/jeux/5", "curl -i https://api.ludotheque.example/jeux/5", "curl -X https://api.ludotheque.example/jeux/5", "curl -H https://api.ludotheque.example/jeux/5"], a: 1, exp: "-i affiche statut + en-têtes + corps." },
+      { type: "qcm", q: "curl -X POST …/jeux -d '{ \"titre\": \"Dixit\" }' répond 415 Unsupported Media Type. Il manque…", opts: ["-H \"Content-Type: application/json\"", "-i", "un deuxième -d", "-X GET"], a: 0, exp: "Sans lui, le corps est annoncé comme formulaire." },
+      { type: "qcm", q: "curl -i …/jeux/999 affiche « HTTP/1.1 404 Not Found ». Conclusion :", opts: ["Le serveur est planté", "curl est mal installé", "Le jeu 999 n'existe pas : la requête était correcte, la ressource non", "Il faut réessayer en POST"], a: 2, exp: "404 = ressource inexistante ; la grille de la leçon 5 s'applique." },
+      { type: "vf", q: "Un fichier de commandes curl (ou .http) versionné avec le projet sert de documentation vivante.", a: true, exp: "Et d'embryon de tests automatisés pour la CI/CD." },
+      { type: "input", q: "Complète : curl -i -___ DELETE https://api.ludotheque.example/jeux/9", a: ["X", "-X"], ph: "Une option…", exp: "-X choisit la méthode ; réponse attendue : 204." }
+    ],
+    solution: `<pre class="pseudo">curl URL                          GET, corps seul                          # forme minimale : lit la ressource, affiche juste les données
+curl -i URL                       + statut et en-têtes                     # ajoute -i pour voir aussi le code et les en-têtes
+curl -i -X POST URL -H "Content-Type: application/json" -d '{ … }'         # créer : méthode POST + en-tête JSON + corps JSON (attendu : 201)
+curl -i -X PATCH URL -H "Content-Type: application/json" -d '{ … }'        # retoucher : PATCH + en-tête JSON + les seuls champs à changer (200)
+curl -i -X DELETE URL             → 204 attendu                            # supprimer : DELETE ; succès sans corps = 204
+
+Lecture : 1. CODE  2. EN-TÊTES  3. CORPS                                   # toujours lire la réponse dans cet ordre
+Confort : HTTPie · Postman · Insomnia · REST Client (fichier .http)        # outils plus agréables une fois curl maîtrisé
+Réflexe : chaque endpoint se teste À LA MAIN avant d'écrire le client.     # la règle d'or du pro</pre>
+<p>La semaine des fondations est bouclée : tu sais parler HTTP, JSON, méthodes, codes et ressources — et tester le tout. Semaine 2 : concevoir l'API de la Ludothèque endpoint par endpoint.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l7", title: "Le scénario de test complet", level: 2,
+    statement: "Rédige le scénario de test manuel du cycle de vie d'un jeu sur l'API Ludothèque, sous forme de commandes curl commentées : 1) créer le jeu 7 Wonders, 2) vérifier qu'il apparaît dans la liste, 3) relire sa fiche via l'URL renvoyée par le serveur, 4) le marquer indisponible, 5) le supprimer, 6) prouver que la suppression a bien eu lieu. Pour chaque étape, indique la commande exacte (une seule ligne), le code de statut attendu et ce que tu vérifies dans la réponse.",
+    hints: [
+      "Étape 1 : quelle méthode, quels -H, quel -d ? Et quel en-tête de la réponse te donne l'URL pour l'étape 3 ?",
+      "Étapes 4 et 5 : retouche partielle puis suppression — deux méthodes différentes, deux codes différents.",
+      "Étape 6 : comment PROUVER une absence ? Quel code attends-tu en relisant la fiche supprimée ?"
+    ],
+    solution: "1. Créer :\ncurl -i -X POST https://api.ludotheque.example/jeux -H \"Content-Type: application/json\" -d '{ \"titre\": \"7 Wonders\", \"editeur\": \"Repos Production\", \"annee\": 2010, \"categorie\": \"strategie\", \"prix_location\": 3.00, \"prix_vente\": 45.00 }'   # POST = créer ; -H annonce du JSON ; -d = le corps JSON du nouveau jeu\n→ attendu 201 Created + Location: /jeux/7 ; je note l'id renvoyé.\n\n2. Vérifier la liste :\ncurl -i https://api.ludotheque.example/jeux   # GET par défaut : relire toute la collection\n→ attendu 200 ; le tableau JSON contient un objet \"titre\": \"7 Wonders\".\n\n3. Relire la fiche (URL du Location) :\ncurl -i https://api.ludotheque.example/jeux/7   # GET sur l'élément précis créé à l'étape 1\n→ attendu 200 ; les champs et leurs TYPES correspondent à ce que j'ai envoyé.\n\n4. Marquer indisponible :\ncurl -i -X PATCH https://api.ludotheque.example/jeux/7 -H \"Content-Type: application/json\" -d '{ \"disponible\": false }'   # PATCH = retoucher un seul champ\n→ attendu 200 ; \"disponible\": false, les autres champs intacts.\n\n5. Supprimer :\ncurl -i -X DELETE https://api.ludotheque.example/jeux/7   # DELETE = effacer la ressource\n→ attendu 204, sans corps.\n\n6. Prouver l'absence :\ncurl -i https://api.ludotheque.example/jeux/7   # on retente un GET sur la fiche supprimée\n→ attendu 404 Not Found : la preuve que la suppression est effective.",
+    note: "Ce scénario est un vrai protocole de recette : tu le rejoueras tel quel sur ton implémentation Django, Spring, Laravel ou ASP.NET du capstone Ludothèque. Transposé dans un fichier .http ou une collection Postman, puis automatisé, il deviendra un test d'intégration exécuté par ta chaîne CI/CD — la boucle est bouclée avec le Niveau 7." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

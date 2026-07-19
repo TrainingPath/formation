@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Requêtes ORM (QuerySets)",
+  subtitle: "Interroger la base finement, sans SQL.",
+  theory: `
+<h3>1. Le QuerySet : une requête paresseuse</h3>
+<p>Un <strong>QuerySet</strong> (« ensemble de résultats de requête ») est ce que renvoie l'ORM quand on interroge la base : une collection d'objets. Sa particularité : il est <strong>paresseux</strong> (en anglais <em>lazy</em>). Cela veut dire que la vraie requête à la base n'est <strong>pas</strong> envoyée tout de suite ; elle attend le dernier moment, quand on utilise réellement les données (une boucle, un affichage). C'est comme un serveur qui note toute ta commande avant d'aller en cuisine une seule fois, plutôt que de faire un aller-retour par plat. On peut donc affiner la requête par étapes, gratuitement.</p>
+<pre class="pseudo">taches = Tache.objects.filter(faite=False)   # on décrit un filtre — AUCUNE requête envoyée pour l'instant
+taches = taches.order_by("date_creation")    # on ajoute un tri — toujours aucune requête (on affine)
+for t in taches:                             # ← ICI la requête SQL part enfin (on utilise les données)
+    print(t.texte)                           # print affiche le texte de chaque tâche</pre>
+
+<h3>2. Filtrer avec des « lookups »</h3>
+<p>Un <strong>lookup</strong> (« recherche ») est une condition exprimée après un double tiret bas <code>__</code> : elle permet de filtrer autrement que par une simple égalité. Le mot <strong>casse</strong> désigne la distinction majuscules/minuscules.</p>
+<pre class="pseudo">Tache.objects.filter(faite=True)                  # égalité simple : faite vaut True
+Tache.objects.filter(texte__contains="urgent")    # __contains : le texte CONTIENT « urgent »
+Tache.objects.filter(texte__icontains="urgent")   # __icontains : idem mais insensible à la casse (i = ignore)
+Tache.objects.filter(id__gte=5)                    # __gte : id &gt;= 5 (greater than or equal, "≥")
+Tache.objects.filter(id__lt=10)                    # __lt : id &lt; 10 (less than, "&lt;")
+Tache.objects.filter(date_creation__year=2026)     # __year : l'année de la date vaut 2026</pre>
+<p>Le double underscore <code>__</code> introduit un <strong>lookup</strong> : <code>__contains</code>, <code>__icontains</code>, <code>__gte</code> (≥), <code>__lte</code> (≤), <code>__gt</code> (&gt;), <code>__lt</code> (&lt;), <code>__startswith</code>, <code>__year</code>… C'est la façon d'exprimer des conditions autres que l'égalité.</p>
+
+<h3>3. Exclure, trier, limiter</h3>
+<p><code>exclude</code> est le contraire de <code>filter</code>. <code>order_by</code> trie. Le <strong>slicing</strong> (<code>[:5]</code>) est la découpe Python d'une liste, ici traduite en limite SQL.</p>
+<pre class="pseudo">Tache.objects.exclude(faite=True)             # TOUTES les tâches SAUF celles qui sont faites
+Tache.objects.order_by("date_creation")       # tri CROISSANT par date (de la plus ancienne à la récente)
+Tache.objects.order_by("-date_creation")      # tri DÉCROISSANT : le tiret "-" devant le champ inverse l'ordre
+Tache.objects.all()[:5]                        # les 5 premières seulement (LIMIT 5, via le slicing Python)
+Tache.objects.filter(faite=False)[:3]          # les 3 premières tâches non faites</pre>
+
+<h3>4. Chaîner les requêtes</h3>
+<p><strong>Chaîner</strong>, c'est enchaîner les méthodes bout à bout avec des points : chaque étape affine la précédente.</p>
+<pre class="pseudo">Tache.objects.filter(faite=False).exclude(texte="").order_by("-date_creation")[:10]
+# lecture : non faites, PUIS texte non vide, PUIS triées par date décroissante, PUIS limité à 10</pre>
+<div class="tip">On <strong>chaîne</strong> les méthodes : chaque <code>.filter()</code>, <code>.exclude()</code>, <code>.order_by()</code> renvoie un nouveau QuerySet qu'on peut affiner encore. Comme le QuerySet est paresseux, tout se combine en UNE seule requête SQL, exécutée à la fin. Élégant ET efficace.</div>
+
+<h3>5. Compter et agréger</h3>
+<p><strong>Agréger</strong>, c'est calculer une valeur unique à partir de plusieurs lignes (un total, une moyenne…). <code>Count</code> compte, <code>Sum</code> additionne, <code>Avg</code> fait la moyenne.</p>
+<pre class="pseudo">Tache.objects.count()                          # nombre TOTAL de tâches
+Tache.objects.filter(faite=True).count()       # nombre de tâches faites
+Tache.objects.exists()                         # y en a-t-il au moins une ? renvoie True/False
+
+from django.db.models import Count, Avg, Sum   # importe les fonctions d'agrégation
+Tache.objects.aggregate(total=Count("id"))     # aggregate : calcule → renvoie {"total": 42}
+# les agrégats (Count, Sum, Avg, Max, Min) sont calculés CÔTÉ BASE, pas en Python</pre>
+
+<h3>6. SQL ou Python ? Toujours filtrer côté base</h3>
+<pre class="pseudo"># BIEN : la base filtre et ne renvoie QUE le nécessaire
+faites = Tache.objects.filter(faite=True)          # seules les tâches faites reviennent
+
+# MAL : rapatrier TOUT puis filtrer en Python (très lent sur de grosses tables)
+faites = [t for t in Tache.objects.all() if t.faite]  # all() charge tout en mémoire, on jette le reste</pre>
+<div class="warn">Fais toujours filtrer, trier et compter par la BASE (via le QuerySet), pas en Python. La base est optimisée pour ça (des index, comme la dichotomie du cours Python) : demander <code>filter(faite=True)</code> ne rapatrie que les tâches utiles, alors que <code>all()</code> puis une compréhension charge TOUT en mémoire. Sur 100 000 lignes, la différence est énorme.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un QuerySet est « paresseux » (lazy) : cela signifie…", opts: ["Il est lent", "La requête SQL n'est exécutée qu'au moment où on utilise les données", "Il ne marche pas", "Il copie la base"], a: 1, exp: "On peut l'affiner sans coût ; la requête part à l'usage." },
+    { type: "qcm", q: "<code>texte__contains=\"urgent\"</code> filtre les tâches dont le texte…", opts: ["Est égal à urgent", "CONTIENT « urgent »", "Commence par urgent", "Finit par urgent"], a: 1, exp: "Le lookup __contains ; __icontains ignore la casse." },
+    { type: "qcm", q: "Le double underscore <code>__</code> dans un filter introduit…", opts: ["Un commentaire", "Un LOOKUP : une condition autre que l'égalité (__gte, __contains…)", "Une erreur", "Un tri"], a: 1, exp: "field__lookup=valeur." },
+    { type: "qcm", q: "<code>id__gte=5</code> signifie…", opts: ["id = 5", "id ≥ 5 (greater than or equal)", "id < 5", "id contient 5"], a: 1, exp: "__gte = supérieur ou égal." },
+    { type: "qcm", q: "<code>order_by(\"-date_creation\")</code> trie…", opts: ["Croissant", "DÉCROISSANT (le - devant le champ)", "Au hasard", "Par id"], a: 1, exp: "Le tiret inverse l'ordre." },
+    { type: "qcm", q: "<code>exclude(faite=True)</code> retourne…", opts: ["Les tâches faites", "TOUTES sauf celles qui sont faites", "Rien", "Une erreur"], a: 1, exp: "exclude = le contraire de filter." },
+    { type: "qcm", q: "<code>Tache.objects.all()[:5]</code> fait…", opts: ["Copie tout", "Limite aux 5 premières (LIMIT 5, via le slicing)", "Supprime 5", "Trie"], a: 1, exp: "Le slicing sur un QuerySet devient un LIMIT SQL." },
+    { type: "qcm", q: "Chaîner <code>.filter().exclude().order_by()</code> …", opts: ["Fait 3 requêtes", "Combine tout en UNE requête (grâce à la paresse du QuerySet)", "Plante", "Copie la base"], a: 1, exp: "Chaque méthode affine le même QuerySet." },
+    { type: "qcm", q: "<code>Tache.objects.filter(faite=True).count()</code> retourne…", opts: ["Les tâches faites", "Le NOMBRE de tâches faites (calculé côté base)", "True", "La première"], a: 1, exp: "count() = combien, sans rapatrier les objets." },
+    { type: "qcm", q: "<code>Tache.objects.exists()</code> retourne…", opts: ["Toutes les tâches", "True/False : y a-t-il au moins une tâche ?", "Le nombre", "None"], a: 1, exp: "Le test d'existence, plus efficace que count() > 0." },
+    { type: "qcm", q: "Filtrer les tâches faites : quelle approche préférer ?", opts: ["[t for t in Tache.objects.all() if t.faite]", "Tache.objects.filter(faite=True) — la BASE filtre", "Les deux pareil", "En JavaScript"], a: 1, exp: "Filtrer côté base ne rapatrie que le nécessaire." },
+    { type: "qcm", q: "Pourquoi éviter de tout rapatrier avec all() pour filtrer en Python ?", opts: ["C'est interdit", "C'est LENT : sur 100 000 lignes, on charge tout en mémoire inutilement", "Ça ne marche pas", "Aucune raison"], a: 1, exp: "La base est optimisée (index) : laisse-la travailler." },
+    { type: "qcm", q: "<code>Count</code>, <code>Sum</code>, <code>Avg</code> (django.db.models) calculent…", opts: ["En Python", "CÔTÉ BASE (agrégats SQL), via aggregate()", "Dans le template", "Nulle part"], a: 1, exp: "Les agrégats sont exécutés par la base, efficacement." },
+    { type: "vf", q: "Un QuerySet peut être affiné par étapes avant d'exécuter la requête.", a: true, exp: "La paresse permet le chaînage : la requête part à l'usage." },
+    { type: "qcm", q: "<code>date_creation__year=2026</code> filtre…", opts: ["Toutes les dates", "Les tâches créées en 2026 (le lookup __year)", "Une erreur", "Par mois"], a: 1, exp: "__year extrait l'année pour comparer." }
+  ],
+  final: {
+    title: "Exercice final — Interroger la todo-liste",
+    intro: `<p>On affine les requêtes dans une vue :</p>
+<pre class="pseudo">a_faire = Tache.objects.filter(faite=False).order_by("-date_creation")  # non faites, plus récentes d'abord
+urgentes = Tache.objects.filter(texte__icontains="urgent")             # texte contenant "urgent" (casse ignorée)
+nb_faites = Tache.objects.filter(faite=True).count()                   # nombre de tâches faites (côté base)
+cinq_recentes = Tache.objects.order_by("-date_creation")[:5]           # les 5 plus récentes (LIMIT 5)</pre>`,
+    questions: [
+      { type: "qcm", q: "Que contient <code>a_faire</code> ?", opts: ["Toutes les tâches", "Les tâches non faites, triées de la plus récente à la plus ancienne", "Les tâches faites", "Une tâche"], a: 1, exp: "filter(faite=False) + order_by décroissant." },
+      { type: "qcm", q: "Que fait <code>texte__icontains=\"urgent\"</code> ?", opts: ["texte = urgent", "Cherche « urgent » dans le texte, sans tenir compte de la casse", "Commence par urgent", "Une erreur"], a: 1, exp: "__icontains : contient, insensible à la casse." },
+      { type: "qcm", q: "<code>nb_faites</code> est…", opts: ["Une liste", "Un nombre : le compte des tâches faites (côté base)", "Un booléen", "None"], a: 1, exp: "count() renvoie un entier." },
+      { type: "qcm", q: "<code>[:5]</code> à la fin de <code>cinq_recentes</code> …", opts: ["Supprime 5", "Limite aux 5 premières (LIMIT 5)", "Trie", "Compte"], a: 1, exp: "Le slicing devient un LIMIT SQL." },
+      { type: "vf", q: "Toutes ces requêtes filtrent/trient CÔTÉ BASE, ce qui est plus efficace qu'en Python.", a: true, exp: "Le QuerySet laisse la base optimiser le travail." }
+    ],
+    solution: `<pre class="pseudo">Tache.objects.filter(faite=False)              # égalité simple
+Tache.objects.filter(texte__icontains="x")     # __icontains : contient (casse ignorée)
+Tache.objects.filter(id__gte=5)                # __gte : supérieur ou égal
+Tache.objects.exclude(faite=True)              # exclude : tout sauf
+Tache.objects.order_by("-date_creation")[:5]   # tri décroissant, LIMIT 5
+Tache.objects.filter(faite=True).count()       # compter côté base
+# QuerySet paresseux · lookups (__) · chaînage · agrégats :
+# tout filtré/trié/compté par la base, sans SQL.</pre>
+<p>Tu interroges la base finement. Demain : relier plusieurs modèles entre eux.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes requêtes ORM ici…",
+  items: [
+  { id: "dj-l10", title: "Cinq requêtes utiles", level: 3,
+    statement: "Écris (en Python, comme dans une vue) les requêtes ORM pour : (1) toutes les tâches non faites triées par date de création croissante ; (2) les tâches dont le texte contient « projet » (insensible à la casse) ; (3) le nombre de tâches faites ; (4) les 3 tâches les plus récentes ; (5) toutes les tâches SAUF celles dont l'id est 1.",
+    hints: [
+      "Non faites triées : Tache.objects.filter(faite=False).order_by(\"date_creation\").",
+      "Contient (casse ignorée) : filter(texte__icontains=\"projet\"). Compter : filter(faite=True).count().",
+      "3 plus récentes : order_by(\"-date_creation\")[:3]. Exclure : exclude(id=1)."
+    ],
+    solution: "# 1. Non faites, triées par date croissante\na_faire = Tache.objects.filter(faite=False).order_by(\"date_creation\")\n\n# 2. Texte contenant « projet » (insensible à la casse)\nprojets = Tache.objects.filter(texte__icontains=\"projet\")\n\n# 3. Nombre de tâches faites (compté côté base)\nnb_faites = Tache.objects.filter(faite=True).count()\n\n# 4. Les 3 tâches les plus récentes\nrecentes = Tache.objects.order_by(\"-date_creation\")[:3]\n\n# 5. Toutes sauf l'id 1\nautres = Tache.objects.exclude(id=1)",
+    note: "filter/exclude/order_by/count + les lookups (__icontains, etc.) couvrent l'immense majorité des besoins. La base fait le travail : efficace même sur de grosses tables." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

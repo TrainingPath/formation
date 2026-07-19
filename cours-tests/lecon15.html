@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Tests d'intégration : la vraie base de données",
+  subtitle: "Le mock te dit ce que tu veux entendre ; la base de données te dit la vérité.",
+  theory: `
+<h3>1. Ce que les mocks ne voient pas</h3>
+<p>Aux leçons 9 et 10, tu as remplacé la base par des doubles : rapide, isolé, parfait pour la logique pure. Mais un mock ne connaît que ce que TU lui as appris. Il ignore les <strong>contraintes</strong> (unicité, clés étrangères, NOT NULL), les <strong>transactions</strong> (des groupes d'opérations « tout ou rien ») et le <strong>SQL</strong> réellement généré par l'<strong>ORM</strong> (le SQL est le langage qui interroge une base de données ; l'ORM, <em>Object-Relational Mapping</em>, est la couche qui traduit automatiquement tes classes en tables et tes objets en lignes). Un mock acceptera sans broncher deux locations actives du même jeu ; la vraie base, elle, refusera la deuxième — si la contrainte existe. C'est exactement ce qu'un <strong>test d'intégration</strong> vérifie : plusieurs pièces qui travaillent ensemble, ici tes modèles Django et une vraie base.</p>
+<pre class="pseudo">class Location(models.Model):                       # un modele Django = une table de la base de donnees
+    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)      # lien vers un Jeu ; PROTECT interdit de supprimer un jeu encore lie
+    membre = models.ForeignKey(Membre, on_delete=models.PROTECT)   # lien vers le Membre qui loue ; meme protection
+    date_retour = models.DateField(null=True)       # date de retour ; null=True => vide tant que le jeu n'est pas rendu
+
+    class Meta:                                     # Meta = options du modele (ici, les contraintes de la table)
+        constraints = [                             # liste des regles garanties PAR la base elle-meme
+            models.UniqueConstraint(                # une contrainte d'unicite...
+                fields=["jeu"],                     # ...portant sur le champ "jeu"...
+                condition=models.Q(date_retour__isnull=True),   # ...seulement quand date_retour est vide (location active)
+                name="un_jeu_ne_se_loue_qu_une_fois",           # nom de la contrainte (visible dans la base)
+            )
+        ]</pre>
+
+<h3>2. Une base de test dédiée — JAMAIS la prod</h3>
+<p>Règle absolue : les tests tournent sur une base <strong>jetable</strong>, créée pour eux et détruite après. Django s'en charge : il crée une base au nom préfixé (<code>test_ludotheque</code>), y applique tes migrations, puis la supprime. Reste à choisir le moteur :</p>
+<pre class="pseudo"># settings de test — option vitesse
+DATABASES = {"default": {                           # configuration de la base "par defaut"
+    "ENGINE": "django.db.backends.sqlite3",         # moteur SQLite (leger, integre a Python)
+    "NAME": ":memory:",                             # ":memory:" = base vivant en RAM, effacee a la fin
+}}
+# option réalisme : un MySQL de test → mêmes contraintes,
+# mêmes types, même SQL que la production</pre>
+<p><strong>SQLite en mémoire</strong> : ultra rapide, idéal au quotidien. <strong>MySQL de test</strong> : plus lent mais fidèle à la prod — types stricts, collations, verrous diffèrent d'un moteur à l'autre. Bon compromis : SQLite en local, MySQL en intégration continue.</p>
+
+<h3>3. django.test.TestCase : l'indépendance gratuite</h3>
+<p>La classe <code>TestCase</code> de Django fait deux choses précieuses : elle utilise la base de test jetable, et elle enveloppe <strong>chaque test dans une transaction annulée</strong> (rollback) à la fin. Ce qu'un test écrit en base disparaît avant le test suivant : chaque test repart d'une base propre, sans une ligne de nettoyage.</p>
+<pre class="pseudo">from django.test import TestCase                    # la classe de base des tests qui utilisent la base de donnees
+from ludotheque.models import Jeu                   # on importe le modele a tester
+
+class TestJeu(TestCase):                            # regroupe les tests du modele Jeu
+    def test_creation_jeu(self):                    # test : creer un jeu l'enregistre bien
+        Jeu.objects.create(titre="Catan", prix_jour=2)   # ecrit une ligne "Catan" dans la base de test
+        self.assertEqual(Jeu.objects.count(), 1)    # on verifie qu'il y a exactement 1 jeu en base
+
+    def test_base_propre(self):                     # test suivant : la base est-elle repartie a zero ?
+        # le Catan du test précédent a été annulé
+        self.assertEqual(Jeu.objects.count(), 0)    # 0 jeu : le rollback a bien efface le test precedent</pre>
+
+<h3>4. Préparer les données : setUpTestData</h3>
+<p>Créer les mêmes objets dans chaque test coûte cher. <code>setUpTestData</code> est appelée <strong>une seule fois par classe</strong> : les objets sont créés une fois, et le rollback les restaure entre les tests.</p>
+<pre class="pseudo">class TestLocation(TestCase):                       # tests de la Location, avec des donnees communes
+    @classmethod                                    # setUpTestData est une methode DE CLASSE (recoit cls, pas self)
+    def setUpTestData(cls):                         # appelee UNE seule fois pour toute la classe
+        cls.jeu = Jeu.objects.create(titre="Catan", prix_jour=2)   # un jeu partage par tous les tests
+        cls.alice = Membre.objects.create(nom="Alice")   # un premier membre
+        cls.bruno = Membre.objects.create(nom="Bruno")   # un second membre</pre>
+
+<h3>5. La règle métier vérifiée en base</h3>
+<p>« Un jeu déjà loué ne peut pas l'être à nouveau » : la contrainte de la section 1 grave cette règle dans la base. Le test d'intégration prouve que la base refuse vraiment :</p>
+<pre class="pseudo">from django.db import IntegrityError                # l'exception levee quand la base refuse une ecriture
+
+    def test_jeu_deja_loue_refuse(self):            # test de la regle : pas deux locations actives du meme jeu
+        Location.objects.create(jeu=self.jeu, membre=self.alice)   # 1re location : Alice loue Catan (OK)
+        with self.assertRaises(IntegrityError):     # on EXIGE que la base leve IntegrityError...
+            Location.objects.create(jeu=self.jeu, membre=self.bruno)   # ...quand Bruno tente de louer le meme jeu</pre>
+<p>Rappelle-toi la pyramide (leçon 8) : ces tests sont plus lents que les unitaires, donc <strong>moins nombreux</strong>. On y met les contraintes, les requêtes et les transactions — pas le barème des tarifs. En une ligne : Java fait pareil avec JUnit et @DataJpaTest de Spring, C# avec xUnit et une base de test, PHP avec PHPUnit et le trait RefreshDatabase de Laravel.</p>
+<div class="warn">Vérifie deux fois tes réglages : des tests lancés sur la base de <strong>production</strong> détruisent des données réelles. La base de test doit porter un nom distinct (Django préfixe par <code>test_</code>) et vivre ailleurs que la prod.</div>
+<div class="tip">Commence chaque classe par <code>setUpTestData</code> avec un ou deux objets bien nommés (<code>cls.jeu</code>, <code>cls.alice</code>) : tes tests d'intégration resteront courts et lisibles.</div>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce qu'un mock ne peut PAS détecter ?", opts: ["Un appel de fonction oublié", "Une contrainte d'unicité oubliée dans le schéma de la base", "Un mauvais argument passé à une méthode", "Une valeur de retour incorrecte"], a: 1, exp: "Le mock rejoue ce qu'on lui a appris ; seule la vraie base applique ses contraintes." },
+    { type: "qcm", q: "Un test d'intégration…", opts: ["teste une fonction pure isolée", "teste toute l'application dans un navigateur", "remplace tous les tests unitaires", "fait travailler plusieurs pièces ensemble (modèles + vraie base)"], a: 3, exp: "Il vérifie les coutures : ORM, contraintes, transactions." },
+    { type: "qcm", q: "Sur quelle base les tests doivent-ils tourner ?", opts: ["La base de production, pour le réalisme", "Une copie de la prod datant d'une semaine", "Une base de test jetable, créée puis détruite", "Aucune : toujours des mocks"], a: 2, exp: "Django la crée, applique les migrations et la supprime après." },
+    { type: "qcm", q: "django.test.TestCase enveloppe chaque test dans…", opts: ["une transaction annulée à la fin", "un thread séparé", "un conteneur Docker", "un try/except global"], a: 0, exp: "Le rollback rend les tests indépendants gratuitement." },
+    { type: "vf", q: "Avec TestCase, il faut effacer à la main les objets créés par chaque test.", a: false, exp: "Le rollback de la transaction s'en charge : chaque test repart d'une base propre." },
+    { type: "input", q: "Quelle méthode de classe prépare des données créées une seule fois pour toute la classe de tests ?", a: ["setUpTestData"], ph: "nom de la méthode", exp: "Décorée @classmethod, appelée une fois ; le rollback restaure les objets entre les tests." },
+    { type: "qcm", q: "Avantage principal de SQLite en mémoire pour les tests :", opts: ["Le réalisme parfait vis-à-vis de MySQL", "La vitesse", "La persistance des données", "Des contraintes plus strictes"], a: 1, exp: "Tout se passe en RAM : la suite tourne en quelques secondes." },
+    { type: "qcm", q: "Avantage principal d'un MySQL de test :", opts: ["Il est plus rapide que SQLite", "Il fonctionne sans installation", "Mêmes contraintes, types et SQL que la production", "Il ne nécessite pas de migrations"], a: 2, exp: "Le réalisme : ce qui passe ici passera en prod." },
+    { type: "input", q: "Quelle exception Django lève-t-il quand une contrainte de base est violée ?", a: ["IntegrityError", "django.db.IntegrityError"], ph: "NomDeLException", exp: "from django.db import IntegrityError — à attraper avec assertRaises." },
+    { type: "qcm", q: "Django nomme la base de test…", opts: ["prod_ludotheque", "test_ludotheque (préfixe test_)", "ludotheque_backup", "tmp_db"], a: 1, exp: "Un nom distinct : impossible de la confondre avec la prod." },
+    { type: "vf", q: "D'après la pyramide des tests, les tests d'intégration doivent être moins nombreux que les unitaires.", a: true, exp: "Plus lents → moins nombreux : on y met contraintes, requêtes, transactions." },
+    { type: "qcm", q: "Où grave-t-on la règle « un jeu déjà loué ne peut pas l'être à nouveau » pour qu'elle soit garantie par la base ?", opts: ["Dans le template HTML", "Dans une UniqueConstraint du Meta du modèle", "Dans un commentaire du code", "Dans requirements.txt"], a: 1, exp: "Avec condition=Q(date_retour__isnull=True) : une seule location active par jeu." },
+    { type: "qcm", q: "Que met-on en priorité dans les tests d'intégration ?", opts: ["Le barème complet des tarifs", "Les couleurs de l'interface", "Contraintes, requêtes et transactions", "Le style du code"], a: 2, exp: "Le barème reste en unitaire (rapide) ; l'intégration vérifie les coutures avec la base." },
+    { type: "vf", q: "setUpTestData est exécutée avant CHAQUE test de la classe.", a: false, exp: "Une seule fois par classe ; c'est le rollback qui restaure les objets entre les tests." },
+    { type: "qcm", q: "L'équivalent Java d'un test d'intégration de la couche données :", opts: ["JUnit avec @DataJpaTest (Spring)", "Checkstyle", "black", "assertRedirects"], a: 0, exp: "Même idée : une base de test jetable pilotée par le framework." }
+  ],
+  final: {
+    title: "Exercice final — La contrainte à l'épreuve",
+    intro: `<p>Tu écris la classe TestLocation de la Ludothèque. Vérifions que chaque brique est en place.</p>`,
+    questions: [
+      { type: "qcm", q: "Le grand apport de django.test.TestCase :", opts: ["Base de test jetable + transaction annulée par test", "Génération automatique des tests", "Suppression automatique de la base de prod", "Compilation du Python"], a: 0, exp: "Isolation et indépendance sans effort." },
+      { type: "qcm", q: "Deux locations actives du même jeu :", opts: ["Le mock l'interdit toujours", "La UniqueConstraint en base lève IntegrityError", "Django l'accepte quoi qu'il arrive", "MySQL envoie un e-mail"], a: 1, exp: "La règle métier est garantie par le schéma, et le test le prouve." },
+      { type: "vf", q: "SQLite en mémoire se comporte toujours exactement comme MySQL.", a: false, exp: "Types, collations, verrous diffèrent : d'où le MySQL de test pour le réalisme." },
+      { type: "input", q: "Complète : les tests d'intégration sont plus lents, donc moins…", a: ["nombreux"], ph: "un adjectif", exp: "La pyramide de la leçon 8 : beaucoup d'unitaires, moins d'intégration." },
+      { type: "qcm", q: "setUpTestData est appelée…", opts: ["à chaque assertion", "une fois par test", "une fois par classe de tests", "une fois par projet"], a: 2, exp: "D'où sa vitesse : les objets sont créés une fois, le rollback les préserve." }
+    ],
+    solution: `<pre class="pseudo">Mocks     : parfaits pour la logique pure, aveugles aux contraintes
+Base test : jetable, nommée test_..., JAMAIS la prod
+Moteur    : SQLite mémoire = vitesse ; MySQL de test = réalisme
+TestCase  : transaction annulée par test → indépendance gratuite
+Données   : setUpTestData = créées une fois par classe
+Règle     : « jeu déjà loué » = UniqueConstraint → IntegrityError
+Pyramide  : plus lents → moins nombreux</pre>
+<p>La base répond présent. Prochaine étape : simuler un navigateur sans navigateur, avec le client de test Django.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l15", title: "Le plan d'intégration de la Ludothèque", level: 3,
+    statement: "La Ludothèque part en production le mois prochain. Rédige le plan des tests d'intégration de la couche modèles : liste cinq comportements qui doivent être vérifiés contre une vraie base (contraintes, suppressions protégées, retours de jeu…). Pour chacun, précise les données à préparer dans setUpTestData, l'action du test et l'assertion attendue. Termine en justifiant en deux phrases pourquoi ces cinq cas ne peuvent pas être couverts par des mocks.",
+    hints: [
+      "Pars des règles métier : jeu déjà loué, membre supprimé alors qu'il a une location en cours, titre de jeu unique, jeu rendu qui redevient louable…",
+      "Pour chaque ligne : données préparées → action → assertion (assertRaises ou assertEqual).",
+      "La question filtre : est-ce la BASE qui garantit ce comportement, ou ton code Python ? Si c'est la base, un mock ne prouve rien."
+    ],
+    solution: "Comportement                       | Données (setUpTestData)     | Action + assertion\n-----------------------------------+-----------------------------+--------------------------------------------\nJeu déjà loué → refus              | 1 jeu, 2 membres            | 2e Location active → assertRaises(IntegrityError)\nTitre de jeu unique                | 1 jeu « Catan »             | créer un 2e « Catan » → IntegrityError\nMembre avec location → protégé     | 1 location en cours         | membre.delete() → assertRaises(ProtectedError)\nJeu rendu → louable à nouveau      | 1 location avec date_retour | 2e Location → aucune exception, count == 2\nprix_jour obligatoire (NOT NULL)   | rien                        | Jeu sans prix_jour → IntegrityError\n\nPourquoi pas des mocks : ces garanties vivent dans le schéma SQL\n(UNIQUE, clés étrangères, NOT NULL), pas dans le code Python.\nUn mock rejouerait mes suppositions ; seule la vraie base tranche.",
+    note: "Ce plan est exactement ce qu'on te demandera en entreprise avant d'écrire la moindre ligne : quoi tester, avec quelles données, à quel niveau. Garde-le sous la main : au cours CI/CD, ces mêmes tests d'intégration tourneront contre un MySQL jetable à chaque push." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

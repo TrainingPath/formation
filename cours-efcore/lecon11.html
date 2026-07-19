@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "La relation 1-1 et les owned types",
+  subtitle: "Le profil du membre, l'adresse dans la même table : le tête-à-tête a deux visages.",
+  theory: `
+<h3>1. Le besoin : un profil par membre, ni plus ni moins</h3>
+<p>Dernière cardinalité au tableau de chasse de la Ludothèque : le <strong>1-1</strong> (un tête-à-tête : une ligne face à une seule autre ligne). Le cas d'école : chaque <strong>Membre</strong> possède au plus un <strong>ProfilMembre</strong> (biographie, avatar, jeu préféré) — des données volumineuses, rarement affichées, qu'on ne veut pas traîner dans chaque SELECT de la table Membres. Deux tables, une ligne en face d'une ligne : au Niveau 4, tu réalisais ça avec une FK <strong>unique</strong> — c'est l'unicité qui transforme un N-1 en 1-1.</p>
+<pre class="pseudo">Membres (Id, Pseudo, Email, ...)
+Profils (Id, Biographie, AvatarUrl, JeuPrefere, MembreId UNIQUE → Membres.Id)
+
+Une FK ordinaire   → N profils par membre  (N-1)
+Une FK + UNIQUE    → au plus UN profil     (1-1)</pre>
+
+<h3>2. Configurer le 1-1 : HasOne, WithOne et le HasForeignKey générique</h3>
+<p>Chaque entité porte une navigation de <strong>référence</strong> vers l'autre (pas de collection nulle part), et la Fluent API enchaîne <strong>HasOne / WithOne</strong>. Subtilité clé : dans un 1-1, les deux bouts sont « un » — EF Core ne peut pas deviner qui porte la FK. Tu le lui dis avec <strong>HasForeignKey&lt;ProfilMembre&gt;</strong> : le paramètre générique désigne l'entité <strong>dépendante</strong> (celle qui a la colonne). EF Core pose automatiquement l'index UNIQUE sur MembreId.</p>
+<pre class="pseudo">public class Membre                                    // le moule d'une ligne de la table Membres
+{
+    public int Id { get; set; }                        // clé primaire
+    public string Pseudo { get; set; }                 // pseudonyme
+    public ProfilMembre Profil { get; set; }       // navigation 1-1   // référence vers le profil (au plus un)
+}
+
+public class ProfilMembre                              // le moule d'une ligne de la table Profils
+{
+    public int Id { get; set; }                        // clé primaire du profil
+    public string Biographie { get; set; }             // biographie du membre
+    public string AvatarUrl { get; set; }              // URL de l'avatar
+    public int MembreId { get; set; }              // FK... UNIQUE   // clé étrangère vers le membre ; index unique → 1-1
+    public Membre Membre { get; set; }                 // navigation de retour vers le membre
+}
+
+modelBuilder.Entity&lt;Membre&gt;()                          // on configure l'entité Membre…
+    .HasOne(m =&gt; m.Profil)                             // …un Membre A UN Profil…
+    .WithOne(p =&gt; p.Membre)                             // …et un Profil A UN Membre (relation 1-1)
+    .HasForeignKey&lt;ProfilMembre&gt;(p =&gt; p.MembreId);   // ← QUI porte la FK   // le générique désigne l'entité dépendante</pre>
+<p>Vocabulaire à retenir : le <strong>principal</strong> (Membre) existe seul ; le <strong>dépendant</strong> (ProfilMembre) porte la FK et ne peut exister sans son principal. Équivalents en une ligne : @OneToOne chez JPA/Hibernate, hasOne chez Eloquent, OneToOneField chez Django.</p>
+
+<h3>3. Les owned types : l'objet sans identité</h3>
+<p>Deuxième visage du tête-à-tête : l'<strong>adresse</strong> du membre (rue, ville, code postal). Faut-il une entité Adresse avec sa table et son Id ? Non — une adresse n'a pas de vie propre : on ne cherche jamais « l'adresse n°12 », elle n'existe qu'<em>à travers</em> son membre. C'est un <strong>objet-valeur</strong> (value object : un objet défini par ses valeurs, pas par une identité — comme un billet de 10 € que n'importe quel autre billet de 10 € remplace), et EF Core le modélise en <strong>owned type</strong> (« type possédé ») : une classe <em>sans clé</em>, possédée par son entité hôte.</p>
+<pre class="pseudo">public class Adresse            // pas d'Id : pas d'identité propre   // objet-valeur : décrit le membre, n'existe pas seul
+{
+    public string Rue { get; set; }                    // la rue
+    public string Ville { get; set; }                  // la ville
+    public string CodePostal { get; set; }             // le code postal
+}
+
+public class Membre                                    // le moule d'une ligne de la table Membres
+{
+    public int Id { get; set; }                        // clé primaire
+    public string Pseudo { get; set; }                 // pseudonyme
+    public Adresse Adresse { get; set; }           // possédé   // owned type : l'adresse appartient au membre
+}
+
+modelBuilder.Entity&lt;Membre&gt;()                          // on configure l'entité Membre…
+    .OwnsOne(m =&gt; m.Adresse);                          // …déclare qu'elle POSSÈDE son Adresse (owned type)</pre>
+
+<h3>4. Le table splitting : une classe de plus, zéro table de plus</h3>
+<p>Par défaut, <strong>OwnsOne</strong> ne crée <em>aucune</em> table : les propriétés de l'owned type deviennent des colonnes de la table hôte, préfixées — c'est le <strong>table splitting</strong> (« découpage de table » : plusieurs classes C# rangées dans une seule table SQL). Deux classes C#, une seule table SQL : le découpage objet n'impose rien au relationnel.</p>
+<pre class="pseudo">-- Table Membres générée :
+Membres (Id, Pseudo, Email,                            -- colonnes propres du membre
+         Adresse_Rue, Adresse_Ville, Adresse_CodePostal)   -- colonnes de l'owned, préfixées : c'est le table splitting
+
+-- Lecture : AUCUN JOIN nécessaire, l'adresse arrive avec le membre
+var m = ctx.Membres.First(x =&gt; x.Id == 7);             // charge le membre 7 (un seul SELECT sur la table Membres)
+Console.WriteLine(m.Adresse.Ville);   // chargée d'office (même table)   // l'adresse est déjà là : aucun Include nécessaire</pre>
+<p>Conséquences pratiques : pas de DbSet&lt;Adresse&gt; (on ne requête jamais une adresse seule), pas d'Id, et l'owned est chargé <em>automatiquement</em> avec son hôte — pas besoin d'Include quand tout vit dans la même table. Tu peux aussi l'annoter <strong>[Owned]</strong> sur la classe, réutiliser la même classe Adresse sur plusieurs entités (chacune obtient SES colonnes), le déporter dans sa propre table avec <em>OwnsOne(...).ToTable("Adresses")</em>, ou posséder une collection avec <strong>OwnsMany</strong>. Cousin direct : le duo @Embeddable/@Embedded de JPA/Hibernate.</p>
+
+<h3>5. Entité 1-1 ou owned type : l'arbre de décision</h3>
+<p>Les deux techniques rangent « un sous-objet par entité » — comment choisir ? Pose trois questions. <strong>L'objet a-t-il une identité métier ?</strong> (le cherche-t-on par lui-même, a-t-il son cycle de vie ?) Oui → entité 1-1. <strong>Est-il volumineux ou rarement utilisé ?</strong> Oui → entité 1-1 dans SA table (on ne le charge que sur demande) ; le profil avec sa biographie est le cas type. <strong>Est-ce un simple paquet de valeurs qui décrit l'hôte ?</strong> Oui → owned type, colonnes dans la table hôte ; l'adresse est le cas type. Le critère rejoint ton cours de conception : une entité a une identité, un objet-valeur n'a que des attributs.</p>
+<div class="warn">Dans un 1-1, oublier <strong>HasForeignKey&lt;TDependant&gt;</strong> quand les deux entités portent des navigations croisées laisse EF Core dans l'ambiguïté : « impossible de déterminer l'entité dépendante » — l'exception est explicite mais déroutante. Dis toujours QUI porte la clé. Et n'invente pas de DbSet pour un owned type : il n'a ni clé ni existence propre, toute requête directe est un non-sens.</div>
+<div class="tip">Règle mnémotechnique héritée de Merise : « identité → entité, attributs → owned ». Si tu hésites encore, demande-toi ce qu'il advient de l'objet quand son hôte disparaît : l'adresse meurt avec le membre (owned), un profil pourrait théoriquement être archivé à part (entité).</div>`,
+  exercises: [
+    { type: "qcm", q: "En relationnel, ce qui transforme une relation N-1 en 1-1 est…", opts: ["Une deuxième clé étrangère", "Un index UNIQUE sur la clé étrangère", "Une table de jointure", "Un trigger"], a: 1, exp: "FK ordinaire = N enfants possibles ; FK unique = au plus un : le 1-1 du Niveau 4." },
+    { type: "qcm", q: "La phrase Fluent pour le 1-1 Membre/ProfilMembre commence par…", opts: ["HasMany(m =&gt; m.Profil)", "HasOne(m =&gt; m.Profil).WithOne(p =&gt; p.Membre)", "OwnsOne(m =&gt; m.Profil)", "HasKey(m =&gt; m.Profil)"], a: 1, exp: "Deux navigations de référence, aucune collection : HasOne des deux côtés — donc WithOne." },
+    { type: "qcm", q: "Pourquoi HasForeignKey prend-il un paramètre générique (&lt;ProfilMembre&gt;) dans un 1-1 ?", opts: ["Pour accélérer la requête", "Parce que les deux bouts sont « un » : EF Core ne peut pas deviner qui porte la FK", "C'est une erreur de syntaxe", "Pour créer deux FK"], a: 1, exp: "Dans un N-1 la FK est forcément côté N ; dans un 1-1, il faut désigner l'entité dépendante." },
+    { type: "input", q: "Comment appelle-t-on l'entité qui porte la FK et ne peut exister sans l'autre ?", a: ["dépendante", "le dépendant", "dependante", "dependant", "l'entité dépendante"], ph: "principal / … ?", exp: "Le principal (Membre) existe seul ; le dépendant (ProfilMembre) porte la clé étrangère." },
+    { type: "vf", q: "Dans le 1-1 configuré, EF Core pose automatiquement un index unique sur ProfilMembre.MembreId.", a: true, exp: "C'est cet index qui garantit « au plus un profil par membre » côté SQL Server." },
+    { type: "qcm", q: "Un owned type se reconnaît à…", opts: ["Son Id auto-incrémenté", "Son absence de clé et d'existence propre : il n'existe qu'à travers son hôte", "Son DbSet dédié", "Sa table de jointure"], a: 1, exp: "Un objet-valeur : des attributs sans identité — l'adresse du membre en est l'exemple type." },
+    { type: "input", q: "Quelle méthode Fluent déclare que Membre possède son Adresse ?", a: ["OwnsOne", "OwnsOne()"], ph: "Owns…", exp: "modelBuilder.Entity&lt;Membre&gt;().OwnsOne(m =&gt; m.Adresse) — ou l'attribut [Owned] sur la classe." },
+    { type: "qcm", q: "Par défaut, OwnsOne(m =&gt; m.Adresse) génère…", opts: ["Une table Adresses avec FK", "Des colonnes Adresse_Rue, Adresse_Ville… dans la table Membres", "Une colonne JSON", "Une vue SQL"], a: 1, exp: "Le table splitting : deux classes C#, une seule table SQL, colonnes préfixées." },
+    { type: "qcm", q: "Pour lire m.Adresse.Ville après avoir chargé le membre, il faut…", opts: ["Un Include(m =&gt; m.Adresse)", "Rien : l'owned en table splitting est chargé d'office avec son hôte", "Un second SELECT manuel", "Un FromSql"], a: 1, exp: "Même table = mêmes colonnes ramenées par le SELECT du membre : aucun JOIN, aucun Include." },
+    { type: "vf", q: "On déclare un DbSet&lt;Adresse&gt; pour pouvoir requêter les adresses directement.", a: false, exp: "Un owned type n'a ni clé ni vie propre : pas de DbSet, pas de requête directe — on passe toujours par l'hôte." },
+    { type: "qcm", q: "L'attribut qui marque une classe comme possédée, au lieu de la Fluent API :", opts: ["[NotMapped]", "[Owned]", "[Keyless]", "[ComplexType] uniquement"], a: 1, exp: "[Owned] sur la classe Adresse : toute entité qui la référence la possède." },
+    { type: "qcm", q: "La même classe Adresse est utilisée par Membre ET par une future entité Fournisseur :", opts: ["Impossible : un owned n'a qu'un hôte", "Chaque hôte obtient ses propres colonnes Adresse_* dans sa table", "Les deux partagent la même table Adresses", "Il faut dupliquer la classe"], a: 1, exp: "L'owned type est réutilisable : chaque possession est indépendante, avec ses colonnes à elle." },
+    { type: "qcm", q: "Le profil (biographie longue, rarement affichée) est mieux servi par…", opts: ["Un owned type en table splitting", "Une entité 1-1 dans sa propre table, chargée à la demande", "Une colonne nvarchar(max) dans Membres", "Un fichier texte"], a: 1, exp: "Volumineux + rarement lu → table séparée : les SELECT courants sur Membres restent légers." },
+    { type: "vf", q: "Un owned type peut être déporté dans sa propre table avec OwnsOne(...).ToTable(...).", a: true, exp: "Le table splitting n'est que le défaut : ToTable sépare physiquement tout en gardant la sémantique « possédé »." },
+    { type: "qcm", q: "L'équivalent JPA/Hibernate des owned types est…", opts: ["@OneToMany", "@Embeddable / @Embedded", "@JoinTable", "@Transient"], a: 1, exp: "Même idée : un objet-valeur incorporé dans la table de l'entité — OneToOneField restant l'équivalent Django du 1-1." }
+  ],
+  final: {
+    title: "Exercice final — Profil et adresse : chacun sa technique",
+    intro: `<p>Tu finalises le Membre de la Ludothèque : un ProfilMembre (biographie, avatar) et une Adresse (rue, ville, code postal). Deux sous-objets, deux modélisations — vérifions que tu choisis juste.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour l'Adresse, simple paquet de valeurs décrivant le membre, tu choisis…", opts: ["Une entité 1-1 avec FK unique", "Un owned type via OwnsOne", "Une relation N-N", "Une table de jointure"], a: 1, exp: "Pas d'identité, pas de cycle de vie propre : objet-valeur → owned type." },
+      { type: "qcm", q: "Pour le ProfilMembre volumineux et rarement affiché, tu choisis…", opts: ["Un owned type en table splitting", "Une entité 1-1 dans sa propre table", "Des colonnes dans Membres", "Un DbSet&lt;string&gt;"], a: 1, exp: "Table séparée = les SELECT quotidiens sur Membres ne trimbalent pas la biographie." },
+      { type: "input", q: "Dans la config HasOne(m =&gt; m.Profil).WithOne(p =&gt; p.Membre), quelle méthode désigne l'entité qui porte la FK ?", a: ["HasForeignKey", "HasForeignKey<ProfilMembre>", "HasForeignKey&lt;ProfilMembre&gt;"], ph: "Méthode…", exp: "HasForeignKey&lt;ProfilMembre&gt;(p =&gt; p.MembreId) : le générique lève l'ambiguïté du 1-1." },
+      { type: "vf", q: "Après OwnsOne(m =&gt; m.Adresse), la migration crée une table Adresses.", a: false, exp: "Table splitting par défaut : les colonnes Adresse_* atterrissent dans Membres — aucune table de plus." },
+      { type: "qcm", q: "Charger un membre et afficher sa ville : combien de requêtes SQL avec l'owned par défaut ?", opts: ["Deux : membre puis adresse", "Une seule : tout vit dans la même table", "Trois", "Aucune"], a: 1, exp: "Le SELECT des Membres ramène aussi Adresse_Ville : le découpage n'existe qu'en C#." }
+    ],
+    solution: `<pre class="pseudo">1-1 (deux tables)  : Membre ── ProfilMembre
+  FK UNIQUE côté dépendant (ProfilMembre.MembreId)
+  HasOne(m =&gt; m.Profil).WithOne(p =&gt; p.Membre)
+      .HasForeignKey&lt;ProfilMembre&gt;(p =&gt; p.MembreId)
+  principal = existe seul ; dépendant = porte la FK
+
+Owned type (même table) : Membre possède Adresse
+  classe SANS Id, pas de DbSet — OwnsOne(m =&gt; m.Adresse) ou [Owned]
+  → colonnes Adresse_Rue, Adresse_Ville… dans Membres (table splitting)
+  → chargé d'office avec l'hôte, aucun JOIN
+
+Choix : identité / volumineux / cycle de vie → entité 1-1
+        paquet de valeurs descriptives       → owned type
+Ailleurs : @OneToOne + @Embeddable (JPA), hasOne (Eloquent),
+           OneToOneField (Django)</pre>
+<p>Toutes les cardinalités sont posées : N-1, 1-N, N-N, 1-1. Mais tes navigations restent désespérément vides tant qu'on ne les charge pas… Prochaine leçon : <strong>Include et ThenInclude</strong>, l'art de ramener les relations.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l11", title: "Profil, adresse, préférences : trois sous-objets, quel destin ?", level: 2,
+    statement: "Le comité de la Ludothèque veut enrichir le Membre avec trois blocs de données : (a) une Adresse postale (rue, ville, code postal) pour les courriers ; (b) un ProfilPublic (biographie de 4000 caractères, URL d'avatar, bannière) affiché uniquement sur la page profil ; (c) des PreferencesNotification (troisbooléens : email, SMS, résumé hebdo) lues à CHAQUE envoi de notification. Pour chacun des trois, tranche par écrit entre owned type (table splitting), owned type déporté (ToTable) et entité 1-1, en justifiant par : identité propre, volume, fréquence d'accès, et coût des SELECT quotidiens sur Membres. Écris la configuration Fluent retenue pour chaque bloc.",
+    hints: [
+      "Pour chaque bloc, commence par les trois questions de l'arbre de décision : identité métier ? volumineux/rare ? paquet de valeurs ?",
+      "PreferencesNotification est minuscule et lu sans arrêt : où doivent vivre ses colonnes pour éviter tout JOIN ?",
+      "ProfilPublic pèse lourd et n'est lu que sur une page : que deviendrait chaque SELECT * de Membres s'il vivait en table splitting ?"
+    ],
+    solution: "(a) Adresse → OWNED TYPE en table splitting.\nAucune identité (on ne cherche jamais une adresse seule), volume faible\n(3 colonnes courtes), accès occasionnel. Colonnes Adresse_* dans Membres :\nzéro JOIN, zéro table.\n  modelBuilder.Entity<Membre>().OwnsOne(m => m.Adresse);\n\n(b) ProfilPublic → ENTITÉ 1-1 dans sa propre table.\nPas vraiment d'identité métier, MAIS volumineux (biographie 4000 car.,\nURLs) et lu sur UNE seule page. En table splitting, chaque SELECT du\nmembre (login, notifications, locations...) trimballerait 4 Ko inutiles.\nTable séparée + chargement à la demande :\n  modelBuilder.Entity<Membre>()\n      .HasOne(m => m.ProfilPublic).WithOne(p => p.Membre)\n      .HasForeignKey<ProfilPublic>(p => p.MembreId);\n(Variante défendable : owned déporté via OwnsOne(...).ToTable(\"Profils\") —\nmême schéma SQL ; l'entité 1-1 garde l'avantage de pouvoir être requêtée\net faire l'objet d'un endpoint dédié.)\n\n(c) PreferencesNotification → OWNED TYPE en table splitting.\nTrois bits lus à CHAQUE notification : le critère décisif est la fréquence.\nDans la table Membres, elles arrivent gratuitement avec le membre déjà\nchargé — un JOIN systématique vers une table de 3 booléens serait absurde.\n  modelBuilder.Entity<Membre>().OwnsOne(m => m.Preferences);\n\nBilan : le même outil (owned) sert (a) et (c) pour des raisons différentes\n(simplicité vs fréquence), et le volume de (b) impose la table séparée.\nLa décision est PHYSIQUE (coût des SELECT) autant que CONCEPTUELLE\n(identité) — exactement l'arbitrage MCD/MPD du Niveau 4.",
+    note: "Tu viens de faire du Domain-Driven Design sans le savoir : entité contre value object est LA distinction fondatrice du DDD, et EF Core l'outille mieux que la plupart des ORM. JPA a @Embeddable pour (a) et (c) mais forcerait une entité pour (b) ; Django n'a même pas d'équivalent des owned types (tout est table). Retiens la grille identité/volume/fréquence : elle revient dans chaque conception de schéma de ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

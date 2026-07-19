@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 25</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 25,
+  title: "Sauvegarde et restauration (ntdsutil)",
+  subtitle: "Protéger l'annuaire et savoir le remettre debout après un incident.",
+  theory: `
+<h3>1. Pourquoi sauvegarder l'annuaire</h3>
+<p>Active Directory est le cœur du réseau : s'il est corrompu ou effacé, plus personne ne se connecte. On doit donc en garder des <strong>sauvegardes</strong> (des copies de sécurité) régulières, pour pouvoir revenir en arrière après une panne, un ransomware ou une grosse erreur.</p>
+<h3>2. Où vivent les données AD</h3>
+<p>Toute la base de données AD tient dans un fichier nommé <strong>ntds.dit</strong> (« NT Directory Services, Directory Information Tree ») et ses journaux, stockés par défaut dans le dossier NTDS de Windows. Pour sauvegarder AD, on ne copie pas ce fichier à la main (il est ouvert et verrouillé) : on capture l'état complet du serveur, appelé le <strong>System State</strong> (« état du système »), qui contient ntds.dit, le registre, SYSVOL, etc.</p>
+<div class="tip">Le <strong>System State</strong> est le paquet minimal à sauvegarder pour restaurer un contrôleur de domaine : il regroupe tout ce qui rend le serveur unique.</div>
+<h3>3. Sauvegarder avec Windows Server Backup</h3>
+<p>L'outil intégré <strong>wbadmin</strong> (Windows Backup Admin) réalise cette sauvegarde. On lui demande de sauvegarder le System State vers un disque de destination :</p>
+<pre class="pseudo">wbadmin start systemstatebackup -backupTarget:E:   # sauvegarde l'etat systeme (dont AD) vers le disque E:
+# start systemstatebackup : lance une sauvegarde de l'etat systeme
+# -backupTarget:E:        : disque de destination (ici E:)</pre>
+<p>En PowerShell moderne, le module <strong>WindowsServerBackup</strong> propose aussi des cmdlets (Start-WBBackup) pour piloter finement les sauvegardes planifiées.</p>
+<h3>4. ntdsutil : l'outil expert d'AD</h3>
+<p><strong>ntdsutil</strong> est l'utilitaire en ligne de commande dédié à la maintenance profonde d'Active Directory. On y entre des sous-commandes. Il sert notamment à créer un <strong>instantané</strong> (snapshot) de la base, une photo figée qu'on peut inspecter sans toucher à l'annuaire en production :</p>
+<pre class="pseudo">ntdsutil          # entre dans l'outil ntdsutil
+snapshot          # passe dans le contexte snapshot (instantanes de la base)
+activate instance ntds   # cible l'instance AD active
+create            # cree un instantane fige de la base (une photo horodatee)
+quit              # sort du contexte
+quit              # quitte ntdsutil</pre>
+<div class="warn">ntdsutil est puissant et donc dangereux : certaines commandes touchent directement la base AD. On l'utilise avec méthode, en suivant une procédure écrite, jamais au hasard.</div>
+<h3>5. Restaurer : le mode DSRM</h3>
+<p>Pour restaurer AD, on redémarre le contrôleur de domaine dans un mode spécial : le <strong>DSRM</strong> (Directory Services Restore Mode, « mode de restauration des services d'annuaire »). Dans ce mode, AD est arrêté, ce qui permet de remplacer la base par une sauvegarde. On se connecte alors avec un mot de passe spécial défini à la promotion du contrôleur (le mot de passe DSRM).</p>
+<pre class="pseudo">wbadmin start systemstaterecovery -version:...   # restaure l'etat systeme depuis une sauvegarde (en mode DSRM)
+# start systemstaterecovery : lance la restauration de l'etat systeme
+# -version                  : identifiant de la sauvegarde a restaurer</pre>
+<h3>6. Restauration normale vs faisant autorité</h3>
+<p>Deux nuances essentielles. Une <strong>restauration normale (non-autoritative)</strong> remet la base en place, puis laisse la réplication la remettre à jour avec les autres contrôleurs : bien pour réparer un serveur défaillant. Une <strong>restauration faisant autorité (autoritative)</strong> force certains objets restaurés à écraser ceux des autres contrôleurs : c'est ce qu'on utilise pour récupérer des objets supprimés partout, quand la corbeille AD (jour 24) n'était pas activée.</p>
+<pre class="pseudo">Non-autoritative : "je répare ce serveur, les autres ont raison"      # la replication corrige ensuite
+Autoritative     : "ces objets restaures font foi, imposez-les partout" # utile apres une suppression massive</pre>
+<div class="tip">Résumé : sauvegarder le System State régulièrement (wbadmin), garder ntdsutil pour la maintenance experte, restaurer en mode DSRM, et choisir autoritatif seulement pour réimposer des objets supprimés.</div>`,
+  exercises: [
+    { type: "qcm", q: "Comment s'appelle le fichier qui contient la base de données AD ?", opts: ["ad.db", "ntds.dit", "sysvol.dat", "registry.pol"], a: 1, exp: "ntds.dit est la base de l'annuaire." },
+    { type: "qcm", q: "Que sauvegarde-t-on pour pouvoir restaurer un contrôleur de domaine ?", opts: ["Seulement le bureau", "Le System State (état du système)", "Les fichiers temporaires", "Les GPO uniquement"], a: 1, exp: "Le System State contient ntds.dit, le registre, SYSVOL…" },
+    { type: "qcm", q: "Quel outil réalise la sauvegarde de l'état système ?", opts: ["ntdsutil", "wbadmin", "gpupdate", "dcpromo"], a: 1, exp: "wbadmin start systemstatebackup sauvegarde le System State." },
+    { type: "qcm", q: "À quoi sert <strong>ntdsutil</strong> ?", opts: ["À naviguer sur le web", "À la maintenance experte de la base AD (snapshots, etc.)", "À créer des utilisateurs", "À imprimer"], a: 1, exp: "ntdsutil est l'utilitaire de maintenance profonde d'AD." },
+    { type: "qcm", q: "Dans quel mode redémarre-t-on pour restaurer AD ?", opts: ["Mode sans échec réseau", "DSRM (Directory Services Restore Mode)", "Mode veille", "Mode avion"], a: 1, exp: "En DSRM, AD est arrêté et la base peut être remplacée." },
+    { type: "qcm", q: "Quand utilise-t-on une restauration <strong>faisant autorité</strong> ?", opts: ["Pour réparer un simple serveur défaillant", "Pour réimposer partout des objets supprimés (sans corbeille)", "Pour créer une GPO", "Jamais"], a: 1, exp: "L'autoritative force les objets restaurés à écraser ceux des autres DC." },
+    { type: "input", q: "Quel outil en ligne de commande fait la maintenance experte d'AD ?", a: ["ntdsutil"], ph: "un outil", exp: "ntdsutil gère snapshots et opérations de base." },
+    { type: "input", q: "Quel outil lance la sauvegarde de l'état système ?", a: ["wbadmin"], ph: "un outil", exp: "wbadmin start systemstatebackup." },
+    { type: "input", q: "Comment s'appelle le paquet minimal à sauvegarder (2 mots, anglais) ?", a: ["System State", "systemstate", "system state"], ph: "deux mots", exp: "Le System State regroupe ntds.dit, registre, SYSVOL…" },
+    { type: "input", q: "Quel sigle désigne le mode de restauration des services d'annuaire ?", a: ["DSRM", "dsrm"], ph: "un sigle", exp: "DSRM = Directory Services Restore Mode." },
+    { type: "input", q: "Dans ntdsutil, quelle sous-commande CRÉE un instantané de la base ?", a: ["create", "snapshot create"], ph: "un mot", exp: "Dans le contexte snapshot, la commande create fige une photo de la base." },
+    { type: "input", q: "Quel type de restauration NE force PAS ses objets sur les autres DC ? (un mot)", a: ["non-autoritative", "normale", "non autoritative", "nonautoritative"], ph: "un mot", exp: "La restauration normale laisse la réplication mettre à jour le serveur." },
+    { type: "vf", q: "On peut copier ntds.dit à la main pendant qu'AD fonctionne.", a: false, exp: "Le fichier est ouvert et verrouillé : on passe par une sauvegarde du System State." },
+    { type: "vf", q: "Le mode DSRM utilise un mot de passe spécial défini à la promotion du contrôleur.", a: true, exp: "Le mot de passe DSRM est distinct du mot de passe de domaine." },
+    { type: "vf", q: "ntdsutil est un outil anodin qu'on peut utiliser au hasard sans risque.", a: false, exp: "Il touche la base AD : on suit toujours une procédure précise." }
+  ],
+  final: {
+    title: "Exercice final — Plan de sauvegarde et de restauration",
+    intro: `<p>Ton responsable te demande de mettre en place une sauvegarde de l'annuaire et de savoir quoi faire en cas de désastre.</p>
+<pre class="pseudo">wbadmin start systemstatebackup -backupTarget:E:   # sauvegarde reguliere de l'etat systeme
+# En cas d'incident : redemarrer en DSRM puis restaurer</pre>`,
+    questions: [
+      { type: "input", q: "Quel outil planifie/lance la sauvegarde de l'état système ?", a: ["wbadmin"], ph: "un outil", exp: "wbadmin start systemstatebackup." },
+      { type: "qcm", q: "Que contient la sauvegarde System State, indispensable pour AD ?", opts: ["Seulement les GPO", "ntds.dit, le registre, SYSVOL…", "Les fichiers Word", "Rien d'utile"], a: 1, exp: "C'est tout ce qui rend le contrôleur unique." },
+      { type: "input", q: "Dans quel mode redémarrer le DC pour restaurer la base ? (sigle)", a: ["DSRM", "dsrm"], ph: "un sigle", exp: "Directory Services Restore Mode." },
+      { type: "qcm", q: "Un ransomware a chiffré le serveur. Quel type de restauration pour remettre ce DC debout ?", opts: ["Restauration normale (non-autoritative), la réplication complète ensuite", "Rien", "Créer une GPO", "Supprimer l'annuaire"], a: 0, exp: "On répare le serveur ; les autres DC le remettront à jour." },
+      { type: "qcm", q: "On a supprimé toute une OU et la corbeille n'était pas active. Quel type de restauration ?", opts: ["Non-autoritative", "Faisant autorité (autoritative) pour réimposer les objets partout", "Aucune", "wbadmin delete"], a: 1, exp: "L'autoritative force les objets restaurés sur tous les DC." }
+    ],
+    solution: `<p>Le plan complet : sauvegarder régulièrement, puis restaurer selon le cas.</p>
+<pre class="pseudo">-- SAUVEGARDE (planifiee, ex. quotidienne) --
+wbadmin start systemstatebackup -backupTarget:E:        # capture l'etat systeme (dont ntds.dit) vers E:
+
+-- RESTAURATION apres panne du serveur --
+# 1. redemarrer le DC en mode DSRM (mot de passe DSRM)
+wbadmin start systemstaterecovery -version:<id>         # restauration NORMALE : la replication corrige ensuite
+
+-- RESTAURATION apres suppression massive (sans corbeille) --
+# meme demarrage en DSRM, puis restauration FAISANT AUTORITE
+# on marque les objets a reimposer avec ntdsutil (authoritative restore)</pre>
+<p>À retenir : sauvegarde = System State via wbadmin ; restauration = mode DSRM ; normale pour réparer un serveur, autoritative pour réimposer des objets supprimés partout. Et l'idéal reste d'avoir activé la corbeille AD en amont.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j25", title: "Script de sauvegarde de l'état système", level: 2,
+    statement: "Écris un court script PowerShell qui affiche un message, lance une sauvegarde de l'état système vers le disque <code>E:</code> avec wbadmin, puis affiche un message de fin. (Chaque ligne commentée.)",
+    hints: [
+      "Utilise Write-Host pour les messages d'information.",
+      "La commande de sauvegarde est : wbadmin start systemstatebackup -backupTarget:E: -quiet.",
+      "Le paramètre -quiet évite la demande de confirmation interactive."
+    ],
+    solution: "Write-Host 'Debut de la sauvegarde de l etat systeme...'          # message d'information avant de commencer\nwbadmin start systemstatebackup -backupTarget:E: -quiet         # lance la sauvegarde System State vers E: (sans confirmation)\nWrite-Host 'Sauvegarde terminee.'                               # message de fin une fois la commande revenue",
+    note: "wbadmin capture le System State (dont ntds.dit) : c'est ce qu'il faut pour restaurer un contrôleur de domaine. -quiet est utile dans un script planifié pour éviter toute question interactive." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Permissions et délégations (ACL)",
+  subtitle: "Qui a le droit de faire quoi dans l'annuaire.",
+  theory: `
+<h3>1. Le contrôle d'accès</h3>
+<p>Dans Active Directory, on ne laisse pas tout le monde tout faire. Chaque objet (utilisateur, OU, groupe…) est protégé par une liste qui dit « telle personne a le droit de lire, telle autre a le droit de modifier ». Cette liste s'appelle une <strong>ACL</strong> (Access Control List, « liste de contrôle d'accès »). C'est le videur de l'objet : il consulte sa liste avant d'autoriser ou de refuser chaque action.</p>
+<h3>2. ACE : une ligne de la liste</h3>
+<p>Une ACL est composée de plusieurs lignes. Chaque ligne s'appelle une <strong>ACE</strong> (Access Control Entry, « entrée de contrôle d'accès »). Une ACE dit trois choses : QUI (un utilisateur ou un groupe), QUOI (le droit accordé, par exemple lire ou écrire) et le SENS (Autoriser ou Refuser).</p>
+<pre class="pseudo">ACL de l'OU "RH"          # la liste de controle d'acces de l'OU RH
+ ACE 1 : Admins  | ModifierTout | Autoriser   # les admins peuvent tout modifier
+ ACE 2 : Jean    | LireSeulement | Autoriser   # Jean peut seulement lire
+ ACE 3 : Stagiaires | ModifierMotDePasse | Refuser   # les stagiaires ne peuvent PAS reinitialiser les mots de passe</pre>
+<div class="tip">Retiens : ACL = la liste entière, ACE = une ligne de la liste. Une ACL est faite de plusieurs ACE.</div>
+<h3>3. La délégation : confier une tâche précise</h3>
+<p><strong>Déléguer</strong>, c'est accorder à quelqu'un un droit limité sur une partie de l'annuaire, sans en faire un administrateur complet. Exemple typique : autoriser l'équipe du support à <em>réinitialiser les mots de passe</em> des utilisateurs de l'OU « Ventes », mais rien d'autre. La délégation, c'est simplement ajouter des ACE bien ciblées.</p>
+<div class="warn">Principe du <strong>moindre privilège</strong> : on n'accorde QUE le droit nécessaire, sur la plus petite portée possible. Donner « Contrôle total » alors qu'un simple « Réinitialiser le mot de passe » suffisait est une faute de sécurité classique.</div>
+<h3>4. Lire une ACL en PowerShell</h3>
+<p>On accède à l'annuaire comme à un disque grâce au <strong>lecteur AD:</strong> (le module ActiveDirectory ajoute un lecteur nommé AD:, un peu comme C:). On lit l'ACL d'un objet avec <code>Get-Acl</code> :</p>
+<pre class="pseudo">Import-Module ActiveDirectory                       # charge les cmdlets et le lecteur AD:
+$acl = Get-Acl -Path "AD:\OU=RH,DC=exemple,DC=local"   # lit l'ACL de l'OU RH et la range dans $acl
+$acl.Access                                         # affiche les ACE (les lignes) de cette ACL</pre>
+<h3>5. Ajouter une ACE (déléguer)</h3>
+<p>Modifier une ACL se fait en trois temps : on lit l'ACL, on lui ajoute une ACE, puis on réécrit l'ACL avec <code>Set-Acl</code>. On fabrique l'ACE avec un objet <code>ActiveDirectoryAccessRule</code> qui décrit QUI, QUOI et le sens :</p>
+<pre class="pseudo">$acl = Get-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local"   # 1. lit l'ACL actuelle de l'OU Ventes
+$qui  = New-Object System.Security.Principal.NTAccount("EXEMPLE","Support")   # le groupe a qui on delegue
+$regle = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($qui, "WriteProperty", "Allow")   # 2. fabrique l'ACE : QUI, QUOI (ecrire), sens (Autoriser)
+$acl.AddAccessRule($regle)                          # ajoute l'ACE a l'ACL en memoire
+Set-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local" -AclObject $acl   # 3. reecrit l'ACL modifiee sur l'objet</pre>
+<div class="tip">Dans la vraie vie, l'assistant graphique « Délégation de contrôle » et la cmdlet <code>dsacls</code> simplifient ces réglages. Mais comprendre Get-Acl / AddAccessRule / Set-Acl explique ce qui se passe réellement en dessous.</div>
+<h3>6. Autoriser l'emporte-t-il sur Refuser ?</h3>
+<p>Règle d'or : un <strong>Refuser explicite</strong> l'emporte presque toujours sur un Autoriser. Si Jean est dans un groupe autorisé à écrire mais qu'une ACE le refuse nommément, le refus gagne. C'est pratique pour exclure une exception d'une règle générale.</p>
+<pre class="pseudo">Groupe Ventes  | Ecrire | Autoriser     # tout le groupe Ventes peut ecrire...
+Jean (membre)  | Ecrire | Refuser       # ...sauf Jean : le Refuser explicite gagne</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que contient une <strong>ACL</strong> ?", opts: ["Un mot de passe", "La liste des droits (qui peut faire quoi) sur un objet", "Le nom du serveur", "Une adresse e-mail"], a: 1, exp: "L'ACL est la liste de contrôle d'accès d'un objet." },
+    { type: "qcm", q: "Une <strong>ACE</strong>, c'est…", opts: ["Toute la liste", "Une ligne de l'ACL : QUI, QUOI, Autoriser/Refuser", "Un serveur", "Un module"], a: 1, exp: "L'ACE est une entrée ; l'ACL est composée de plusieurs ACE." },
+    { type: "qcm", q: "Que signifie <strong>déléguer</strong> dans AD ?", opts: ["Supprimer un compte", "Accorder un droit limité et ciblé sans donner tous les pouvoirs", "Redémarrer le serveur", "Créer une GPO"], a: 1, exp: "La délégation confie une tâche précise via des ACE ciblées." },
+    { type: "qcm", q: "Le principe du <strong>moindre privilège</strong> dit de…", opts: ["Donner Contrôle total à tous", "N'accorder que le droit nécessaire, sur la plus petite portée", "Refuser tout à tout le monde", "Ignorer les ACL"], a: 1, exp: "On limite les droits au strict nécessaire." },
+    { type: "qcm", q: "Entre une ACE Autoriser et une ACE Refuser explicite sur la même personne…", opts: ["Autoriser gagne", "Le Refuser explicite l'emporte presque toujours", "Elles s'annulent", "La plus ancienne gagne"], a: 1, exp: "Un Deny explicite prime sur un Allow." },
+    { type: "qcm", q: "Comment accède-t-on à l'annuaire comme à un disque en PowerShell ?", opts: ["Par le lecteur C:", "Par le lecteur AD:", "Par le lecteur GPO:", "Par le lecteur DNS:"], a: 1, exp: "Le module ActiveDirectory ajoute le lecteur AD:." },
+    { type: "input", q: "Quelle cmdlet LIT l'ACL d'un objet ? (Verbe-Nom)", a: ["Get-Acl", "get-acl"], ph: "Verbe-Acl", exp: "Get-Acl renvoie l'ACL de l'objet visé par -Path." },
+    { type: "input", q: "Quelle cmdlet RÉÉCRIT une ACL modifiée sur l'objet ? (Verbe-Nom)", a: ["Set-Acl", "set-acl"], ph: "Verbe-Acl", exp: "Set-Acl applique l'ACL modifiée avec -AclObject." },
+    { type: "input", q: "Quelle méthode ajoute une ACE à une ACL en mémoire ? (NomMéthode)", a: ["AddAccessRule", "addaccessrule"], ph: "Add...", exp: "$acl.AddAccessRule($regle) ajoute la règle à l'ACL." },
+    { type: "input", q: "Quelle propriété de $acl affiche la liste des ACE ?", a: [".Access", "Access"], ph: ".Xxxxx", exp: "$acl.Access liste les entrées (ACE) de l'ACL." },
+    { type: "input", q: "Comment s'appelle une LIGNE d'une ACL (3 lettres, en anglais) ?", a: ["ACE", "ace"], ph: "sigle", exp: "ACE = Access Control Entry." },
+    { type: "input", q: "Complète : Get-Acl -Path 'AD:\\OU=RH,DC=exemple,DC=local' range son résultat dans une variable ; quel préfixe pour cette variable en PowerShell ?", a: ["$", "dollar", "le dollar"], ph: "un signe", exp: "Ex : $acl = Get-Acl ... (toute variable commence par $)." },
+    { type: "vf", q: "Une ACL est composée de plusieurs ACE.", a: true, exp: "L'ACL est la liste ; chaque ACE en est une ligne." },
+    { type: "vf", q: "Donner « Contrôle total » quand un simple droit suffisait respecte le moindre privilège.", a: false, exp: "C'est le contraire : on n'accorde que le strict nécessaire." },
+    { type: "vf", q: "Un Refuser explicite l'emporte presque toujours sur un Autoriser.", a: true, exp: "Le Deny explicite prime, utile pour exclure une exception." }
+  ],
+  final: {
+    title: "Exercice final — Déléguer la réinitialisation des mots de passe",
+    intro: `<p>Le support doit pouvoir réinitialiser les mots de passe des utilisateurs de l'OU « Ventes », et RIEN d'autre. On délègue proprement en respectant le moindre privilège.</p>
+<pre class="pseudo">$acl = Get-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local"   # 1. lit l'ACL de l'OU Ventes
+# ... on fabrique une ACE ciblee pour le groupe Support ...
+Set-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local" -AclObject $acl   # 3. reecrit l'ACL</pre>`,
+    questions: [
+      { type: "qcm", q: "Quelle est la PREMIÈRE étape pour déléguer un droit ?", opts: ["Supprimer l'OU", "Lire l'ACL actuelle avec Get-Acl", "Redémarrer le serveur", "Créer une GPO"], a: 1, exp: "On lit d'abord l'ACL avant de la modifier." },
+      { type: "input", q: "Quelle méthode ajoute la nouvelle ACE à $acl ?", a: ["AddAccessRule", "addaccessrule"], ph: "Add...", exp: "$acl.AddAccessRule($regle)." },
+      { type: "input", q: "Quelle cmdlet applique enfin l'ACL modifiée ? (Verbe-Nom)", a: ["Set-Acl", "set-acl"], ph: "Verbe-Acl", exp: "Set-Acl -AclObject $acl écrit les changements." },
+      { type: "qcm", q: "Pourquoi ne PAS donner « Contrôle total » au support ?", opts: ["C'est plus lent", "Cela viole le moindre privilège : ils pourraient tout faire, pas juste réinitialiser les mots de passe", "Get-Acl l'interdit", "AD ne le permet pas"], a: 1, exp: "On n'accorde que le droit strictement nécessaire." },
+      { type: "vf", q: "La délégation revient à ajouter des ACE ciblées sur le bon objet.", a: true, exp: "Déléguer = accorder des droits précis via des ACE." }
+    ],
+    solution: `<p>La délégation complète en trois temps, avec une ACE ciblée pour le groupe Support :</p>
+<pre class="pseudo">Import-Module ActiveDirectory                                       # charge cmdlets et lecteur AD:
+$acl = Get-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local"           # 1. lit l'ACL de l'OU Ventes
+$qui  = New-Object System.Security.Principal.NTAccount("EXEMPLE","Support")   # le groupe Support (le QUI)
+$regle = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($qui, "WriteProperty", "Allow")   # 2. ACE ciblee : Autoriser
+$acl.AddAccessRule($regle)                                          # ajoute l'ACE a l'ACL en memoire
+Set-Acl -Path "AD:\OU=Ventes,DC=exemple,DC=local" -AclObject $acl  # 3. reecrit l'ACL modifiee</pre>
+<p>On lit, on ajoute une ACE précise, on réécrit. En respectant le moindre privilège, le support obtient exactement le droit voulu, ni plus, ni moins.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j20", title: "Lire et afficher les droits d'une OU", level: 2,
+    statement: "Écris un script qui charge le module AD, lit l'ACL de l'OU <code>OU=RH,DC=exemple,DC=local</code>, la range dans une variable, puis affiche les entrées (ACE) de cette ACL.",
+    hints: [
+      "Charge le module avec Import-Module ActiveDirectory (il fournit le lecteur AD:).",
+      "Utilise Get-Acl -Path 'AD:\\OU=RH,DC=exemple,DC=local' et range le résultat dans $acl.",
+      "Les ACE sont dans la propriété $acl.Access."
+    ],
+    solution: "Import-Module ActiveDirectory                              # charge les cmdlets AD et le lecteur AD:\n$acl = Get-Acl -Path 'AD:\\OU=RH,DC=exemple,DC=local'      # lit l'ACL de l'OU RH et la range dans $acl\n$acl.Access                                               # affiche les ACE (les lignes de droits) de l'ACL",
+    note: "Lire l'ACL est toujours la première étape avant toute modification : on regarde qui a déjà quels droits. $acl.Access donne le détail QUI/QUOI/Autoriser-ou-Refuser de chaque entrée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Validation (Form Request) et gestion des erreurs",
+  subtitle: "Blinder les entrées et traduire les échecs — sécurité et robustesse d'un même geste.",
+  theory: `
+<h3>1. Toute entrée est hostile</h3>
+<p>L'API va bientôt écrire (créer un jeu, louer). Avant cela, on pose la règle de sécurité n°1 : <strong>aucune donnée entrante n'est de confiance</strong>. On valide en <em>liste d'autorisation</em> (ce qui est permis), pas en liste d'interdiction.</p>
+<p>Une <strong>entrée</strong> (ou <em>input</em>) est toute donnée venue de l'extérieur : formulaire, URL, requête API. La <strong>validation</strong> est le contrôle qui vérifie qu'elle est correcte et attendue avant de l'utiliser. Deux stratégies : la <strong>liste d'interdiction</strong> (bloquer ce qu'on sait mauvais — voué à l'échec, car on ne connaît jamais tout le mal) et la <strong>liste d'autorisation</strong> (n'accepter que ce qu'on a explicitement permis — bien plus sûr). C'est comme un videur qui ne laisse entrer que les invités figurant sur sa liste, plutôt que d'essayer de reconnaître tous les indésirables.</p>
+
+<h3>2. Une Form Request</h3>
+<p>Une <strong>Form Request</strong> est une classe dédiée à la validation d'une requête, exécutée automatiquement <em>avant</em> le contrôleur. <code>authorize()</code> répond à « cet utilisateur a-t-il le droit ? » (sinon erreur 403), et <code>rules()</code> décrit les contraintes de chaque champ, de façon <em>déclarative</em> : <code>required</code> = obligatoire, <code>string</code> = du texte, <code>max:200</code> = 200 caractères maximum, <code>numeric</code> = un nombre, <code>gt:0</code> = strictement supérieur à 0, <code>integer</code> = un entier, <code>min:0</code> = au moins 0, <code>exists:categories,id</code> = doit correspondre à une ligne réelle de la table <code>categories</code>. Le symbole <code>|</code> combine plusieurs règles.</p>
+<pre class="pseudo">// app/Http/Requests/StoreJeuRequest.php
+class StoreJeuRequest extends FormRequest {                     // classe de validation exécutée avant le contrôleur
+    public function authorize(): bool {                         // l'utilisateur a-t-il le DROIT de faire cette action ?
+        return $this->user()?->can('gerer-catalogue') ?? false;   // vrai s'il a la permission "gerer-catalogue" ; sinon refus (403)
+    }
+    public function rules(): array {                           // les contraintes, champ par champ
+        return [
+            'titre' => 'required|string|max:200',              // titre : obligatoire, texte, 200 caractères max
+            'prix_achat' => 'required|numeric|gt:0',           // prix d'achat : obligatoire, nombre, > 0
+            'prix_location' => 'required|numeric|gt:0',        // prix de location : obligatoire, nombre, > 0
+            'stock_vente' => 'integer|min:0',                  // stock de vente : entier, au moins 0
+            'stock_location' => 'integer|min:0',               // stock de location : entier, au moins 0
+            'categorie_id' => 'required|exists:categories,id', // catégorie : obligatoire ET doit exister réellement en base
+        ];
+    }
+}
+// contrôleur : function store(StoreJeuRequest $r) { ... } — la requête est déjà validée AVANT d'entrer ici</pre>
+
+<h3>3. La validation échoue proprement</h3>
+<p>Si une règle n'est pas respectée, Laravel interrompt tout et renvoie <em>automatiquement</em> une réponse avec le code HTTP <strong>422</strong> (« contenu non traitable ») listant l'erreur de chaque champ. Aucun code à écrire : la requête fautive n'atteint jamais le métier.</p>
+<pre class="pseudo">// requête invalide -> réponse 422 automatique avec les erreurs par champ
+// (JSON pour l'API, redirection avec erreurs pour le web) — rien à écrire</pre>
+
+<h3>4. Traduire les exceptions métier, sans fuite</h3>
+<p>Le <strong>Handler</strong> (gestionnaire d'exceptions) est l'endroit unique où l'on décide comment traduire chaque erreur interne en réponse HTTP. <code>render(fn(StockInsuffisantException $ex) => …)</code> dit : « quand cette exception métier survient, réponds avec le code <strong>409</strong> » (409 = conflit : l'action est logique mais impossible dans l'état actuel, ici plus de stock). Une <code>ModelNotFoundException</code> (ressource introuvable) devient un <strong>404</strong>. On ne renvoie <em>jamais</em> la <strong>stack trace</strong> — la trace technique détaillée de l'erreur — qui révélerait la technologie, les chemins de fichiers et le schéma de la base.</p>
+<pre class="pseudo">// bootstrap/app.php (Laravel 11) ou app/Exceptions/Handler.php
+->withExceptions(function (Exceptions $e) {                    // on configure la traduction des erreurs
+    $e->render(fn(StockInsuffisantException $ex) =>            // quand cette exception métier survient…
+        response()->json(['erreur' => $ex->getMessage()], 409));   // …répondre en JSON avec le message et le code 409 (conflit)
+});
+// ModelNotFoundException -> 404 automatique. On NE renvoie JAMAIS de stack trace.</pre>
+
+<h3>5. Un test par branche d'erreur</h3>
+<p><code>actingAs($this->vendeur)</code> simule un utilisateur connecté (un vendeur) le temps du test. <code>postJson('/api/jeux', […])</code> envoie une requête de création (POST) avec des données volontairement invalides. <code>assertStatus(422)</code> vérifie que l'API a bien refusé avec le code 422 attendu.</p>
+<pre class="pseudo">public function test_refuse_titre_vide(): void {              // teste qu'un titre vide est refusé
+    $this->actingAs($this->vendeur)                           // se faire passer pour un vendeur connecté
+        ->postJson('/api/jeux', ['titre' => '', 'prix_location' => 5])   // envoie une création avec un titre vide (invalide)
+        ->assertStatus(422);                                  // vérifie le refus avec le code 422
+}</pre>
+<div class="warn">En production, <code>APP_DEBUG=false</code> : Laravel masque alors les détails techniques et n'affiche jamais la stack trace au client (elle révélerait la techno, les chemins, le schéma). Une Form Request valide AVANT le contrôleur ; le Handler centralise la traduction des exceptions métier. Un seul endroit décide, cohérent et testable.</div>
+<div class="tip">La validation n'est pas une commodité, c'est la première ligne de défense (cours Sécurité). Écrite maintenant, avec <code>exists</code>, <code>numeric</code>, <code>min</code> (liste d'autorisation) et des messages neutres, elle ferme d'emblée injection et fuite d'information. Chaque cas d'erreur a son test.</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle de sécurité n°1 sur les entrées :", opts: ["Elles sont sûres", "Toute entrée est hostile (à valider)", "On filtre le mal connu", "On ignore"], a: 1, exp: "Liste d'autorisation." },
+    { type: "qcm", q: "Une Form Request valide…", opts: ["Après le métier", "Avant que le contrôleur ne s'exécute", "En prod seulement", "Jamais"], a: 1, exp: "Requête invalide bloquée." },
+    { type: "qcm", q: "'prix_location' => 'required|numeric|gt:0' garantit…", opts: ["Un texte", "Un nombre > 0 obligatoire", "Rien", "Un tableau"], a: 1, exp: "Contrainte déclarative." },
+    { type: "qcm", q: "'categorie_id' => 'exists:categories,id' vérifie…", opts: ["Le format", "Que la catégorie existe vraiment en base", "Le CSS", "Le rôle"], a: 1, exp: "Liste d'autorisation." },
+    { type: "qcm", q: "Une validation qui échoue renvoie…", opts: ["500", "422 (automatique, erreurs par champ)", "200", "301"], a: 1, exp: "Rien à écrire." },
+    { type: "qcm", q: "authorize() dans la Form Request…", opts: ["Valide les champs", "Vérifie le droit d'agir (403 sinon)", "Chiffre", "Déploie"], a: 1, exp: "Autorisation intégrée." },
+    { type: "qcm", q: "StockInsuffisantException devient…", opts: ["500", "409 (via le Handler)", "200", "301"], a: 1, exp: "Conflit d'état métier." },
+    { type: "qcm", q: "ModelNotFoundException devient…", opts: ["404 (automatique)", "200", "403", "500"], a: 0, exp: "Ressource absente." },
+    { type: "qcm", q: "En production, APP_DEBUG doit être…", opts: ["true", "false (pas de stack trace au client)", "peu importe", "supprimé"], a: 1, exp: "Anti-fuite d'information." },
+    { type: "qcm", q: "Une stack trace renvoyée au client…", opts: ["Est utile", "Révèle la techno/les chemins/le schéma", "Est neutre", "Est chiffrée"], a: 1, exp: "Danger." },
+    { type: "vf", q: "Le Handler centralise la traduction des exceptions en codes HTTP.", a: true, exp: "Un seul endroit." },
+    { type: "qcm", q: "Chaque branche d'erreur a…", opts: ["Rien", "Son test (verrouillé par la CI)", "Un TODO", "Un email"], a: 1, exp: "Robustesse vérifiable." },
+    { type: "qcm", q: "Valider en liste d'autorisation, c'est…", opts: ["Interdire le mal connu", "Autoriser explicitement ce qui est permis", "Tout accepter", "Chiffrer"], a: 1, exp: "Plus sûr que la liste noire." },
+    { type: "qcm", q: "La validation est…", opts: ["Une commodité", "La première ligne de défense", "Optionnelle", "Décorative"], a: 1, exp: "Sécurité par conception." },
+    { type: "vf", q: "Une requête invalide n'atteint jamais le métier.", a: true, exp: "Rejetée en amont." }
+  ],
+  final: {
+    title: "Exercice final — Entrées sûres, erreurs traduites",
+    intro: `<p>Form Request + Handler + tests d'erreur.</p>`,
+    questions: [
+      { type: "qcm", q: "La validation se déclare :", opts: ["dans une Form Request (rules + authorize)", "à la main partout", "en SQL", "jamais"], a: 0, exp: "Déclarative." },
+      { type: "qcm", q: "Les exceptions métier -> HTTP :", opts: ["dans le Handler (centralisé)", "en try/catch dispersés", "en prod", "au hasard"], a: 0, exp: "Un seul endroit." },
+      { type: "qcm", q: "StockInsuffisant ->", opts: ["409", "200", "500", "302"], a: 0, exp: "Conflit métier." },
+      { type: "qcm", q: "En prod, la stack trace :", opts: ["masquée (APP_DEBUG=false)", "affichée au client", "loggée dans l'URL", "publique"], a: 0, exp: "Anti-fuite." },
+      { type: "vf", q: "Chaque cas d'erreur est couvert par un test.", a: true, exp: "Verrouillé en CI." }
+    ],
+    solution: `<pre class="pseudo">class StoreJeuRequest extends FormRequest {                                     // validation avant le contrôleur
+  public function authorize(): bool { return $this->user()?->can('gerer-catalogue'); }   // droit d'agir (403 sinon)
+  public function rules(): array {                                              // contraintes des champs
+    return ['titre'=>'required|string|max:200',                                // titre obligatoire, texte, max 200
+            'prix_location'=>'required|numeric|gt:0',                           // prix : nombre > 0 obligatoire
+            'stock_vente'=>'integer|min:0',                                     // stock : entier >= 0
+            'categorie_id'=>'required|exists:categories,id'];                   // catégorie qui existe vraiment
+  }
+}
+// Handler : render StockInsuffisantException -> 409 ; ModelNotFound -> 404       // traduction centralisée des erreurs
+// APP_DEBUG=false en prod ; 1 test par branche d'erreur                          // pas de stack trace exposée + chaque cas testé</pre>
+<p>Les entrées sont sûres. Demain : les comptes et l'authentification durcie.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta validation et ta gestion d'erreurs…",
+  items: [
+  { id: "proj6php-l8", title: "Form Request + gestion d'erreurs centralisée", level: 2,
+    statement: "Écris la StoreJeuRequest (authorize + rules en liste d'autorisation), la traduction des exceptions dans le Handler (StockInsuffisant->409, ModelNotFound->404), et un test qui refuse un titre vide (422). Explique en 2-3 lignes pourquoi centraliser et pourquoi APP_DEBUG=false en prod.",
+    hints: [
+      "rules() : required|numeric|gt:0 pour les prix, integer|min:0 pour les stocks, exists:categories,id.",
+      "authorize() : $this->user()?->can('gerer-catalogue').",
+      "Handler : $e->render(fn(StockInsuffisantException) => response()->json([...], 409))."
+    ],
+    solution: "// app/Http/Requests/StoreJeuRequest.php\nclass StoreJeuRequest extends FormRequest {                     // classe de validation, avant le controleur\n    public function authorize(): bool {                         // droit d'agir ? (403 sinon)\n        return $this->user()?->can('gerer-catalogue') ?? false; // vrai si permission \"gerer-catalogue\"\n    }\n    public function rules(): array {                           // contraintes champ par champ\n        return [\n            'titre' => 'required|string|max:200',              // obligatoire, texte, 200 max\n            'prix_achat' => 'required|numeric|gt:0',           // obligatoire, nombre > 0\n            'prix_location' => 'required|numeric|gt:0',        // obligatoire, nombre > 0\n            'stock_vente' => 'integer|min:0',                  // entier >= 0\n            'stock_location' => 'integer|min:0',               // entier >= 0\n            'categorie_id' => 'required|exists:categories,id', // doit exister reellement en base (liste d'autorisation)\n        ];\n    }\n}\n\n// bootstrap/app.php (Laravel 11) — traduction centralisee, sans fuite\n->withExceptions(function (Exceptions $e) {                     // configure la traduction des erreurs\n    $e->render(fn(StockInsuffisantException $ex) =>             // quand l'exception metier survient...\n        response()->json(['erreur' => $ex->getMessage()], 409));// ...repond en JSON avec le code 409 (conflit)\n    // ModelNotFoundException -> 404 automatique\n});\n\n// tests/Feature/JeuValidationTest.php\npublic function test_refuse_titre_vide(): void {                // teste le refus d'un titre vide\n    $this->actingAs($this->vendeur)                            // simule un vendeur connecte\n        ->postJson('/api/jeux', ['titre' => '', 'prix_location' => 5])   // creation avec titre vide (invalide)\n        ->assertStatus(422);                                   // verifie le refus (code 422)\n}\n\n// POURQUOI CENTRALISER, POURQUOI APP_DEBUG=false\n// Centraliser : un seul endroit decide exception -> code HTTP. Des try/catch\n// disperses divergent (un 500 ici, un 404 la pour le meme cas) et sont impossibles\n// a tester uniformement.\n// APP_DEBUG=false en prod : sinon Laravel affiche la page d'erreur detaillee avec\n// la STACK TRACE, les variables, les chemins de fichiers -- de l'or pour un\n// attaquant (il apprend la techno, la structure, parfois des secrets). En prod, le\n// client ne voit qu'une page d'erreur neutre ; le detail reste dans les logs serveur.",
+    note: "La validation et la gestion d'erreurs sont deux faces d'une même exigence de sécurité : ne jamais faire confiance à l'entrée, ne jamais trahir l'intérieur. La Form Request de Laravel réunit élégamment les deux contrôles (authorize + rules) AVANT le contrôleur. Et APP_DEBUG=false est le réglage de production le plus critique et le plus souvent oublié : une app en debug exposée publiquement est une fuite d'information permanente." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

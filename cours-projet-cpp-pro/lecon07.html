@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Requêtes préparées et le job de tests au vert",
+  subtitle: "Toute donnée externe est liée, jamais concaténée — et les ressources sont RAII.",
+  theory: `
+<h3>1. La règle d'or : requête préparée</h3>
+<p>Une <strong>requête préparée</strong> est une requête SQL écrite avec des trous (des <code>?</code>) que l'on remplit ensuite avec des valeurs, au lieu de coller ces valeurs directement dans le texte de la requête. Toute valeur venant de l'extérieur (une saisie, un paramètre) est ainsi <strong>liée</strong> via <code>setInt</code>/<code>setString</code>, jamais <strong>concaténée</strong> (« collée bout à bout ») dans la chaîne SQL. Le moteur de base de données distingue alors clairement le <strong>code</strong> (la structure de la requête) des <strong>données</strong> (les valeurs) : l'<strong>injection SQL</strong> — une attaque où un utilisateur glisse du code malveillant dans un champ de saisie pour détourner la requête — devient structurellement impossible.</p>
+
+<h3>2. Un findById exemplaire</h3>
+<p><code>findById</code> (« trouver par identifiant ») lit en base le jeu portant un id donné.</p>
+<pre class="pseudo">Jeu JeuRepository::findById(sql::Connection&amp; con, int id) {         // chercher le jeu d'identifiant "id" via la connexion "con"
+    std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement( // preparer une requete a trou (le ? sera rempli apres)
+        "SELECT id,nom,categorie_id,prix_location,prix_achat,"      // colonnes demandees (1/2)
+        "stock_location,stock_vente FROM jeu WHERE id=?"));         // ...suite, et condition WHERE id = ? (le trou)
+    p-&gt;setInt(1, id);                            // remplir le 1er ? avec la valeur "id" (valeur LIEE, pas collee)
+    std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery());  // executer la requete ; r contient les lignes trouvees
+    if (!r-&gt;next()) throw std::runtime_error("Jeu introuvable");    // avancer a la 1re ligne ; s'il n'y en a aucune, signaler une erreur
+    return mapper(r.get());                      // transformer la ligne trouvee en objet Jeu et le renvoyer
+}                                                // fin de la fonction</pre>
+<div class="warn">Jamais <code>"... WHERE id=" + std::to_string(id)</code> (coller la valeur dans le texte). Même pour un entier « inoffensif », on lie systématiquement : cette discipline uniforme évite l'oubli le jour où la valeur devient une chaîne saisie par un utilisateur.</div>
+
+<h3>3. RAII sur les objets du connecteur</h3>
+<p>Le <strong>RAII</strong> (<em>Resource Acquisition Is Initialization</em>) est un principe du C++ : une ressource (mémoire, fichier, connexion) est confiée à un objet qui la libère tout seul quand il disparaît, comme une lampe à détecteur qui s'éteint dès qu'on quitte la pièce. <code>std::unique_ptr</code> est un « pointeur intelligent » qui possède un objet et le supprime automatiquement.</p>
+<p>Ici, le <code>PreparedStatement</code> (la requête préparée) et le <code>ResultSet</code> (le tableau de résultats) sont détenus par des <code>std::unique_ptr</code> : ils sont libérés automatiquement en fin de <strong>portée</strong> (la zone entre accolades où ils existent), même si une <strong>exception</strong> — un signal d'erreur qui interrompt le cours normal du programme — remonte. Zéro fuite mémoire, sans <code>delete</code> manuel (le <code>delete</code> étant l'ordre de libération qu'on oublie si facilement à la main). <code>r.get()</code> fournit au passage l'adresse brute détenue par le pointeur intelligent, le temps de la passer au <code>mapper</code>.</p>
+
+<h3>4. Garder le job de tests au vert</h3>
+<pre class="pseudo"># Le pipeline execute deja : build -> ctest         # rappel : la CI compile puis lance les tests
+# A chaque ajout au DAO, on relance les tests localement AVANT de pousser  # on verifie chez soi d'abord
+cmake --build build &amp;&amp; ctest --test-dir build        # compiler PUIS lancer les tests (&& = "et si ca reussit, enchaine")</pre>
+<div class="tip">Discipline pro : on ne pousse pas du rouge. On compile et on lance les tests <strong>en local</strong> d'abord ; la CI confirme ensuite. Le job de tests reste vert, donc <code>main</code> reste déployable.</div>
+
+<h3>5. Écriture, aussi préparée</h3>
+<pre class="pseudo">"UPDATE jeu SET stock_location = stock_location - 1 WHERE id = ?"  // MODIFIER : retirer 1 au stock du jeu vise (? = son id)
+p-&gt;setInt(1, jeuId);                              // remplir le ? avec l'id du jeu concerne (valeur liee)</pre>
+<p>Les lectures (<code>SELECT</code>) <em>et</em> les écritures (<code>UPDATE</code>, qui modifie des lignes existantes) passent par des requêtes préparées. Les modifications sensibles (comme le stock) seront de plus encadrées par des <strong>transactions</strong> (leçon 11) : un moyen de grouper plusieurs opérations en un tout « tout ou rien ».</p>
+`,
+  exercises: [
+    { type: "qcm", q: "Une donnée externe doit être…", opts: ["concaténée", "liée (setInt/setString)", "affichée", "ignorée"], a: 1, exp: "Requête préparée." },
+    { type: "qcm", q: "La requête préparée empêche…", opts: ["les fuites mémoire", "l'injection SQL", "les exceptions", "les logs"], a: 1, exp: "Code ≠ données." },
+    { type: "qcm", q: "Pour un entier, on lie…", opts: ["jamais", "quand même, par discipline uniforme", "seulement en prod", "au hasard"], a: 1, exp: "Éviter l'oubli." },
+    { type: "qcm", q: "PreparedStatement et ResultSet sont détenus par…", opts: ["des pointeurs nus", "des unique_ptr (RAII)", "des globales", "rien"], a: 1, exp: "Libération auto." },
+    { type: "qcm", q: "En cas d'exception, les unique_ptr…", opts: ["fuient", "libèrent quand même les ressources", "plantent", "se copient"], a: 1, exp: "Exception-safe." },
+    { type: "qcm", q: "« WHERE id=\" + to_string(id) » est…", opts: ["recommandé", "à proscrire (concaténation)", "plus sûr", "obligatoire"], a: 1, exp: "Jamais coller." },
+    { type: "qcm", q: "Discipline pro avant de pousser :", opts: ["pousser directement", "compiler et lancer les tests en local", "sauter les tests", "déployer"], a: 1, exp: "On ne pousse pas du rouge." },
+    { type: "qcm", q: "Le job de tests vert garantit…", opts: ["rien", "que main reste déployable", "un déploiement", "des logs"], a: 1, exp: "Santé de main." },
+    { type: "qcm", q: "Les écritures (UPDATE) sont…", opts: ["concaténées", "préparées aussi (valeurs liées)", "sans contrôle", "affichées"], a: 1, exp: "Même règle." },
+    { type: "qcm", q: "if (!r->next()) throw … signale…", opts: ["un succès", "l'absence de résultat (jeu introuvable)", "une fuite", "un log"], a: 1, exp: "Cas d'erreur." },
+    { type: "vf", q: "Lier systématiquement les valeurs évite l'oubli quand elles deviennent des chaînes utilisateur.", a: true, exp: "Discipline uniforme." },
+    { type: "qcm", q: "Le connecteur alloue les objets ; on les…", opts: ["oublie", "enveloppe dans unique_ptr pour les posséder", "copie", "ignore"], a: 1, exp: "Prise en charge RAII." },
+    { type: "qcm", q: "Les modifications de stock seront aussi…", opts: ["laissées libres", "encadrées par des transactions (leçon 11)", "supprimées", "loggées seulement"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "mapper(r.get()) transforme…", opts: ["un objet en SQL", "une ligne en objet Jeu", "un log", "un secret"], a: 1, exp: "DAO." },
+    { type: "qcm", q: "La CI confirme…", opts: ["le déploiement", "que le build et les tests passent", "les secrets", "l'UI"], a: 1, exp: "Vérification indépendante." }
+  ],
+  final: {
+    title: "Exercice final — Corriger une requête dangereuse",
+    intro: `<p>Un DAO écrit :</p>
+<pre class="pseudo">std::string sql = "SELECT * FROM jeu WHERE nom = '" + nom + "'";  // DANGER : on COLLE "nom" dans le texte SQL -> injection possible
+sql::ResultSet* r = con.createStatement()-&gt;executeQuery(sql);     // DANGER : pointeur NU, personne ne le liberera
+// ... pas de delete ...                                          // la memoire du ResultSet fuit (jamais rendue)</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Faille n°1 :", opts: ["aucune", "concaténation de nom : injection SQL", "trop lent", "trop court"], a: 1, exp: "Donnée dans le code." },
+      { type: "qcm", q: "Correction n°1 :", opts: ["échapper à la main", "requête préparée + setString(1, nom)", "supprimer WHERE", "rien"], a: 1, exp: "Valeur liée." },
+      { type: "qcm", q: "Faille n°2 :", opts: ["aucune", "ResultSet en pointeur nu, non libéré (fuite)", "trop de colonnes", "rien"], a: 1, exp: "Pas de RAII." },
+      { type: "qcm", q: "Correction n°2 :", opts: ["un delete manuel", "un std::unique_ptr<sql::ResultSet>", "un goto", "rien"], a: 1, exp: "RAII." },
+      { type: "qcm", q: "Avant de pousser, on…", opts: ["pousse direct", "compile et lance les tests localement", "déploie", "ignore la CI"], a: 1, exp: "Vert d'abord." }
+    ],
+    solution: `<pre class="pseudo">std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement(  // requete preparee a trou
+    "SELECT id,nom,categorie_id,prix_location,prix_achat,"       // colonnes (1/2)
+    "stock_location,stock_vente FROM jeu WHERE nom = ?"));       // ...suite, condition WHERE nom = ?
+p-&gt;setString(1, nom);                        // remplir le ? avec "nom" : valeur liee, anti-injection
+std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery());  // executer ; r possede le resultat
+// RAII : p et r liberes automatiquement, meme en cas d'exception  // aucune fuite, aucun delete manuel</pre>
+<p>Valeur liée contre l'injection, <code>unique_ptr</code> contre les fuites : une lecture sûre et propre. Demain : validation, exceptions et entrées sûres.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton DAO ici…",
+  items: [
+  { id: "projcpppro-l07", title: "Chercher un utilisateur par login", level: 3,
+    statement: "Écris UtilisateurRepository::findByLogin(con, login) qui exécute SELECT ... WHERE login = ? avec une requête préparée (setString), enveloppe PreparedStatement et ResultSet dans des unique_ptr, et lance std::runtime_error si aucun résultat. Retourne mapper(r.get()).",
+    hints: [
+      "prepareStatement(\"... WHERE login = ?\").",
+      "setString(1, login) — jamais de concaténation.",
+      "unique_ptr pour p et r ; if (!r->next()) throw ..."
+    ],
+    solution: "Utilisateur UtilisateurRepository::findByLogin(            // chercher un utilisateur par son login\n        sql::Connection& con, const std::string& login) {  // recoit la connexion et le login a chercher\n    std::unique_ptr<sql::PreparedStatement> p(con.prepareStatement(  // preparer la requete a trou\n        \"SELECT id, login, mot_de_passe_hash, role \"        // colonnes demandees (1/2)\n        \"FROM utilisateur WHERE login = ?\"));               // ...table et condition WHERE login = ?\n    p->setString(1, login);                       // remplir le ? avec le login : valeur liee, anti-injection\n    std::unique_ptr<sql::ResultSet> r(p->executeQuery());   // executer ; r possede les lignes trouvees\n    if (!r->next())                               // avancer a la 1re ligne ; s'il n'y en a aucune...\n        throw std::runtime_error(\"Utilisateur introuvable\"); // ...signaler une erreur\n    return mapper(r.get());                       // transformer la ligne en objet Utilisateur et le renvoyer\n}                                                 // fin de la fonction",
+    note: "Le login vient de l'utilisateur : le lier par setString rend l'injection impossible. Les unique_ptr possèdent statement et result set, garantissant leur libération même si une exception remonte. Cette discipline uniforme — tout lier, tout envelopper — est ce qui rend le DAO sûr sans effort de nettoyage manuel." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

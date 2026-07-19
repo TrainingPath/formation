@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "L'authentification",
+  subtitle: "Gérer les comptes et les connexions, sans réinventer la roue.",
+  theory: `
+<h3>1. L'authentification « batteries incluses »</h3>
+<p>L'<strong>authentification</strong> est le fait de vérifier l'identité d'une personne (« es-tu bien qui tu prétends être ? »), typiquement via un identifiant et un mot de passe — comme montrer sa carte à l'entrée. Django fournit un système d'authentification complet : un modèle <strong>User</strong> (utilisateur), le <strong>hachage</strong> sécurisé des mots de passe, les vues de connexion/déconnexion… Tout est prêt dans <code>django.contrib.auth</code> (déjà présent dans <code>INSTALLED_APPS</code>). On ne code presque rien.</p>
+
+<h3>2. Le modèle User et le superutilisateur</h3>
+<p>Le <strong>hachage</strong> transforme un mot de passe en une empreinte illisible et irréversible : on peut vérifier un mot de passe sans jamais le stocker en clair. Un <strong>superutilisateur</strong> est un compte administrateur qui a tous les droits.</p>
+<pre class="pseudo">from django.contrib.auth.models import User               # User : le modèle d'utilisateur fourni par Django
+
+User.objects.create_user("ana", password="secret123")    # crée un utilisateur ; le mot de passe est HACHÉ
+User.objects.get(username="ana")                          # récupère cet utilisateur par son nom</pre>
+<pre class="pseudo"># Dans le terminal, créer un compte administrateur (superutilisateur) :
+python manage.py createsuperuser   # demande un nom, un email et un mot de passe</pre>
+<div class="warn">Ne stocke JAMAIS un mot de passe en clair. <code>create_user</code> le <strong>hache</strong> automatiquement (algorithme sécurisé) : même toi ne peux pas le relire. C'est une protection essentielle offerte par Django — n'écris jamais ton propre système de mots de passe.</div>
+
+<h3>3. Connexion et déconnexion</h3>
+<p><code>authenticate</code> vérifie le couple identifiant/mot de passe, <code>login</code> ouvre la session (connecte), <code>logout</code> la ferme (déconnecte).</p>
+<pre class="pseudo">from django.contrib.auth import authenticate, login, logout   # les trois outils de connexion
+
+def connexion(request):
+    if request.method == "POST":                    # si le formulaire de connexion est envoyé…
+        user = authenticate(                        # authenticate : vérifie identifiant + mot de passe
+            username=request.POST["username"],      # le nom saisi
+            password=request.POST["password"])      # le mot de passe saisi
+        if user is not None:                        # si les identifiants sont corrects (user trouvé)…
+            login(request, user)                    # login : OUVRE la session, l'utilisateur est connecté
+            return redirect("liste")                # on l'emmène vers sa liste
+    return render(request, "taches/connexion.html") # GET ou échec : afficher le formulaire
+
+def deconnexion(request):
+    logout(request)                                 # logout : FERME la session (déconnexion)
+    return redirect("liste")                        # retour à la page publique</pre>
+<p>Django propose aussi des vues toutes faites (<code>LoginView</code>, <code>LogoutView</code>) qu'il suffit de câbler dans les URLs, avec un template de connexion — encore moins de code.</p>
+
+<h3>4. request.user : qui est connecté ?</h3>
+<p><code>AnonymousUser</code> est l'objet « visiteur anonyme » que Django met à la place d'un vrai utilisateur quand personne n'est connecté : ainsi <code>request.user</code> existe toujours.</p>
+<pre class="pseudo">request.user                        # l'utilisateur courant (ou AnonymousUser si personne n'est connecté)
+request.user.is_authenticated       # renvoie True si un utilisateur est connecté, False sinon
+request.user.username               # le nom de l'utilisateur connecté
+# Disponible aussi dans TOUS les templates via la variable {{ user }} (leçon 5)</pre>
+<pre class="pseudo">{% if user.is_authenticated %}                                       &lt;!-- si connecté… --&gt;
+    Bonjour {{ user.username }} — &lt;a href="{% url 'deconnexion' %}"&gt;Se déconnecter&lt;/a&gt;  &lt;!-- nom + lien de déconnexion --&gt;
+{% else %}                                                          &lt;!-- sinon (anonyme)… --&gt;
+    &lt;a href="{% url 'connexion' %}"&gt;Se connecter&lt;/a&gt;               &lt;!-- lien vers la connexion --&gt;
+{% endif %}                                                         &lt;!-- fin de la condition --&gt;</pre>
+
+<h3>5. Protéger une vue : @login_required</h3>
+<p>Un <strong>décorateur</strong> est un mot précédé de <code>@</code>, posé au-dessus d'une fonction pour lui ajouter un comportement sans en modifier le corps — ici, exiger d'être connecté.</p>
+<pre class="pseudo">from django.contrib.auth.decorators import login_required   # importe le décorateur
+
+@login_required                     # DÉCORATEUR : cette vue exige d'être CONNECTÉ
+def liste(request):
+    taches = Tache.objects.filter(utilisateur=request.user)   # ne garde que les tâches de CET utilisateur
+    return render(request, "taches/liste.html", {"taches": taches})  # les afficher</pre>
+<div class="tip">Le décorateur <code>@login_required</code> placé au-dessus d'une vue redirige automatiquement vers la page de connexion si le visiteur n'est pas authentifié. Une seule ligne remplace tout un contrôle d'accès manuel. C'est le portier automatique de Django.</div>
+
+<h3>6. Relier les données à l'utilisateur</h3>
+<pre class="pseudo">class Tache(models.Model):
+    texte = models.CharField(max_length=200)                          # texte de la tâche
+    utilisateur = models.ForeignKey(User, on_delete=models.CASCADE)   # chaque tâche appartient à un utilisateur
+
+# à la création, on associe l'utilisateur connecté :
+Tache.objects.create(texte=..., utilisateur=request.user)   # la tâche est reliée à son créateur</pre>
+<p>Pour que chaque personne ne voie QUE ses propres tâches, on relie le modèle à <code>User</code> par une ForeignKey (leçon 11), puis on filtre sur <code>request.user</code>. C'est ainsi qu'une todo-liste devient multi-utilisateurs.</p>`,
+  exercises: [
+    { type: "qcm", q: "Django fournit-il un système d'authentification ?", opts: ["Non, à coder soi-même", "Oui, complet : modèle User, hachage des mots de passe, connexion… (batteries incluses)", "Seulement en payant", "Non"], a: 1, exp: "django.contrib.auth, déjà installé." },
+    { type: "qcm", q: "<code>User.objects.create_user(...)</code> et le mot de passe…", opts: ["Le stocke en clair", "Le HACHE automatiquement (sécurisé, irréversible)", "L'ignore", "L'affiche"], a: 1, exp: "Jamais de mot de passe en clair : Django le hache." },
+    { type: "qcm", q: "Créer un compte administrateur en terminal :", opts: ["python manage.py createsuperuser", "createadmin", "python manage.py admin", "startapp admin"], a: 0, exp: "createsuperuser crée un compte avec tous les droits." },
+    { type: "qcm", q: "<code>authenticate(username, password)</code> retourne…", opts: ["Toujours True", "L'utilisateur si les identifiants sont corrects, sinon None", "Le mot de passe", "Une erreur"], a: 1, exp: "On teste « user is not None » ensuite." },
+    { type: "qcm", q: "<code>login(request, user)</code> fait…", opts: ["Crée un compte", "OUVRE la session : l'utilisateur est désormais connecté", "Déconnecte", "Route"], a: 1, exp: "login attache l'utilisateur à la session." },
+    { type: "qcm", q: "<code>logout(request)</code> fait…", opts: ["Connecte", "FERME la session (déconnexion)", "Crée un compte", "Rien"], a: 1, exp: "Fin de session." },
+    { type: "qcm", q: "<code>request.user</code> quand personne n'est connecté vaut…", opts: ["None", "Un AnonymousUser (dont is_authenticated est False)", "Une erreur", "\"\""], a: 1, exp: "Toujours un objet ; on teste is_authenticated." },
+    { type: "qcm", q: "<code>request.user.is_authenticated</code> sert à…", opts: ["Le mot de passe", "Savoir si un utilisateur est CONNECTÉ (True/False)", "La vitesse", "L'URL"], a: 1, exp: "Le test d'authentification, aussi dispo dans les templates." },
+    { type: "qcm", q: "Le décorateur <code>@login_required</code> …", opts: ["Style la vue", "Exige d'être connecté : redirige vers la connexion sinon", "Crée un user", "Route"], a: 1, exp: "Le portier automatique, en une ligne." },
+    { type: "qcm", q: "Dans un template, <code>{{ user }}</code> …", opts: ["Doit être passé au contexte", "Est disponible AUTOMATIQUEMENT (context processor)", "N'existe pas", "Est le mot de passe"], a: 1, exp: "user est injecté dans tous les templates." },
+    { type: "qcm", q: "Pour que chaque utilisateur ne voie QUE ses tâches, on…", opts: ["Affiche tout", "Relie Tache à User (ForeignKey) et filtre sur request.user", "Cache le HTML", "Rien"], a: 1, exp: "ForeignKey vers User + filter(utilisateur=request.user)." },
+    { type: "qcm", q: "Doit-on écrire son propre hachage de mots de passe ?", opts: ["Oui", "NON : Django le fait de façon sécurisée ; réinventer est dangereux", "Parfois", "En prod seulement"], a: 1, exp: "La sécurité des mots de passe est un domaine d'experts : laisse Django faire." },
+    { type: "qcm", q: "Django propose aussi des vues toutes faites pour la connexion :", opts: ["Non", "Oui : LoginView / LogoutView, à câbler dans les URLs", "Seulement l'admin", "Uniquement l'API"], a: 1, exp: "Encore moins de code à écrire." },
+    { type: "vf", q: "@login_required redirige un visiteur non connecté vers la page de connexion.", a: true, exp: "Le contrôle d'accès en une ligne." },
+    { type: "qcm", q: "Relier une tâche à l'utilisateur connecté à la création :", opts: ["Tache.objects.create(texte=...)", "Tache.objects.create(texte=..., utilisateur=request.user)", "user.add(tache)", "impossible"], a: 1, exp: "On associe request.user via la ForeignKey." }
+  ],
+  final: {
+    title: "Exercice final — Une todo-liste par utilisateur",
+    intro: `<p>On rend la todo-liste personnelle :</p>
+<pre class="pseudo">from django.contrib.auth.decorators import login_required   # le décorateur de protection
+
+@login_required                                             # accès réservé aux connectés
+def liste(request):
+    taches = Tache.objects.filter(utilisateur=request.user)  # seulement les tâches de l'utilisateur
+    return render(request, "taches/liste.html", {"taches": taches})  # afficher
+
+@login_required                                             # accès réservé aux connectés
+def creer(request):
+    if request.method == "POST":                            # si envoi du formulaire
+        Tache.objects.create(
+            texte=request.POST.get("texte", ""),            # le texte saisi
+            utilisateur=request.user)                       # associée à l'utilisateur connecté
+        return redirect("liste")                            # rediriger (PRG)
+    return render(request, "taches/creer.html")             # GET : afficher le formulaire</pre>`,
+    questions: [
+      { type: "qcm", q: "Que fait <code>@login_required</code> ici ?", opts: ["Rien", "Redirige vers la connexion si le visiteur n'est pas authentifié", "Crée un compte", "Style la page"], a: 1, exp: "Seuls les connectés accèdent à ces vues." },
+      { type: "qcm", q: "<code>filter(utilisateur=request.user)</code> garantit que…", opts: ["Toutes les tâches sont visibles", "Chaque utilisateur ne voit QUE ses propres tâches", "L'admin voit tout", "Rien"], a: 1, exp: "Le filtrage par utilisateur = une todo-liste personnelle." },
+      { type: "qcm", q: "À la création, <code>utilisateur=request.user</code> …", opts: ["Est inutile", "Associe la tâche à l'utilisateur connecté (via la ForeignKey)", "Crée un user", "Supprime"], a: 1, exp: "Chaque tâche appartient à son créateur." },
+      { type: "qcm", q: "Le mot de passe des utilisateurs est stocké…", opts: ["En clair", "Haché (sécurisé) par Django, irréversible", "Dans un cookie", "Nulle part"], a: 1, exp: "create_user hache le mot de passe." },
+      { type: "vf", q: "Ce code nécessite une ForeignKey de Tache vers User (et donc makemigrations + migrate).", a: true, exp: "Le champ utilisateur relie chaque tâche à un compte." }
+    ],
+    solution: `<pre class="pseudo">class Tache(models.Model):
+    texte = models.CharField(max_length=200)                          # texte
+    utilisateur = models.ForeignKey(User, on_delete=models.CASCADE)   # lien vers le propriétaire
+
+@login_required
+def liste(request):
+    taches = Tache.objects.filter(utilisateur=request.user)   # seulement les siennes
+    return render(request, "taches/liste.html", {"taches": taches})
+
+# création : Tache.objects.create(texte=..., utilisateur=request.user)
+# User + hachage + login/logout + @login_required + ForeignKey vers User :
+# une todo-liste sécurisée et multi-utilisateurs.</pre>
+<p>Ton app gère les comptes. Demain : affiner les droits avec les permissions.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code Django ici…",
+  items: [
+  { id: "dj-l16", title: "Vue protégée et menu conditionnel", level: 3,
+    statement: "Écris une vue <code>mes_taches(request)</code> protégée par @login_required, qui affiche uniquement les tâches de l'utilisateur connecté. Puis écris le fragment de template du menu qui affiche « Bonjour <nom> » + un lien de déconnexion si l'utilisateur est connecté, sinon un lien de connexion.",
+    hints: [
+      "Décorateur : @login_required au-dessus de la vue (from django.contrib.auth.decorators import login_required).",
+      "Filtrer : Tache.objects.filter(utilisateur=request.user).",
+      "Template : {% if user.is_authenticated %} ... {{ user.username }} ... {% url 'deconnexion' %} {% else %} {% url 'connexion' %} {% endif %}."
+    ],
+    solution: "# views.py\nfrom django.contrib.auth.decorators import login_required\nfrom django.shortcuts import render\nfrom .models import Tache\n\n@login_required\ndef mes_taches(request):\n    taches = Tache.objects.filter(utilisateur=request.user)  # seulement les siennes\n    return render(request, \"taches/liste.html\", {\"taches\": taches})\n\n# base.html (fragment)\n# {% if user.is_authenticated %}\n#     Bonjour {{ user.username }}\n#     <a href=\"{% url 'deconnexion' %}\">Se déconnecter</a>\n# {% else %}\n#     <a href=\"{% url 'connexion' %}\">Se connecter</a>\n# {% endif %}",
+    note: "@login_required protège la vue, filter(utilisateur=request.user) isole les données, et {{ user }} (disponible partout) permet un menu qui s'adapte à l'état de connexion." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

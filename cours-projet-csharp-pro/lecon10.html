@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Autorisation par rôle et par ressource (Policies, anti-IDOR)",
+  subtitle: "Qui peut agir ? Sur SON objet ? Les deux, dès la création — et testés.",
+  theory: `
+<h3>1. Deux questions, pas une</h3>
+<p>Être <strong>authentifié</strong> (identifié) ne veut pas dire être <strong>autorisé</strong> (avoir le droit). Il faut donc deux contrôles distincts, résumés dans ce tableau :</p>
+<pre class="pseudo">RÔLE      cet utilisateur a-t-il le DROIT d'effectuer cette action ?  (vendeur ?)
+RESSOURCE agit-il bien sur SON objet à lui, pas celui d'un autre ?    (SA location ?)</pre>
+<p>Oublier le second, c'est l'<strong>IDOR</strong> (Insecure Direct Object Reference) : une faille où l'on accède à l'objet d'autrui en changeant simplement un numéro dans l'URL. C'est la faille n°1 du classement de sécurité <strong>OWASP</strong> (référence A01).</p>
+
+<h3>2. Autorisation par rôle (policy)</h3>
+<p>Une <strong>policy</strong> (« politique ») est une règle d'autorisation nommée, définie une fois puis réutilisée. <code>RequireRole</code> exige un ou plusieurs rôles. L'attribut <code>[Authorize(Policy = "…")]</code> applique la règle à une action.</p>
+<pre class="pseudo">// Program.cs
+builder.Services.AddAuthorization(o =>                       // configure les règles d'autorisation
+    o.AddPolicy("GererCatalogue", p => p.RequireRole("Vendeur", "Admin")));   // règle nommée : réservée aux rôles Vendeur ou Admin
+
+[Authorize(Policy = "GererCatalogue")]                       // cette action exige la règle "GererCatalogue"
+[HttpPost] public IActionResult CreerJeu(CreerJeuDto dto) { ... }   // 403 sinon — sans le bon rôle, accès refusé (code HTTP 403 = interdit)</pre>
+
+<h3>3. Autorisation par ressource</h3>
+<p>Le contrôle par ressource vérifie que l'objet manipulé <strong>appartient</strong> bien à l'utilisateur courant. On récupère son identifiant (<code>GetUserId</code>) et on filtre la requête dessus.</p>
+<pre class="pseudo">[Authorize]                                                 // réservé aux utilisateurs connectés
+public async Task&lt;IActionResult&gt; MesLocations() {           // affiche les locations de l'utilisateur
+    var uid = _userManager.GetUserId(User);                 // récupère l'identifiant de l'utilisateur CONNECTÉ
+    var locations = await _db.Locations.Where(l => l.ClientId == uid).ToListAsync();   // ne garde que SES locations
+    return View(locations);        // filtré par l'utilisateur COURANT   // envoie la liste à la page à afficher
+}</pre>
+
+<h3>4. Le piège de l'id d'URL</h3>
+<p>Un même code peut être sûr ou vulnérable selon un seul détail : vérifie-t-on l'appartenance ?</p>
+<pre class="pseudo">// VULNÉRABLE : /locations/42 -> renvoie la location 42 quel qu'en soit le client
+var loc = await _db.Locations.FindAsync(id);   // IDOR ! aucun contrôle d'appartenance
+// SÛR : on filtre par le propriétaire
+var loc = await _db.Locations
+    .FirstOrDefaultAsync(l => l.Id == id && l.ClientId == uid);   // null si pas à lui -> 404</pre>
+<p><code>FindAsync(id)</code> va chercher n'importe quel objet par son numéro, sans se soucier du propriétaire — d'où la faille. <code>FirstOrDefaultAsync(...)</code> ajoute la condition <code>&& l.ClientId == uid</code> : si l'objet n'est pas à l'utilisateur, il renvoie <code>null</code> (rien), qu'on traduit en 404.</p>
+
+<h3>5. Le test d'accès croisé — le plus important</h3>
+<p>Le <strong>test d'accès croisé</strong> met en scène deux utilisateurs : A tente d'atteindre l'objet de B, et l'on vérifie que c'est refusé. C'est la seule preuve réelle de l'absence d'IDOR.</p>
+<pre class="pseudo">[Fact] public async Task Client_ne_voit_pas_les_locations_dautrui() {   // test anti-IDOR
+    var client = ConnecterEnTantQue(clientA);               // on se connecte en tant que client A
+    var r = await client.GetAsync($"/locations/{locationDeB.Id}");   // A tente d'ouvrir une location de B
+    r.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.Forbidden);   // doit être refusé : 404 ou 403
+}</pre>
+<div class="warn">Le test d'accès croisé (A tente l'objet de B) est le seul qui prouve l'absence d'IDOR. Écrit AVEC la fonctionnalité, il tourne à chaque commit : la faille ne peut plus s'installer sans un job rouge. Masquer le bouton dans la vue Razor ne protège rien — la protection est côté serveur, sur la donnée (policy + filtre par propriétaire).</div>
+<div class="tip">Renvoyer 404 sur une ressource qui n'appartient pas à l'utilisateur évite en plus de révéler qu'elle existe. Rôle (policy) ET ressource (filtre par User id, ou une <code>AuthorizationHandler</code> basée ressource), contrôlés côté serveur, testés par accès croisé : c'est la parade complète à la faille la plus répandue du web.</div>`,
+  exercises: [
+    { type: "qcm", q: "Authentifié signifie…", opts: ["Autorisé à tout", "Identifié — mais pas forcément autorisé", "Admin", "Rien"], a: 1, exp: "Deux notions distinctes." },
+    { type: "qcm", q: "L'IDOR, c'est…", opts: ["Un chiffrement", "Accéder à l'objet d'un autre via son id", "Un rôle", "Un cookie"], a: 1, exp: "OWASP A01." },
+    { type: "qcm", q: "[Authorize(Policy=\"GererCatalogue\")] contrôle…", opts: ["La ressource", "Le rôle (le droit d'agir)", "Le CSS", "La base"], a: 1, exp: "403 sinon." },
+    { type: "qcm", q: "Where(l => l.ClientId == uid) contrôle…", opts: ["Le rôle", "La ressource (filtrée par l'utilisateur courant)", "Le cache", "Rien"], a: 1, exp: "SON objet." },
+    { type: "qcm", q: "_db.Locations.FindAsync(id) sans vérif est…", opts: ["Sûr", "Vulnérable à l'IDOR", "Rapide", "Chiffré"], a: 1, exp: "N'importe qui lit n'importe quoi." },
+    { type: "qcm", q: "FirstOrDefaultAsync(l => l.Id==id && l.ClientId==uid) renvoie…", opts: ["Toujours l'objet", "null si l'objet n'est pas à lui (-> 404)", "500", "Le rôle"], a: 1, exp: "Appartenance vérifiée." },
+    { type: "qcm", q: "Le test d'accès croisé vérifie…", opts: ["Le CSS", "Que A ne voit pas l'objet de B", "La vitesse", "Le port"], a: 1, exp: "Preuve anti-IDOR." },
+    { type: "qcm", q: "Masquer le bouton dans Razor…", opts: ["Protège la donnée", "Ne protège rien (contrôle côté serveur)", "Suffit", "Chiffre"], a: 1, exp: "Sécurité serveur." },
+    { type: "qcm", q: "Renvoyer 404 plutôt que 403 évite…", opts: ["Rien", "De révéler que la ressource existe", "Le login", "Le cache"], a: 1, exp: "Discrétion." },
+    { type: "qcm", q: "Rôle ET ressource, c'est…", opts: ["Redondant", "Les deux contrôles nécessaires", "Un seul suffit", "Décoratif"], a: 1, exp: "Peut-il agir ? sur SON objet ?" },
+    { type: "vf", q: "Le contrôle d'accès cassé est la faille n°1 (OWASP A01).", a: true, exp: "Très répandue." },
+    { type: "qcm", q: "GetUserId(User) fournit…", opts: ["L'URL", "L'id de l'utilisateur connecté", "Le rôle brut", "Le cookie"], a: 1, exp: "Le principal courant." },
+    { type: "qcm", q: "Le test croisé tourne…", opts: ["Une fois", "À chaque commit (CI)", "En prod seulement", "Jamais"], a: 1, exp: "Filet permanent." },
+    { type: "qcm", q: "Une policy se définit dans…", opts: ["Le cookie", "AddAuthorization (Program.cs)", "La vue", "L'URL"], a: 1, exp: "Centralisée." },
+    { type: "vf", q: "Écrire le test d'accès croisé avec la fonctionnalité empêche l'IDOR de s'installer.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Rôle + ressource, testés",
+    intro: `<p>Policy + filtre par propriétaire + test croisé.</p>`,
+    questions: [
+      { type: "qcm", q: "Le droit d'agir se contrôle par :", opts: ["[Authorize(Policy=...)]", "un if dans la vue", "le menu masqué", "rien"], a: 0, exp: "Par rôle." },
+      { type: "qcm", q: "L'appartenance se contrôle par :", opts: ["un filtre l.ClientId == uid", "FindAsync(id) brut", "l'id d'URL de confiance", "un cookie"], a: 0, exp: "Par ressource." },
+      { type: "qcm", q: "L'IDOR se prouve absent par :", opts: ["un test d'accès croisé", "un screenshot", "la bonne foi", "un WAF"], a: 0, exp: "A tente l'objet de B." },
+      { type: "qcm", q: "Sur un objet qui n'est pas à lui, on renvoie :", opts: ["404 (ne révèle pas l'existence)", "200", "le SQL", "500"], a: 0, exp: "Discret." },
+      { type: "vf", q: "Rôle ET ressource sont tous deux nécessaires.", a: true, exp: "Peut-il agir ? sur SON objet ?" }
+    ],
+    solution: `<pre class="pseudo">o.AddPolicy("GererCatalogue", p => p.RequireRole("Vendeur","Admin"));   // règle par rôle
+
+[Authorize(Policy = "GererCatalogue")]          // par RÔLE : exige Vendeur/Admin
+[HttpPost] IActionResult CreerJeu(...) { ... }  // 403 sans le bon rôle
+
+[Authorize] async Task<IActionResult> MesLocations() {  // par RESSOURCE
+  var uid = _userManager.GetUserId(User);       // id de l'utilisateur connecté
+  return View(await _db.Locations.Where(l => l.ClientId == uid).ToListAsync());   // seulement SES locations
+}
+// accès par id SÛR : FirstOrDefaultAsync(l => l.Id==id && l.ClientId==uid) -> 404   // filtre par propriétaire
+// test : connecter A ; GET /locations/{idDeB} -> NotFound/Forbidden               // preuve anti-IDOR</pre>
+<p>L'IDOR est fermé. Demain : louer — transaction et test d'intégration.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton autorisation et son test croisé…",
+  items: [
+  { id: "proj6cs-l10", title: "Autorisation par rôle et par ressource, prouvée", level: 3,
+    statement: "Écris une policy 'GererCatalogue' (rôle), une action réservée, une action 'mes locations' filtrée par l'utilisateur courant, la version SÛRE d'un accès par id, et le test d'accès croisé prouvant l'absence d'IDOR. Explique en 3-4 lignes pourquoi masquer le bouton ne suffit pas et pourquoi 404 plutôt que 403.",
+    hints: [
+      "AddAuthorization(o => o.AddPolicy(\"GererCatalogue\", p => p.RequireRole(\"Vendeur\",\"Admin\"))).",
+      "SÛR : FirstOrDefaultAsync(l => l.Id == id && l.ClientId == uid) -> null -> 404.",
+      "Test : connecter le client A qui tente l'objet de B -> NotFound/Forbidden."
+    ],
+    solution: "// Program.cs — par ROLE\nbuilder.Services.AddAuthorization(o =>\n    o.AddPolicy(\"GererCatalogue\", p => p.RequireRole(\"Vendeur\", \"Admin\")));\n\n[Authorize(Policy = \"GererCatalogue\")]\n[HttpPost] public IActionResult CreerJeu(CreerJeuDto dto) { ... }  // 403 si pas le role\n\n// par RESSOURCE : filtre par l'utilisateur courant\n[Authorize]\npublic async Task<IActionResult> MesLocations() {\n    var uid = _userManager.GetUserId(User);\n    return View(await _db.Locations.Where(l => l.ClientId == uid).ToListAsync());\n}\n// acces par id, version SURE\n[Authorize]\npublic async Task<IActionResult> Detail(long id) {\n    var uid = _userManager.GetUserId(User);\n    var loc = await _db.Locations.FirstOrDefaultAsync(l => l.Id == id && l.ClientId == uid);\n    return loc is null ? NotFound() : View(loc);   // 404 si pas a lui\n}\n\n// LE TEST QUI COMPTE : acces croise\n[Fact] public async Task Client_ne_voit_pas_les_locations_dautrui() {\n    var client = ConnecterEnTantQue(_clientA);\n    var r = await client.GetAsync($\"/locations/{_locationDeB.Id}\");\n    r.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.Forbidden);\n}\n\n// POURQUOI MASQUER LE BOUTON NE SUFFIT PAS, POURQUOI 404\n// Le bouton cache n'existe que dans le HTML Razor : un attaquant appelle l'URL\n// directement (curl, Postman) sans passer par l'interface. La seule vraie\n// protection est cote SERVEUR, sur la donnee (policy + filtre par ClientId). On\n// renvoie 404 (et non 403) quand on filtre par proprietaire, car un 403 confirmerait\n// que la location 42 EXISTE ; le 404 ne revele meme pas son existence.\n// Role + ressource + test croise = parade complete a l'IDOR (OWASP A01).",
+    note: "L'IDOR est à la fois la faille la plus répandue et la plus facile à ignorer, parce qu'en test manuel avec son propre compte, tout fonctionne. Seul le test d'accès CROISÉ (un utilisateur qui tente l'objet d'un autre) la révèle. Les policies (rôle) et le filtre par propriétaire (ressource) d'ASP.NET séparent proprement les deux questions ; pour des cas complexes, un AuthorizationHandler basé ressource formalise le contrôle. En écrivant le test croisé avec la fonctionnalité, on le rend permanent." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

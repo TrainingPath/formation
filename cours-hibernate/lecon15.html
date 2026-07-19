@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Criteria et requêtes dynamiques (aperçu) + requêtes natives",
+  subtitle: "Quand la requête dépend des cases cochées par l'utilisateur — et quand il faut redescendre au SQL brut.",
+  theory: `
+<h3>1. Le problème des requêtes dynamiques</h3>
+<p>Imagine le formulaire de recherche de la Ludothèque : titre (optionnel), catégorie (optionnelle), prix max (optionnel). En JPQL, il faudrait concaténer des bouts de chaîne selon les champs remplis — fragile, illisible, et une faute de frappe n'explose qu'à l'exécution. La <strong>Criteria API</strong> (« API de critères ») construit la requête comme un <strong>objet Java</strong> : le compilateur vérifie les types, et on ajoute les conditions une par une.</p>
+<pre class="pseudo">// Concaténation JPQL : le chemin de la douleur
+String jpql = "SELECT j FROM Jeu j WHERE 1=1";           // WHERE 1=1 : astuce pour pouvoir coller des AND ensuite
+if (titre != null)  jpql += " AND j.titre LIKE :t";      // ajoute une condition si titre est rempli... fragile
+if (prixMax != null) jpql += " AND j.prixLocation &lt;= :p"; // ...et vite illisible quand les critères se multiplient</pre>
+
+<h3>2. Le trio CriteriaBuilder / CriteriaQuery / Root</h3>
+<p>Trois objets suffisent à décrire un SELECT : le <strong>CriteriaBuilder</strong> est l'usine (il fabrique conditions, fonctions, tris), la <strong>CriteriaQuery</strong> est la requête en construction, et le <strong>Root</strong> représente l'entité du FROM.</p>
+<pre class="pseudo">CriteriaBuilder cb = em.getCriteriaBuilder();          // l'USINE : fabrique conditions, fonctions, tris
+CriteriaQuery&lt;Jeu&gt; cq = cb.createQuery(Jeu.class);     // le SQUELETTE du SELECT (résultat attendu : des Jeu)
+Root&lt;Jeu&gt; jeu = cq.from(Jeu.class);                    // le ROOT : l'équivalent du FROM Jeu j
+
+cq.select(jeu).where(cb.equal(jeu.get("titre"), "Catan"));  // SELECT jeu WHERE titre = 'Catan'
+List&lt;Jeu&gt; res = em.createQuery(cq).getResultList();     // exécuter la requête construite
+// Équivalent exact de : SELECT j FROM Jeu j WHERE j.titre = 'Catan'</pre>
+<p>Oui, c'est plus verbeux que le JPQL. L'intérêt n'apparaît que quand la requête <strong>varie</strong>.</p>
+
+<h3>3. La recherche multi-critères de la Ludothèque</h3>
+<p>Le motif clé : accumuler des <strong>Predicate</strong> (une condition élémentaire, un morceau de WHERE) dans une liste, puis les combiner d'un coup avec un AND. Chaque critère absent est simplement... absent de la requête.</p>
+<pre class="pseudo">List&lt;Predicate&gt; conditions = new ArrayList&lt;&gt;();          // liste des conditions (chaque Predicate = un bout de WHERE)
+if (titre != null)                                        // si un titre a été saisi...
+    conditions.add(cb.like(jeu.get("titre"), "%" + titre + "%"));  // ...ajoute une condition LIKE
+if (prixMax != null)                                      // si un prix max a été saisi...
+    conditions.add(cb.le(jeu.get("prixLocation"), prixMax));  // ...ajoute une condition &lt;= (le = "less or equal")
+if (categorie != null)                                    // si une catégorie a été choisie...
+    conditions.add(cb.equal(jeu.get("categorie").get("nom"), categorie));  // ...ajoute une égalité sur le nom
+
+cq.where(conditions.toArray(new Predicate[0]))            // combiner TOUTES les conditions retenues avec un AND
+  .orderBy(cb.asc(jeu.get("titre")));                     // trier par titre croissant
+// 0 critère → SELECT sans WHERE ; 3 critères → WHERE ... AND ... AND ...</pre>
+<p>Objectif de cette leçon : un <strong>aperçu</strong>, pas la maîtrise exhaustive — sache lire ce code et reconnaître le cas d'usage. Spring Data JPA industrialise ce motif avec les Specifications ; EF Core fait pareil en chaînant des .Where() LINQ, Eloquent en chaînant des when(), Django en composant des objets Q.</p>
+
+<h3>4. Les requêtes natives : redescendre au SQL</h3>
+<p>Parfois, ni JPQL ni Criteria ne suffisent : fonction spécifique MySQL, hint d'index, requête d'expert écrite au Niveau 4 que tu veux réutiliser telle quelle. Une <strong>requête native</strong> est du SQL brut envoyé directement à la base. <strong>createNativeQuery</strong> l'exécute, et peut quand même mapper le résultat vers une entité si tu passes la classe.</p>
+<pre class="pseudo">// SQL MySQL tel quel, résultat mappé vers l'entité Jeu
+List&lt;Jeu&gt; jeux = em.createNativeQuery(                    // createNativeQuery : on envoie du SQL BRUT
+    "SELECT * FROM jeu WHERE MATCH(titre) AGAINST (?1) LIMIT 10",  // SQL 100 % MySQL (?1 = paramètre positionnel)
+    Jeu.class).setParameter(1, motCle).getResultList();  // Jeu.class → chaque ligne devient un Jeu ; on remplit ?1
+
+// Sans classe : List&lt;Object[]&gt;, une case par colonne, casts manuels
+List&lt;Object[]&gt; brut = em.createNativeQuery(               // sans classe en 2e argument...
+    "SELECT titre, prix_location FROM jeu").getResultList();  // ...chaque ligne = un Object[] (casts manuels requis)</pre>
+
+<h3>5. Le prix du natif : couplage et mapping manuel</h3>
+<p>Deux risques à peser avant chaque requête native. Un : le <strong>couplage au dialecte</strong> — ton MATCH ... AGAINST est du MySQL pur ; migrer vers PostgreSQL casserait la requête, alors que JPQL et Criteria sont traduits par Hibernate pour chaque base. Deux : le <strong>mapping manuel</strong> — sans la classe en second argument, tu retombes dans les Object[] et les casts, le rituel JDBC que l'ORM devait t'épargner (leçon 1). Hiérarchie saine : JPQL d'abord, Criteria quand c'est dynamique, natif en dernier recours documenté.</p>
+<div class="warn">Dans une requête native, tu écris les noms de TABLES et de COLONNES (jeu, prix_location), plus les noms d'entités et d'attributs (Jeu, prixLocation). Mélanger les deux mondes dans la même chaîne est l'erreur classique — et Hibernate ne peut pas la détecter, puisqu'il ne parse pas ton SQL natif.</div>
+<div class="tip">Le piège de jeu.get("titre") : la chaîne "titre" n'est PAS vérifiée par le compilateur — une faute de frappe explose à l'exécution, comme en JPQL. Le vrai type-safe intégral exige le métamodèle généré (Jeu_.titre), hors programme ici : retiens simplement que Criteria vérifie les TYPES des valeurs, pas l'orthographe des attributs passés en chaîne.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le cas d'usage typique de la Criteria API :", opts: ["Créer les tables au démarrage", "Construire une requête qui varie selon les critères remplis par l'utilisateur", "Remplacer les transactions", "Configurer le pool de connexions"], a: 1, exp: "Recherche multi-critères : on ajoute les conditions une par une, en Java." },
+    { type: "qcm", q: "Dans le trio Criteria, l'« usine » qui fabrique conditions et fonctions est…", opts: ["Root", "CriteriaQuery", "CriteriaBuilder", "EntityManagerFactory"], a: 2, exp: "cb = em.getCriteriaBuilder() : c'est lui qui crée equal, like, asc..." },
+    { type: "qcm", q: "Root&lt;Jeu&gt; jeu = cq.from(Jeu.class) correspond en JPQL à…", opts: ["FROM Jeu j", "WHERE j.id = 1", "ORDER BY j.titre", "GROUP BY j"], a: 0, exp: "Le Root est l'entité de départ de la requête, l'équivalent du FROM." },
+    { type: "input", q: "Quelle méthode de l'EntityManager donne accès au CriteriaBuilder ?", a: ["getCriteriaBuilder", "getCriteriaBuilder()", "em.getCriteriaBuilder", "em.getCriteriaBuilder()"], ph: "nom de la méthode…", exp: "CriteriaBuilder cb = em.getCriteriaBuilder() : le point d'entrée de l'API." },
+    { type: "qcm", q: "Le motif standard pour une recherche multi-critères en Criteria :", opts: ["Concaténer des chaînes SQL", "Accumuler des Predicate dans une liste puis les passer à where(...)", "Écrire une requête par combinaison possible", "Utiliser ddl-auto"], a: 1, exp: "Chaque critère rempli ajoute un Predicate ; where() les combine en AND." },
+    { type: "vf", q: "Si aucun critère n'est rempli, la liste de Predicate est vide et la requête Criteria retourne tous les jeux.", a: true, exp: "where() sans condition → SELECT sans WHERE : le formulaire vide liste tout le catalogue." },
+    { type: "qcm", q: "Principal reproche fait à la Criteria API :", opts: ["Elle est verbeuse", "Elle ne sait pas faire de WHERE", "Elle exige du XML", "Elle ne marche qu'avec Oracle"], a: 0, exp: "Trois objets et beaucoup de lignes pour un simple SELECT : on la réserve au dynamique." },
+    { type: "vf", q: "jeu.get(\"titre\") est vérifié par le compilateur : une faute de frappe dans \"titre\" ne compile pas.", a: false, exp: "La chaîne n'est pas vérifiée ; seul le métamodèle généré (Jeu_.titre) l'est. Criteria vérifie les types, pas ces chaînes." },
+    { type: "qcm", q: "Pour exécuter du SQL MySQL brut avec JPA, on appelle…", opts: ["em.createQuery", "em.createNativeQuery", "em.find", "em.persist"], a: 1, exp: "createNativeQuery envoie la chaîne telle quelle à la base." },
+    { type: "input", q: "Quelle méthode de l'EntityManager exécute une requête SQL brute ?", a: ["createNativeQuery", "createNativeQuery()", "em.createNativeQuery", "em.createNativeQuery()"], ph: "nom de la méthode…", exp: "em.createNativeQuery(\"SELECT ...\", Jeu.class) : SQL natif, résultat mappable en entités." },
+    { type: "qcm", q: "Le second argument de createNativeQuery(\"SELECT * FROM jeu\", Jeu.class) sert à…", opts: ["Choisir la base de données", "Mapper les lignes du résultat vers l'entité Jeu", "Activer show_sql", "Créer la table jeu"], a: 1, exp: "Sans lui, tu récupères des Object[] et des casts manuels." },
+    { type: "qcm", q: "Dans une requête NATIVE, on écrit…", opts: ["Les noms d'entités et d'attributs (Jeu, prixLocation)", "Les noms de tables et de colonnes (jeu, prix_location)", "Du JPQL classique", "Des expressions Criteria"], a: 1, exp: "C'est du SQL : Hibernate ne le parse pas, le vocabulaire est celui de MySQL." },
+    { type: "qcm", q: "Le risque de « couplage au dialecte » d'une requête native :", opts: ["Elle est trop lente", "Elle utilise du SQL spécifique MySQL qui casserait sur une autre base", "Elle ignore les transactions", "Elle supprime des données"], a: 1, exp: "JPQL/Criteria sont traduits par Hibernate pour chaque base ; le natif, non." },
+    { type: "vf", q: "La hiérarchie recommandée est : natif d'abord, Criteria ensuite, JPQL en dernier recours.", a: false, exp: "C'est l'inverse : JPQL d'abord, Criteria pour le dynamique, natif en dernier recours documenté." },
+    { type: "qcm", q: "L'équivalent du motif « conditions ajoutées dynamiquement » dans les autres piles :", opts: ["Specifications Spring Data, .Where() chaînés en LINQ/EF Core, objets Q de Django", "Les fichiers CSS", "Les threads Java", "Les index MySQL"], a: 0, exp: "Même idée partout : composer la requête en code plutôt qu'en chaînes." }
+  ],
+  final: {
+    title: "Exercice final — Le formulaire de recherche de jeux",
+    intro: `<p>Le site de la Ludothèque propose : titre contient (optionnel), prix de location max (optionnel), catégorie (optionnelle). Tu dois choisir la bonne technique, puis assembler la requête Criteria correspondante.</p>`,
+    questions: [
+      { type: "qcm", q: "La technique adaptée à ce formulaire aux critères tous optionnels :", opts: ["Une requête native figée", "Huit requêtes JPQL, une par combinaison", "La Criteria API avec une liste de Predicate", "ddl-auto=create"], a: 2, exp: "Le nombre de combinaisons explose ; Criteria compose la requête selon les champs remplis." },
+      { type: "input", q: "Complète : CriteriaQuery&lt;Jeu&gt; cq = cb.createQuery(Jeu.class); Root&lt;Jeu&gt; jeu = cq.____(Jeu.class);", a: ["from", "from()", ".from", "cq.from"], ph: "la méthode…", exp: "cq.from(Jeu.class) : le Root, équivalent du FROM Jeu j." },
+      { type: "qcm", q: "L'utilisateur n'a rempli que « prix max ». La requête générée contient…", opts: ["WHERE j.prix_location &lt;= ? uniquement", "WHERE avec trois conditions", "Aucun SELECT", "Un GROUP BY"], a: 0, exp: "Un seul Predicate a été ajouté à la liste : la requête ne porte que lui." },
+      { type: "vf", q: "Pour un SELECT MySQL avec MATCH ... AGAINST, il faut passer par createNativeQuery, car ce SQL n'existe pas en JPQL.", a: true, exp: "Fonction spécifique du dialecte MySQL : c'est le cas légitime du natif, à documenter." },
+      { type: "qcm", q: "Cette requête native MATCH ... AGAINST a pour contrepartie…", opts: ["Un couplage au dialecte MySQL assumé", "L'impossibilité d'utiliser des transactions", "La suppression du schéma", "L'obligation d'abandonner Hibernate"], a: 0, exp: "Migrer de base casserait la requête : on accepte le risque en connaissance de cause." }
+    ],
+    solution: `<pre class="pseudo">CriteriaBuilder cb = em.getCriteriaBuilder();          // l'usine à conditions
+CriteriaQuery&lt;Jeu&gt; cq = cb.createQuery(Jeu.class);     // le squelette du SELECT (résultat : des Jeu)
+Root&lt;Jeu&gt; jeu = cq.from(Jeu.class);                    // le FROM Jeu
+
+List&lt;Predicate&gt; conditions = new ArrayList&lt;&gt;();          // la liste des conditions à combiner
+if (titre != null)                                        // le titre est-il rempli ?
+    conditions.add(cb.like(jeu.get("titre"), "%" + titre + "%"));  // → condition LIKE
+if (prixMax != null)                                      // le prix max est-il rempli ?
+    conditions.add(cb.le(jeu.get("prixLocation"), prixMax));  // → condition &lt;=
+if (categorie != null)                                    // une catégorie est-elle choisie ?
+    conditions.add(cb.equal(jeu.get("categorie").get("nom"), categorie));  // → égalité sur le nom
+
+cq.where(conditions.toArray(new Predicate[0]))            // combiner les conditions retenues avec AND
+  .orderBy(cb.asc(jeu.get("titre")));                     // trier par titre croissant
+List&lt;Jeu&gt; resultats = em.createQuery(cq).getResultList(); // construire puis exécuter
+
+// Et pour la recherche plein texte, le natif assumé :
+// em.createNativeQuery("SELECT * FROM jeu WHERE MATCH(titre) AGAINST (?1)",
+//                      Jeu.class)</pre>
+<p>Ta recherche sait maintenant s'adapter aux critères — mais elle peut retourner 500 jeux d'un coup. Demain : découper les résultats en pages avec setFirstResult/setMaxResults, et comprendre ce que Spring Data cache derrière Pageable.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l15", title: "JPQL, Criteria ou natif : l'arbitrage", level: 3,
+    statement: "Quatre besoins arrivent dans ton backlog Ludothèque : (a) lister les locations en retard (critères fixes), (b) le formulaire de recherche de jeux à 5 filtres optionnels, (c) une recherche plein texte MATCH ... AGAINST sur les titres, (d) le top 10 des jeux les plus loués du mois (agrégat simple). Pour chacun, choisis JPQL, Criteria ou requête native, et rédige la justification : critères de décision, risques acceptés, et ce que tu documenterais pour le développeur suivant.",
+    hints: [
+      "Le premier critère de tri : la requête est-elle FIGÉE ou construite selon les choix de l'utilisateur ?",
+      "Le natif ne se justifie que si le SQL nécessaire n'existe ni en JPQL ni en Criteria — vérifie chaque cas.",
+      "Pour chaque natif accepté, nomme les deux risques (dialecte, mapping) et comment tu les contiens."
+    ],
+    solution: "(a) Locations en retard → JPQL.\n    Requête figée, lisible en une ligne :\n    SELECT l FROM Location l WHERE l.dateRetourPrevue < :aujourdHui\n    Aucune raison de payer la verbosité de Criteria.\n\n(b) Recherche 5 filtres optionnels → Criteria.\n    2^5 = 32 combinaisons : la concaténation JPQL serait illisible et fragile.\n    Motif liste de Predicate ; je note que les get(\"...\") ne sont pas\n    vérifiés à la compilation (tests d'intégration indispensables).\n\n(c) Plein texte MATCH ... AGAINST → requête native, seul choix possible.\n    Risques documentés : couplage au dialecte MySQL (un commentaire\n    « MySQL uniquement » + la requête isolée dans UNE classe DAO) ;\n    mapping contenu en passant Jeu.class à createNativeQuery.\n\n(d) Top 10 du mois → JPQL.\n    COUNT + GROUP BY + ORDER BY existent en JPQL (leçon 14) ; le LIMIT\n    viendra de setMaxResults(10) (leçon 16), pas d'un LIMIT natif.\n\nRègle générale documentée pour l'équipe :\nJPQL par défaut → Criteria si la structure varie → natif en dernier\nrecours, isolé, commenté, avec mapping vers entité quand c'est possible.",
+    note: "Cet arbitrage est une compétence d'architecte plus que de codeur : tu le referas au Niveau 6 en choisissant entre méthodes dérivées, @Query JPQL, Specifications et @Query(nativeQuery = true) de Spring Data JPA — les quatre mêmes étages, avec des noms différents. EF Core (LINQ vs FromSqlRaw) et Django (QuerySet vs raw()) posent exactement le même choix." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

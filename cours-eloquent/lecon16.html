@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Pagination : paginate et simplePaginate",
+  subtitle: "3 000 jeux, 15 par page : le LIMIT/OFFSET du cours MySQL, industrialisé en une méthode.",
+  theory: `
+<h3>1. Pourquoi paginer</h3>
+<p>Le catalogue de la Ludothèque dépasse les 3 000 jeux. Un Jeu::all() vers le navigateur, c'est 3 000 lignes chargées en mémoire, un HTML monstrueux et un utilisateur perdu. La <strong>pagination</strong> découpe les résultats en pages numérotées (analogie : un annuaire relié en pages plutôt qu'un rouleau de papier sans fin). Au cours MySQL, la solution s'appelait <strong>LIMIT + OFFSET</strong> :</p>
+<pre class="pseudo">-- Page 3, 15 jeux par page :
+SELECT * FROM jeux ORDER BY titre LIMIT 15 OFFSET 30;   -- 15 lignes, en sautant les 30 premières
+-- OFFSET = (page - 1) × taille</pre>
+<p>Tu POURRAIS recoder ça avec skip() et take() de la leçon 13… plus le comptage total, plus les liens de pages, plus la lecture du paramètre ?page. Laravel a tout emballé.</p>
+
+<h3>2. paginate() : la pagination complète</h3>
+<pre class="pseudo">// Contrôleur :
+$jeux = Jeu::orderBy('titre')-&gt;paginate(15);   // 15 jeux de la page courante
+// 2 requêtes : SELECT COUNT(*) …          (le total)
+//              SELECT … LIMIT 15 OFFSET … (la page demandée)
+
+// Vue Blade :
+@foreach ($jeux as $jeu) … @endforeach   // affiche les 15 jeux de la page
+{{ $jeux-&gt;links() }}     // ← les liens numérotés de pages, générés tout seuls</pre>
+<p><strong>paginate(15)</strong> lit tout seul le paramètre <strong>?page=3</strong> de l'URL, calcule l'OFFSET, et retourne un <strong>LengthAwarePaginator</strong> (un « paginateur conscient de la longueur totale ») : un objet qui se parcourt comme une collection ET connaît le contexte :</p>
+<pre class="pseudo">$jeux-&gt;total();          // 3 214 : nombre total de jeux (grâce au COUNT)
+$jeux-&gt;currentPage();    // 3 : page actuellement affichée
+$jeux-&gt;lastPage();       // 215 : numéro de la dernière page
+$jeux-&gt;hasMorePages();   // true : existe-t-il une page suivante ?</pre>
+<p>Important : paginate REMPLACE get() en bout de chaîne — tout ce que tu sais chaîner avant (where, orderBy, with, withCount…) reste valable.</p>
+
+<h3>3. simplePaginate et cursorPaginate : les variantes économes</h3>
+<p><strong>simplePaginate(15)</strong> saute la requête COUNT : il charge 16 lignes pour savoir s'il existe une page suivante, et n'offre que « Précédent / Suivant ». Pas de total, pas de numéros de pages — mais une requête de moins, précieuse sur les grosses tables où COUNT(*) coûte cher.</p>
+<pre class="pseudo">$avis = Avis::latest()-&gt;simplePaginate(20);   // 20 avis récents, SANS compter le total
+// liens : ← Précédent | Suivant →  (aucun COUNT exécuté)</pre>
+<p>Troisième option à connaître de nom : <strong>cursorPaginate()</strong>, qui remplace l'OFFSET par un curseur « après tel id » (analogie : un marque-page posé sur la dernière ligne lue, au lieu de recompter depuis le début) — imbattable pour le scroll infini et stable quand des lignes s'insèrent entre deux pages.</p>
+
+<h3>4. Garder les filtres : withQueryString</h3>
+<p>La pagination se combine avec la recherche de la leçon 13… et c'est là qu'un bug classique guette. L'utilisateur cherche « ?q=catan », clique sur la page 2 : le lien généré est « ?page=2 » et <strong>la recherche disparaît</strong>.</p>
+<pre class="pseudo">$jeux = Jeu::where('titre', 'like', '%' . $q . '%')   // filtre de recherche
+    -&gt;orderBy('titre')                                // tri stable
+    -&gt;paginate(15)                                    // 15 jeux par page
+    -&gt;withQueryString();     // les liens deviennent ?q=catan&amp;page=2 (le filtre est conservé)
+
+// Variante ciblée : -&gt;appends(['q' =&gt; $q])   // n'ajoute QUE le paramètre q aux liens</pre>
+<p><strong>withQueryString()</strong> recopie tous les paramètres de l'URL courante dans les liens de pages : filtres, tri et pagination cohabitent enfin.</p>
+
+<h3>5. Pagination et API JSON</h3>
+<p>Retourné tel quel depuis un contrôleur, le paginator se sérialise en JSON structuré — exactement ce qu'attend un front ou une app mobile au Niveau 6 :</p>
+<pre class="pseudo">return Jeu::paginate(15);   // le paginator se transforme automatiquement en JSON
+// {
+//   "data": [ … les 15 jeux … ],
+//   "current_page": 3, "last_page": 215,
+//   "per_page": 15, "total": 3214,
+//   "next_page_url": "…?page=4", …
+// }
+
+// Taille choisie par le client, AVEC garde-fou :
+$parPage = min((int) $request-&gt;input('per_page', 15), 50);   // défaut 15, plafonné à 50
+return Jeu::paginate($parPage);   // pagination avec la taille validée</pre>
+<p><em>Mêmes services ailleurs : Pageable et Page chez Spring Data (JPA), Skip/Take en LINQ chez EF Core, Paginator chez Django.</em></p>
+<div class="warn">Deux pièges qui frappent en silence : (1) la page 2 qui PERD les filtres de recherche — sans withQueryString(), les liens ne gardent que ?page ; (2) le per_page laissé au choix du client sans plafond — un ?per_page=100000 et ton API refait le Jeu::all() que la pagination devait empêcher. Plafonne toujours.</div>
+<div class="tip">Choisis en trois questions : besoin des numéros de pages et du total ? paginate. Juste Précédent/Suivant sur une grosse table ? simplePaginate (le COUNT économisé). Scroll infini ou flux qui bouge ? cursorPaginate. Et un ORDER BY stable est obligatoire dans les trois cas : sans tri déterministe, les pages se chevauchent.</div>`,
+  exercises: [
+    { type: "qcm", q: "En SQL, la page 3 d'un listing de 15 lignes par page correspond à…", opts: ["LIMIT 3 OFFSET 15", "LIMIT 15 OFFSET 30", "LIMIT 15 OFFSET 45", "LIMIT 30 OFFSET 15"], a: 1, exp: "OFFSET = (page − 1) × taille = 2 × 15 = 30 — le LIMIT/OFFSET du cours MySQL." },
+    { type: "qcm", q: "Jeu::orderBy('titre')->paginate(15) exécute…", opts: ["1 requête", "2 requêtes : un COUNT(*) puis la page en LIMIT/OFFSET", "15 requêtes", "3 214 requêtes"], a: 1, exp: "Le total d'abord (pour les numéros de pages), la page ensuite." },
+    { type: "qcm", q: "Comment paginate() sait-il quelle page servir ?", opts: ["Il lit le paramètre ?page de l'URL automatiquement", "Il faut le lui passer en 2e argument obligatoire", "Il devine selon l'heure", "Via un cookie"], a: 0, exp: "?page=3 est lu tout seul : rien à coder côté contrôleur." },
+    { type: "input", q: "Quelle méthode Blade génère les liens numérotés de pagination ?", a: ["links", "links()", "->links()"], ph: "{{ $jeux->…() }}", exp: "{{ $jeux->links() }} : la barre de pagination complète, stylée et cliquable." },
+    { type: "qcm", q: "paginate() retourne…", opts: ["Un tableau PHP", "Une chaîne HTML", "Un LengthAwarePaginator, parcourable comme une collection et conscient du contexte", "Un booléen"], a: 2, exp: "total(), currentPage(), lastPage()… en plus du foreach." },
+    { type: "vf", q: "paginate() se place en bout de chaîne, À LA PLACE de get().", a: true, exp: "Tout ce qui précède (where, with, withCount, orderBy) reste valable ; paginate est la méthode terminale." },
+    { type: "qcm", q: "Ce que simplePaginate ÉCONOMISE par rapport à paginate :", opts: ["Le LIMIT", "La requête COUNT(*) du total", "Le ORDER BY", "La connexion MySQL"], a: 1, exp: "Il charge taille+1 lignes pour savoir s'il y a une suite : pas de total, pas de numéros." },
+    { type: "qcm", q: "simplePaginate ne peut PAS afficher…", opts: ["Le lien Suivant", "Le lien Précédent", "Le nombre total de pages", "Les lignes de la page"], a: 2, exp: "Sans COUNT, ni total ni lastPage : seulement Précédent/Suivant." },
+    { type: "input", q: "Quelle méthode recopie les paramètres de l'URL (filtres, tri) dans les liens de pages ?", a: ["withQueryString", "withQueryString()", "->withQueryString()"], ph: "nom de la méthode…", exp: "paginate(15)->withQueryString() : ?q=catan survit au passage en page 2." },
+    { type: "qcm", q: "Sans withQueryString, l'utilisateur qui cherche « catan » puis clique page 2 obtient…", opts: ["La page 2 de sa recherche", "Une erreur 404", "La page 2 du catalogue COMPLET : le filtre a disparu des liens", "La page 1"], a: 2, exp: "Les liens générés ne portent que ?page=2 — le bug classique des listings filtrés." },
+    { type: "qcm", q: "cursorPaginate se distingue en remplaçant l'OFFSET par…", opts: ["Un COUNT", "Un curseur « après telle valeur », stable et idéal pour le scroll infini", "Un cache", "Un index FULLTEXT"], a: 1, exp: "Pas de décalage qui glisse quand des lignes s'insèrent : la suite reprend après le dernier élément vu." },
+    { type: "vf", q: "Retourner directement un paginator depuis un contrôleur produit un JSON avec data, current_page, total…", a: true, exp: "La sérialisation est automatique : le format standard des API paginées du Niveau 6." },
+    { type: "qcm", q: "Un ?per_page fourni par le client doit être…", opts: ["Utilisé tel quel", "Plafonné (ex : min(valeur, 50)) pour éviter un all() déguisé", "Ignoré", "Multiplié par 10"], a: 1, exp: "?per_page=100000 referait exactement ce que la pagination devait empêcher." },
+    { type: "qcm", q: "Pourquoi un ORDER BY stable est-il indispensable en pagination ?", opts: ["Pour la couleur des liens", "Sans tri déterministe, MySQL peut servir les lignes dans un ordre changeant : doublons et oublis entre pages", "Pour accélérer le COUNT", "C'est purement esthétique"], a: 1, exp: "Chaque page est une requête séparée : seul un tri fixe garantit un découpage cohérent." },
+    { type: "qcm", q: "L'équivalent de la pagination chez Spring Data (JPA) :", opts: ["Pageable et Page", "Include()", "annotate()", "sync()"], a: 0, exp: "Pageable/Page chez Spring Data, Skip/Take en LINQ, Paginator chez Django : même besoin partout." }
+  ],
+  final: {
+    title: "Exercice final — Le catalogue passe en pages",
+    intro: `<p>Le catalogue, la recherche et le flux d'avis passent en pagination. À toi de choisir la bonne variante à chaque écran et de ne perdre aucun filtre en route.</p>`,
+    questions: [
+      { type: "qcm", q: "Le catalogue public avec numéros de pages, 15 jeux triés par titre :", opts: ["Jeu::orderBy('titre')->paginate(15)", "Jeu::all()->take(15)", "Jeu::limit(15)->get()", "Jeu::simplePaginate()->links()"], a: 0, exp: "paginate = numéros + total ; le tri stable garantit des pages cohérentes." },
+      { type: "qcm", q: "La recherche paginée qui GARDE ?q=catan en page 2 :", opts: ["paginate(15) tout court", "paginate(15)->withQueryString()", "get()->paginate()", "links() suffit"], a: 1, exp: "withQueryString recopie les paramètres de l'URL dans chaque lien de page." },
+      { type: "input", q: "Quelle méthode du paginator donne le nombre total de lignes trouvées ?", a: ["total", "total()", "->total()"], ph: "$jeux->…()", exp: "total() — c'est la requête COUNT de paginate qui le rend possible." },
+      { type: "vf", q: "Pour un flux d'avis en « Précédent/Suivant » sans afficher de total, simplePaginate est le bon choix.", a: true, exp: "Pas de numéros nécessaires → on économise le COUNT(*)." },
+      { type: "qcm", q: "L'API mobile demande ?per_page=100000. La bonne réaction du contrôleur :", opts: ["Obéir", "paginate(min((int) $request->input('per_page', 15), 50))", "Retourner all()", "Bloquer l'utilisateur"], a: 1, exp: "Valeur par défaut + plafond : la pagination reste une protection, pas une option." }
+    ],
+    solution: `<pre class="pseudo">paginate(15)        → COUNT + page · numéros · total() · links()
+simplePaginate(15)  → pas de COUNT · Précédent/Suivant seulement
+cursorPaginate(15)  → curseur stable · scroll infini, gros volumes
+
+Se place EN BOUT de chaîne (remplace get) — where/with/orderBy avant
+?page lu automatiquement · ORDER BY stable obligatoire
+withQueryString()   → les filtres survivent au changement de page
+API : paginator → JSON {data, current_page, total…} · per_page PLAFONNÉ
+
+Ailleurs : Pageable/Page (Spring Data) · Skip/Take (LINQ) · Paginator (Django)</pre>
+<p>Afficher proprement, c'est réglé. Mais louer un jeu, c'est ÉCRIRE deux fois : créer la location ET décrémenter le stock — tout ou rien. Leçon 17 : les transactions avec DB::transaction.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l16", title: "Trois écrans, trois paginations", level: 2,
+    statement: "La Ludothèque a trois écrans à paginer : (1) le catalogue public avec recherche (?q), filtre de catégorie (?categorie) et numéros de pages ; (2) le mur d'avis en scroll infini de l'application mobile, où de nouveaux avis arrivent en permanence ; (3) la liste d'administration des membres, très grosse table, où seuls Précédent/Suivant suffisent. Pour chaque écran : choisis paginate, simplePaginate ou cursorPaginate, écris la requête complète (relations préchargées comprises), justifie le choix par le coût des requêtes, et explique comment les filtres de l'écran 1 survivent au changement de page.",
+    hints: [
+      "Compte les requêtes de chaque variante : paginate = COUNT + page ; simplePaginate = page (taille+1) ; cursorPaginate = page à partir d'un curseur.",
+      "Le scroll infini avec insertions permanentes fait glisser l'OFFSET : quelle variante reste stable quand la ligne 1 change ?",
+      "Écran 1 : deux when() pour les filtres, un withQueryString() sur le paginator — trace le lien généré pour la page 2."
+    ],
+    solution: "(1) Catalogue public → paginate : l'utilisateur veut « page 12/215 »,\n    donc le COUNT se justifie.\n    $jeux = Jeu::with('editeur')->withCount('avis')\n        ->when($request->q, function ($query, $q) {\n            $query->where('titre', 'like', '%' . $q . '%');\n        })\n        ->when($request->categorie, function ($query, $cat) {\n            $query->whereHas('categories', function ($sub) use ($cat) {\n                $sub->where('nom', $cat);\n            });\n        })\n        ->orderBy('titre')\n        ->paginate(15)\n        ->withQueryString();\n    Lien page 2 généré : ?q=catan&categorie=Strategie&page=2 —\n    sans withQueryString, il ne resterait que ?page=2 et la recherche\n    serait perdue.\n\n(2) Mur d'avis mobile → cursorPaginate : avec des insertions\n    permanentes, l'OFFSET glisse (l'avis n°15 de la page 1 redevient\n    le n°1 de la page 2 → doublons). Le curseur « après tel id »\n    reste stable, et le COUNT est inutile en scroll infini.\n    $avis = Avis::with(['jeu', 'membre'])->latest('id')\n        ->cursorPaginate(20);\n\n(3) Admin des membres → simplePaginate : table énorme, COUNT(*)\n    coûteux, et personne n'a besoin de « page 4 812 ».\n    $membres = Membre::orderBy('id')->simplePaginate(50);\n\nConstantes des trois : tri stable obligatoire, relations préchargées\nAVANT la méthode terminale, per_page jamais laissé libre côté client.",
+    note: "Ce choix à trois options est un classique d'architecture : offset simple, offset sans total, ou keyset/cursor pagination — les mêmes débats existent chez Spring Data (Page vs Slice, exactement paginate vs simplePaginate !), en LINQ et chez Django. Au Niveau 6, ton API mobile utilisera le curseur et ton back-office l'offset : tu sauras dire pourquoi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

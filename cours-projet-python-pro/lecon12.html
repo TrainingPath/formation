@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Acheter un jeu : prix figé et couverture",
+  subtitle: "Le second stock, et la couverture de tests qui entre dans le pipeline.",
+  theory: `
+<h3>1. Acheter, sur l'autre stock</h3>
+<p>Acheter ressemble à louer, mais agit sur l'<em>autre</em> stock (<code>stock_vente</code>) et enregistre un <strong>montant figé</strong>. « Figer » un prix, c'est en garder une <strong>copie</strong> au moment de l'achat plutôt qu'un lien vivant vers le prix du jeu : ainsi, une facture reste fidèle même si le tarif évolue ensuite.</p>
+<pre class="pseudo">def acheter(client, jeu_id):   # enregistre l'achat d'un jeu
+    with transaction.atomic():   # transaction : tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charger + verrouiller le jeu
+        if jeu.stock_vente <= 0:   # plus d'exemplaire en vente ?…
+            raise StockInsuffisant("Plus de stock de vente")   # …refuser (annule la transaction)
+        achat = Achat.objects.create(client=client, jeu=jeu,   # ecriture 1 : creer l'achat…
+                    date_achat=timezone.now(),   # …date de l'achat
+                    montant=jeu.prix_achat)      # prix FIGÉ au moment de l'achat (copie du prix serveur)
+        jeu.stock_vente -= 1   # baisser le stock de vente
+        jeu.save(update_fields=["stock_vente"])   # ecriture 2 : enregistrer cette colonne
+        return achat   # renvoyer l'achat cree</pre>
+<p>Le montant est <strong>copié</strong> dans l'achat : si le vendeur change le prix demain, les achats d'hier gardent leur montant. Une facture ne change pas.</p>
+
+<h3>2. Le test du prix figé</h3>
+<pre class="pseudo">def test_prix_fige(self):   # le montant de l'achat ne doit pas suivre le prix du jeu
+    achat = services.acheter(self.client_u, self.jeu.id)   # jeu à 29,99 €
+    self.jeu.prix_achat = Decimal("39.99"); self.jeu.save()   # le vendeur change le prix APRES l'achat
+    achat.refresh_from_db()   # recharger l'achat depuis la base
+    self.assertEqual(achat.montant, Decimal("29.99"))       # inchangé ! (montant fige)</pre>
+
+<h3>3. La couverture entre dans la CI</h3>
+<pre class="pseudo"># ci.yml — job tests (ou couverture)
+- run: |   # une commande sur plusieurs lignes (le | garde les retours a la ligne)
+    pip install coverage   # installer l'outil de mesure de couverture
+    coverage run manage.py test   # lancer les tests en mesurant les lignes executees
+    coverage report --fail-under=80          # échoue sous le seuil (ici 80 %)</pre>
+<p>La couverture est un <strong>détecteur de trous</strong> : 80 % couverts ne prouve pas « bien testé », mais 40 % prouve que des pans entiers n'ont aucun filet.</p>
+
+<h3>4. Le seuil-cliquet (anti-recul)</h3>
+<pre class="pseudo">--fail-under se règle au NIVEAU ACTUEL (ex. 82 %), pas à 100 %.
+Il empêche de RECULER : une PR qui fait chuter la couverture est rouge.
+On le remonte au fil des progrès — un cliquet, pas une barre de saut.</pre>
+
+<h3>5. Louer et acheter : même ossature</h3>
+<pre class="pseudo">Les deux : transaction + verrou + contrôle de stock + exception métier.
+Quand une structure se répète, c'est le signe d'une architecture comprise —
+pas d'un copier-coller. Les deux stocks distincts (Merise) prennent tout leur sens.</pre>
+<div class="warn">Le montant vient de <code>jeu.prix_achat</code> (serveur), <strong>jamais</strong> d'un champ envoyé par le client. Un montant fourni par la requête serait modifiable — l'acheteur choisirait son prix. Comme pour l'identité (leçon 10), la valeur qui compte vient du serveur, pas de l'entrée utilisateur.</div>
+<div class="tip">La couverture ne remplace pas la réflexion : coverage report -m montre les LIGNES manquées, la vraie matière de travail. Le seuil-cliquet institutionnalise l'amélioration sans tyrannie — on progresse sans jamais reculer.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter décrémente…", opts: ["stock_location", "stock_vente", "Les deux", "Aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Le montant de l'achat vaut…", opts: ["jeu.prix_location", "jeu.prix_achat, copié (figé)", "0", "un champ du POST"], a: 1, exp: "Jamais du client !" },
+    { type: "qcm", q: "Pourquoi figer le prix ?", opts: ["Performance", "Garder le montant historique si le prix change", "Éviter un JOIN", "Obligation Django"], a: 1, exp: "Une facture ne change pas." },
+    { type: "vf", q: "Si le vendeur change prix_achat, les achats passés changent de montant.", a: false, exp: "Le montant est figé." },
+    { type: "qcm", q: "Le test du prix figé change le prix…", opts: ["Avant l'achat", "APRÈS l'achat, puis vérifie que le montant n'a pas bougé", "Jamais", "Dans le template"], a: 1, exp: "Le scénario réel." },
+    { type: "qcm", q: "La couverture mesure…", opts: ["La vitesse", "La part du code traversée par les tests", "La qualité des assertions", "Les commits"], a: 1, exp: "Détecteur de trous." },
+    { type: "vf", q: "80 % de couverture garantit que le code est bien testé.", a: false, exp: "Traverser ≠ vérifier." },
+    { type: "qcm", q: "--fail-under fait…", opts: ["Formater", "Échouer le job sous le seuil", "Monter à 80 %", "Rien"], a: 1, exp: "Cliquet anti-recul." },
+    { type: "qcm", q: "Le seuil se règle…", opts: ["À 100 % d'office", "Au niveau actuel, remonté au fil des progrès", "À 0", "Au hasard"], a: 1, exp: "Un cliquet." },
+    { type: "qcm", q: "Une PR qui fait chuter la couverture…", opts: ["Passe", "Est rouge", "Accélère", "Chiffre"], a: 1, exp: "Anti-recul." },
+    { type: "qcm", q: "Louer et acheter partagent…", opts: ["Rien", "La même ossature (transaction, verrou, stock, exception)", "Deux bases", "Un langage"], a: 1, exp: "Architecture cohérente." },
+    { type: "qcm", q: "Les deux stocks distincts viennent…", opts: ["D'une mode", "Du modèle Merise", "De DRF", "Du frontend"], a: 1, exp: "Conception → code." },
+    { type: "qcm", q: "coverage report -m montre…", opts: ["Le pourcentage seul", "Les lignes non couvertes (matière de travail)", "Le CSS", "Un cookie"], a: 1, exp: "Cibler." },
+    { type: "vf", q: "Un montant fourni par la requête serait modifiable par l'acheteur.", a: true, exp: "D'où la valeur serveur." },
+    { type: "qcm", q: "acheter renvoie l'Achat pour…", opts: ["Rien", "Que la vue affiche le récapitulatif", "Migrer", "Chiffrer"], a: 1, exp: "Service renvoie, vue présente." }
+  ],
+  final: {
+    title: "Exercice final — L'achat figé, couvert",
+    intro: `<p>On écrit l'achat, son test de prix figé, et le cliquet de couverture.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock contrôlé :", opts: ["stock_vente", "stock_location", "les deux", "aucun"], a: 0, exp: "Achat = vente." },
+      { type: "qcm", q: "Le montant vient de :", opts: ["jeu.prix_achat (copié)", "du POST", "de la config", "du rôle"], a: 0, exp: "Serveur, figé." },
+      { type: "qcm", q: "Le test :", opts: ["Change le prix APRÈS l'achat, vérifie montant inchangé", "ne change rien", "supprime le jeu", "mock tout"], a: 0, exp: "Le scénario réel." },
+      { type: "qcm", q: "La couverture en CI :", opts: ["coverage report --fail-under=<niveau actuel>", "à 100 %", "jamais", "à 0"], a: 0, exp: "Cliquet." },
+      { type: "vf", q: "Louer et acheter suivent la même ossature transactionnelle.", a: true, exp: "Mêmes garanties." }
+    ],
+    solution: `<pre class="pseudo">def acheter(client, jeu_id):   # enregistre un achat
+    with transaction.atomic():   # transaction : tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charger + verrouiller le jeu
+        if jeu.stock_vente <= 0: raise StockInsuffisant("Plus de stock de vente")   # refuser si plus de stock
+        achat = Achat.objects.create(client=client, jeu=jeu,   # ecriture 1 : l'achat…
+                    date_achat=timezone.now(), montant=jeu.prix_achat)  # FIGÉ : copie du prix serveur
+        jeu.stock_vente -= 1; jeu.save(update_fields=["stock_vente"])   # ecriture 2 : baisser puis enregistrer le stock
+        return achat   # renvoyer l'achat
+
+def test_prix_fige(self):   # le montant reste fige apres un changement de prix
+    achat = services.acheter(self.u, self.jeu.id)   # acheter au prix initial
+    self.jeu.prix_achat = Decimal("99"); self.jeu.save()   # changer le prix APRES
+    achat.refresh_from_db(); self.assertEqual(achat.montant, self.prix_initial)   # montant inchange
+
+# ci.yml : coverage run manage.py test && coverage report --fail-under=82   # cliquet : echoue sous 82 %</pre>
+<p>L'achat est figé et couvert. Demain : le frontend, échappé et sous en-têtes.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton achat, son test et le cliquet…",
+  items: [
+  { id: "proj6py-l12", title: "Le trou de couverture comblé", level: 3,
+    statement: "coverage report -m montre que services.acheter est peu couvert (la branche stock nul n'est pas testée). Écris : la lecture du rapport, le test manquant (achat sur stock nul → StockInsuffisant, aucun achat créé, stock inchangé), et la mise à jour du seuil (cliquet). Explique pourquoi un trou de couverture cache souvent une règle métier sans garde.",
+    hints: [
+      "coverage report -m services.py -> lignes de la branche « stock <= 0 » non couvertes.",
+      "Le test : jeu à stock_vente=0, assertRaises(StockInsuffisant), Achat.objects.count()==0.",
+      "Après le test : couverture monte -> remonter --fail-under."
+    ],
+    solution: "# 1. LIRE le trou\n$ coverage run manage.py test && coverage report -m | grep services   # mesurer puis filtrer la ligne du service\n# catalogue/services.py   120  6  95%   48-49   # (sortie) 6 lignes non couvertes : 48-49\n# -> lignes 48-49 = la branche « if stock_vente <= 0: raise » jamais exécutée\n\n# 2. COMBLER — la branche de refus, testée\nclass AcheterTests(TestCase):   # tests de l'achat\n    def setUp(self):   # donnees communes avant chaque test\n        self.cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        self.jeu = Jeu.objects.create(titre=\"Azul\", prix_achat=Decimal(\"39.99\"),   # un jeu…\n                        prix_location=4, stock_vente=0, categorie=self.cat)  # stock NUL\n        self.u = User.objects.create_user(\"c@ludo.fr\", \"c@ludo.fr\", \"Mdp8carac!\")   # un client\n\n    def test_achat_stock_nul_refuse(self):   # acheter sans stock doit etre refuse\n        with self.assertRaises(services.StockInsuffisant):   # on ATTEND l'exception…\n            services.acheter(self.u, self.jeu.id)   # …en tentant l'achat\n        self.assertEqual(Achat.objects.count(), 0)   # aucun achat fantôme\n        self.jeu.refresh_from_db()   # recharger le jeu\n        self.assertEqual(self.jeu.stock_vente, 0)     # stock inchangé\n\n# 3. LE CLIQUET\n$ coverage report        # TOTAL passe de 95 % à ~97 %\n# ci.yml : coverage report --fail-under=90   (était 85)\n\n# Pourquoi un trou cache une règle sans garde :\n# La branche « stock <= 0 » EST la règle de sécurité métier (pas de vente\n# à découvert). Non couverte, elle pourrait être cassée par un refactoring\n# sans que rien ne le signale. Combler le trou, c'est mettre un garde sur\n# la règle — la couverture pointe précisément vers ce qui n'est pas protégé.",
+    note: "coverage report -m transforme un pourcentage abstrait en lignes précises — et ces lignes non couvertes sont souvent des branches d'erreur, c'est-à-dire les règles de sécurité métier (refus de vente à découvert, ici). Le trou de couverture pointe vers ce qui n'a pas de filet ; le combler protège la règle, et le cliquet garantit qu'on ne rouvrira pas le trou." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Mise en place : projet C++, CMake, MySQL",
+  subtitle: "Créer le squelette, organiser avec CMake, et ouvrir la première connexion via Connector/C++.",
+  theory: `
+<h3>1. MySQL Connector/C++</h3>
+<p>Pour qu'un programme C++ parle à la base de données <strong>MySQL</strong> (le grand classeur électronique qui conserve les informations), il lui faut un <strong>connecteur</strong> : un intermédiaire, comme un traducteur entre deux personnes qui ne parlent pas la même langue. MySQL en fournit un <strong>orienté objet</strong> pour le C++ (de style <em>JDBC</em>, le connecteur bien connu du monde Java). « Orienté objet » veut dire qu'on manipule la base à travers des <strong>objets</strong> — des morceaux de programme qui regroupent des données et des actions. Les trois principaux sont : <code>sql::Connection</code> (la <strong>connexion</strong> ouverte, le fil de communication avec la base), <code>sql::PreparedStatement</code> (une requête « préparée », une question toute prête à envoyer) et <code>sql::ResultSet</code> (le <strong>jeu de résultats</strong>, le tableau de réponses renvoyé par la base). On installe ce connecteur en ajoutant à l'ordinateur un <strong>paquet</strong> (un logiciel prêt à installer) nommé <code>libmysqlcppconn-dev</code>, puis on <strong>lie</strong> la bibliothèque <code>mysqlcppconn</code> au moment de fabriquer le programme — « lier », c'est brancher notre code sur ce code déjà écrit, comme visser une pièce détachée.</p>
+
+<h3>2. Ouvrir une connexion (avec RAII)</h3>
+<pre class="pseudo">#include &lt;mysql_driver.h&gt;          // apporte le "driver" (le pilote qui sait dialoguer avec MySQL)
+#include &lt;mysql_connection.h&gt;      // apporte la classe sql::Connection (une connexion ouverte)
+#include &lt;memory&gt;                  // apporte std::unique_ptr (le "pointeur intelligent" utilise plus bas)
+
+auto* driver = sql::mysql::get_mysql_driver_instance();   // recupere le pilote unique fourni par MySQL
+std::unique_ptr&lt;sql::Connection&gt; con(                      // on range la connexion dans un unique_ptr...
+    driver-&gt;connect("tcp://127.0.0.1:3306", "ludo", "secret"));  // ...en se connectant : adresse:port, identifiant, mot de passe
+con-&gt;setSchema("ludotheque");                             // choisit la base a utiliser (equivaut a "USE ludotheque")
+// le unique_ptr ferme la connexion tout seul en fin de portee (RAII)</pre>
+<p>Décryptons. <code>#include</code> demande d'ajouter un fichier tout fait avant de compiler (comme importer une boîte à outils). Le <strong>driver</strong> (ou « pilote ») est le composant qui sait techniquement parler à MySQL ; <code>get_mysql_driver_instance()</code> en fournit un exemplaire unique. <code>connect(...)</code> ouvre réellement la connexion : on lui donne l'<strong>adresse</strong> de la base (<code>tcp://127.0.0.1:3306</code> désigne « cet ordinateur-ci », sur la porte numéro 3306), un <strong>identifiant</strong> et un <strong>mot de passe</strong>. <code>setSchema</code> choisit ensuite quelle base ouvrir parmi celles disponibles. Le mot <code>auto</code> laisse le compilateur deviner le type tout seul.</p>
+<div class="warn">On tient les objets du connecteur dans des <code>std::unique_ptr</code> — un <strong>pointeur intelligent</strong>, c'est-à-dire une boîte qui contient l'objet et qui le range (le « ferme ») automatiquement quand on n'en a plus besoin. Ce mécanisme s'appelle le <strong>RAII</strong> : la <strong>fermeture est automatique</strong>, pas de <code>close()</code> à oublier comme en langage C. C'est l'un des grands conforts du C++ — comme une porte qui se verrouille toute seule derrière soi.</div>
+
+<h3>3. Une première requête</h3>
+<p>Une <strong>requête</strong> est une question (ou un ordre) que l'on pose à la base, écrite en langage <strong>SQL</strong>. Ici on veut compter les jeux.</p>
+<pre class="pseudo">std::unique_ptr&lt;sql::Statement&gt; stmt(con-&gt;createStatement());   // cree un "ordre SQL" simple, pret a etre envoye
+std::unique_ptr&lt;sql::ResultSet&gt; res(                           // on range le resultat dans un unique_ptr...
+    stmt-&gt;executeQuery("SELECT COUNT(*) AS n FROM jeu"));      // ...en executant la requete : compte les lignes de la table jeu
+res-&gt;next();                                                   // avance sur la premiere (et ici unique) ligne du resultat
+int total = res-&gt;getInt("n");                                 // lit la colonne nommee n (le nombre) sous forme d'entier</pre>
+<p><code>createStatement</code> prépare un ordre SQL vide. <code>executeQuery</code> l'exécute et renvoie un <code>ResultSet</code> (le tableau de réponses) : ici <code>SELECT COUNT(*) AS n FROM jeu</code> veut dire « compte (<code>COUNT</code>) toutes les lignes de la table <code>jeu</code> et appelle ce total <code>n</code> ». Un <code>ResultSet</code> se parcourt ligne par ligne : <code>next()</code> avance d'une ligne (et vaut « faux » quand il n'y en a plus). <code>getInt("n")</code> lit la colonne <code>n</code> en tant qu'entier — on accède aux colonnes par leur nom, ce qui est clair et sûr.</p>
+
+<h3>4. CMake : organiser le projet</h3>
+<p>Quand un projet contient plusieurs fichiers, il faut un chef d'orchestre pour les <strong>compiler</strong> (traduire notre texte en langage que la machine exécute) et les assembler. C'est le rôle de <strong>CMake</strong>, piloté par un fichier <code>CMakeLists.txt</code> — la recette de construction (ses lignes se commentent avec <code>#</code>).</p>
+<pre class="pseudo">cmake_minimum_required(VERSION 3.16)   # exige au moins la version 3.16 de CMake
+project(Ludotheque CXX)                # nom du projet ; CXX signifie "langage C++"
+set(CMAKE_CXX_STANDARD 17)             # on programme selon la norme C++17
+add_executable(ludo main.cpp Db.cpp)   # fabrique le programme "ludo" a partir de ces fichiers
+target_compile_options(ludo PRIVATE -Wall -Wextra)   # active tous les avertissements du compilateur
+target_link_libraries(ludo mysqlcppconn)             # relie la bibliotheque du connecteur MySQL</pre>
+<pre class="pseudo">cmake -S . -B build &amp;&amp; cmake --build build   # configure le projet puis le compile
+./build/ludo                                 # lance le programme fraichement construit</pre>
+<p>Un <strong>exécutable</strong> est le programme final que l'on peut lancer. <code>add_executable</code> dit quels fichiers le composent. <code>-Wall -Wextra</code> demande au compilateur de signaler tout ce qui lui semble suspect (des <strong>avertissements</strong>, comme un correcteur orthographique qui souligne les fautes). <code>target_link_libraries</code> branche la <strong>bibliothèque</strong> du connecteur (du code déjà écrit et réutilisable). La seconde boîte contient des commandes de <strong>terminal</strong> (la fenêtre où l'on tape des ordres au système) : configurer, compiler, puis lancer.</p>
+
+<h3>5. Isoler la connexion</h3>
+<div class="tip">Plutôt que de rouvrir une connexion partout, on la place dans une classe/fonction <code>Db</code> réutilisée dans tout le projet : une seule <code>db_connect()</code> qui renvoie un <code>unique_ptr&lt;sql::Connection&gt;</code> (donc à fermeture automatique). Les erreurs du connecteur (base injoignable, mauvais mot de passe…) remontent sous forme d'<strong>exceptions</strong> — un signal d'alarme (<code>sql::SQLException</code>) que l'on <strong>attrape</strong> là où l'on sait réagir, comme un filet de sécurité (détaillé à la leçon 8).</div>
+<h3>Aller plus loin — pré-incrément (++i) et post-incrément (i++)</h3>
+<p>Les deux écritures ajoutent 1 à la variable ; la différence n'apparaît que lorsqu'on <strong>lit la valeur au moment même</strong> de l'incrémentation. La formule à retenir : <code>i++</code> « donne sa valeur, PUIS grandit » ; <code>++i</code> « grandit, PUIS donne sa valeur ».</p>
+<pre class="pseudo">int a = 5;        // a vaut 5
+int b = a++;      // POST-increment : b prend l'ANCIENNE valeur -> b = 5, et ENSUITE a passe a 6
+int c = 5;        // c vaut 5
+int d = ++c;      // PRE-increment : c passe d'abord a 6, PUIS d prend la NOUVELLE valeur -> d = 6</pre>
+<p>Dans une boucle <code>for (i = 0; i &lt; 5; i++)</code>, on ne lit pas le résultat de <code>i++</code> : on veut seulement « ajouter 1 ». C'est pourquoi <code>i++</code> et <code>++i</code> y donnent exactement la même boucle et sont interchangeables.</p>`,
+  exercises: [
+    { type: "qcm", q: "Le Connector/C++ est un connecteur…", opts: ["procédural", "orienté objet (Connection, PreparedStatement, ResultSet)", "en Python", "réseau bas niveau"], a: 1, exp: "Style JDBC." },
+    { type: "qcm", q: "Quel paquet installe le connecteur C++ ?", opts: ["libmysqlclient-dev", "libmysqlcppconn-dev", "mysql-cpp", "connector"], a: 1, exp: "En-têtes + lib mysqlcppconn." },
+    { type: "qcm", q: "On obtient le driver avec…", opts: ["new Driver()", "sql::mysql::get_mysql_driver_instance()", "malloc", "connect()"], a: 1, exp: "Singleton du driver." },
+    { type: "qcm", q: "Pour la fermeture automatique, on tient les objets dans…", opts: ["des pointeurs bruts", "des std::unique_ptr (RAII)", "des globales", "rien"], a: 1, exp: "Pas de close() à oublier." },
+    { type: "qcm", q: "setSchema sélectionne…", opts: ["la table", "la base de données courante", "l'utilisateur", "le port"], a: 1, exp: "USE ludotheque." },
+    { type: "qcm", q: "executeQuery sert pour…", opts: ["un INSERT", "un SELECT (renvoie un ResultSet)", "un COMMIT", "un CREATE"], a: 1, exp: "Requête de lecture." },
+    { type: "qcm", q: "On parcourt un ResultSet avec…", opts: ["res->loop()", "while (res->next())", "for res", "res.each"], a: 1, exp: "next() avance." },
+    { type: "qcm", q: "res->getInt(\"n\") récupère…", opts: ["une chaîne", "un entier de la colonne n", "un double", "un objet"], a: 1, exp: "Accès typé." },
+    { type: "qcm", q: "CMake sert à…", opts: ["afficher", "organiser et construire un projet C++ multi-fichiers", "se connecter", "trier"], a: 1, exp: "Build." },
+    { type: "qcm", q: "On lie le connecteur avec…", opts: ["target_link_libraries(ludo mysqlcppconn)", "un include", "un printf", "rien"], a: 1, exp: "Édition de liens." },
+    { type: "vf", q: "En C++, la fermeture des objets du connecteur est automatique via RAII.", a: true, exp: "unique_ptr." },
+    { type: "qcm", q: "Les erreurs du connecteur remontent sous forme de…", opts: ["codes de retour", "exceptions (sql::SQLException)", "printf", "logs seuls"], a: 1, exp: "try/catch." },
+    { type: "qcm", q: "Où isoler la connexion ?", opts: ["dans chaque fichier", "dans une classe/fonction Db partagée", "dans le CMakeLists", "dans l'UI"], a: 1, exp: "db_connect() réutilisée." },
+    { type: "qcm", q: "cmake --build fait…", opts: ["exécuter", "compiler ce qui a changé", "se connecter", "afficher"], a: 1, exp: "Construction incrémentale." },
+    { type: "qcm", q: "-Wall -Wextra active…", opts: ["l'optimisation", "les avertissements du compilateur", "MySQL", "les tests"], a: 1, exp: "Qualité dès le début." }
+  ],
+  final: {
+    title: "Exercice final — La fonction db_connect",
+    intro: `<p>On isole la connexion. Analyse :</p>
+<pre class="pseudo">sql::Connection* db_connect() {        // renvoie un POINTEUR BRUT vers la connexion (voila le probleme)
+    auto* driver = sql::mysql::get_mysql_driver_instance();   // recupere le pilote MySQL
+    sql::Connection* con = driver-&gt;connect("tcp://127.0.0.1:3306", "ludo", "secret");   // ouvre la connexion
+    con-&gt;setSchema("ludotheque");      // choisit la base ludotheque
+    return con;                        // rend le pointeur brut : mais QUI fera le delete ? risque de fuite memoire
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Le défaut principal :", opts: ["aucun", "renvoyer un pointeur brut : qui fait delete ? risque de fuite", "trop lent", "rien"], a: 1, exp: "Préférer unique_ptr." },
+      { type: "qcm", q: "Le type de retour idéal :", opts: ["sql::Connection*", "std::unique_ptr<sql::Connection> (RAII)", "int", "void"], a: 1, exp: "Fermeture automatique." },
+      { type: "qcm", q: "Que faire des erreurs de connexion ?", opts: ["les ignorer", "les laisser remonter en exception (sql::SQLException), attrapée par l'appelant", "un printf", "rien"], a: 1, exp: "try/catch." },
+      { type: "qcm", q: "Où mettre idéalement les identifiants ?", opts: ["en dur", "dans des variables d'environnement (leçon 19)", "dans l'UI", "dans le CMakeLists"], a: 1, exp: "Secrets externalisés." },
+      { type: "qcm", q: "Avec unique_ptr, la connexion se ferme…", opts: ["à la main", "automatiquement en fin de portée", "jamais", "au commit"], a: 1, exp: "RAII." }
+    ],
+    solution: `<pre class="pseudo">#include &lt;mysql_driver.h&gt;
+#include &lt;mysql_connection.h&gt;
+#include &lt;memory&gt;
+
+std::unique_ptr&lt;sql::Connection&gt; db_connect() {
+    auto* driver = sql::mysql::get_mysql_driver_instance();
+    std::unique_ptr&lt;sql::Connection&gt; con(
+        driver-&gt;connect("tcp://127.0.0.1:3306", "ludo", "secret"));
+    con-&gt;setSchema("ludotheque");
+    return con;   // RAII : fermeture automatique ; pas de fuite
+}
+// Les erreurs (sql::SQLException) remontent et sont attrapées par l'appelant.</pre>
+<p>Un <code>unique_ptr</code> garantit la fermeture ; les exceptions gèrent les erreurs. Le socle est posé. Demain : traduire le MCD en tables SQL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpp-l02", title: "Compter les jeux", level: 2,
+    statement: "En supposant un sql::Connection& con, écris une fonction int nbJeux(sql::Connection& con) qui exécute « SELECT COUNT(*) AS n FROM jeu » et renvoie le nombre. Utilise des unique_ptr pour le Statement et le ResultSet.",
+    hints: [
+      "std::unique_ptr<sql::Statement> stmt(con.createStatement());",
+      "std::unique_ptr<sql::ResultSet> res(stmt->executeQuery(\"SELECT COUNT(*) AS n FROM jeu\"));",
+      "res->next(); return res->getInt(\"n\");"
+    ],
+    solution: "#include <cppconn/statement.h>\n#include <cppconn/resultset.h>\n#include <memory>\n\nint nbJeux(sql::Connection& con) {\n    std::unique_ptr<sql::Statement> stmt(con.createStatement());\n    std::unique_ptr<sql::ResultSet> res(\n        stmt->executeQuery(\"SELECT COUNT(*) AS n FROM jeu\"));\n    res->next();\n    return res->getInt(\"n\");\n    // stmt et res sont fermes automatiquement (RAII) a la sortie\n}",
+    note: "Les unique_ptr ferment le Statement et le ResultSet à la fin de la fonction, sans effort. Le connecteur est orienté objet : on lit les colonnes par nom (getInt(\"n\")). Les erreurs éventuelles remontent en sql::SQLException." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

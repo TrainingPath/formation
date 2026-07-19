@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Authentification avec JWT",
+  subtitle: "Qui es-tu ? Les jetons signés, l'authentification des API modernes.",
+  theory: `
+<h3>1. Authentification vs autorisation</h3>
+<p>Deux questions distinctes : l'<strong>authentification</strong> répond à « QUI es-tu ? » (aujourd'hui), l'<strong>autorisation</strong> à « as-tu le DROIT ? » (demain). Analogie : montrer sa carte d'identité à l'entrée (authentification), puis vérifier si ton billet donne accès au salon VIP (autorisation).</p>
+<h3>2. Pourquoi des jetons et pas des sessions ?</h3>
+<p><strong>Sans état</strong> (stateless) veut dire que le serveur ne garde AUCUN souvenir entre deux requêtes. Une API est sans état : pas de session serveur. Le client s'authentifie une fois (login), reçoit un <strong>JWT</strong> (JSON Web Token, « jeton web JSON » : un laissez-passer signé), puis le joint à CHAQUE requête :</p>
+<pre class="pseudo">Authorization: Bearer eyJhbGciOi...griffonnage...signé   // en-tête HTTP joint à chaque requête ; Bearer = "porteur" du jeton</pre>
+<h3>3. Anatomie d'un JWT</h3>
+<pre class="pseudo">en-tête.charge-utile.signature                       // trois parties séparées par des points
+- en-tête   : l'algorithme de signature
+- charge    : les CLAIMS (affirmations) : sub=3, name=aurelia,
+              role=admin, exp=1789… (expiration)
+- signature : hachage (en-tête + charge + CLÉ SECRÈTE du serveur)</pre>
+<p>Un <strong>claim</strong> (« affirmation ») est une information portée par le jeton (identifiant, nom, rôle, expiration). Point crucial : le contenu est <strong>lisible par tous</strong> (simple base64 — un encodage, pas un chiffrement) mais <strong>infalsifiable</strong> : modifier un claim invalide la signature, que seul le serveur (avec sa clé secrète) peut produire. Donc : jamais de données sensibles dedans, mais confiance totale dans ce qu'il affirme.</p>
+<h3>4. Mots de passe : le rappel non négociable</h3>
+<p>On ne stocke JAMAIS un mot de passe en clair — seulement son <strong>hash</strong> (une empreinte à sens unique : on peut la calculer mais pas la « remonter » vers le mot de passe) lent et salé (bcrypt via BCrypt.Net, ou PBKDF2 intégré). À la connexion, on compare le hash :</p>
+<pre class="pseudo">// Inscription :
+user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);      // on stocke le HASH, jamais le mot de passe en clair
+// Connexion :
+bool ok = BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash);   // compare le mot de passe fourni au hash enregistré</pre>
+<h3>5. Le circuit complet</h3>
+<pre class="pseudo">// 1. Configuration (Program.cs) :
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)  // active l'authentification par jeton Bearer
+    .AddJwtBearer(o =&gt; { /* clé, émetteur, audience */ });                  // configure la validation du JWT (clé secrète…)
+app.UseAuthentication();   // AVANT UseAuthorization !                       // 1er : établir QUI est l'appelant
+app.UseAuthorization();                                                      // 2e : vérifier ses droits (leçon 17)
+
+// 2. Le login émet le jeton :
+[HttpPost("login")]                                                         // POST api/auth/login
+public ActionResult&lt;object&gt; Login(LoginDto dto)
+{
+    var user = /* chercher par email */;                                    // on récupère l'utilisateur
+    if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))  // inconnu OU mauvais mot de passe
+        return Unauthorized();                   // 401, message vague !     // sans révéler LEQUEL a échoué
+
+    string jeton = GenererJwt(user);             // claims + expiration + signature  // fabrique le jeton signé
+    return new { token = jeton };                                           // renvoie le jeton au client
+}
+
+// 3. Protéger un endpoint :
+[Authorize]                       // jeton valide exigé → sinon 401         // porte fermée à qui ne s'est pas identifié
+[HttpGet("mes-taches")]                                                     // GET api/taches/mes-taches
+public ... { var id = User.FindFirstValue(ClaimTypes.NameIdentifier); ... }  // lit l'id de l'utilisateur dans les claims du jeton</pre>
+<div class="warn">Le message d'échec du login doit rester vague (« Identifiants incorrects ») : dire « cet email n'existe pas » aiderait un attaquant à énumérer les comptes.</div>
+<div class="tip">401 Unauthorized = « je ne sais pas qui tu es » (pas ou mauvais jeton). 403 Forbidden = « je sais qui tu es, mais tu n'as pas le droit » (demain). Ne les confonds plus jamais.</div>`,
+  exercises: [
+    { type: "qcm", q: "Authentification et autorisation : quelle différence ?", opts: ["Synonymes", "Authentification = qui es-tu ; autorisation = as-tu le droit", "L'autorisation vient en premier", "Aucune"], a: 1, exp: "Deux questions, deux mécanismes, deux leçons." },
+    { type: "qcm", q: "Pourquoi une API utilise-t-elle des jetons plutôt que des sessions serveur ?", opts: ["C'est plus joli", "L'API est sans état : le jeton transporte l'identité à chaque requête, aucun stockage serveur", "Les sessions sont payantes", "Question de mode"], a: 1, exp: "Le client PROUVE son identité à chaque appel." },
+    { type: "qcm", q: "Dans quel en-tête HTTP le client envoie-t-il son JWT ?", opts: ["Cookie", "Authorization: Bearer <jeton>", "X-Token", "Accept"], a: 1, exp: "Le schéma Bearer : « porteur » du jeton." },
+    { type: "qcm", q: "De quoi se compose un JWT ?", opts: ["D'un mot de passe chiffré", "En-tête . charge utile (claims) . signature", "D'un GUID", "D'une clé publique"], a: 1, exp: "Trois parties séparées par des points." },
+    { type: "qcm", q: "Le contenu d'un JWT est-il secret ?", opts: ["Oui, chiffré", "Non : lisible par tous (base64) mais INFALSIFIABLE grâce à la signature", "Oui, sauf l'en-tête", "Non, et falsifiable"], a: 1, exp: "Lisible ≠ modifiable. Jamais de données sensibles dedans." },
+    { type: "qcm", q: "Un client modifie role=user en role=admin dans son JWT. Résultat ?", opts: ["Il devient admin", "La signature ne correspond plus : jeton rejeté, 401", "Ça dépend du navigateur", "Le serveur re-signe"], a: 1, exp: "Sans la clé secrète du serveur, impossible de produire une signature valide." },
+    { type: "qcm", q: "Qu'est-ce qu'un claim ?", opts: ["Une erreur", "Une affirmation portée par le jeton : identifiant, nom, rôle, expiration…", "Une route", "Un mot de passe"], a: 1, exp: "sub, name, role, exp : l'identité en pièces détachées." },
+    { type: "qcm", q: "Comment stocker le mot de passe d'un utilisateur ?", opts: ["En clair", "Uniquement son hash lent et salé (BCrypt/PBKDF2)", "En base64", "Dans le JWT"], a: 1, exp: "Même une fuite de base ne révèle pas les mots de passe." },
+    { type: "qcm", q: "Pourquoi bcrypt est-il volontairement LENT ?", opts: ["Mauvaise conception", "Pour rendre la force brute (milliards d'essais) impraticable", "Pour économiser le CPU", "À cause de .NET"], a: 1, exp: "0,1 s pour toi = des siècles pour l'attaquant." },
+    { type: "qcm", q: "Que fait l'attribut [Authorize] sur un endpoint ?", opts: ["Il le cache", "Il exige un jeton valide : sans jeton (ou invalide/expiré) → 401", "Il chiffre la réponse", "Il logge l'accès"], a: 1, exp: "La porte fermée à qui ne s'est pas identifié." },
+    { type: "qcm", q: "401 vs 403 :", opts: ["Identiques", "401 = pas identifié ; 403 = identifié mais pas le droit", "403 = pas identifié", "401 = erreur serveur"], a: 1, exp: "La nuance clé de demain." },
+    { type: "qcm", q: "Pourquoi « Identifiants incorrects » plutôt que « Cet email n'existe pas » ?", opts: ["Politesse", "Ne pas permettre l'énumération des comptes existants", "C'est plus court", "Traduction"], a: 1, exp: "Ne jamais confirmer l'existence d'un compte à un inconnu." },
+    { type: "qcm", q: "Que contient le claim exp ?", opts: ["L'expérience", "La date d'expiration : passé ce moment, le jeton est refusé", "L'exportation", "L'expéditeur"], a: 1, exp: "Un jeton volé a une durée de vie limitée." },
+    { type: "vf", q: "app.UseAuthentication() doit être placé AVANT app.UseAuthorization() dans le pipeline.", a: true, exp: "Logique : identifier QUI (authentification) avant de vérifier les DROITS (autorisation). L'ordre du pipeline est fonctionnel." },
+    { type: "vf", q: "Comme le JWT est signé, on peut y mettre le mot de passe de l'utilisateur.", a: false, exp: "JAMAIS : le contenu est LISIBLE par quiconque possède le jeton. Signé ≠ chiffré." }
+  ],
+  final: {
+    title: "Exercice final — Le circuit d'authentification",
+    intro: `<p>Session curl complète :</p>
+<pre class="pseudo">$ curl -i -X POST .../api/auth/login -H "Content-Type: application/json" \\   # tentative de login…
+       -d '{"email":"aurelia@mail.com","password":"mauvais"}'                  # …avec un mauvais mot de passe
+HTTP/1.1 401 Unauthorized                                                       # identité non établie → 401
+
+$ curl -i -X POST .../api/auth/login -H "Content-Type: application/json" \\   # nouvelle tentative…
+       -d '{"email":"aurelia@mail.com","password":"correct!"}'                 # …avec le bon mot de passe
+HTTP/1.1 200 OK                                                                 # succès
+{"token":"eyJhbGciOiJIUzI1NiIs..."}                                            # le serveur renvoie le JWT
+
+$ curl -i .../api/taches/mes-taches                                             # on appelle un endpoint protégé SANS jeton
+HTTP/1.1 401 Unauthorized                                                       # aucune identité jointe → 401
+
+$ curl -i .../api/taches/mes-taches -H "Authorization: Bearer eyJhbGciOi..."   # cette fois AVEC le jeton
+HTTP/1.1 200 OK                                                                 # accès accordé
+[{"id":1,"titre":"Réviser JWT","estTerminee":false}]                           # les tâches de l'utilisateur</pre>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi la 3e requête échoue-t-elle alors que le login a réussi juste avant ?", opts: ["Le serveur a oublié", "Aucun jeton joint : une API sans état ne « se souvient » pas — le jeton se présente à CHAQUE requête", "Le jeton a expiré en 2 secondes", "Bug"], a: 1, exp: "Pas de session : l'identité voyage dans l'en-tête, à chaque appel." },
+      { type: "qcm", q: "Comment le serveur sait-il QUELLES tâches renvoyer dans la 4e requête ?", opts: ["Par l'IP", "Il lit l'identifiant de l'utilisateur dans les claims du jeton (User.FindFirstValue...)", "Par cookie", "Il renvoie tout"], a: 1, exp: "Le jeton porte l'identité ; le code filtre par MembreId." },
+      { type: "qcm", q: "La 1re réponse (mauvais mot de passe) et la 3e (pas de jeton) ont le même statut 401. Cohérent ?", opts: ["Non, c'est un bug", "Oui : dans les deux cas, l'identité n'est pas établie", "Non, la 1re devrait être 403", "Peu importe"], a: 1, exp: "401 = identité manquante ou invalide, quel qu'en soit le chemin." },
+      { type: "qcm", q: "Comment la vérification du mot de passe s'est-elle faite côté serveur ?", opts: ["password == stocké", "BCrypt.Verify(fourni, hashStocké) : on compare au hash, jamais au clair", "SELECT password", "Par le JWT"], a: 1, exp: "Le mot de passe en clair n'existe nulle part côté serveur." },
+      { type: "vf", q: "Si un attaquant vole ce jeton, il peut appeler l'API à la place d'Aurélia jusqu'à l'expiration.", a: true, exp: "D'où : HTTPS obligatoire, expiration courte, et ne jamais logger les jetons." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 16 :
+// 1. API sans état : login → JWT → Authorization: Bearer à chaque requête.
+// 2. JWT = en-tête.claims.signature : lisible mais infalsifiable.
+//    Jamais de secret dedans ; expiration obligatoire.
+// 3. Mots de passe : hash bcrypt (Verify), jamais de clair, message d'échec vague.
+// 4. [Authorize] exige l'identité ; les claims donnent qui/quoi.
+// 5. 401 = pas identifié ; 403 = pas le droit (demain).
+// 6. UseAuthentication AVANT UseAuthorization.</pre>
+<p>On sait QUI appelle. Demain : qui a le droit de faire QUOI — rôles et politiques d'autorisation.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-jwt-login", title: "La méthode de connexion complète", level: 3,
+    statement: "Écris la méthode <code>Login(LoginDto dto)</code> asynchrone : cherche l'utilisateur par email (FirstOrDefaultAsync), vérifie le mot de passe avec BCrypt ; en cas d'échec (utilisateur inconnu OU mauvais mot de passe), renvoie un 401 avec le MÊME message vague ; en cas de succès, renvoie un objet <code>{ token }</code> produit par <code>_jwt.Generer(user)</code> (service injecté).",
+    hints: [
+      "var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);",
+      "Un seul if pour les deux échecs : if (user == null || !BCrypt.Net.BCrypt.Verify(...)) return Unauthorized(...);",
+      "Ne JAMAIS distinguer « email inconnu » de « mauvais mot de passe » dans la réponse."
+    ],
+    solution: "[HttpPost(\"login\")]\npublic async Task<ActionResult<object>> Login(LoginDto dto)\n{\n    // 1. Chercher l'utilisateur par email\n    var user = await _context.Users\n        .FirstOrDefaultAsync(u => u.Email == dto.Email);\n\n    // 2. Échec unique et VAGUE pour les deux cas :\n    //    email inconnu OU mauvais mot de passe\n    if (user == null ||\n        !BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))  // compare au hash\n    {\n        return Unauthorized(new { title = \"Identifiants incorrects\" }); // 401\n    }\n\n    // 3. Succès : émettre le jeton signé (claims + expiration)\n    string token = _jwt.Generer(user);            // service JWT injecté\n    return new { token };                         // renvoie le jeton au client\n}",
+    note: "Détail qui compte : grâce au user == null || !Verify(...), le code ne révèle jamais lequel des deux a échoué — ni dans la réponse, ni par une différence de comportement." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

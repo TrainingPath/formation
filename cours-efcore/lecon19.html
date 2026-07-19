@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Suivi des entités : états, Attach, AsSplitQuery",
+  subtitle: "Ton API reçoit des entités fantômes : apprends à les rattacher sans tout écraser.",
+  theory: `
+<h3>1. Les cinq états du change tracker</h3>
+<p>Depuis la leçon 6, tu sais que le change tracker observe tes entités. Il est temps de nommer précisément ce qu'il voit : chaque entité connue du contexte porte un <strong>état</strong> (enum <strong>EntityState</strong>), et c'est cet état qui décide du SQL généré par <strong>SaveChanges</strong>. Tu peux le lire — et le forcer — via <strong>ctx.Entry(entite).State</strong>.</p>
+<pre class="pseudo">Detached  : le contexte ne connaît PAS l'entité (new, ou désérialisée du JSON)
+Added     : sera insérée au prochain SaveChanges          → INSERT
+Unchanged : lue depuis la base, rien modifié              → aucun SQL
+Modified  : au moins une propriété a changé               → UPDATE
+Deleted   : marquée pour suppression                      → DELETE
+
+var jeu = await ctx.Jeux.FindAsync(5);
+Console.WriteLine(ctx.Entry(jeu).State);   // Unchanged
+jeu.PrixLocation = 4.50m;
+Console.WriteLine(ctx.Entry(jeu).State);   // Modified (le tracker a vu)</pre>
+<p>Tout le cycle CRUD des leçons 5 et 6 se relit avec cette grille : <strong>Add</strong> pose l'état Added, <strong>Remove</strong> pose Deleted, une simple affectation de propriété sur une entité suivie fait passer Unchanged → Modified. SaveChanges parcourt tous les états et traduit.</p>
+
+<h3>2. Le cas critique : l'entité détachée dans une API</h3>
+<p>Dans ton API ASP.NET Core, le DbContext est <strong>scoped</strong> : un contexte neuf par requête HTTP (leçon 2). Quand un client envoie <strong>PUT /api/jeux/5</strong> avec un JSON, le model binding fabrique un objet Jeu avec <strong>new</strong>… que ce contexte tout frais n'a <strong>jamais vu</strong>. Son état : <strong>Detached</strong>. Si tu appelles SaveChanges sans rien faire, il ne se passe strictement rien — le tracker ignore les fantômes.</p>
+<pre class="pseudo">[HttpPut("{id}")]
+public async Task&lt;IActionResult&gt; Modifier(int id, Jeu jeu)
+{
+    // jeu vient du JSON : ctx.Entry(jeu).State == Detached
+    // Il faut le RATTACHER au contexte avant de sauvegarder.
+}</pre>
+
+<h3>3. Trois stratégies pour rattacher (de la plus brutale à la plus sûre)</h3>
+<p><strong>Stratégie A — Attach puis marquer.</strong> <strong>ctx.Attach(jeu)</strong> rattache l'entité en Unchanged ; tu passes ensuite l'état (ou des propriétés ciblées) en Modified. <strong>Stratégie B — Update.</strong> <strong>ctx.Jeux.Update(jeu)</strong> rattache et marque <em>toutes</em> les propriétés Modified d'un coup : UPDATE de toutes les colonnes, y compris celles que le client n'a pas envoyées (elles écrasent la base avec leurs valeurs par défaut !). <strong>Stratégie C — relire puis copier.</strong> Tu recharges l'entité depuis la base, tu copies champ par champ (ou via un DTO, leçon 14), et le tracker génère un UPDATE partiel propre. C'est la plus sûre, au prix d'un SELECT.</p>
+<pre class="pseudo">// A. Attach + marquage ciblé
+ctx.Attach(jeu);
+ctx.Entry(jeu).Property(j =&gt; j.PrixLocation).IsModified = true;
+
+// B. Update : tout est marqué Modified (dangereux si JSON partiel)
+ctx.Jeux.Update(jeu);
+
+// C. Relire puis copier : UPDATE partiel, valeurs actuelles préservées
+var existant = await ctx.Jeux.FindAsync(id);
+if (existant == null) return NotFound();
+existant.Titre = jeu.Titre;
+existant.PrixLocation = jeu.PrixLocation;
+await ctx.SaveChangesAsync();</pre>
+<p>Chez Hibernate/JPA, le même problème se règle avec <strong>merge()</strong> sur une entité <em>detached</em> — mêmes états, même piège, autre dialecte.</p>
+
+<h3>4. Déboguer le tracker et gérer la concurrence optimiste</h3>
+<p>Quand SaveChanges fait « autre chose que prévu », inspecte <strong>ctx.ChangeTracker.Entries()</strong> : la liste de toutes les entités suivies et leur état. Combiné au LogTo de la leçon 18, tu vois exactement pourquoi tel UPDATE part. Autre risque en API : deux membres modifient le même Jeu en même temps. La <strong>concurrence optimiste</strong> ajoute une colonne <strong>rowversion</strong> via l'attribut <strong>[Timestamp]</strong> : SQL Server l'incrémente à chaque écriture, EF Core la glisse dans le WHERE de l'UPDATE, et si la ligne a bougé entre-temps, SaveChanges lève une <strong>DbUpdateConcurrencyException</strong> que tu attrapes pour prévenir l'utilisateur.</p>
+<pre class="pseudo">foreach (var e in ctx.ChangeTracker.Entries())
+    Console.WriteLine(e.Entity.GetType().Name + " : " + e.State);
+
+public class Jeu
+{
+    public int JeuId { get; set; }
+    [Timestamp]
+    public byte[] Version { get; set; }   // colonne rowversion
+}
+// UPDATE Jeux SET ... WHERE JeuId = 5 AND Version = @ancienne
+// 0 ligne touchée → DbUpdateConcurrencyException</pre>
+
+<h3>5. AsSplitQuery : désamorcer l'explosion cartésienne</h3>
+<p>Dernier réglage de performance, cousin du N+1 de la leçon 18 mais inverse. Un gros chargement avec <em>plusieurs</em> Include de collections — les locations ET les avis d'un jeu — génère une seule requête à JOINs multiples : chaque ligne de résultat combine une location avec un avis. 30 locations × 40 avis = <strong>1 200 lignes</strong> transférées pour 70 objets utiles : c'est l'<strong>explosion cartésienne</strong>. <strong>AsSplitQuery()</strong> découpe en une requête par collection : 3 requêtes légères au lieu d'une obèse. Le compromis : plusieurs allers-retours, et les requêtes ne voient pas forcément le même instantané des données si la base bouge entre elles.</p>
+<pre class="pseudo">var jeu = await ctx.Jeux
+    .Include(j =&gt; j.Locations)
+    .Include(j =&gt; j.Avis)
+    .AsSplitQuery()                 // 3 SELECT au lieu d'un JOIN géant
+    .FirstAsync(j =&gt; j.JeuId == 5);</pre>
+<div class="warn"><strong>Update sur une entité détachée écrase TOUT.</strong> Si le JSON du client omet un champ (Stock, DateAjout…), la propriété vaut sa valeur par défaut (0, null) et Update l'écrit telle quelle en base. C'est le bug silencieux le plus classique des API EF Core : préfère la stratégie « relire puis copier » ou un marquage ciblé.</div>
+<div class="tip">Réflexe de diagnostic : un doute sur ce que SaveChanges va faire ? Une boucle sur ChangeTracker.Entries() juste avant l'appel, et tu lis les états noir sur blanc. Deux lignes de code qui économisent une heure de LogTo.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un objet Jeu créé avec new, jamais passé à Add ni Attach, est dans l'état…", opts: ["Unchanged", "Added", "Detached", "Modified"], a: 2, exp: "Le contexte ne le connaît pas : il est détaché, invisible pour SaveChanges." },
+    { type: "qcm", q: "Une entité chargée via FindAsync, sans aucune modification, est dans l'état…", opts: ["Unchanged", "Detached", "Added", "Modified"], a: 0, exp: "Lue et suivie, rien touché : Unchanged, aucun SQL au SaveChanges." },
+    { type: "qcm", q: "ctx.Jeux.Update(jeu) sur une entité détachée…", opts: ["Ne fait rien", "Rattache et marque TOUTES les propriétés Modified", "Génère un UPDATE partiel intelligent", "Relit d'abord la base pour comparer"], a: 1, exp: "Toutes les colonnes partent dans l'UPDATE, même celles que le client n'a pas envoyées." },
+    { type: "vf", q: "ctx.Attach(jeu) place l'entité dans l'état Modified.", a: false, exp: "Attach rattache en Unchanged ; c'est à toi de marquer ensuite ce qui a changé." },
+    { type: "input", q: "Quelle méthode rattache une entité au contexte dans l'état Unchanged ?", a: ["Attach", "ctx.Attach", "Attach()"], ph: "Nom de la méthode…", exp: "Attach : point de départ de la stratégie « rattacher puis marquer finement »." },
+    { type: "qcm", q: "Pourquoi l'entité reçue dans un PUT est-elle forcément détachée ?", opts: ["Le JSON est chiffré", "Le DbContext est scoped : un contexte neuf par requête HTTP, qui n'a jamais vu cet objet", "ASP.NET Core interdit le suivi", "SQL Server la détache"], a: 1, exp: "HTTP est sans état : le contexte de la requête PUT n'a rien en mémoire." },
+    { type: "qcm", q: "La stratégie la plus sûre pour un PUT partiel :", opts: ["Update direct", "Attach + State = Deleted", "Relire l'entité depuis la base puis copier les champs reçus", "Ne rien faire, SaveChanges devine"], a: 2, exp: "Un SELECT de plus, mais un UPDATE partiel qui n'écrase jamais les colonnes non envoyées." },
+    { type: "qcm", q: "ctx.ChangeTracker.Entries() sert à…", opts: ["Vider la base", "Lister les entités suivies et leur état, pour déboguer avant SaveChanges", "Créer une migration", "Compter les lignes en base"], a: 1, exp: "La radiographie du tracker : indispensable quand SaveChanges surprend." },
+    { type: "qcm", q: "L'attribut [Timestamp] sur une propriété byte[] crée…", opts: ["Une colonne DateTime", "Une colonne rowversion utilisée pour la concurrence optimiste", "Un index unique", "Un trigger SQL"], a: 1, exp: "SQL Server l'incrémente à chaque écriture ; EF la vérifie dans le WHERE de l'UPDATE." },
+    { type: "qcm", q: "Deux membres modifient le même Jeu ; le second SaveChanges avec rowversion périmée lève…", opts: ["SqlInjectionException", "DbUpdateConcurrencyException", "NullReferenceException", "TimeoutException"], a: 1, exp: "0 ligne touchée par l'UPDATE conditionné → EF signale le conflit de concurrence." },
+    { type: "qcm", q: "L'explosion cartésienne survient quand…", opts: ["On oublie SaveChanges", "Plusieurs Include de collections partent dans une seule requête à JOINs multiples", "On utilise AsNoTracking", "La base est trop petite"], a: 1, exp: "Chaque ligne combine les collections : 30 locations × 40 avis = 1 200 lignes transférées." },
+    { type: "input", q: "Quelle méthode découpe un chargement à Include multiples en plusieurs requêtes SQL ?", a: ["AsSplitQuery", "AsSplitQuery()"], ph: "Nom de la méthode…", exp: "AsSplitQuery : une requête par collection au lieu d'un JOIN géant." },
+    { type: "vf", q: "AsSplitQuery garantit que toutes ses requêtes voient exactement le même instantané des données.", a: false, exp: "C'est justement son compromis : entre deux requêtes, la base peut bouger." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA du rattachement d'une entité détachée :", opts: ["merge()", "flush()", "migrate()", "seed()"], a: 0, exp: "merge() réconcilie une entité detached avec la session — même concept, autre ORM." },
+    { type: "vf", q: "Sur une entité suivie, SaveChanges ne met à jour que les colonnes réellement modifiées.", a: true, exp: "C'est l'UPDATE partiel du tracker (leçon 6) — que Update sur une détachée fait perdre." }
+  ],
+  final: {
+    title: "Exercice final — Le PUT qui ne perd rien",
+    intro: `<p>Ton API Ludothèque expose PUT /api/jeux/5. Le client envoie un JSON incomplet (Titre et PrixLocation, mais pas Stock). Vérifions que tu sais choisir la bonne stratégie et prévoir les conflits.</p>`,
+    questions: [
+      { type: "qcm", q: "À l'entrée de l'action, ctx.Entry(jeu).State vaut…", opts: ["Detached", "Unchanged", "Modified", "Added"], a: 0, exp: "Objet désérialisé du JSON : le contexte scoped ne l'a jamais vu." },
+      { type: "qcm", q: "Avec ctx.Jeux.Update(jeu), la colonne Stock (absente du JSON) devient…", opts: ["Inchangée en base", "Écrasée par 0, la valeur par défaut de la propriété", "NULL obligatoirement", "Recalculée par SQL Server"], a: 1, exp: "Update marque tout Modified : le 0 par défaut part dans l'UPDATE. Bug silencieux." },
+      { type: "vf", q: "La stratégie « relire puis copier » coûte un SELECT supplémentaire mais préserve les colonnes non envoyées.", a: true, exp: "C'est le prix de la sécurité : le tracker compare aux vraies valeurs actuelles." },
+      { type: "qcm", q: "Pour détecter qu'un autre membre a modifié le jeu entre-temps, tu ajoutes…", opts: ["Un [Timestamp] byte[] et tu attrapes DbUpdateConcurrencyException", "Un lock C#", "Un Thread.Sleep", "Un index"], a: 0, exp: "Concurrence optimiste : la rowversion arbitre, l'exception te laisse décider quoi faire." },
+      { type: "qcm", q: "Le GET du même jeu avec Include(Locations) et Include(Avis) rame : tu tentes…", opts: ["AsSplitQuery pour éviter l'explosion cartésienne", "Update", "Un deuxième DbContext", "Supprimer les Avis"], a: 0, exp: "Plusieurs collections incluses = candidat idéal au découpage en requêtes séparées." }
+    ],
+    solution: `<pre class="pseudo">États      : Detached / Added / Unchanged / Modified / Deleted
+Lecture    : ctx.Entry(e).State ; debug : ChangeTracker.Entries()
+
+PUT API    : l'entité du JSON est DETACHED
+  A. Attach + IsModified ciblé   → UPDATE fin, mais manuel
+  B. Update                      → tout Modified, écrase le JSON partiel !
+  C. relire (FindAsync) + copier → UPDATE partiel, la plus sûre
+
+Concurrence: [Timestamp] byte[] → rowversion dans le WHERE
+             conflit → DbUpdateConcurrencyException à attraper
+
+Perf       : Include multiples de collections → explosion cartésienne
+             AsSplitQuery() = plusieurs SELECT légers (compromis cohérence)</pre>
+<p>Tu maîtrises maintenant le cycle de vie complet d'une entité, du JSON entrant jusqu'à l'UPDATE. Prochaine leçon : on assemble TOUTE la couche de persistance de la Ludothèque.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l19", title: "Autopsie d'un PUT destructeur", level: 3,
+    statement: "Un collègue a écrit l'action PUT /api/jeux/5 ainsi : le contrôleur reçoit un objet Jeu désérialisé du JSON, appelle ctx.Jeux.Update(jeu) puis SaveChangesAsync. Les testeurs signalent que modifier le titre d'un jeu remet son Stock à 0 et vide sa DateAjout. Rédige l'analyse complète du bug : explique l'état de l'entité à l'arrivée, ce que fait exactement Update sur cet état, pourquoi les colonnes absentes du JSON sont écrasées, puis propose DEUX corrections distinctes (avec leur code ou pseudo-code) en comparant leurs avantages, leurs coûts et le cas où tu choisirais l'une plutôt que l'autre.",
+    hints: [
+      "Commence par l'état : que vaut ctx.Entry(jeu).State pour un objet issu du model binding, et pourquoi le contexte scoped n'en sait rien ?",
+      "Update marque toutes les propriétés Modified : que contiennent Stock et DateAjout dans l'objet C# si le JSON ne les mentionne pas ?",
+      "Tes deux corrections : l'une relit la base avant de copier, l'autre rattache et marque finement — compare un SELECT en plus contre du marquage manuel."
+    ],
+    solution: "DIAGNOSTIC\n1. L'objet Jeu vient du JSON : le DbContext de la requête est neuf (scoped),\n   donc ctx.Entry(jeu).State == Detached.\n2. Update(jeu) rattache l'entité et marque TOUTES les propriétés Modified.\n3. Les champs absents du JSON gardent leur valeur par défaut C# :\n   Stock = 0, DateAjout = default. Update les considère comme des\n   modifications volontaires → UPDATE Jeux SET Stock = 0, DateAjout = ...\n   La base est écrasée par des valeurs que personne n'a saisies.\n\nCORRECTION 1 — relire puis copier (recommandée)\n   var existant = await ctx.Jeux.FindAsync(id);\n   if (existant == null) return NotFound();\n   existant.Titre = dto.Titre;\n   existant.PrixLocation = dto.PrixLocation;\n   await ctx.SaveChangesAsync();\n   + UPDATE partiel : seules les colonnes copiées changent\n   + gère naturellement le 404 ; se marie bien avec un DTO d'entrée\n   - coûte un SELECT par PUT\n\nCORRECTION 2 — Attach + marquage ciblé\n   ctx.Attach(jeu);\n   ctx.Entry(jeu).Property(j => j.Titre).IsModified = true;\n   ctx.Entry(jeu).Property(j => j.PrixLocation).IsModified = true;\n   await ctx.SaveChangesAsync();\n   + zéro SELECT : un seul aller-retour SQL\n   - liste de propriétés à maintenir à la main : fragile quand l'entité évolue\n   - pas de vérification d'existence (l'UPDATE peut toucher 0 ligne)\n\nCHOIX : correction 1 par défaut dans une API métier (sûreté, DTO, 404) ;\ncorrection 2 pour un endpoint à très fort trafic où le SELECT compte.\nEn prime : un [Timestamp] rowversion protégerait des écrasements concurrents.",
+    note: "Ce bug est l'exact symétrique du réflexe Merise : une mise à jour doit dire précisément QUELLES colonnes elle touche, comme un UPDATE SQL bien écrit. Hibernate (merge) et Django (save avec update_fields) posent le même piège aux mêmes endroits — l'analyse que tu viens de rédiger se transpose telle quelle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 24</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 24,
+  title: "La corbeille AD et la récupération",
+  subtitle: "Récupérer un objet supprimé par erreur, sans tout restaurer.",
+  theory: `
+<h3>1. Que se passe-t-il quand on supprime un objet ?</h3>
+<p>Quand on supprime un utilisateur dans Active Directory, il ne disparaît pas instantanément. AD le transforme d'abord en <strong>tombstone</strong> (« pierre tombale ») : une coquille presque vide, dépouillée de la plupart de ses attributs, qui reste stockée un certain temps avant l'effacement définitif. Le problème : un tombstone a perdu tant d'informations qu'on ne peut pas le restaurer proprement (mots de passe, appartenances aux groupes… envolés).</p>
+<h3>2. La corbeille AD : la vraie solution</h3>
+<p>La <strong>corbeille AD</strong> (Active Directory Recycle Bin) est une fonctionnalité qui change ce comportement : au lieu d'être vidé de ses attributs, l'objet supprimé les CONSERVE tous pendant la durée de rétention. On peut alors le restaurer <em>intégralement</em>, comme s'il n'avait jamais été supprimé — avec ses groupes, ses attributs, son SID. C'est l'équivalent de la corbeille de Windows, mais pour l'annuaire.</p>
+<div class="warn">La corbeille AD est <strong>désactivée par défaut</strong> et son activation est <strong>irréversible</strong> (on ne peut plus la désactiver ensuite). Elle exige aussi que la forêt soit à un niveau fonctionnel suffisant. On l'active une fois, en connaissance de cause.</div>
+<h3>3. L'activer par script</h3>
+<p>On active la corbeille avec <code>Enable-ADOptionalFeature</code> (« activer une fonctionnalité optionnelle »). Il faut lui indiquer la cible : la forêt entière.</p>
+<pre class="pseudo">Enable-ADOptionalFeature -Identity "Recycle Bin Feature" -Scope ForestOrConfigurationSet -Target "exemple.local"
+# -Identity : le nom de la fonctionnalite a activer (la corbeille)
+# -Scope    : la portee (toute la foret)
+# -Target   : la foret concernee (ici exemple.local)</pre>
+<h3>4. Retrouver un objet supprimé</h3>
+<p>Les objets supprimés ne s'affichent pas normalement. Pour les voir, on ajoute le paramètre <code>-IncludeDeletedObjects</code> à <code>Get-ADObject</code>, et on filtre sur les objets supprimés :</p>
+<pre class="pseudo">Get-ADObject -Filter "isDeleted -eq $true" -IncludeDeletedObjects -Properties *
+# -Filter isDeleted -eq $true : ne garde que les objets marques comme supprimes
+# -IncludeDeletedObjects      : autorise l'affichage des objets supprimes (caches par defaut)
+# -Properties *               : montre tous les attributs, pour identifier le bon objet</pre>
+<p>Pour cibler une personne précise, on filtre sur son nom :</p>
+<pre class="pseudo">Get-ADObject -Filter "Name -like 'Marie Dupont*'" -IncludeDeletedObjects   # retrouve l'objet supprime de Marie Dupont</pre>
+<h3>5. Restaurer l'objet</h3>
+<p>Une fois l'objet identifié, on le restaure avec <code>Restore-ADObject</code>. Le plus simple est d'enchaîner la recherche et la restauration avec le pipe :</p>
+<pre class="pseudo">Get-ADObject -Filter "Name -like 'Marie Dupont*'" -IncludeDeletedObjects |   # trouve l'objet supprime...
+    Restore-ADObject                                                        # ...et le restaure integralement</pre>
+<p>L'utilisateur retrouve alors sa place exacte, ses attributs et ses appartenances de groupe. Bien plus efficace que de tout recréer à la main.</p>
+<div class="tip">Bonne pratique : activer la corbeille AD DÈS le début de la vie d'une forêt. Le jour où quelqu'un supprime la mauvaise OU, on est très content de l'avoir.</div>
+<h3>6. Sans corbeille : la sauvegarde</h3>
+<p>Si la corbeille n'était pas activée au moment de la suppression, il reste la <strong>restauration faisant autorité</strong> depuis une sauvegarde (vue au jour 25). C'est plus lourd : on repart d'une copie de l'annuaire. La corbeille évite justement d'en arriver là pour une simple suppression accidentelle.</p>`,
+  exercises: [
+    { type: "qcm", q: "En quoi un objet supprimé se transforme-t-il SANS la corbeille ?", opts: ["En GPO", "En tombstone : une coquille vidée de la plupart de ses attributs", "En groupe", "En sauvegarde"], a: 1, exp: "Le tombstone a perdu trop d'informations pour une vraie restauration." },
+    { type: "qcm", q: "Que permet la <strong>corbeille AD</strong> ?", opts: ["Supprimer plus vite", "Conserver tous les attributs d'un objet supprimé pour le restaurer intégralement", "Créer des GPO", "Chiffrer les mots de passe"], a: 1, exp: "L'objet garde ses attributs et peut être restauré complet." },
+    { type: "qcm", q: "Par défaut, la corbeille AD est…", opts: ["Activée", "Désactivée", "Supprimée", "Cachée"], a: 1, exp: "Il faut l'activer explicitement." },
+    { type: "qcm", q: "Que dire de l'activation de la corbeille AD ?", opts: ["Réversible", "Irréversible : on ne peut plus la désactiver", "Automatique", "Sans effet"], a: 1, exp: "Une fois activée, elle ne se désactive pas." },
+    { type: "qcm", q: "Quel paramètre rend visibles les objets supprimés ?", opts: ["-Filter", "-IncludeDeletedObjects", "-Enabled", "-Scope"], a: 1, exp: "-IncludeDeletedObjects affiche les objets normalement cachés." },
+    { type: "qcm", q: "Que reste-t-il si la corbeille n'était PAS activée lors de la suppression ?", opts: ["Rien du tout", "La restauration depuis une sauvegarde (jour 25)", "Un simple Restore-ADObject suffit toujours", "Une GPO"], a: 1, exp: "Sans corbeille, on repart d'une sauvegarde de l'annuaire." },
+    { type: "input", q: "Quelle cmdlet ACTIVE la corbeille AD ? (Verbe-Nom)", a: ["Enable-ADOptionalFeature", "enable-adoptionalfeature"], ph: "Verbe-ADOptionalFeature", exp: "Enable-ADOptionalFeature active la corbeille." },
+    { type: "input", q: "Quelle cmdlet RESTAURE un objet supprimé ? (Verbe-Nom)", a: ["Restore-ADObject", "restore-adobject"], ph: "Verbe-ADObject", exp: "Restore-ADObject remet l'objet en place." },
+    { type: "input", q: "Quel paramètre ajoute-t-on à Get-ADObject pour voir les objets supprimés ? (avec le tiret)", a: ["-IncludeDeletedObjects", "IncludeDeletedObjects"], ph: "-Xxxx", exp: "-IncludeDeletedObjects lève le masquage." },
+    { type: "input", q: "Comment s'appelle la coquille presque vide d'un objet supprimé (sans corbeille) ?", a: ["tombstone", "un tombstone", "pierre tombale"], ph: "un mot (anglais)", exp: "Le tombstone est trop dépouillé pour une vraie restauration." },
+    { type: "input", q: "Complète le filtre des objets supprimés : \"isDeleted -eq ___\"", a: ["$true", "true"], ph: "$xxxx", exp: "isDeleted -eq $true cible les objets supprimés." },
+    { type: "input", q: "Quel paramètre d'Enable-ADOptionalFeature indique la forêt ciblée ? (avec le tiret)", a: ["-Target", "Target"], ph: "-Xxxxx", exp: "-Target reçoit le nom de la forêt (ex : exemple.local)." },
+    { type: "vf", q: "Un tombstone peut être restauré aussi complètement qu'avec la corbeille AD.", a: false, exp: "Non : le tombstone a perdu trop d'attributs." },
+    { type: "vf", q: "Il est recommandé d'activer la corbeille AD dès le début de vie d'une forêt.", a: true, exp: "On l'a alors disponible avant la première erreur." },
+    { type: "vf", q: "Avec la corbeille, un objet restauré retrouve ses appartenances aux groupes.", a: true, exp: "Tous les attributs sont conservés, y compris les groupes." }
+  ],
+  final: {
+    title: "Exercice final — Récupérer un compte supprimé par erreur",
+    intro: `<p>Un collègue a supprimé par accident le compte de <strong>Marie Dupont</strong>. La corbeille AD est activée. Tu dois le retrouver puis le restaurer.</p>
+<pre class="pseudo">Get-ADObject -Filter "Name -like 'Marie Dupont*'" -IncludeDeletedObjects   # 1. retrouver l'objet supprime
+# ... verifier que c'est le bon ...
+# 2. le restaurer</pre>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi ajouter <code>-IncludeDeletedObjects</code> à la recherche ?", opts: ["Pour supprimer l'objet", "Car les objets supprimés sont cachés par défaut", "Pour créer un compte", "Pour trier"], a: 1, exp: "Sans ce paramètre, l'objet supprimé n'apparaît pas." },
+      { type: "input", q: "Quel filtre retrouve l'objet par son nom : -Filter \"Name -___ 'Marie Dupont*'\" ?", a: ["-like", "like"], ph: "-Xxxx", exp: "-like avec * permet une correspondance partielle." },
+      { type: "input", q: "Quelle cmdlet restaure ensuite l'objet trouvé ? (Verbe-Nom)", a: ["Restore-ADObject", "restore-adobject"], ph: "Verbe-ADObject", exp: "Restore-ADObject le remet en place." },
+      { type: "qcm", q: "Après restauration, que retrouve Marie ?", opts: ["Rien", "Ses attributs et ses appartenances de groupe", "Seulement son nom", "Un tombstone"], a: 1, exp: "La corbeille conserve tout : restauration intégrale." },
+      { type: "vf", q: "Cette récupération n'aurait pas été possible aussi simplement sans la corbeille AD.", a: true, exp: "Sans corbeille, il aurait fallu une sauvegarde." }
+    ],
+    solution: `<p>La récupération complète en deux temps, reliés par le pipe :</p>
+<pre class="pseudo">Import-Module ActiveDirectory                                              # charge les cmdlets AD
+Get-ADObject -Filter "Name -like 'Marie Dupont*'" -IncludeDeletedObjects | # 1. retrouve l'objet supprime (visible grace au parametre)
+    Restore-ADObject                                                       # 2. le restaure integralement
+Get-ADUser -Identity "mdupont"                                             # verifie que le compte est bien revenu</pre>
+<p>Grâce à la corbeille, Marie retrouve son compte complet en une commande. La leçon : activer la corbeille AVANT d'en avoir besoin transforme une catastrophe en simple formalité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j24", title: "Retrouver et restaurer un utilisateur", level: 3,
+    statement: "Écris un script qui recherche l'objet supprimé dont le nom commence par <code>Jean Martin</code> (en incluant les objets supprimés), le restaure, puis vérifie sa présence avec Get-ADUser sur l'identifiant <code>jmartin</code>.",
+    hints: [
+      "Utilise Get-ADObject -Filter \"Name -like 'Jean Martin*'\" -IncludeDeletedObjects.",
+      "Canalise (pipe) le résultat vers Restore-ADObject.",
+      "Termine par Get-ADUser -Identity 'jmartin' pour confirmer."
+    ],
+    solution: "Import-Module ActiveDirectory                                               # charge les cmdlets AD\nGet-ADObject -Filter \"Name -like 'Jean Martin*'\" -IncludeDeletedObjects |    # retrouve l'objet supprime (rendu visible)\n    Restore-ADObject                                                        # le restaure integralement\nGet-ADUser -Identity 'jmartin'                                              # verifie que le compte est bien revenu",
+    note: "Sans -IncludeDeletedObjects, Get-ADObject ne verrait pas l'objet supprimé. Le pipe enchaîne recherche et restauration ; la corbeille AD doit avoir été activée avant la suppression pour que tous les attributs reviennent." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

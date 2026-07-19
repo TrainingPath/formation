@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Git, branches et première CI (le pipeline dès le départ)",
+  subtitle: "Poser le garde-fou avant d'écrire le métier : chaque commit sera vérifié.",
+  theory: `
+<h3>1. Le dépôt propre</h3>
+<p>Reprenons les mots essentiels. <strong>Git</strong> (prononcé « guite ») est un outil qui mémorise l'historique du code, version après version — comme le « suivi des modifications » d'un traitement de texte, mais pour tous les fichiers du projet à la fois. Un <strong>dépôt</strong> (« repository ») est le dossier surveillé par Git, avec toute sa mémoire ; <code>git init</code> le crée, vide. Un <strong>commit</strong> est une version enregistrée : une photo datée de l'état du projet à un instant précis. <code>git add</code> choisit ce qui entrera sur la photo, <code>git commit</code> la prend et lui colle une étiquette (le message). Le fichier <strong>.gitignore</strong> est la liste des fichiers que Git doit délibérément ignorer — secrets, dossiers générés — pour qu'ils ne soient jamais photographiés. Un <strong>dépôt distant</strong> (« remote ») est la copie partagée sur un serveur (ici GitHub) ; <code>git remote add origin</code> lui donne son adresse et le surnom <em>origin</em>, et <code>git push</code> y envoie tes commits. La branche <strong>main</strong> est la ligne principale, la version officielle du projet.</p>
+<pre class="pseudo">git init   # creer ici un depot Git vide (le carnet de bord commence)
+# .gitignore : .env*, .venv/, __pycache__/, *.pyc, db.sqlite3   # fichiers que Git doit ignorer (jamais versionnes)
+git add . &amp;&amp; git commit -m "chore: squelette Django + Docker Compose"   # photographier tous les fichiers puis enregistrer cette 1re version
+git remote add origin git@github.com:toi/ludotheque-pro.git   # relier le depot local au depot distant GitHub (surnomme « origin »)
+git push -u origin main   # envoyer la branche main sur le distant et la suivre (-u)</pre>
+<p>Les messages sont <strong>normés</strong> dès le premier commit. Un <strong>commit conventionnel</strong> commence par un mot-type qui annonce la nature du changement : <code>feat:</code> (une nouveauté), <code>fix:</code> (une correction), <code>chore:</code> (une tâche d'entretien). Ce petit vocabulaire n'est pas décoratif : la leçon 15 lira ces types pour générer automatiquement le <strong>changelog</strong> (la liste des changements de chaque version).</p>
+
+<h3>2. Le premier workflow CI</h3>
+<p>Un <strong>workflow</strong> (ou pipeline) est une suite d'étapes automatiques déclenchées par un événement — pense à une chaîne de montage qui se met en marche dès qu'un colis arrive. Il est décrit en <strong>YAML</strong>, ce format où l'imbrication se lit à l'<em>indentation</em> (le décalage vers la droite). <code>on</code> liste les <strong>déclencheurs</strong> : ici un <em>push</em> (envoi de code) ou une <em>pull request</em> visant <code>main</code>. Un <strong>job</strong> est un travail exécuté sur un <strong>runner</strong> — une machine neuve et jetable fournie par GitHub (<code>ubuntu-latest</code>). Chaque <strong>step</strong> (étape) fait une chose : <code>uses</code> réutilise une <strong>action</strong> toute prête (une brique partagée, ici <em>checkout</em> qui récupère le code, ou <em>setup-python</em> qui installe Python), tandis que <code>run</code> lance une commande. Le <strong>linter</strong> <strong>ruff</strong> vérifie le style ; <code>manage.py check</code> demande à Django de s'auto-diagnostiquer.</p>
+<pre class="pseudo"># .github/workflows/ci.yml   # emplacement impose par GitHub pour ranger un pipeline
+name: CI   # nom affiche du pipeline
+on:   # les evenements qui declenchent ce pipeline
+  push: { branches: [main] }   # a chaque push (envoi de code) sur la branche main
+  pull_request: { branches: [main] }   # et a chaque pull request visant main
+jobs:   # la liste des travaux a executer
+  verifier:   # un seul job, nomme « verifier »
+    runs-on: ubuntu-latest   # sur une machine Linux neuve, fournie par GitHub
+    steps:   # les etapes du job, jouees dans l'ordre
+      - uses: actions/checkout@v4   # etape 1 : recuperer le code du depot
+      - uses: actions/setup-python@v5   # etape 2 : installer l'interpreteur Python
+        with: { python-version: "3.14", cache: "pip" }   # version 3.14, avec cache des paquets pip (plus rapide)
+      - run: pip install -r requirements.txt ruff   # etape 3 : installer les dependances + ruff (le linter)
+      - run: python manage.py check   # etape 4 : diagnostic interne de Django
+        env: { DJANGO_SECRET_KEY: cle-de-ci }   # cle jetable, uniquement pour la CI (jamais celle de prod)
+      - run: ruff check .   # etape 5 : verifier le style et les erreurs evidentes</pre>
+<p>Le pipeline vit <strong>dans le dépôt</strong> : versionné, revu en PR comme le code. Chaque push déclenche une machine neuve (cours CI/CD), ce qui garantit un résultat neutre, indépendant de « ma » machine.</p>
+
+<h3>3. Protéger main</h3>
+<p>La <strong>protection de branche</strong> est une barrière posée sur <code>main</code> dans les réglages de GitHub : elle interdit d'y écrire n'importe comment. On exige une <strong>pull request</strong> (impossible de pousser en direct), la réussite d'un <strong>status check</strong> (le job CI doit être vert), et au moins une <strong>approbation</strong> d'un relecteur. « <em>Do not allow bypassing</em> » ferme la dernière porte : même un administrateur ne peut contourner la règle.</p>
+<pre class="pseudo">Settings → Branches → règle sur main :
+✔ Require a pull request before merging (1 approbation)
+✔ Require status checks to pass : verifier (le job CI)
+✔ Do not allow bypassing (admins compris)
+→ le push direct sur main devient impossible.</pre>
+
+<h3>4. Le cycle de travail</h3>
+<p>Voici la routine quotidienne. <code>git switch main</code> bascule sur la branche principale et <code>git pull</code> en télécharge la dernière version partagée. <code>git switch -c feature/catalogue</code> crée (option <code>-c</code>) une <strong>branche</strong> de travail — un brouillon isolé où l'on code sans gêner <code>main</code>. On y fait ses commits, on les <em>push</em>, puis on ouvre une <strong>pull request</strong>. Après une CI verte et une revue, on <strong>fusionne</strong> (<em>merge</em> : on intègre la branche dans <code>main</code>), et la branche devenue inutile est supprimée.</p>
+<pre class="pseudo">git switch main &amp;&amp; git pull   # revenir sur main et recuperer la derniere version partagee
+git switch -c feature/catalogue   # creer (-c) et basculer sur une branche de travail isolee
+... code + tests ...   # (ici on ecrit le code et ses tests)
+git commit -m "feat: modèles du catalogue"   # enregistrer une version ; message norme « feat » (nouveaute)
+git push -u origin feature/catalogue   # envoyer la branche sur le distant et la suivre
+# → PR → CI verte → revue → merge → branche supprimée   # la suite : proposer, verifier, relire, fusionner, nettoyer</pre>
+
+<h3>5. Pourquoi AVANT le métier ?</h3>
+<div class="warn">Mettre la CI en place quand le projet est déjà gros, c'est découvrir d'un coup des dizaines de problèmes (tests absents, lint noyé sous les erreurs). En la posant sur un squelette vide, elle part <strong>verte</strong> et le reste : chaque fonctionnalité entre déjà sous surveillance, et une régression est visible à la seconde.</div>
+<div class="tip">La CI démarre minimale (check + lint) : c'est suffisant pour établir la discipline. On lui ajoutera les tests avec MySQL (leçon 7), la couverture (l.12), la sécurité (l.14) et le build d'image (l.18) au fil du projet — chaque brique quand elle devient pertinente.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les messages de commit sont normés dès…", opts: ["La fin du projet", "Le premier commit (feat/fix/chore)", "Jamais", "La prod"], a: 1, exp: "Le changelog en dépend (l.15)." },
+    { type: "qcm", q: "Le workflow CI vit…", opts: ["Sur un serveur externe", "Dans le dépôt (.github/workflows), versionné", "Dans un clic", "En prod"], a: 1, exp: "Revu en PR comme le code." },
+    { type: "qcm", q: "Le premier job vérifie…", opts: ["Rien", "manage.py check et ruff", "Le déploiement", "Le CSS"], a: 1, exp: "Minimal mais suffisant pour démarrer." },
+    { type: "qcm", q: "Chaque push déclenche…", opts: ["Ma machine", "Une machine neuve (runner) qui rejoue le job", "La prod", "Rien"], a: 1, exp: "Environnement neutre." },
+    { type: "qcm", q: "Protéger main impose…", opts: ["Rien", "PR + status checks verts + revue avant merge", "Un mot de passe", "Un cron"], a: 1, exp: "main toujours verte." },
+    { type: "qcm", q: "Après protection, le push direct sur main…", opts: ["Fonctionne", "Est impossible (même admin)", "Est plus rapide", "Est silencieux"], a: 1, exp: "La seule porte est la PR." },
+    { type: "qcm", q: "cache: pip dans setup-python…", opts: ["Cache des secrets", "Réutilise les paquets entre exécutions (plus rapide)", "Compile", "Rien"], a: 1, exp: "Pipeline véloce." },
+    { type: "qcm", q: "DJANGO_SECRET_KEY: cle-de-ci est…", opts: ["Un vrai secret", "Une valeur jetable de CI (pas la prod)", "Chiffré", "Interdit"], a: 1, exp: "Les vrais secrets : leçon 14." },
+    { type: "qcm", q: "Poser la CI sur un squelette vide, c'est…", opts: ["Inutile", "Partir vert et le rester (chaque feature sous surveillance)", "Trop tôt", "Dangereux"], a: 1, exp: "L'inverse du rétrofit." },
+    { type: "qcm", q: "Un changement part…", opts: ["De main directement", "D'une branche courte + PR", "Sans branche", "En prod"], a: 1, exp: "GitHub Flow." },
+    { type: "vf", q: "Le pipeline est posé avant d'écrire la première fonctionnalité métier.", a: true, exp: "La discipline du jour 1." },
+    { type: "qcm", q: "La CI démarre…", opts: ["Complète d'emblée", "Minimale (check + lint), enrichie au fil du projet", "Jamais", "En prod"], a: 1, exp: "Chaque brique quand elle est pertinente." },
+    { type: "qcm", q: ".gitignore doit contenir…", opts: [".env*, .venv/, __pycache__/", "settings.py", "manage.py", "le code"], a: 0, exp: "Secrets et fichiers générés." },
+    { type: "qcm", q: "Une régression future sera…", opts: ["Invisible", "Rouge à la seconde (job échoué)", "Ignorée", "Chiffrée"], a: 1, exp: "Le filet permanent." },
+    { type: "vf", q: "Le YAML du pipeline passe en revue comme le code.", a: true, exp: "L'infra est du code." }
+  ],
+  final: {
+    title: "Exercice final — Le garde-fou en place",
+    intro: `<p>On établit le dépôt et sa CI avant tout métier.</p>`,
+    questions: [
+      { type: "qcm", q: "Le dépôt démarre par :", opts: ["git init + .gitignore + commit normé + push", "un zip", "rien", "un déploiement"], a: 0, exp: "Base propre." },
+      { type: "qcm", q: "Le workflow se déclenche sur :", opts: ["push et pull_request vers main", "un cron seul", "manuellement", "jamais"], a: 0, exp: "Chaque commit." },
+      { type: "qcm", q: "Le job minimal exécute :", opts: ["manage.py check + ruff check", "les 50 tests déjà", "un déploiement", "rien"], a: 0, exp: "Suffisant pour démarrer." },
+      { type: "qcm", q: "main est protégée par :", opts: ["PR + status check + revue, sans bypass", "la bonne volonté", "un mot de passe", "rien"], a: 0, exp: "Mécanique." },
+      { type: "vf", q: "Chaque fonctionnalité naîtra désormais sous surveillance de la CI.", a: true, exp: "Le garde-fou du jour 1." }
+    ],
+    solution: `<pre class="pseudo">git init ; .gitignore (.env*, .venv/, __pycache__/)   # depot vide + liste des fichiers ignores
+git commit -m "chore: squelette Django + Compose" ; git push -u origin main   # 1er commit norme puis envoi sur le distant
+
+# .github/workflows/ci.yml
+on: { push: {branches:[main]}, pull_request: {branches:[main]} }   # declenche a chaque push/PR sur main
+jobs: verifier:   # un job « verifier » sur runner neuf
+  steps: [checkout, setup-python(3.14,cache pip),   # recuperer le code, installer Python 3.14
+          "pip install -r requirements.txt ruff",   # installer dependances + linter
+          "python manage.py check", "ruff check ."]   # diagnostic Django puis lint du style
+
+# Protection de main : PR + status checks + revue (sans bypass)   # la seule porte d'entree reste la PR</pre>
+<p>Le garde-fou est posé. Demain : le schéma, migré dans le conteneur.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow et ta protection…",
+  items: [
+  { id: "proj6py-l3", title: "Le pipeline minimal annoté", level: 2,
+    statement: "Écris .github/workflows/ci.yml (déclencheurs, runner, checkout, setup-python avec cache, install, check, ruff) avec un commentaire par étape, plus la liste des réglages de protection de branche pour main. Termine par une phrase expliquant pourquoi ce pipeline minimal est posé AVANT le métier plutôt qu'après.",
+    hints: [
+      "Chaque step : # <quoi> — <pourquoi>.",
+      "Protection : require PR, require status checks (verifier), require review, no bypass.",
+      "Argument : partir vert sur un squelette vide vs découvrir 50 problèmes d'un coup."
+    ],
+    solution: "# .github/workflows/ci.yml\nname: CI   # nom affiche du pipeline\n# Declencheurs : chaque push sur main et chaque PR visant main\non:   # les evenements qui declenchent le pipeline\n  push: { branches: [main] }   # a chaque envoi de code sur main\n  pull_request: { branches: [main] }   # a chaque pull request visant main\n\njobs:   # la liste des travaux a executer\n  verifier:   # un seul job, nomme « verifier »\n    runs-on: ubuntu-latest   # machine neuve : rien d'hier, rien de « chez moi »\n    steps:   # les etapes, jouees dans l'ordre\n      - uses: actions/checkout@v4   # recupere le code du commit\n      - uses: actions/setup-python@v5   # installe l'interpreteur Python\n        with: { python-version: \"3.14\", cache: \"pip\" }   # meme version que l'image, cache pip\n      - run: pip install -r requirements.txt ruff   # dependances + linter\n      - run: python manage.py check   # config Django saine\n        env: { DJANGO_SECRET_KEY: cle-de-ci }   # valeur jetable de CI\n      - run: ruff check .   # style et erreurs evidentes\n\n# PROTECTION DE main (Settings → Branches)\n# ✔ Require a pull request before merging (1 approbation)\n# ✔ Require status checks to pass : verifier\n# ✔ Require branches up to date before merging\n# ✔ Do not allow bypassing (admins inclus)\n\n# POURQUOI AVANT LE MÉTIER\n# Posé sur un squelette vide, le pipeline part VERT et le reste : chaque\n# fonctionnalité entre déjà testée et lintée. Posé sur un projet mûr, il\n# révélerait d'un coup des dizaines de problèmes accumulés — le rétrofit\n# coûteux qu'on veut précisément éviter.",
+    note: "La version Python de la CI DOIT correspondre à celle de l'image (3.14) : tester avec 3.14 et livrer du 3.13 ne prouverait rien. Le pipeline minimal n'est pas « incomplet » — il est suffisant pour instaurer la discipline, et il grandira exactement quand chaque brique (tests, sécurité, image) deviendra pertinente." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

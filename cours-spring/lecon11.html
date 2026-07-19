@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Relations entre entités",
+  subtitle: "Un emprunt concerne UN livre et UN membre ; un membre a PLUSIEURS emprunts.",
+  theory: `
+<h3>1. Penser les relations</h3>
+<p>Une <strong>relation</strong> est un lien entre deux entités. On les décrit par leur « cardinalité » (combien d'un côté, combien de l'autre) : <em>One-to-Many</em> (un-vers-plusieurs), <em>Many-to-One</em> (plusieurs-vers-un), etc.</p>
+<pre class="pseudo">Membre 1 ────── * Emprunt * ────── 1 Livre        // 1 membre ↔ plusieurs emprunts ↔ 1 livre
+
+Un membre A plusieurs emprunts     (One-to-Many)   // côté membre : une liste d'emprunts
+Un emprunt CONCERNE un membre      (Many-to-One)   // côté emprunt : un seul membre
+Un emprunt CONCERNE un livre       (Many-to-One)   // côté emprunt : un seul livre</pre>
+<p>En base, cela devient des <strong>clés étrangères</strong> (une clé étrangère est une colonne qui contient l'id d'une ligne d'une autre table, comme un renvoi) : la table <code>emprunts</code> a une colonne <code>membre_id</code> et une colonne <code>livre_id</code>.</p>
+<h3>2. @ManyToOne : le côté « enfant »</h3>
+<pre class="pseudo">@Entity                                        // classe persistée
+public class Emprunt {                          // un emprunt relie un membre et un livre
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée
+    private Long id;
+
+    @ManyToOne(optional = false)          // un emprunt SANS membre : impossible (plusieurs emprunts → 1 membre)
+    @JoinColumn(name = "membre_id")       // nom de la colonne clé étrangère vers la table membres
+    private Membre membre;                       // le membre concerné (un OBJET, pas un id !)
+
+    @ManyToOne(optional = false)                 // idem côté livre : plusieurs emprunts → 1 livre
+    @JoinColumn(name = "livre_id")               // clé étrangère vers la table livres
+    private Livre livre;                          // le livre concerné
+
+    private LocalDate dateEmprunt;               // date de l'emprunt
+    private LocalDate dateRetour;                // null tant que le livre n'est pas rendu
+}                                                // fin de la classe</pre>
+<p>Côté Java, on manipule des OBJETS : <code>emprunt.getMembre().getNom()</code>. Hibernate gère la <strong>jointure</strong> (le rapprochement des tables) tout seul.</p>
+<h3>3. @OneToMany : le côté « parent » (optionnel !)</h3>
+<pre class="pseudo">@Entity                                        // classe persistée
+public class Membre {
+    // ...
+    @OneToMany(mappedBy = "membre")     // « la relation est déjà portée
+    private List&lt;Emprunt&gt; emprunts;     //   par le champ membre d'Emprunt » (aucune colonne créée ici)
+}                                                // fin de la classe</pre>
+<ul>
+<li><code>mappedBy = "membre"</code> : PAS de nouvelle colonne — ce côté est le MIROIR de la relation. Le côté @ManyToOne (avec @JoinColumn) est le <strong>propriétaire</strong> (celui qui porte réellement la clé étrangère).</li>
+<li>Ce côté est facultatif : ne l'ajoute que si tu navigues vraiment de Membre vers ses emprunts.</li>
+</ul>
+<h3>4. LAZY : chargé seulement si on le demande</h3>
+<p><strong>LAZY</strong> (« paresseux ») = charger les données liées seulement au moment où on y accède. <strong>EAGER</strong> (« empressé ») = les charger tout de suite, systématiquement.</p>
+<pre class="pseudo">@OneToMany est LAZY par défaut : les emprunts d'un membre ne sont
+chargés QUE si on appelle membre.getEmprunts().
+@ManyToOne est EAGER par défaut — bonne pratique : le passer en LAZY.
+
+@ManyToOne(fetch = FetchType.LAZY, optional = false)   // charge le membre/livre seulement quand on y accède</pre>
+<h3>5. Le piège mortel : JSON et boucle infinie</h3>
+<p>Sérialiser un Membre → ses emprunts → chaque emprunt a un membre → qui a des emprunts → …  <strong>boucle infinie</strong> ! (Sérialiser = transformer un objet en JSON.) Solutions :</p>
+<pre class="pseudo">Solution 1 (bonne) : des DTO ! On expose EmpruntDto{id, titreLivre,
+                     nomMembre, dateEmprunt} — plat, sans cycle.
+Solution 2 (dépannage) : @JsonIgnore sur la collection inverse.</pre>
+<pre class="pseudo">// Le service qui crée un emprunt relie les objets :
+public Emprunt emprunter(Long membreId, Long livreId) {           // reçoit les identifiants
+    Membre m = membreRepo.findById(membreId).orElseThrow(...);    // charge le membre (ou exception)
+    Livre l = livreRepo.findById(livreId).orElseThrow(...);       // charge le livre (ou exception)
+    if (!l.isDisponible()) throw new LivreIndisponibleException(livreId);  // règle : le livre est-il disponible ?
+    l.setDisponible(false);                                       // le livre devient indisponible
+    return empruntRepo.save(new Emprunt(m, l, LocalDate.now()));  // relie les OBJETS et enregistre
+}                                                                 // fin de la méthode</pre>
+<div class="warn">« LazyInitializationException » : tu as touché une collection LAZY hors transaction (souvent dans le contrôleur ou pendant la sérialisation JSON). Solution propre : construire le DTO DANS le service, pendant que la session est ouverte.</div>
+<div class="tip">Le réflexe DTO de la leçon 6 devient vital ici : les entités liées ne sortent JAMAIS brutes en JSON. Un DTO plat par cas d'usage, et tous les pièges (cycle, lazy, surexposition) disparaissent d'un coup.</div>`,
+  exercises: [
+    { type: "qcm", q: "« Un emprunt concerne un membre ; un membre a plusieurs emprunts. » Quelle annotation côté Emprunt ?", opts: ["@OneToMany", "@ManyToOne", "@OneToOne", "@ManyToMany"], a: 1, exp: "Plusieurs emprunts (Many) vers un membre (One) : @ManyToOne." },
+    { type: "qcm", q: "Comment cette relation se matérialise-t-elle dans la table emprunts ?", opts: ["Une table de plus", "Une colonne clé étrangère membre_id", "Un fichier JSON", "Rien"], a: 1, exp: "@JoinColumn(name = \"membre_id\") : la clé étrangère classique du relationnel." },
+    { type: "qcm", q: "Que signifie mappedBy = \"membre\" dans @OneToMany ?", opts: ["Crée une colonne membre", "Ce côté est le miroir : la relation est portée par le champ membre d'Emprunt", "Trie par membre", "Rend la relation obligatoire"], a: 1, exp: "Un seul côté possède la clé étrangère ; l'autre ne fait que refléter." },
+    { type: "qcm", q: "Quel côté de la relation est le « propriétaire » ?", opts: ["@OneToMany avec mappedBy", "@ManyToOne avec @JoinColumn : celui qui porte la clé étrangère", "Les deux", "Aucun"], a: 1, exp: "C'est lui qu'il faut renseigner pour créer le lien en base." },
+    { type: "qcm", q: "Que fait optional = false sur @ManyToOne ?", opts: ["Rend la relation facultative", "Interdit un emprunt sans membre : la clé étrangère devient NOT NULL", "Supprime la colonne", "Accélère la requête"], a: 1, exp: "Un emprunt orphelin n'a pas de sens : la contrainte le garantit." },
+    { type: "qcm", q: "Que signifie LAZY pour une collection ?", opts: ["Elle est lente", "Elle n'est chargée depuis la base QUE quand on y accède", "Elle est vide", "Elle est triée"], a: 1, exp: "Chargement à la demande : on ne paie que ce qu'on utilise." },
+    { type: "qcm", q: "Sérialiser en JSON un Membre avec ses emprunts (qui référencent le membre…) provoque :", opts: ["Rien", "Une récursion infinie Membre→Emprunts→Membre→…", "Un tri automatique", "Une erreur 404"], a: 1, exp: "Le cycle bidirectionnel piège Jackson — StackOverflow ou JSON géant." },
+    { type: "qcm", q: "Quelle est la SOLUTION PROPRE au problème du cycle JSON ?", opts: ["Supprimer les relations", "Exposer des DTO plats construits dans le service", "Éteindre Jackson", "Toujours renvoyer null"], a: 1, exp: "EmpruntDto{titreLivre, nomMembre, date} : plat, sans cycle, sans surprise." },
+    { type: "qcm", q: "Que signale une LazyInitializationException ?", opts: ["Un disque plein", "L'accès à une collection LAZY hors transaction (souvent à la sérialisation)", "Un mot de passe faux", "Une boucle for mal écrite"], a: 1, exp: "La session Hibernate est fermée quand Jackson essaie de lire la collection." },
+    { type: "qcm", q: "Où construire les DTO pour éviter la LazyInitializationException ?", opts: ["Dans le contrôleur", "Dans le service, pendant que la session/transaction est ouverte", "Dans le navigateur", "Dans application.properties"], a: 1, exp: "Le service lit les entités ET les traduit en DTO au même moment." },
+    { type: "vf", q: "Le côté @OneToMany (la liste des emprunts dans Membre) est obligatoire pour que la relation fonctionne.", a: false, exp: "Seul le côté @ManyToOne est nécessaire. Le côté collection ne s'ajoute que par besoin réel de navigation." },
+    { type: "qcm", q: "Dans le service emprunter(), pourquoi charger le Membre et le Livre AVANT de créer l'Emprunt ?", opts: ["Pour ralentir", "L'emprunt référence des entités persistées : on les récupère (ou orElseThrow) puis on les relie", "Par superstition", "Pour le JSON"], a: 1, exp: "On relie des objets gérés par JPA : new Emprunt(m, l, date) puis save." },
+    { type: "qcm", q: "Quelle annotation de dépannage cache une propriété du JSON généré ?", opts: ["@Secret", "@JsonIgnore", "@Hide", "@NoJson"], a: 1, exp: "Utile en dépannage sur la collection inverse — mais les DTO restent la vraie solution." },
+    { type: "qcm", q: "Un livre pourrait être écrit par plusieurs auteurs, un auteur écrit plusieurs livres. Quelle relation ?", opts: ["@OneToOne", "@ManyToMany (avec une table de jointure)", "@ManyToOne", "Aucune"], a: 1, exp: "Many-to-Many → table intermédiaire livre_auteur générée par JPA." },
+    { type: "qcm", q: "emprunt.getMembre().getNom() : qui exécute la jointure SQL nécessaire ?", opts: ["Toi, à la main", "Hibernate, de manière transparente", "Le navigateur", "Jackson"], a: 1, exp: "C'est tout l'intérêt de l'ORM : tu navigues entre objets, il traduit en SQL." }
+  ],
+  final: {
+    title: "Exercice final — L'emprunt relié, de la base au JSON",
+    intro: `<p>Le circuit complet d'un POST /api/emprunts. Analyse chaque étage :</p>
+<pre class="pseudo">// SERVICE
+public EmpruntDto emprunter(Long membreId, Long livreId) {        // renvoie un DTO plat, pas l'entité
+    Membre m = membreRepo.findById(membreId)                      // charge le membre
+        .orElseThrow(() -> new MembreIntrouvableException(membreId));  // absent → exception
+    Livre l = livreRepo.findById(livreId)                         // charge le livre
+        .orElseThrow(() -> new LivreIntrouvableException(livreId));    // absent → exception
+    if (!l.isDisponible()) throw new LivreIndisponibleException(livreId);  // règle métier
+
+    l.setDisponible(false);                                       // le livre devient indisponible
+    Emprunt e = empruntRepo.save(new Emprunt(m, l, LocalDate.now()));  // relie les objets et enregistre
+    return new EmpruntDto(e.getId(), l.getTitre(), m.getNom(), e.getDateEmprunt());  // DTO plat (session ouverte)
+}                                                                 // fin de la méthode</pre>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi le service renvoie-t-il un EmpruntDto et pas l'entité Emprunt ?", opts: ["C'est plus court", "L'entité a des relations (cycle JSON, lazy) : le DTO plat évite tous les pièges", "Les entités sont secrètes", "Question de mode"], a: 1, exp: "DTO construit dans le service = pas de cycle, pas de LazyInitializationException." },
+      { type: "qcm", q: "Que contient la ligne insérée dans la table emprunts ?", opts: ["Tout le JSON du membre", "id, membre_id, livre_id (clés étrangères), date_emprunt, date_retour null", "Le titre du livre", "Le nom du membre"], a: 1, exp: "Les relations se stockent en clés étrangères, pas en copies." },
+      { type: "qcm", q: "POST avec un membreId inexistant : quelle exception ?", opts: ["LivreIndisponibleException", "MembreIntrouvableException, levée par le premier orElseThrow", "NullPointerException", "Aucune"], a: 1, exp: "Chaque orElseThrow protège une étape — l'ordre des vérifications compte." },
+      { type: "qcm", q: "Pourquoi l.setDisponible(false) AVANT le save de l'emprunt ?", opts: ["L'ordre est aléatoire", "La règle métier : un livre emprunté n'est plus disponible ; tout se joue dans la même transaction", "Pour le JSON", "Hibernate l'exige"], a: 1, exp: "Le service applique la règle et modifie les deux entités de façon cohérente." },
+      { type: "qcm", q: "Le membre 5 a 3 emprunts. Combien de lignes dans emprunts ont membre_id = 5 ?", opts: ["1", "3", "5", "0"], a: 1, exp: "Une ligne par emprunt, chacune pointant vers le membre : c'est ça, le One-to-Many." }
+    ],
+    solution: `<pre class="pseudo">// La photographie des tables après deux emprunts du membre 5 :
+
+membres :  ID | NOM    | EMAIL          | ACTIF
+           5  | Diallo | a.d@ex.be      | TRUE
+
+livres :   ID | TITRE     | AUTEUR  | DISPONIBLE
+           1  | Dune      | Herbert | FALSE   ← emprunté
+           2  | Fondation | Asimov  | FALSE   ← emprunté
+
+emprunts : ID | MEMBRE_ID | LIVRE_ID | DATE_EMPRUNT | DATE_RETOUR
+           1  | 5         | 1        | 2026-07-01   | NULL   ← membre 5 → livre 1
+           2  | 5         | 2        | 2026-07-03   | NULL   ← membre 5 → livre 2
+
+// Et le JSON servi au client (le DTO plat) :
+// {"id":2,"titreLivre":"Fondation","nomMembre":"Diallo","dateEmprunt":"2026-07-03"}</pre>
+<p>Objets reliés côté Java, clés étrangères côté base, DTO plat côté JSON : chaque monde a sa représentation, et toi tu maîtrises les trois.</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-relation-emprunt", title: "Relier Emprunt à Livre et Membre", level: 3,
+    statement: "Complète l'entité <code>Emprunt</code> de la leçon 8 : ajoute les deux relations vers <code>Membre</code> et <code>Livre</code> (obligatoires, chargement LAZY, clés étrangères <code>membre_id</code> et <code>livre_id</code>) et le constructeur <code>Emprunt(Membre m, Livre l, LocalDate date)</code>. Écris ensuite le record <code>EmpruntDto(Long id, String titreLivre, String nomMembre, LocalDate dateEmprunt)</code> et une méthode statique <code>EmpruntDto.depuis(Emprunt e)</code> qui le construit.",
+    hints: [
+      "Chaque relation : @ManyToOne(fetch = FetchType.LAZY, optional = false) + @JoinColumn(name = \"...\").",
+      "Un record Java (leçon Java 13) est parfait pour un DTO : concis et immuable.",
+      "depuis(e) navigue dans les objets : e.getLivre().getTitre(), e.getMembre().getNom()."
+    ],
+    solution: "@Entity\n@Table(name = \"emprunts\")\npublic class Emprunt {\n    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n\n    @ManyToOne(fetch = FetchType.LAZY, optional = false) // plusieurs emprunts → un membre\n    @JoinColumn(name = \"membre_id\")                    // clé étrangère NOT NULL\n    private Membre membre;\n\n    @ManyToOne(fetch = FetchType.LAZY, optional = false)\n    @JoinColumn(name = \"livre_id\")\n    private Livre livre;\n\n    @Column(nullable = false)\n    private LocalDate dateEmprunt;\n    private LocalDate dateRetour;                        // null = en cours\n\n    protected Emprunt() {}                               // pour JPA\n\n    public Emprunt(Membre m, Livre l, LocalDate date) {\n        this.membre = m;                                 // on relie les OBJETS ;\n        this.livre = l;                                  // Hibernate écrira les ids\n        this.dateEmprunt = date;\n    }\n    // getters...\n}\n\n// Le DTO plat : ce que l'API montre au monde\npublic record EmpruntDto(Long id, String titreLivre,\n                         String nomMembre, LocalDate dateEmprunt) {\n\n    public static EmpruntDto depuis(Emprunt e) {\n        return new EmpruntDto(\n            e.getId(),\n            e.getLivre().getTitre(),     // navigation d'objets (session ouverte !)\n            e.getMembre().getNom(),\n            e.getDateEmprunt());\n    }\n}",
+    note: "Appelle EmpruntDto.depuis(e) DANS le service : la session Hibernate y est encore ouverte, donc les relations LAZY sont lisibles sans exception." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

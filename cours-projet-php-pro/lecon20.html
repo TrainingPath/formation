@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Observabilité, sauvegardes, RGPD et rollback",
+  subtitle: "Les filets de la vie en production — un logiciel exploité, pas juste livré.",
+  theory: `
+<h3>1. Observer</h3>
+<p>L'<strong>observabilité</strong> est la capacité à comprendre ce qui se passe dans une application <em>en production</em>, où l'on ne peut pas s'arrêter pour inspecter le code. L'outil de base est le <strong>log</strong> (journal) : on <em>journalise</em> les événements importants (connexions, achats, erreurs) pour pouvoir les relire ensuite. Règle d'or : jamais de secret ni de donnée personnelle brute dans un log. En conteneur, on envoie les logs vers <strong>stderr</strong> (la sortie d'erreur standard), et Docker les collecte automatiquement (<code>LOG_CHANNEL=stderr</code>).</p>
+<pre class="pseudo">use Illuminate\\Support\\Facades\\Log;   // importe l'outil de journalisation de Laravel
+// événements de sécurité et métier, SANS secret ni donnée perso brute
+Log::info('location', ['jeu' => $jeuId, 'client' => $client->id]);   // journalise une location réussie (après commit)
+Log::warning('echec de connexion', ['ip' => $request->ip()]);        // journalise un échec de connexion (avec l'IP source)
+// en conteneur : LOG_CHANNEL=stderr -> logs collectés par Docker</pre>
+
+<h3>2. Sauvegarder (chiffré, testé)</h3>
+<p>Une <strong>sauvegarde</strong> est une copie de la base à conserver en cas de perte. <code>mysqldump</code> exporte toute la base en un fichier texte ; on le <strong>chiffre</strong> aussitôt avec <code>gpg</code> (pour que, volé, il reste illisible), et l'on range la <strong>clé de déchiffrement séparément</strong> de la sauvegarde. Point crucial : la <strong>restauration</strong> (remettre la sauvegarde en service) doit être <em>testée</em> régulièrement — une sauvegarde qu'on n'a jamais su restaurer n'est qu'un espoir.</p>
+<pre class="pseudo">docker compose exec bdd mysqldump -uroot -p... ludotheque \\   # exporte toute la base "ludotheque"
+  | gpg --encrypt --recipient sauvegarde@ludo > backup-\$(date +%F).sql.gpg   # chiffre le résultat et l'écrit dans un fichier daté
+# clé de déchiffrement stockée SÉPARÉMENT ; restauration TESTÉE régulièrement
+# une sauvegarde jamais restaurée n'est qu'un espoir.</pre>
+
+<h3>3. Respecter les données (RGPD)</h3>
+<p>Le <strong>RGPD</strong> accorde des droits aux personnes sur leurs données. Trois se traduisent en code : le <strong>droit d'accès</strong> et de <strong>portabilité</strong> (exporter ses données dans un format réutilisable), et le <strong>droit à l'effacement</strong> (supprimer son compte). Pour ce dernier, on préfère souvent l'<strong>anonymisation</strong> — retirer l'identité tout en gardant les statistiques agrégées — à une suppression brute qui casserait l'intégrité comptable. S'ajoutent la <strong>minimisation</strong> (ne stocker que le strict nécessaire, ex. jamais de carte bancaire) et des <strong>durées de conservation</strong> (purge planifiée des vieilles données).</p>
+<pre class="pseudo">public function exporterMesDonnees(User $u): JsonResponse {   // droit d'accès / portabilité
+    return response()->json($this->donneesPersonnelles($u));   // renvoie les données de l'utilisateur en JSON
+}
+public function supprimerMonCompte(User $u): void {           // droit à l'effacement
+    DB::transaction(function () use ($u) {                    // tout ou rien (atomique)
+        $this->anonymiserLocations($u);   // garder les stats, retirer l'identité
+        $u->delete();                     // supprime le compte lui-même
+    });
+}
+// minimisation (pas de carte stockée) + durées de conservation (purge planifiée)</pre>
+
+<h3>4. Pouvoir revenir (rollback)</h3>
+<p>Le <strong>rollback</strong> (« retour en arrière ») consiste à redéployer la version précédente quand la nouvelle se comporte mal. Grâce à l'<strong>immuabilité</strong> des images (l'image 1.0.0 existe toujours au registre), le rollback du <em>code</em> prend moins de 5 minutes. Le vrai défi est le <strong>schéma</strong> de la base : d'où la <strong>règle N-1</strong> — le schéma de la version N doit rester compatible avec le code N-1. On y parvient par des <strong>migrations additives</strong> : on ajoute une colonne, on bascule le code, puis seulement on supprime l'ancienne — en trois déploiements, jamais d'un coup.</p>
+<pre class="pseudo"># la version déployée se comporte mal :
+# .env.version : VERSION=1.0.0 (précédente) ; docker compose pull && up -d
+# l'image 1.0.0 existe toujours au registre (immuable) -> < 5 min
+# ⚠ migrations compatibles N-1 : le schéma de N reste lisible par le code N-1</pre>
+
+<h3>5. La production est un état à tenir</h3>
+<pre class="pseudo">observer (logs, /health) · sauvegarder (chiffré, testé) ·
+respecter (RGPD) · revenir (rollback N-1)
+Ces filets, appris séparément (Docker/CI-CD/Sécurité), tous en place ici.</pre>
+<div class="warn">Le rollback applicatif est trivial grâce à l'immuabilité des images ; le vrai sujet est le <strong>schéma</strong>. La règle N-1 (le schéma de la version N reste compatible avec le code N-1) se traduit en migrations additives : on ajoute une colonne, on bascule le code, on supprime l'ancienne — en trois déploiements, jamais d'un coup.</div>
+<div class="tip">Livrer n'est pas la fin : un logiciel se tient. Observer pour comprendre, sauvegarder pour survivre à une perte, respecter les données par obligation et par éthique, revenir vite quand ça dérape. Ces réflexes, disséminés dans les cours d'outillage, forment ici un tout cohérent sur un même projet.</div>`,
+  exercises: [
+    { type: "qcm", q: "En production, on comprend ce qui se passe grâce…", opts: ["Au debugger", "Aux logs (sur stderr, collectés)", "À la RAM", "Au hasard"], a: 1, exp: "Le debugger n'existe plus en prod." },
+    { type: "qcm", q: "On ne journalise JAMAIS…", opts: ["L'événement", "Mots de passe, jetons, données perso brutes", "L'horodatage", "L'IP"], a: 1, exp: "Fuite par les logs." },
+    { type: "qcm", q: "Le log de succès d'une location se place…", opts: ["Avant la transaction", "Après le commit", "Dans le template", "Jamais"], a: 1, exp: "Pas de location annulée journalisée." },
+    { type: "qcm", q: "Une sauvegarde doit être…", opts: ["En clair sur un partage", "Chiffrée, clé séparée, restauration testée", "Supprimée", "Publique"], a: 1, exp: "Autant de soin que la base." },
+    { type: "qcm", q: "Une sauvegarde jamais restaurée est…", opts: ["Fiable", "Un espoir, pas une garantie", "Chiffrée", "Inutile"], a: 1, exp: "Tester la restauration." },
+    { type: "qcm", q: "Le droit d'accès (RGPD) se traduit par…", opts: ["Une mention CGU", "Une fonction d'export des données", "Rien", "Un cookie"], a: 1, exp: "Du code." },
+    { type: "qcm", q: "Le droit à l'effacement demande souvent…", opts: ["La suppression brute toujours", "L'anonymisation (retirer l'identité, garder les stats)", "De chiffrer", "De publier"], a: 1, exp: "Intégrité préservée." },
+    { type: "qcm", q: "Le rollback applicatif consiste à…", opts: ["Rebuild en urgence", "Redéployer le tag précédent (image immuable)", "Restaurer le serveur", "Éteindre"], a: 1, exp: "< 5 min." },
+    { type: "qcm", q: "Le vrai sujet du rollback :", opts: ["Le code", "Le schéma déjà migré (règle N-1)", "Le DNS", "Les secrets"], a: 1, exp: "Découpler code et base." },
+    { type: "qcm", q: "La règle N-1 :", opts: ["Ne jamais migrer", "Migrations additives (ajouter, basculer, supprimer)", "Deux bases", "Un backup par heure"], a: 1, exp: "Reculer d'une version ne casse rien." },
+    { type: "vf", q: "Une rupture de schéma se fait en plusieurs déploiements, jamais d'un coup.", a: true, exp: "Additif puis bascule." },
+    { type: "qcm", q: "En conteneur, les logs vont…", opts: ["Dans un fichier", "Sur stderr, collectés par Docker", "En base", "Nulle part"], a: 1, exp: "LOG_CHANNEL=stderr." },
+    { type: "qcm", q: "La minimisation (RGPD) :", opts: ["Tout stocker", "Ne pas stocker l'inutile (ex. pas de carte)", "Chiffrer tout", "Dupliquer"], a: 1, exp: "Moins de surface." },
+    { type: "qcm", q: "La production est…", opts: ["La fin", "Un état à tenir (observer, sauvegarder, respecter, revenir)", "Optionnelle", "Un test"], a: 1, exp: "Logiciel exploité." },
+    { type: "vf", q: "Ces filets, appris séparément, sont tous en place sur un même projet.", a: true, exp: "L'aboutissement du Niveau 8." }
+  ],
+  final: {
+    title: "Exercice final — Les filets de la production",
+    intro: `<p>On installe observabilité, sauvegardes, RGPD et rollback.</p>`,
+    questions: [
+      { type: "qcm", q: "Les logs :", opts: ["Événements sans secret, après commit", "avec les mots de passe", "en fichier local éditable", "aucun"], a: 0, exp: "Utile sans trahir." },
+      { type: "qcm", q: "Les sauvegardes :", opts: ["Chiffrées, clé séparée, restauration testée", "en clair", "supprimées", "publiques"], a: 0, exp: "Base complète sinon." },
+      { type: "qcm", q: "Le droit à l'effacement :", opts: ["Anonymiser + supprimer l'identité", "tout garder", "chiffrer", "rien"], a: 0, exp: "Stats préservées." },
+      { type: "qcm", q: "Le rollback :", opts: ["Redéployer le tag précédent (< 5 min)", "rebuild", "restaurer le serveur", "prier"], a: 0, exp: "Image immuable." },
+      { type: "vf", q: "La règle N-1 découple le rollback du code de celui du schéma.", a: true, exp: "Rupture en plusieurs déploiements." }
+    ],
+    solution: `<pre class="pseudo">// Observabilité : logs structurés (après commit, sans secret)
+Log::info('location', ['jeu' => $jeuId, 'client' => $client->id]);   // journalise une location réussie
+
+# Sauvegarde chiffrée, clé séparée, restauration testée
+docker compose exec bdd mysqldump ... | gpg --encrypt -r sauvegarde@ludo > backup.sql.gpg   # exporte puis chiffre
+
+// RGPD
+public function supprimerMonCompte(User $u): void {          // droit à l'effacement
+  DB::transaction(fn() => [$this->anonymiserLocations($u), $u->delete()]);   // anonymise puis supprime, atomique
+}
+# Rollback : VERSION=1.0.0 (précédent) + pull + up -d (migrations N-1)</pre>
+<p>Les filets sont en place. Demain : l'examen — le projet professionnel de bout en bout.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes filets de production…",
+  items: [
+  { id: "proj6php-l20", title: "Le plan d'exploitation", level: 3,
+    statement: "Rédige le plan d'exploitation de la Ludothèque pro (14-18 lignes) : l'observabilité (quoi journaliser / jamais journaliser), la stratégie de sauvegarde (chiffrement, clé séparée, restauration testée, fréquence), le volet RGPD (3 fonctions), et la procédure de rollback avec la règle N-1 illustrée sur un renommage de colonne via migrations. Termine par « la production est un état, pas un événement ».",
+    hints: [
+      "Journaliser : événements de sécurité/métier ; jamais : secrets, données perso brutes.",
+      "Renommage N-1 : migration+1 ajoute la colonne (double écriture), +2 bascule, +3 supprime.",
+      "Rollback = redéployer le tag précédent ; sûr SI schéma compatible N-1."
+    ],
+    solution: "PLAN D'EXPLOITATION — Ludotheque pro\n\nOBSERVABILITE\n- Journaliser (Log) : connexions (reussies/echouees), changements de role,\n  actions sensibles (achat, suppression), erreurs. LOG_CHANNEL=stderr (Docker).\n- JAMAIS : mots de passe, jetons, cookies, donnees personnelles brutes.\n- Surveiller : /health, taux d'erreurs, temps de reponse, usage memoire.\n\nSAUVEGARDES\n- mysqldump chiffre (gpg), cle stockee SEPAREMENT de la sauvegarde.\n- Planifiees (quotidiennes) + restauration TESTEE une fois par mois sur un\n  environnement jetable (une sauvegarde non restauree n'est qu'un espoir).\n\nRGPD (3 fonctions implementees)\n1. exporterMesDonnees(u) -> JSON reutilisable (acces + portabilite)\n2. supprimerMonCompte(u) -> anonymise les locations, retire l'identite\n3. purgePlanifiee() -> anonymise/purge au-dela des durees de conservation\n+ minimisation : pas de carte bancaire stockee (paiement delegue).\n\nROLLBACK + REGLE N-1 (via migrations)\n- Rollback : .env.version -> tag precedent, docker compose pull && up -d\n  (l'image precedente existe toujours au registre). < 5 min.\n- Migrations compatibles N-1 : le schema de la version N reste lisible par le\n  code N-1. Exemple — renommer nb_jours en duree_jours :\n    migration +1 : AJOUTER duree_jours (nullable), le code ecrit les DEUX champs\n    migration +2 : LIRE duree_jours (les deux restent synchrones)\n    migration +3 : SUPPRIMER nb_jours (plus aucune version deployee ne le lit)\n  -> a chaque etape, reculer d'UNE version ne casse rien.\n\nLa production est un ETAT (a observer, sauvegarder, proteger, restaurer),\npas un evenement ponctuel qu'on oublie apres le deploiement.",
+    note: "Le renommage en trois migrations illustre la règle la plus contre-intuitive du déploiement professionnel : on ne change jamais un schéma d'un coup si l'on veut pouvoir reculer. Le rollback du CODE est trivial (image immuable) ; c'est le SCHÉMA qui exige de la discipline. Ce plan réunit les filets appris dans les trois cours d'outillage en une exploitation cohérente — la vraie fin d'un projet n'est pas la livraison, c'est l'exploitation tenue dans la durée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

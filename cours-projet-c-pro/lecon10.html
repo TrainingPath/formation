@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Autorisation par rôle et par ressource (anti-IDOR)",
+  subtitle: "Le bon rôle ne suffit pas : on vérifie aussi que la ressource appartient à l'utilisateur.",
+  theory: `
+<h3>1. Deux niveaux d'autorisation</h3>
+<p>Un <strong>rôle</strong> est le « badge » d'un utilisateur, qui définit ce qu'il a globalement le droit de faire (client, vendeur, admin). Une <strong>ressource</strong> est un objet manipulé par l'application (une location, une facture, un compte), désigné par un <strong>identifiant</strong> (un numéro unique). Le contrôle par rôle ne suffit pas toujours : un client a le droit d'annuler <em>ses</em> locations — mais pas celles d'un autre client, qui possède pourtant le même rôle. Il faut donc aussi vérifier la <strong>propriété de la ressource</strong> : « cet objet appartient-il bien à la personne qui le demande ? »</p>
+
+<h3>2. La faille IDOR</h3>
+<pre class="pseudo">// URL/action : annuler la location n°42
+// Un client change 42 en 43 (la location d'un autre) → l'obtient si on ne vérifie pas !</pre>
+<div class="warn"><strong>IDOR</strong> (Insecure Direct Object Reference) : accéder à l'objet d'autrui en manipulant son identifiant. Le rôle « client » est correct, mais la ressource ne lui appartient pas. C'est une faille de contrôle d'accès très courante.</p></div>
+
+<h3>3. Vérifier la propriété</h3>
+<pre class="pseudo">Code service_annuler_location(const Utilisateur *u, MYSQL *c, int loc_id) {  // u = qui demande, c = base, loc_id = n° de la location à annuler
+    Location l;                                          // une fiche Location, qu'on va remplir
+    if (dao_location_par_id(c, loc_id, &amp;l) != 0) return ERR_DB;  // charge la location n° loc_id dans l ; si échec, renvoie une erreur base
+    // anti-IDOR : la location doit appartenir à u (sauf admin)
+    if (u->role != ADMIN &amp;&amp; l.utilisateur_id != u->id)   // si u N'EST PAS admin ET que la location n'est pas à lui (&& = ET)
+        return ERR_DROIT;                                // → refus : accès interdit
+    return dao_annuler_location(c, loc_id) == 0 ? OK : ERR_DB;  // sinon annule ; renvoie OK si réussi, sinon ERR_DB
+}</pre>
+
+<h3>4. Tester le refus</h3>
+<pre class="pseudo">// un client ne doit PAS annuler la location d'un autre
+Utilisateur autre = { .id = 2, .role = CLIENT };     // un utilisateur : id 2, rôle simple CLIENT (.champ = valeur remplit une fiche)
+Location loc_de_1 = { .id = 42, .utilisateur_id = 1 };  // une location n° 42 qui appartient à l'utilisateur 1
+// service_annuler_location(&amp;autre, ...) doit renvoyer ERR_DROIT   // ← l'utilisateur 2 ne possède pas cette location : refus attendu</pre>
+<div class="tip">On teste explicitement le <strong>refus</strong> : un test qui prouve qu'un accès interdit est bien bloqué vaut autant qu'un test du cas nominal. La sécurité se vérifie, elle aussi, par des tests en CI.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le contrôle par rôle suffit-il toujours ?", opts: ["oui", "non : il faut aussi vérifier la propriété de la ressource", "jamais utile", "seulement pour l'admin"], a: 1, exp: "Rôle + ressource." },
+    { type: "qcm", q: "IDOR signifie…", opts: ["une injection", "accéder à l'objet d'autrui en changeant son identifiant", "une fuite mémoire", "un rôle"], a: 1, exp: "Insecure Direct Object Reference." },
+    { type: "qcm", q: "Un client annulant la location d'un autre client, c'est…", opts: ["autorisé", "une faille IDOR", "un bon test", "sans risque"], a: 1, exp: "Contrôle d'accès manquant." },
+    { type: "qcm", q: "La parade à l'IDOR :", opts: ["cacher l'id", "vérifier que la ressource appartient à l'utilisateur", "chiffrer l'URL", "un log"], a: 1, exp: "Contrôle de propriété." },
+    { type: "qcm", q: "Dans service_annuler_location, on compare…", opts: ["les prix", "l.utilisateur_id et u->id (sauf admin)", "les rôles seulement", "les stocks"], a: 1, exp: "Propriété de la location." },
+    { type: "qcm", q: "L'admin, lui…", opts: ["est bloqué", "peut agir sur les ressources d'autrui (exception prévue)", "n'existe pas", "est un client"], a: 1, exp: "Rôle privilégié explicite." },
+    { type: "qcm", q: "En cas de ressource d'autrui, on renvoie…", opts: ["OK", "ERR_DROIT", "ERR_STOCK", "la location"], a: 1, exp: "Accès refusé." },
+    { type: "qcm", q: "Teste-t-on aussi le refus ?", opts: ["non", "oui : prouver qu'un accès interdit est bloqué", "seulement le succès", "jamais"], a: 1, exp: "Tests de sécurité." },
+    { type: "qcm", q: "Un test de refus vaut…", opts: ["moins qu'un test nominal", "autant qu'un test du cas nominal", "rien", "un secret"], a: 1, exp: "La sécurité se teste." },
+    { type: "qcm", q: "IDOR est une faille de…", opts: ["performance", "contrôle d'accès", "compilation", "réseau bas niveau"], a: 1, exp: "Autorisation par ressource." },
+    { type: "vf", q: "Vérifier le rôle suffit pour empêcher un client de toucher les données d'un autre.", a: false, exp: "Faux : deux clients ont le même rôle ; il faut vérifier la propriété." },
+    { type: "qcm", q: "On charge d'abord la ressource pour…", opts: ["l'afficher", "connaître son propriétaire (utilisateur_id) et décider", "la supprimer", "rien"], a: 1, exp: "Comparer au demandeur." },
+    { type: "qcm", q: "La règle anti-IDOR vit dans…", opts: ["l'UI", "le service", "le Dockerfile", "le Makefile"], a: 1, exp: "Contrôle côté métier." },
+    { type: "qcm", q: "Manipuler un id pour cibler autrui est…", opts: ["impossible", "l'essence de l'attaque IDOR", "un test", "un rôle"], a: 1, exp: "D'où le contrôle de propriété." },
+    { type: "qcm", q: "La défense en profondeur ajoute l'anti-IDOR…", opts: ["au menu", "au contrôle par rôle, au niveau ressource", "au Dockerfile", "au scan"], a: 1, exp: "Un cran de sécurité de plus." }
+  ],
+  final: {
+    title: "Exercice final — Boucher une IDOR",
+    intro: `<p>Ce service laisse un client voir la facture d'un autre. Analyse :</p>
+<pre class="pseudo">Code voir_facture(const Utilisateur *u, MYSQL *c, int vente_id, Vente *out) {  // récupère la vente n° vente_id dans "out"
+    return dao_vente_par_id(c, vente_id, out);   // charge et renvoie la vente SANS vérifier à qui elle appartient (à interroger…)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "La faille :", opts: ["aucune", "aucun contrôle de propriété : un client voit la vente d'autrui (IDOR)", "trop lent", "rien"], a: 1, exp: "On lit sans vérifier le propriétaire." },
+      { type: "qcm", q: "La correction :", opts: ["cacher vente_id", "vérifier out->utilisateur_id == u->id (sauf admin)", "chiffrer", "un log"], a: 1, exp: "Contrôle de propriété." },
+      { type: "qcm", q: "En cas de vente d'autrui, on renvoie…", opts: ["la vente", "ERR_DROIT", "OK", "ERR_STOCK"], a: 1, exp: "Accès refusé." },
+      { type: "qcm", q: "L'admin peut-il voir toutes les factures ?", opts: ["non", "oui (exception de rôle prévue)", "jamais", "seulement les siennes"], a: 1, exp: "Rôle privilégié." },
+      { type: "qcm", q: "Quel test ajouter ?", opts: ["aucun", "un test prouvant qu'un client ne voit pas la vente d'un autre", "un test de vitesse", "un scan"], a: 1, exp: "Tester le refus." }
+    ],
+    solution: `<pre class="pseudo">Code voir_facture(const Utilisateur *u, MYSQL *c, int vente_id, Vente *out) {  // version corrigée
+    if (dao_vente_par_id(c, vente_id, out) != 0) return ERR_DB;  // charge la vente dans out ; si échec, erreur base
+    // anti-IDOR : la vente doit appartenir à u (sauf admin)
+    if (u->role != ADMIN &amp;&amp; out->utilisateur_id != u->id)   // si u n'est pas admin ET que la vente n'est pas à lui
+        return ERR_DROIT;                                     // → refus
+    return OK;                                                // sinon : accès autorisé
+}
+/* test de refus (CI) :
+   voir_facture(client2, ..., vente_de_client1, &amp;v) == ERR_DROIT */</pre>
+<p>On charge, on vérifie la propriété, on refuse sinon — et on teste le refus. L'IDOR est bouchée. Demain : louer, avec un test d'intégration.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projcpro-l10", title: "Contrôle de propriété générique", level: 3,
+    statement: "Écris une fonction int proprietaire_ou_admin(const Utilisateur *u, int ressource_owner_id) qui renvoie 1 si u est admin OU si u->id == ressource_owner_id, 0 sinon. Montre son usage anti-IDOR dans un service (return ERR_DROIT si 0).",
+    hints: [
+      "return u->role == ADMIN || u->id == ressource_owner_id;",
+      "Dans le service : if (!proprietaire_ou_admin(u, l.utilisateur_id)) return ERR_DROIT;",
+      "Une seule fonction réutilisable partout où l'IDOR menace."
+    ],
+    solution: "int proprietaire_ou_admin(const Utilisateur *u, int ressource_owner_id) {  // 1 si autorise, 0 sinon\n    return u->role == ADMIN || u->id == ressource_owner_id;   // vrai si u est ADMIN OU proprietaire de la ressource (|| = OU)\n}\n\n// usage anti-IDOR dans un service :\n// Location l;                                             // fiche a remplir\n// if (dao_location_par_id(c, loc_id, &l) != 0) return ERR_DB;   // charge la location ; erreur base sinon\n// if (!proprietaire_ou_admin(u, l.utilisateur_id)) return ERR_DROIT;   // si NON autorise (!), refus\n// ... action autorisee ...",
+    note: "Centraliser le contrôle de propriété dans une fonction unique évite d'oublier l'anti-IDOR quelque part. On l'appelle sur chaque ressource nominative (location, vente, compte), avec l'exception admin." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

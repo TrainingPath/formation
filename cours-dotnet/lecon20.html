@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Projet guidé : l'API du gestionnaire de tâches",
+  subtitle: "Tout assembler : le projet du cours C#, version API professionnelle.",
+  theory: `
+<h3>1. Le cahier des charges</h3>
+<p>Un <strong>cahier des charges</strong> est la liste des besoins à satisfaire. Le gestionnaire de tâches de la leçon 20 de C# (console), réécrit en API avec tout ce que tu as appris :</p>
+<ul>
+<li>Chaque membre inscrit gère SES tâches (créer, lister, terminer, supprimer).</li>
+<li>Authentification JWT ; un admin peut tout voir et tout purger.</li>
+<li>Validation stricte, erreurs propres, pagination, tests.</li>
+</ul>
+<h3>2. Le plan de construction (l'ordre professionnel)</h3>
+<pre class="pseudo">1. Entités + DbContext   → Membre (1) ─── (N) Tache            // la forme des données d'abord
+2. Migration             → dotnet ef migrations add + database update  // créer les tables
+3. DTOs + validation     → CreerTacheDto, LoginDto…            // les objets d'échange validés
+4. Services              → TacheService (règles), AuthService (JWT)  // la logique métier
+5. Contrôleurs           → AuthController, TachesController      // la façade HTTP
+6. Sécurité              → [Authorize], propriété, rôles         // qui a le droit de quoi
+7. Tests                 → nominal + refus (400/401/403/404)     // la preuve que tout marche</pre>
+<h3>3. Les pièces maîtresses</h3>
+<pre class="pseudo">// Entités
+public class Membre {
+    public int Id { get; set; }                          // clé primaire
+    public string Email { get; set; } = "";              // identifiant de connexion
+    public string PasswordHash { get; set; } = "";       // hash bcrypt, jamais le clair
+    public string Role { get; set; } = "membre";         // "membre" ou "admin"
+    public List&lt;Tache&gt; Taches { get; set; } = new();     // navigation 1→N (ses tâches)
+}
+public class Tache {
+    public int Id { get; set; }                          // clé primaire
+    public string Titre { get; set; } = "";              // titre de la tâche
+    public bool EstTerminee { get; set; }                // état
+    public DateTime CreeLe { get; set; } = DateTime.Now; // date de création
+    public int MembreId { get; set; }                    // clé étrangère vers le propriétaire
+    public Membre? Membre { get; set; }                  // navigation N→1
+}
+
+// Le GET central : MES tâches, paginées
+[Authorize]                                              // connecté obligatoire
+[HttpGet]                                                // GET api/taches
+public async Task&lt;object&gt; MesTaches(int page = 1, bool? terminee = null)
+{
+    int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // l'appelant, depuis le jeton
+    var requete = _context.Taches.Where(t =&gt; t.MembreId == userId);           // ne voir QUE ses tâches (en base)
+    if (terminee != null) requete = requete.Where(t =&gt; t.EstTerminee == terminee);  // filtre optionnel
+
+    return new {
+        total = await requete.CountAsync(),              // nombre total (COUNT en base) → pour "page X sur Y"
+        taches = await requete.OrderByDescending(t =&gt; t.CreeLe)  // trier : plus récentes d'abord
+                              .Skip((page - 1) * 10).Take(10)     // pagination : 10 par page
+                              .Select(t =&gt; new { t.Id, t.Titre, t.EstTerminee })  // DTO de sortie (pas de cycle)
+                              .ToListAsync()             // matérialiser la page
+    };
+}</pre>
+<h3>4. Le POST canonique</h3>
+<pre class="pseudo">[Authorize]                                              // connecté obligatoire
+[HttpPost]                                               // POST api/taches
+public async Task&lt;ActionResult&lt;object&gt;&gt; Creer(CreerTacheDto dto)  // DTO validé en entrée
+{
+    int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // identité depuis le jeton
+    var tache = new Tache { Titre = dto.Titre, MembreId = userId };  // identité : décidée par le SERVEUR
+
+    _context.Taches.Add(tache);                          // marqué « à insérer »
+    await _context.SaveChangesAsync();                   // INSERT réel, Id rempli
+    return CreatedAtAction(nameof(ParId), new { id = tache.Id },  // 201 + Location
+                           new { tache.Id, tache.Titre });        // DTO de sortie
+}</pre>
+<h3>5. La check-list finale</h3>
+<pre class="pseudo">✔ DTO en entrée (jamais l'entité)    ✔ identité depuis les claims       // sécurité des entrées
+✔ 201/204/400/401/403/404 corrects   ✔ filtres/pagination EN BASE       // contrat REST + performance
+✔ règles métier dans le service      ✔ dotnet test : succès ET refus verts  // architecture + preuve</pre>
+<div class="tip">Compare avec le gestionnaire console de la leçon 20 de C# : mêmes concepts métier, mais multi-utilisateurs, sécurisé, persistant, testé et documenté. C'est ça, l'apport du framework.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quel est l'ordre de construction professionnel ?", opts: ["Contrôleurs → entités", "Entités/DbContext → migration → DTOs → services → contrôleurs → sécurité → tests", "Tests d'abord, base à la fin", "Au feeling"], a: 1, exp: "Des fondations (données) vers la façade, puis la preuve." },
+    { type: "qcm", q: "Pourquoi MesTaches filtre-t-il sur t.MembreId == userId dès le Where ?", opts: ["Pour le style", "Chaque membre ne voit QUE ses tâches — et le filtre s'exécute en base", "Pour éviter un bug EF", "C'est optionnel"], a: 1, exp: "Sécurité + performance dans la même ligne." },
+    { type: "qcm", q: "D'où vient userId dans Creer ?", opts: ["Du JSON du client", "Des claims du jeton vérifié : l'identité vient TOUJOURS du serveur", "De la query string", "Du hasard"], a: 1, exp: "dto.MembreId n'existe même pas : le DTO ne l'expose pas." },
+    { type: "qcm", q: "Pourquoi CreerTacheDto plutôt que l'entité Tache en entrée ?", opts: ["C'est plus long", "Liste blanche : le client ne peut fournir NI Id, NI MembreId, NI CreeLe", "EF l'exige", "Pour Swagger"], a: 1, exp: "L'anti-mass-assignment de la leçon 12." },
+    { type: "qcm", q: "La réponse de MesTaches contient total ET la page de 10. Pourquoi le total ?", opts: ["Décoratif", "Le client peut afficher « page 2 sur 14 » : le COUNT s'exécute en base, coût minime", "Obligatoire en JSON", "Pour déboguer"], a: 1, exp: "La pagination complète, pensée pour le client." },
+    { type: "qcm", q: "Un membre non connecté appelle GET /api/taches. Réponse ?", opts: ["200 vide", "401 : [Authorize] exige un jeton", "403", "404"], a: 1, exp: "Pas d'identité, pas de tâches." },
+    { type: "qcm", q: "Où vit la règle « max 100 tâches par membre » ?", opts: ["Dans le contrôleur", "Dans TacheService : règle métier, testable sans HTTP", "Dans le DTO", "Dans appsettings uniquement"], a: 1, exp: "Le service décide, le contrôleur traduit (leçon 7). La limite peut venir d'IOptions (leçon 14)." },
+    { type: "qcm", q: "Le Select(t => new { t.Id, t.Titre, t.EstTerminee }) final sert à :", opts: ["Trier", "Projeter un DTO de sortie : pas de cycles, pas de données superflues, moins de transfert", "Compter", "Valider"], a: 1, exp: "Les leçons 10 et 11 combinées." },
+    { type: "qcm", q: "Quels tests prouvent la politique de sécurité du projet ?", opts: ["Le test du GET 200 suffit", "Les refus : sans jeton → 401, tâche d'un autre → 403, id inexistant → 404, titre invalide → 400", "Un test de charge", "Aucun test ne le peut"], a: 1, exp: "Chaque code d'erreur du contrat mérite son test (leçon 15)." },
+    { type: "qcm", q: "L'admin doit voir TOUTES les tâches. Comment l'implémenter proprement ?", opts: ["Un deuxième serveur", "Un endpoint [Authorize(Roles = \"admin\")] (ex. GET api/taches/toutes) sans le filtre MembreId", "Donner le rôle admin à tous", "Supprimer [Authorize]"], a: 1, exp: "Le rôle ouvre un chemin distinct, explicite et auditable." },
+    { type: "qcm", q: "PUT /api/taches/7/terminer par un membre sur SA tâche déjà terminée :", opts: ["500", "400 (ou 409) : la règle métier « déjà terminée » est traduite par le handler d'erreurs", "204 silencieux", "403"], a: 1, exp: "L'exception métier de la leçon 13, en situation réelle." },
+    { type: "qcm", q: "La différence majeure avec le gestionnaire console de la leçon 20 de C# ?", opts: ["Le langage", "Multi-utilisateurs, sécurisé, persistant, testé, documenté : l'industrialisation", "Les noms de variables", "Il est plus lent"], a: 1, exp: "Le framework industrialise ce que tu bricolais à la main." },
+    { type: "qcm", q: "Où la migration initiale intervient-elle dans le plan ?", opts: ["À la fin", "Juste après les entités et le DbContext : la base existe avant tout le reste", "Avant les entités", "Jamais"], a: 1, exp: "On ne construit pas d'API sur une base qui n'existe pas." },
+    { type: "vf", q: "Grâce à la relation Membre 1-N Tache, supprimer un membre supprimera ses tâches (cascade par défaut).", a: true, exp: "Comportement à connaître et à décider consciemment (leçon 11)." },
+    { type: "vf", q: "On aurait pu écrire les contrôleurs avant les entités.", a: false, exp: "Possible mais déconseillé : on exposerait des données dont la forme n'est pas décidée." }
+  ],
+  final: {
+    title: "Exercice final — La revue de code du projet",
+    intro: `<p>Ton collègue propose ce POST. Fais la revue :</p>
+<pre class="pseudo">[HttpPost]                                        // ← ligne A : pas d'attribut d'auth (n'importe qui peut créer)
+public async Task&lt;ActionResult&lt;Tache&gt;&gt; Creer(Tache t)   // ← ligne B : reçoit l'ENTITÉ brute (pas de DTO)
+{
+    t.MembreId = t.MembreId;                      // ← ligne C : le MembreId « vient du JSON » (usurpation !)
+    _context.Taches.Add(t);                       // ajoute l'entité telle quelle
+    await _context.SaveChangesAsync();            // enregistre
+    return Ok(t);                                  // ← ligne D : 200 + entité brute (devrait être 201 + DTO)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Ligne A : que manque-t-il ?", opts: ["Rien", "[Authorize] : n'importe quel anonyme peut créer des tâches", "[HttpGet]", "Un commentaire"], a: 1, exp: "Toute écriture exige une identité établie." },
+      { type: "qcm", q: "Ligne B : recevoir l'entité Tache directement pose quel problème ?", opts: ["Aucun", "Le client peut fournir Id, MembreId, CreeLe… : il faut un DTO liste blanche + validation", "C'est trop lent", "EF le refuse"], a: 1, exp: "Le mass assignment, encore et toujours." },
+      { type: "qcm", q: "Ligne C : le MembreId « vient du JSON ». Gravité ?", opts: ["Cosmétique", "Critique : n'importe qui crée des tâches AU NOM de n'importe qui — l'identité doit venir des claims", "Faible", "C'est un warning"], a: 1, exp: "LA faille d'usurpation classique. User.FindFirstValue, point." },
+      { type: "qcm", q: "Ligne D : Ok(t) au lieu de CreatedAtAction. Problème ?", opts: ["Aucun, 200 suffit", "Contrat REST : une création renvoie 201 + Location — et t est l'entité brute (cycles possibles)", "Il faut 204", "Ok n'existe pas"], a: 1, exp: "201 + DTO de sortie : la réponse canonique." },
+      { type: "qcm", q: "Combien de leçons du cours cette revue mobilise-t-elle ?", opts: ["Une", "Au moins quatre : auth (16-17), DTO/validation (12), REST (6), projection (10-11)", "Zéro", "Deux"], a: 1, exp: "La revue de code, c'est le cours entier en action." }
+    ],
+    solution: `<pre class="pseudo">// La version corrigée, canonique :
+[Authorize]                                        // identité exigée
+[HttpPost]
+public async Task<ActionResult<object>> Creer(CreerTacheDto dto)  // DTO validé
+{
+    // l'identité vient du JETON, jamais du corps
+    int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+    var tache = new Tache { Titre = dto.Titre, MembreId = userId };
+    _context.Taches.Add(tache);
+    await _context.SaveChangesAsync();
+
+    // 201 + Location + DTO de sortie
+    return CreatedAtAction(nameof(ParId), new { id = tache.Id },
+                           new { tache.Id, tache.Titre });
+}</pre>
+<p>Le projet est complet et robuste. Demain : l'examen final — 21 leçons en une page.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-projet-terminer", title: "Terminer une tâche (propriétaire uniquement)", level: 3,
+    statement: "Écris l'endpoint <code>[HttpPost(\"{id:int}/terminer\")]</code> complet : réservé aux connectés ; 404 si la tâche n'existe pas ; 403 si l'appelant n'est ni propriétaire ni admin ; 400 avec ProblemDetails si elle est déjà terminée ; sinon termine, sauvegarde et renvoie 204. Identité depuis les claims uniquement.",
+    hints: [
+      "L'ordre : 404 (existence) → 403 (droit) → 400 (règle métier) → action → 204.",
+      "Déjà terminée : return Problem(title: \"Tâche déjà terminée\", statusCode: 400);",
+      "N'oublie ni [Authorize] ni le SaveChangesAsync."
+    ],
+    solution: "[Authorize]\n[HttpPost(\"{id:int}/terminer\")]\npublic async Task<IActionResult> Terminer(int id)\n{\n    // 1. Existence\n    var tache = await _context.Taches.FindAsync(id);          // charge la tâche visée\n    if (tache == null)\n        return NotFound();                                    // 404\n\n    // 2. Droit : propriétaire ou admin, identité depuis le JETON\n    int userId   = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // l'appelant\n    bool estAdmin = User.IsInRole(\"admin\");                   // rôle admin ?\n    if (tache.MembreId != userId && !estAdmin)\n        return Forbid();                                      // 403\n\n    // 3. Règle métier\n    if (tache.EstTerminee)                                    // déjà terminée ?\n        return Problem(title: \"Tâche déjà terminée\",\n                       statusCode: 400);                      // 400 ProblemDetails\n\n    // 4. Action\n    tache.EstTerminee = true;                                 // on la termine\n    await _context.SaveChangesAsync();                        // on sauvegarde\n    return NoContent();                                       // 204\n}",
+    note: "404 → 403 → 400 → 204 : quatre codes, quatre questions dans le bon ordre. Cet endpoint résume à lui seul les semaines 2 et 3." },
+  { id: "dotnet-projet-test-securite", title: "Le test de sécurité du projet", level: 3,
+    statement: "Écris le test d'intégration <code>Un_membre_ne_peut_pas_terminer_la_tache_d_un_autre</code> avec WebApplicationFactory : prépare deux membres (Marc et Aurélia) et une tâche appartenant à Aurélia ; obtiens un jeton pour Marc (POST login) ; appelle POST /api/taches/{id}/terminer avec ce jeton ; vérifie le 403 ET que la tâche n'est pas terminée en base. Structure Arrange/Act/Assert commentée.",
+    hints: [
+      "Le jeton : var login = await _client.PostAsJsonAsync(\"/api/auth/login\", new { email = ..., password = ... }); puis lire token du JSON.",
+      "Le header : _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(\"Bearer\", token);",
+      "L'assertion d'état : relire la tâche (via un scope du DbContext de test ou un GET admin) et vérifier EstTerminee == false."
+    ],
+    solution: "[Fact]\npublic async Task Un_membre_ne_peut_pas_terminer_la_tache_d_un_autre()\n{\n    // ---- Arrange : deux membres, une tâche à Aurélia ----\n    var (marc, aurelia, tache) = await PreparerDonneesDeTest();       // jeu de données\n    string token = await ObtenirJeton(\"marc@mail.com\", \"mdpMarc123!\");  // jeton de Marc\n    _client.DefaultRequestHeaders.Authorization =\n        new AuthenticationHeaderValue(\"Bearer\", token);              // on présente le jeton\n\n    // ---- Act : Marc tente de terminer la tâche d'Aurélia ----\n    var reponse = await _client.PostAsync(\n        $\"/api/taches/{tache.Id}/terminer\", null);                   // l'appel interdit\n\n    // ---- Assert : refus + état intact ----\n    Assert.Equal(HttpStatusCode.Forbidden, reponse.StatusCode);   // 403\n\n    using var scope = _factory.Services.CreateScope();               // on relit la base\n    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n    var enBase = await db.Taches.FindAsync(tache.Id);\n    Assert.False(enBase!.EstTerminee);            // rien n'a changé\n}",
+    note: "Le duo d'assertions est essentiel : le 403 prouve la réponse, le re-chargement prouve l'ÉTAT. Une API peut mentir dans son statut — la base, jamais." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

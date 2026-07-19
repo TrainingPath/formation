@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Power Query : nettoyer et transformer les données",
+  subtitle: "Dépivoter, fusionner, regrouper, remplir : les transformations qui font vraiment gagner des heures.",
+  theory: `
+<h3>1. Objectif : passer du tableau de présentation au tableau exploitable</h3>
+<p>Un tableau lisible par un humain est rarement analysable par une machine. Les données prêtes pour un TCD sont dites <strong>à plat</strong> (ou normalisées) : une ligne par observation, une colonne par attribut, aucun sous-total intercalé, aucune cellule fusionnée.</p>
+<pre class="pseudo">TABLEAU DE PRESENTATION (croise, humain)   TABLEAU A PLAT (machine)
+   Produit   Jan   Fev   Mar               Produit  Mois  Montant
+   Casque    100   120    90                Casque   Jan     100
+   Clavier    80    70    60                Casque   Fev     120
+                                            Casque   Mar      90
+                                            Clavier  Jan      80
+                                            ...</pre>
+<p>Le passage de gauche à droite s'appelle <strong>dépivoter</strong> : c'est la transformation la plus précieuse de Power Query, et celle qui n'a aucun équivalent simple en formules.</p>
+
+<h3>2. Dépivoter des colonnes</h3>
+<pre class="pseudo">Selectionner la colonne a CONSERVER (Produit)
+Transformer ▸ Dépivoter les colonnes ▸ Dépivoter les autres colonnes
+   M : Table.UnpivotOtherColumns(Etape, {"Produit"}, "Attribut", "Valeur")
+       {"Produit"}   la liste des colonnes qui NE bougent PAS
+       "Attribut"    nom de la colonne qui recevra les anciens en-tetes
+       "Valeur"      nom de la colonne qui recevra les valeurs
+   // renommer ensuite Attribut en "Mois" et Valeur en "Montant"</pre>
+<div class="tip">Choisis toujours <strong>Dépivoter les autres colonnes</strong> plutôt que « Dépivoter les colonnes ». La première fige la liste des colonnes fixes ; si un mois d'avril apparaît le mois prochain, il sera dépivoté automatiquement. La seconde fige la liste des colonnes à dépivoter et ignorera la nouveauté.</div>
+<p>L'opération inverse existe : <strong>Transformer ▸ Colonne croisée dynamique</strong> (<code>Table.Pivot</code>), pour reconstruire un tableau croisé. Utile plus rarement, car le TCD d'Excel le fait déjà.</p>
+
+<h3>3. Combler les trous : Remplir vers le bas</h3>
+<p>Les exports comportent souvent une valeur écrite une seule fois, suivie de cellules vides (l'équivalent des cellules fusionnées). <strong>Remplir</strong> recopie la dernière valeur non vide.</p>
+<pre class="pseudo">Clic droit sur l'en-tete ▸ Remplir ▸ Vers le bas
+   M : Table.FillDown(Etape, {"Region"})
+   M : Table.FillUp(Etape, {"Region"})     // dans l'autre sens
+
+Avant          Apres
+   Nord   100     Nord   100
+   (vide) 200     Nord   200
+   (vide) 150     Nord   150
+   Sud     80     Sud     80</pre>
+<div class="warn">Remplir ne fonctionne que sur des cellules réellement <strong>null</strong>. Une cellule contenant une chaîne vide <code>""</code> ou un espace bloque le remplissage. Passe d'abord par <code>Transformer ▸ Remplacer les valeurs ▸ remplacer "" par null</code>, ou par <code>Transformer ▸ Format ▸ Supprimer les espaces</code>.</div>
+
+<h3>4. Traiter les valeurs manquantes et les doublons</h3>
+<pre class="pseudo">REMPLACER LES VALEURS
+   Transformer ▸ Remplacer les valeurs
+   M : Table.ReplaceValue(Etape, null, 0, Replacer.ReplaceValue, {"Montant"})
+       null     ce qu'on cherche
+       0        ce qu'on met a la place
+       {"..."}  les colonnes concernees
+
+SUPPRIMER LES DOUBLONS
+   Selectionner la ou les colonnes ▸ clic droit ▸ Supprimer les doublons
+   M : Table.Distinct(Etape, {"Reference"})
+       // sur une seule colonne : garde la PREMIERE ligne de chaque valeur
+   M : Table.Distinct(Etape)
+       // sans liste : supprime les lignes entierement identiques
+
+GARDER SEULEMENT LES DOUBLONS (pour auditer)
+   Accueil ▸ Conserver les lignes ▸ Conserver les doublons
+
+SUPPRIMER LES ERREURS
+   Accueil ▸ Supprimer les lignes ▸ Supprimer les erreurs
+   M : Table.RemoveRowsWithErrors(Etape, {"Montant"})</pre>
+<div class="warn">Table.Distinct conserve la <strong>première</strong> ligne rencontrée. Si tu veux garder la plus récente, trie d'abord par date décroissante — l'ordre du tri détermine ce qui survit. Beaucoup de dédoublonnages faux viennent de là.</div>
+
+<h3>5. Fractionner et fusionner des colonnes</h3>
+<pre class="pseudo">FRACTIONNER
+   Transformer ▸ Fractionner la colonne ▸ Par délimiteur
+      Choisir le delimiteur, puis : a chaque occurrence / la plus a gauche /
+      la plus a droite
+   M : Table.SplitColumn(Etape, "NomComplet",
+          Splitter.SplitTextByDelimiter(" ", QuoteStyle.Csv),
+          {"Nom", "Prenom"})
+
+   Transformer ▸ Fractionner la colonne ▸ Par nombre de caractères
+   Transformer ▸ Fractionner la colonne ▸ Par transition minuscule/majuscule
+      // tres pratique sur du "DupontJean"
+
+FUSIONNER
+   Selectionner 2 colonnes (Ctrl+clic) ▸ clic droit ▸ Fusionner les colonnes
+   M : Table.CombineColumns(Etape, {"Nom","Prenom"},
+          each Text.Combine(List.Transform(_, Text.From), " "), "NomComplet")</pre>
+
+<h3>6. Ajouter une colonne calculée</h3>
+<p>Deux voies. La <strong>colonne personnalisée</strong> pour une formule M libre, ou la <strong>colonne d'après les exemples</strong> qui devine la règle à partir de deux ou trois saisies.</p>
+<pre class="pseudo">Ajouter une colonne ▸ Colonne personnalisée
+   M : Table.AddColumn(Etape, "Total", each [Qte] * [Prix], type number)
+       "Total"          le nom de la nouvelle colonne
+       each             pour chaque ligne
+       [Qte] * [Prix]   la formule, les colonnes entre CROCHETS
+       type number      le type du resultat (a preciser, sinon "any")
+
+Quelques formules M utiles :
+   each [Montant] * 1.21                      // TVA
+   each Text.Upper([Nom])                     // majuscules
+   each Date.Year([Date])                     // l'annee
+   each Date.ToText([Date], "MMMM", "fr-FR")  // le mois en toutes lettres
+   each if [Montant] > 1000 then "Grand" else "Petit"
+        // le SI de M : if ... then ... else, en MINUSCULES et
+        // le else est OBLIGATOIRE
+   each Text.Trim([Client])                   // supprime les espaces
+   each List.Sum({[Q1],[Q2],[Q3]})            // somme de plusieurs colonnes
+
+Ajouter une colonne ▸ Colonne d'après les exemples
+   // on tape 2 ou 3 resultats attendus, Power Query deduit la formule M
+   // ideal pour les extractions de texte compliquees</pre>
+<div class="warn">En M, le séparateur décimal est le <strong>point</strong> et le séparateur d'arguments la <strong>virgule</strong>, quels que soient les paramètres régionaux d'Excel. On écrit <code>[Montant] * 1.21</code> et non <code>1,21</code>. C'est la confusion numéro un des débutants francophones.</div>
+
+<h3>7. Regrouper par (Group By)</h3>
+<p><strong>Regrouper par</strong> agrège les lignes, comme le ferait un TCD, mais le résultat est une vraie table réutilisable.</p>
+<pre class="pseudo">Accueil ▸ Regrouper par ▸ (bouton Avancé pour plusieurs regroupements)
+   Grouper par        : Region, puis Produit
+   Nouveau nom colonne: Total ventes
+   Opération          : Somme
+   Colonne            : Montant
+
+   M : Table.Group(Etape, {"Region"}, {
+           {"Total", each List.Sum([Montant]), type number},
+           {"Nb", each Table.RowCount(_), Int64.Type}
+       })
+       {"Region"}            les colonnes de regroupement
+       "Total"               le nom de la colonne d'agregat
+       List.Sum([Montant])   la somme de la colonne dans chaque groupe
+       Table.RowCount(_)     le nombre de lignes du groupe
+       // le _ designe la sous-table du groupe courant</pre>
+
+<h3>8. Combiner deux requêtes : Ajouter contre Fusionner</h3>
+<p>Deux opérations souvent confondues. <strong>Ajouter</strong> empile verticalement (plus de lignes). <strong>Fusionner</strong> rapproche horizontalement selon une clé commune (plus de colonnes) : c'est le RECHERCHEV de Power Query.</p>
+<pre class="pseudo">AJOUTER DES REQUETES  (empiler : janvier + fevrier + mars)
+   Accueil ▸ Ajouter des requêtes ▸ Ajouter les requêtes comme nouvelles
+   M : Table.Combine({Janvier, Fevrier, Mars})
+   // l'alignement se fait par NOM de colonne, pas par position.
+   // Une colonne absente d'une source est remplie de null.
+
+FUSIONNER DES REQUETES  (jointure : ventes + catalogue produits)
+   Accueil ▸ Fusionner des requêtes
+      Selectionner la colonne cle dans chaque table
+      Choisir le TYPE DE JOINTURE :
+        Externe gauche   toutes les lignes de gauche + correspondances
+                         (l'equivalent de RECHERCHEV : le plus courant)
+        Interne          uniquement les lignes presentes des DEUX cotes
+        Anti gauche      uniquement les lignes SANS correspondance
+                         (parfait pour auditer : quels codes sont inconnus)
+        Externe complet  tout, des deux cotes
+   Puis cliquer sur l'icone d'EXPANSION (double fleche) de la colonne
+   creee, et cocher les colonnes a rapatrier.
+
+   M : Table.NestedJoin(Ventes, {"CodeProduit"}, Catalogue, {"Code"},
+                        "Cat", JoinKind.LeftOuter),
+       Table.ExpandTableColumn(Etape, "Cat", {"Libelle","Prix"},
+                               {"Libelle","Prix"})</pre>
+<div class="warn">Après une fusion, la nouvelle colonne affiche <code>Table</code> dans chaque cellule : ce sont des tables imbriquées. Tant que tu n'as pas cliqué sur l'icône d'<strong>expansion</strong> (la double flèche dans l'en-tête) pour choisir les colonnes, rien n'est exploitable. C'est l'étape que tout le monde oublie la première fois.</div>
+<div class="tip">La jointure <strong>Anti gauche</strong> est un outil d'audit redoutable : elle liste exactement les références présentes dans les ventes mais absentes du catalogue. En formules, il faudrait un RECHERCHEX enveloppé de SI.NON.DISP puis un filtre.</div>
+
+<h3>9. Paramétrer et fiabiliser une requête</h3>
+<pre class="pseudo">CREER UN PARAMETRE
+   Accueil ▸ Gérer les paramètres ▸ Nouveau paramètre
+   // pour un chemin de dossier, une annee, un seuil...
+   // on remplace ensuite la valeur en dur dans l'etape Source
+
+GERER LES ERREURS DANS UNE COLONNE PERSONNALISEE
+   each try [Montant] / [Qte] otherwise 0
+      try ... otherwise    l'equivalent de SIERREUR
+      // evite qu'une division par zero fasse echouer toute la requete
+
+RENOMMER LES ETAPES
+   Clic droit sur une etape ▸ Renommer
+   // "Filtre ventes 2025" est plus parlant que "Lignes filtrees1"</pre>
+<div class="tip">Deux habitudes qui distinguent une requête professionnelle : renommer les étapes en langage clair, et éviter toute valeur codée en dur (chemin, année, seuil) au profit d'un paramètre. Six mois plus tard, c'est ce qui fait la différence entre une requête qu'on ajuste en dix secondes et une qu'on refait entièrement.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie « dépivoter » des colonnes ?", opts: ["Trier les colonnes", "Transformer un tableau croisé en tableau à plat", "Supprimer les colonnes vides", "Créer un TCD"], a: 1, exp: "Les en-têtes deviennent des valeurs : une ligne par observation." },
+    { type: "input", q: "Écris le chemin de ruban pour dépivoter en conservant la colonne sélectionnée.", a: ["Transformer ▸ Dépivoter les colonnes ▸ Dépivoter les autres colonnes"], ph: "Transformer ▸ …", exp: "« Les autres colonnes » rend la requête robuste aux nouvelles colonnes." },
+    { type: "qcm", q: "Pourquoi choisir « Dépivoter les autres colonnes » plutôt que « Dépivoter les colonnes » ?", opts: ["C'est plus rapide", "Une nouvelle colonne ajoutée à la source sera dépivotée automatiquement", "Cela trie les données", "Il n'y a pas de différence"], a: 1, exp: "On fige la liste des colonnes FIXES, pas celle des colonnes à dépivoter." },
+    { type: "input", q: "Écris la fonction M qui recopie la dernière valeur non vide vers le bas.", a: ["Table.FillDown"], ph: "Table.…", exp: "Elle correspond à Clic droit ▸ Remplir ▸ Vers le bas." },
+    { type: "vf", q: "Remplir vers le bas fonctionne sur des cellules contenant une chaîne vide \"\".", a: false, exp: "Seules les vraies valeurs null sont comblées : il faut d'abord remplacer \"\" par null." },
+    { type: "qcm", q: "Table.Distinct sur une colonne conserve quelle ligne parmi les doublons ?", opts: ["La dernière", "La première rencontrée", "Celle de plus grande valeur", "Une au hasard"], a: 1, exp: "D'où l'importance de trier avant de dédoublonner." },
+    { type: "input", q: "Écris la fonction M qui ajoute une colonne calculée à une table.", a: ["Table.AddColumn"], ph: "Table.…", exp: "Table.AddColumn(Etape, \"Total\", each [Qte]*[Prix], type number)." },
+    { type: "qcm", q: "Comment écrit-on une condition dans une colonne personnalisée M ?", opts: ["=SI(...)", "if ... then ... else ...", "IF(...)", "CASE WHEN"], a: 1, exp: "En minuscules, et le else est obligatoire." },
+    { type: "qcm", q: "En langage M, comment écrit-on le nombre « un virgule vingt-et-un » ?", opts: ["1,21", "1.21", "1;21", "21%"], a: 1, exp: "Le point décimal s'impose en M, quels que soient les paramètres régionaux." },
+    { type: "vf", q: "En M, une colonne se référence entre crochets, par exemple [Montant].", a: true, exp: "Les crochets désignent le champ de la ligne en cours." },
+    { type: "qcm", q: "Quelle opération empile deux requêtes l'une sous l'autre ?", opts: ["Fusionner des requêtes", "Ajouter des requêtes", "Regrouper par", "Dépivoter"], a: 1, exp: "Ajouter empile verticalement ; l'alignement se fait par nom de colonne." },
+    { type: "input", q: "Écris le nom du type de jointure qui équivaut à un RECHERCHEV classique.", a: ["Externe gauche", "externe gauche", "LeftOuter"], ph: "…", exp: "Elle garde toutes les lignes de gauche et ramène les correspondances." },
+    { type: "qcm", q: "Quelle jointure liste les lignes SANS correspondance dans la table de droite ?", opts: ["Interne", "Externe complet", "Anti gauche", "Externe droit"], a: 2, exp: "Outil d'audit idéal pour repérer les références inconnues." },
+    { type: "qcm", q: "Après une fusion, la colonne créée affiche « Table » partout. Que faut-il faire ?", opts: ["Recommencer la fusion", "Cliquer sur l'icône d'expansion de l'en-tête et choisir les colonnes", "Supprimer la colonne", "Changer le type"], a: 1, exp: "Sans expansion, les tables imbriquées restent inexploitables." },
+    { type: "input", q: "Écris l'expression M qui gère une erreur de calcul en renvoyant 0 à la place.", a: ["try [Montant]/[Qte] otherwise 0", "try ... otherwise 0"], ph: "try … otherwise …", exp: "C'est l'équivalent M de SIERREUR." }
+  ],
+  final: {
+    title: "Exercice final — Du tableau croisé au rapport consolidé",
+    intro: `<p>Deux sources à combiner : un tableau de ventes croisé par mois, et un catalogue produits. Objectif : un rapport à plat, enrichi et agrégé, entièrement actualisable.</p>
+<pre class="pseudo">Requete "Ventes" (tableau croise) :
+   Region   Code    Jan    Fev    Mar
+   Nord     P100    1440    900   1200
+   Nord     P200     640   1100      (vide)
+   Sud      P100     800    750    950
+   Sud      P999     300    200    100
+
+Requete "Catalogue" :
+   Ref     Libelle     Famille
+   P100    Casque      Audio
+   P200    Clavier     Saisie
+   P300    Ecran       Video
+
+   Remarque : P999 n'existe pas dans le catalogue.</pre>`,
+    questions: [
+      { type: "input", q: "Quel chemin de ruban transforme les colonnes Jan, Fev, Mar en lignes, en conservant Region et Code ?", a: ["Transformer ▸ Dépivoter les colonnes ▸ Dépivoter les autres colonnes"], ph: "Transformer ▸ …", exp: "On sélectionne d'abord Region et Code, puis on dépivote les autres." },
+      { type: "qcm", q: "Après dépivotage, comment s'appellent par défaut les deux colonnes créées ?", opts: ["Colonne1 et Colonne2", "Attribut et Valeur", "Mois et Montant", "Clé et Donnée"], a: 1, exp: "On les renomme ensuite en Mois et Montant par un double-clic." },
+      { type: "input", q: "Quel type de jointure faut-il pour rapatrier le Libellé du catalogue sur chaque vente, sans perdre la ligne P999 ?", a: ["Externe gauche", "externe gauche", "LeftOuter"], ph: "…", exp: "L'externe gauche garde toutes les ventes ; P999 aura simplement un null." },
+      { type: "qcm", q: "Comment repérer rapidement que P999 est absent du catalogue ?", opts: ["Trier les données", "Refaire la fusion en jointure Anti gauche", "Supprimer les doublons", "Dépivoter à nouveau"], a: 1, exp: "L'anti-jointure gauche ne renvoie que les lignes sans correspondance." },
+      { type: "vf", q: "Regrouper par Famille avec l'opération Somme sur Montant produit une table réutilisable, contrairement à un TCD.", a: true, exp: "Le résultat est une vraie table, réutilisable comme source d'une autre requête." }
+    ],
+    solution: `<p>Le traitement complet, du tableau croisé au rapport final.</p>
+<pre class="pseudo">PARTIE 1 -- mettre les ventes a plat
+
+Etape 1 : selectionner les colonnes Region ET Code (Ctrl+clic)
+   Transformer ▸ Dépivoter les colonnes ▸ Dépivoter les autres colonnes
+   M : Table.UnpivotOtherColumns(Source, {"Region","Code"},
+                                 "Attribut", "Valeur")
+       {"Region","Code"}  les colonnes qui restent FIXES
+       "Attribut"         recoit les anciens en-tetes : Jan, Fev, Mar
+       "Valeur"           recoit les montants
+       // les cellules vides ne generent aucune ligne : le trou
+       // de Nord/P200 en mars disparait tout seul
+
+Etape 2 : renommer (double-clic sur les en-tetes)
+   M : Table.RenameColumns(Etape1, {{"Attribut","Mois"},
+                                    {"Valeur","Montant"}})
+
+Etape 3 : typer les colonnes
+   M : Table.TransformColumnTypes(Etape2, {{"Montant", Int64.Type}})
+
+PARTIE 2 -- enrichir avec le catalogue
+
+Etape 4 : Accueil ▸ Fusionner des requêtes
+   Table de gauche : Ventes, colonne cle : Code
+   Table de droite : Catalogue, colonne cle : Ref
+   Type de jointure : EXTERNE GAUCHE
+      // garde les 4 codes de vente, meme P999 qui n'a pas de fiche
+      // une jointure INTERNE ferait disparaitre P999 en silence :
+      // le chiffre d'affaires baisserait sans aucune alerte
+   M : Table.NestedJoin(Etape3, {"Code"}, Catalogue, {"Ref"},
+                        "Cat", JoinKind.LeftOuter)
+
+Etape 5 : cliquer sur l'ICONE D'EXPANSION (double fleche) de la
+   colonne "Cat", decocher "Utiliser le nom de la colonne d'origine
+   comme prefixe", cocher Libelle et Famille
+   M : Table.ExpandTableColumn(Etape4, "Cat", {"Libelle","Famille"},
+                               {"Libelle","Famille"})
+       // SANS cette etape, la colonne n'affiche que le mot "Table"
+       // et rien n'est exploitable
+
+Etape 6 : combler les manquants
+   Transformer ▸ Remplacer les valeurs : null ▸ "INCONNU"
+     sur les colonnes Libelle et Famille
+   M : Table.ReplaceValue(Etape5, null, "INCONNU",
+                          Replacer.ReplaceValue, {"Libelle","Famille"})
+       // P999 devient visiblement INCONNU au lieu d'une cellule vide
+
+PARTIE 3 -- auditer et agreger
+
+Etape 7 (requete d'audit separee) :
+   Dupliquer la requete Ventes ▸ Fusionner avec Catalogue
+   ▸ type ANTI GAUCHE
+   M : Table.NestedJoin(Ventes, {"Code"}, Catalogue, {"Ref"},
+                        "Cat", JoinKind.LeftAnti)
+       // renvoie uniquement P999 : la liste des references
+       // a creer dans le catalogue
+
+Etape 8 (le rapport) : Accueil ▸ Regrouper par ▸ Avancé
+   Grouper par : Famille, puis Mois
+   Colonne "CA"      : Somme de Montant
+   Colonne "Nb lignes": Nombre de lignes
+   M : Table.Group(Etape6, {"Famille","Mois"}, {
+           {"CA", each List.Sum([Montant]), type number},
+           {"Nb lignes", each Table.RowCount(_), Int64.Type}
+       })
+       {"Famille","Mois"}    les cles de regroupement
+       List.Sum([Montant])   la somme dans chaque groupe
+       Table.RowCount(_)     le _ designe la sous-table du groupe
+
+Etape 9 : Accueil ▸ Fermer et charger dans... ▸ Tableau
+
+RESULTAT ATTENDU (extrait) :
+   Audio    Jan   2240   2 lignes    (1440 Nord + 800 Sud)
+   Audio    Fev   1650   2 lignes
+   Audio    Mar   2150   2 lignes
+   Saisie   Jan    640   1 ligne
+   INCONNU  Jan    300   1 ligne     (P999)
+   ...</pre>
+<p>La bascule mentale à opérer : ces neuf étapes ne sont pas un travail ponctuel, mais une <strong>procédure enregistrée</strong>. Le mois d'avril arrive dans la source ? Le dépivotage l'absorbe sans rien modifier, grâce à « Dépivoter les autres colonnes ». Une nouvelle référence produit ? La jointure la traite, et la requête d'audit la signale. C'est exactement la différence entre un fichier qu'on refait chaque mois et un fichier qu'on actualise.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta formule / ton code ici…",
+  items: [
+  { id: "excelpro-j16", title: "Nettoyer un export catastrophique", level: 3,
+    statement: "Recopie ce tableau en A1:E8 (les cellules vides restent vides). C'est un export typique : région écrite une seule fois par bloc, tableau croisé par trimestre, un doublon et un espace parasite. Construis une requête Power Query qui produit une table à plat Region / Vendeur / Trimestre / Montant, sans doublon, sans ligne vide, avec une colonne Categorie valant Grand si le montant dépasse 1500 et Petit sinon. Donne les chemins de ruban ET le code M complet.<pre class=\"pseudo\">      A        B          C       D       E\n  1  Region   Vendeur    T1      T2      T3\n  2  Nord     Alice      1800    1200     900\n  3           Bruno       600     750    2100\n  4           Alice      1800    1200     900\n  5  Sud      Chloe      1400\n  6\n  7  Sud      David      2200    1900    1750\n  8  Est      Emma        850    1600</pre>",
+    hints: [
+      "La colonne Region a des trous : Remplir vers le bas règle le problème. Mais fais-le AVANT toute autre transformation, sinon le dépivotage éparpille les lignes.",
+      "La ligne 4 est un doublon exact de la ligne 2 — mais seulement une fois la région remplie. L'ordre des étapes est donc imposé : remplir, puis dédoublonner, puis dépivoter.",
+      "Pour la colonne Categorie : Ajouter une colonne ▸ Colonne personnalisée, avec la syntaxe if ... then ... else en minuscules. Attention au point décimal en M."
+    ],
+    solution: "ETAPE 0 -- charger la plage\n   Selectionner A1:E8\n   Données ▸ Obtenir des données ▸ À partir d'autres sources\n            ▸ À partir d'un tableau ou d'une plage\n   COCHER \"Mon tableau comporte des en-têtes\" (ici la ligne 1 est correcte)\n   M : Source = Excel.CurrentWorkbook(){[Name=\"Tableau1\"]}[Content]\n\nETAPE 1 -- supprimer les lignes vides (la ligne 6)\n   Accueil ▸ Supprimer les lignes ▸ Supprimer les lignes vides\n   // a faire EN PREMIER : sinon Remplir vers le bas propagerait\n   // \"Sud\" a travers la ligne vide, ce qui reste juste ici mais\n   // devient faux des qu'une ligne vide separe deux regions differentes\n\nETAPE 2 -- nettoyer les espaces parasites\n   Selectionner Region et Vendeur\n   ▸ Transformer ▸ Format ▸ Supprimer les espaces\n   M : Trim = Table.TransformColumns(Etape1,\n                {{\"Region\", Text.Trim, type text},\n                 {\"Vendeur\", Text.Trim, type text}})\n   // \"Emma \" et \"Emma\" seraient traites comme deux vendeurs differents\n\nETAPE 3 -- remplir la region vers le bas\n   Clic droit sur l'en-tete Region ▸ Remplir ▸ Vers le bas\n   M : Rempli = Table.FillDown(Trim, {\"Region\"})\n   // Nord se propage aux lignes de Bruno et de la 2e Alice\n   // /!\\ ne marche que sur de vrais null : si les cellules contiennent\n   // une chaine vide, faire d'abord Remplacer les valeurs \"\" -> null\n\nETAPE 4 -- supprimer le doublon\n   Selectionner TOUTES les colonnes (Ctrl+A dans l'apercu)\n   ▸ clic droit ▸ Supprimer les doublons\n   M : SansDoublon = Table.Distinct(Rempli)\n   // la ligne 4 (Nord/Alice/1800/1200/900) est identique a la ligne 2\n   // UNE FOIS la region remplie -- d'ou l'ordre impose : ETAPE 3 AVANT 4.\n   // Fait dans l'autre sens, les deux lignes different (l'une a une\n   // region vide) et le doublon survivrait.\n\nETAPE 5 -- depivoter les trimestres\n   Selectionner Region ET Vendeur (Ctrl+clic)\n   ▸ Transformer ▸ Dépivoter les colonnes ▸ Dépivoter les autres colonnes\n   M : Depivot = Table.UnpivotOtherColumns(SansDoublon,\n                   {\"Region\",\"Vendeur\"}, \"Attribut\", \"Valeur\")\n       {\"Region\",\"Vendeur\"}   les colonnes FIXES\n       \"Attribut\"             recoit T1, T2, T3\n       \"Valeur\"               recoit les montants\n   // les cellules vides (Chloe T2/T3, Emma T3) ne creent aucune ligne :\n   // le nettoyage des trous est automatique\n\nETAPE 6 -- renommer\n   Double-clic sur les en-tetes\n   M : Renomme = Table.RenameColumns(Depivot,\n                   {{\"Attribut\",\"Trimestre\"},{\"Valeur\",\"Montant\"}})\n\nETAPE 7 -- typer\n   M : Types = Table.TransformColumnTypes(Renomme,\n                 {{\"Region\", type text},{\"Vendeur\", type text},\n                  {\"Trimestre\", type text},{\"Montant\", Int64.Type}})\n\nETAPE 8 -- ajouter la colonne Categorie\n   Ajouter une colonne ▸ Colonne personnalisée\n   Nom : Categorie\n   Formule : if [Montant] > 1500 then \"Grand\" else \"Petit\"\n   M : Cat = Table.AddColumn(Types, \"Categorie\",\n               each if [Montant] > 1500 then \"Grand\" else \"Petit\", type text)\n       each        pour chaque ligne\n       [Montant]   la colonne, entre CROCHETS\n       if/then/else  en MINUSCULES, et le else est OBLIGATOIRE\n       type text   le type du resultat, a preciser\n\nETAPE 9 -- charger\n   Volet de droite ▸ Nom : Ventes_Propres\n   Accueil ▸ Fermer et charger dans... ▸ Tableau ▸ Nouvelle feuille\n\nCODE M COMPLET (Accueil ▸ Éditeur avancé) :\nlet\n    Source      = Excel.CurrentWorkbook(){[Name=\"Tableau1\"]}[Content],\n    SansVides   = Table.SelectRows(Source, each not List.IsEmpty(\n                    List.RemoveMatchingItems(Record.FieldValues(_), {\"\", null}))),\n    Trim        = Table.TransformColumns(SansVides,\n                    {{\"Region\", Text.Trim, type text},\n                     {\"Vendeur\", Text.Trim, type text}}),\n    Rempli      = Table.FillDown(Trim, {\"Region\"}),\n    SansDoublon = Table.Distinct(Rempli),\n    Depivot     = Table.UnpivotOtherColumns(SansDoublon,\n                    {\"Region\",\"Vendeur\"}, \"Attribut\", \"Valeur\"),\n    Renomme     = Table.RenameColumns(Depivot,\n                    {{\"Attribut\",\"Trimestre\"},{\"Valeur\",\"Montant\"}}),\n    Types       = Table.TransformColumnTypes(Renomme,\n                    {{\"Montant\", Int64.Type}}),\n    Cat         = Table.AddColumn(Types, \"Categorie\",\n                    each if [Montant] > 1500 then \"Grand\" else \"Petit\",\n                    type text)\nin\n    Cat\n\nRESULTAT ATTENDU -- 12 lignes :\n   Nord | Alice | T1 | 1800 | Grand\n   Nord | Alice | T2 | 1200 | Petit\n   Nord | Alice | T3 |  900 | Petit\n   Nord | Bruno | T1 |  600 | Petit\n   Nord | Bruno | T2 |  750 | Petit\n   Nord | Bruno | T3 | 2100 | Grand\n   Sud  | Chloe | T1 | 1400 | Petit\n   Sud  | David | T1 | 2200 | Grand\n   Sud  | David | T2 | 1900 | Grand\n   Sud  | David | T3 | 1750 | Grand\n   Est  | Emma  | T1 |  850 | Petit\n   Est  | Emma  | T2 | 1600 | Grand\n   // le doublon Alice a disparu, Chloe n'a qu'une ligne (T1),\n   // Emma en a deux : les trous ne generent rien.\n\nControle rapide : Regrouper par Region, Somme de Montant\n   Nord = 7350 | Sud = 7250 | Est = 2450  -- total 17050",
+    note: "Le vrai enseignement de cet exercice, c'est l'ORDRE DES ETAPES. Il n'est pas negociable : (1) supprimer les lignes vides, (2) nettoyer les espaces, (3) remplir vers le bas, (4) dedoublonner, (5) depivoter. Inverse 3 et 4 et le doublon d'Alice survit, parce que tant que la region n'est pas remplie les deux lignes ne sont pas identiques. Depivote avant de dedoublonner et le doublon devient trois lignes eparpillees, bien plus penibles a eliminer. Retiens ce principe general : en Power Query, chaque etape travaille sur le RESULTAT de la precedente -- on nettoie donc TOUJOURS avant de restructurer. Dernier rappel : en M, le separateur decimal est le point et le separateur d'arguments la virgule, quels que soient tes parametres regionaux." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Acheter un jeu : prix figé et couverture",
+  subtitle: "Enregistrer le prix payé, tester les branches de refus, et mesurer ce qui est réellement couvert.",
+  theory: `
+<h3>1. L'achat, prix figé sous transaction</h3>
+<p>Acheter un jeu ressemble à louer, mais avec une subtilité : on <strong>fige le prix payé</strong>. Figer, c'est copier la valeur à l'instant de l'opération pour qu'elle ne change plus ensuite.</p>
+<pre class="pseudo">void AchatService::acheter(sql::Connection&amp; con, int uid, int jeuId, int q) { // achete q exemplaires du jeu jeuId pour l'utilisateur uid
+    if (q &lt;= 0) throw SaisieInvalide("Quantite invalide");   // refuser une quantite nulle ou negative
+    Jeu j = JeuRepository::findById(con, jeuId);             // charger le jeu concerne
+    if (j.stockVente() &lt; q) throw StockInsuffisant("Stock insuffisant"); // refuser si le stock de vente est trop faible
+    double prix = j.prixAchat();                  // FIGER : copier le prix courant dans une variable locale
+    TransactionGuard tx(con);                     // ouvrir la transaction (rollback auto en cas d'erreur)
+    AchatRepository::inserer(con, uid, jeuId, q, prix);   // 1re ecriture : enregistrer l'achat avec le prix FIGE
+    JeuRepository::decrementerStockVente(con, jeuId, q);  // 2e ecriture : retirer q au stock de vente
+    tx.commit();                                  // les deux ont reussi : valider d'un coup
+}                                                 // fin de la methode</pre>
+<p>Le prix payé est <strong>copié</strong> dans la ligne d'achat (colonne <code>prix_unitaire</code>) : l'historique reste vrai même si le catalogue évolue plus tard.</p>
+
+<h3>2. Couvrir les branches, pas seulement le chemin heureux</h3>
+<p>Une <strong>branche</strong> est un embranchement du code : chaque <code>if</code> crée deux chemins possibles (la condition est vraie ou fausse). Le <strong>chemin heureux</strong> est le déroulement sans erreur (tout se passe bien) ; les branches de refus sont les autres chemins.</p>
+<div class="warn">Ici il y a trois chemins : succès, quantité invalide, stock insuffisant. Un test qui ne couvre que le succès laisse deux branches de refus <strong>non vérifiées</strong> — exactement là où se cachent les bugs de sécurité et de cohérence.</div>
+<pre class="pseudo">EXPECT_THROW(AchatService::acheter(con,1,1,0),  SaisieInvalide);    // quantite 0 -> on attend SaisieInvalide (q &lt;= 0)
+EXPECT_THROW(AchatService::acheter(con,1,1,999), StockInsuffisant); // quantite 999 -> on attend StockInsuffisant (q &gt; stock)
+EXPECT_NO_THROW(AchatService::acheter(con,1,1,1));                  // quantite 1 -> cas normal, aucune exception</pre>
+
+<h3>3. Mesurer la couverture</h3>
+<pre class="pseudo"># compiler avec l'instrumentation de couverture       # ajouter un mouchard qui note les lignes executees
+g++ --coverage ... ; ctest ; gcov/lcov -> rapport     # compiler avec --coverage, lancer les tests, produire un rapport
+# ou CMake : -DCMAKE_CXX_FLAGS="--coverage"            # meme chose en passant l'option a CMake</pre>
+<p>La <strong>couverture de code</strong> indique quelles lignes et branches ont réellement été exécutées par les tests. L'<strong>instrumentation</strong> (option <code>--coverage</code>) ajoute des compteurs invisibles pendant la compilation ; <strong>gcov</strong> et <strong>lcov</strong> transforment ensuite ces compteurs en rapport lisible. Elle révèle les zones oubliées : un <code>if</code> jamais pris, un <code>catch</code> jamais déclenché.</p>
+
+<h3>4. La couverture guide, elle ne prouve pas</h3>
+<div class="tip">Atteindre 100 % de lignes couvertes ne garantit pas l'absence de bug : un test peut exécuter une ligne sans vérifier son résultat. Une <strong>assertion</strong> (comme <code>EXPECT_...</code>) est justement l'affirmation qui contrôle ce résultat. La couverture <strong>oriente</strong> l'effort (« cette branche de refus n'est jamais testée ») ; l'assertion, elle, valide le comportement.</div>
+
+<h3>5. En CI, un seuil raisonnable</h3>
+<p>On peut faire échouer la CI en dessous d'un <strong>seuil</strong> (une valeur plancher, par exemple couverture des services &lt; 80 %). L'objectif n'est pas le chiffre parfait, mais d'éviter de <strong>régresser</strong> (revenir en arrière, retirer un test qui protégeait une règle) : garder les règles critiques (tarifs, refus, transactions) systématiquement couvertes.</p>
+`,
+  exercises: [
+    { type: "qcm", q: "Le prix d'un achat est…", opts: ["recalculé au prix courant", "figé (copié) au moment de l'achat", "toujours nul", "dans l'UI"], a: 1, exp: "Historique vrai." },
+    { type: "qcm", q: "Acheter touche…", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "Stock de vente." },
+    { type: "qcm", q: "Combien de chemins à tester ici ?", opts: ["un (succès)", "trois (succès, q invalide, stock insuffisant)", "zéro", "deux only"], a: 1, exp: "Chemin heureux + refus." },
+    { type: "qcm", q: "Tester seulement le succès…", opts: ["suffit", "laisse les branches de refus non vérifiées", "couvre tout", "est idéal"], a: 1, exp: "Zones à risque." },
+    { type: "qcm", q: "La couverture de code indique…", opts: ["la vitesse", "quelles lignes/branches les tests exécutent", "les secrets", "le déploiement"], a: 1, exp: "Lignes exécutées." },
+    { type: "qcm", q: "--coverage sert à…", opts: ["optimiser", "instrumenter pour mesurer la couverture", "déployer", "logger"], a: 1, exp: "Instrumentation." },
+    { type: "qcm", q: "100 % de couverture…", opts: ["prouve l'absence de bug", "n'implique pas des assertions correctes", "est obligatoire", "empêche les tests"], a: 1, exp: "Exécuté ≠ vérifié." },
+    { type: "qcm", q: "La couverture sert surtout à…", opts: ["remplacer les assertions", "orienter l'effort vers les zones non testées", "déployer", "chiffrer"], a: 1, exp: "Guide." },
+    { type: "qcm", q: "q <= 0 doit déclencher…", opts: ["un achat", "SaisieInvalide", "un commit", "rien"], a: 1, exp: "Validation." },
+    { type: "qcm", q: "q > stock doit déclencher…", opts: ["un achat", "StockInsuffisant", "un commit", "rien"], a: 1, exp: "Refus." },
+    { type: "vf", q: "Une ligne exécutée par un test est forcément correctement vérifiée.", a: false, exp: "Faux : sans assertion, rien n'est validé." },
+    { type: "qcm", q: "Un seuil de couverture en CI vise à…", opts: ["le chiffre parfait", "éviter les régressions sur les règles critiques", "ralentir", "logger"], a: 1, exp: "Non-régression." },
+    { type: "qcm", q: "Le prix est copié dans…", opts: ["le catalogue", "la ligne d'achat (prix_unitaire)", "les logs", "l'UI"], a: 1, exp: "Donnée figée." },
+    { type: "qcm", q: "L'achat est atomique grâce…", opts: ["au hasard", "au TransactionGuard", "aux logs", "à l'UI"], a: 1, exp: "Transaction." },
+    { type: "qcm", q: "lcov/gcov produisent…", opts: ["un binaire", "un rapport de couverture", "une image Docker", "un secret"], a: 1, exp: "Rapport." }
+  ],
+  final: {
+    title: "Exercice final — Couvrir les refus d'achat",
+    intro: `<p>Un test existant ne couvre que le succès :</p>
+<pre class="pseudo">TEST(Achat, Ok) {                                       // test du seul chemin heureux
+    EXPECT_NO_THROW(AchatService::acheter(con, 1, 1, 1)); // achat valide -> aucune exception
+}                                                       // manque : les deux branches de refus ne sont pas testees</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Ce qui manque :", opts: ["rien", "les deux branches de refus (q invalide, stock insuffisant)", "un printf", "un sleep"], a: 1, exp: "Chemins non testés." },
+      { type: "qcm", q: "Test pour q = 0 :", opts: ["EXPECT_NO_THROW", "EXPECT_THROW(..., SaisieInvalide)", "EXPECT_EQ", "rien"], a: 1, exp: "Refus attendu." },
+      { type: "qcm", q: "Test pour q > stock :", opts: ["EXPECT_NO_THROW", "EXPECT_THROW(..., StockInsuffisant)", "EXPECT_TRUE", "rien"], a: 1, exp: "Refus attendu." },
+      { type: "qcm", q: "La couverture aidera à…", opts: ["déployer", "repérer que ces branches n'étaient pas exécutées", "chiffrer", "logger"], a: 1, exp: "Zones oubliées." },
+      { type: "qcm", q: "Un seuil de couverture en CI…", opts: ["garantit 0 bug", "empêche de régresser sur les règles critiques", "ralentit inutilement", "logge le mdp"], a: 1, exp: "Filet de non-régression." }
+    ],
+    solution: `<pre class="pseudo">TEST(Achat, CheminsDeRefus) {                            // test couvrant les 3 chemins
+    EXPECT_THROW(AchatService::acheter(con, 1, 1, 0),   SaisieInvalide);   // q &lt;= 0 -> refus SaisieInvalide
+    EXPECT_THROW(AchatService::acheter(con, 1, 1, 999), StockInsuffisant); // q &gt; stock -> refus StockInsuffisant
+    EXPECT_NO_THROW(AchatService::acheter(con, 1, 1, 1));                  // q valide -> succes, aucune exception
+}                                                       // fin du test
+// compile avec --coverage -> le rapport montre les 3 branches executees   // preuve que rien n'est oublie</pre>
+<p>Les trois chemins sont couverts et vérifiés ; la couverture confirme qu'aucune branche de refus n'est oubliée. Demain : l'interface et les entrées sûres.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes tests ici…",
+  items: [
+  { id: "projcpppro-l12", title: "Trois tests pour l'achat", level: 3,
+    statement: "Écris un test GoogleTest qui couvre les trois chemins d'AchatService::acheter : quantité 0 → SaisieInvalide, quantité supérieure au stock → StockInsuffisant, quantité valide → aucun lancement. Explique en commentaire pourquoi couvrir les refus.",
+    hints: [
+      "EXPECT_THROW pour chaque refus, EXPECT_NO_THROW pour le succès.",
+      "Les branches de refus sont les plus sensibles.",
+      "Un commentaire justifie la couverture des chemins d'erreur."
+    ],
+    solution: "TEST(AchatService, TroisChemins) {                      // test des 3 chemins de l'achat\n    // Les branches de refus protegent la coherence et la securite :\n    // les tester evite qu'une regression les desactive silencieusement.\n    EXPECT_THROW(AchatService::acheter(con, 1, 1, 0),   SaisieInvalide);    // q <= 0\n    EXPECT_THROW(AchatService::acheter(con, 1, 1, 999), StockInsuffisant);  // q > stock\n    EXPECT_NO_THROW(AchatService::acheter(con, 1, 1, 1));                   // cas normal\n}                                                       // fin du test",
+    note: "Un test qui ne couvre que le succès laisse les gardes (validation, stock) sans filet : une régression pourrait les désactiver sans faire échouer la CI. En testant explicitement chaque refus, on verrouille le contrat complet. La couverture de code confirme ensuite que ces branches sont bien exercées." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

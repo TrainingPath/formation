@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Requêtes ORM : QuerySets et managers",
+  subtitle: "Lire et écrire dans MySQL sans SQL manuel — mais en sachant ce qui se passe.",
+  theory: `
+<h3>1. Les requêtes du quotidien</h3>
+<pre class="pseudo">Jeu.objects.filter(stock_location__gt=0).order_by("titre")  # louables triés
+Jeu.objects.filter(titre__icontains="catan")                # LIKE '%catan%'
+Jeu.objects.filter(categorie__nom="Stratégie")              # à travers la FK
+Jeu.objects.get(pk=12)                                      # un seul, ou DoesNotExist</pre>
+<p>L'<strong>ORM</strong> (<em>Object-Relational Mapping</em>, « correspondance objet-relationnel ») est le traducteur automatique entre les objets Python et les tables de la base : tu écris du Python, il écrit le SQL à ta place. <code>Jeu.objects</code> est le <strong>manager</strong>, la porte d'entrée des requêtes sur la table des jeux. Un <strong>QuerySet</strong> est une requête en cours de construction (« l'ensemble des jeux tels que… »). Les <em>lookups</em> sont de petits suffixes ajoutés après <code>__</code> (double tiret bas) qui précisent la comparaison : <code>__gt</code> (<em>greater than</em>, « plus grand que »), <code>__icontains</code> (« contient, sans tenir compte des majuscules »), <code>__isnull</code> (« est vide »)… Ils deviennent du SQL : <code>&gt;</code>, <code>LIKE</code>, <code>IS NULL</code>. La double traversée <code>categorie__nom</code> suit la clé étrangère jusqu'à la catégorie et génère un <strong>JOIN</strong> (une jointure : relier deux tables pour lire les colonnes de l'une en filtrant sur l'autre).</p>
+
+<h3>2. Le QuerySet est paresseux</h3>
+<pre class="pseudo">q = Jeu.objects.filter(stock_location__gt=0)   # AUCUN SQL encore
+q = q.filter(categorie__nom="Stratégie")       # toujours rien
+list(q)                                        # ← LE SQL part ici, une fois</pre>
+<p>On dit que le QuerySet est <strong>paresseux</strong> (<em>lazy</em>) : il ne déclenche <em>aucune</em> requête tant qu'on n'a pas besoin des résultats. Le SQL ne part qu'au moment de l'<strong>évaluation</strong> — quand on transforme le QuerySet en liste (<code>list(q)</code>), qu'on le parcourt (<code>for</code>) ou qu'on le compte (<code>len</code>). On peut donc <strong>composer</strong> librement plusieurs filtres : un seul <code>SELECT</code> final est envoyé, quels que soient les filtres empilés.</p>
+
+<h3>3. Un QuerySet personnalisé : le vocabulaire métier</h3>
+<pre class="pseudo">class JeuQuerySet(models.QuerySet):              # un QuerySet « maison » pour ranger les filtres du métier
+    def louables(self):                          # méthode « louables » : les jeux qu'on peut louer
+        return self.filter(stock_location__gt=0) # garde ceux dont le stock de location > 0, renvoie un QuerySet
+    def de_categorie(self, cat_id):              # méthode « de_categorie » : filtrer par catégorie
+        return self.filter(categorie_id=cat_id)  # garde ceux dont l'identifiant de catégorie vaut cat_id
+
+class Jeu(models.Model):                         # (le modèle Jeu)
+    ...                                          # ... = les champs déjà définis
+    objects = JeuQuerySet.as_manager()           # branche notre QuerySet : Jeu.objects connaît maintenant louables(), etc.
+
+Jeu.objects.louables().de_categorie(2).order_by("titre")   # chaînable : on enchaîne les méthodes, 1 seul SELECT</pre>
+<p>Un <strong>QuerySet personnalisé</strong> range les filtres fréquents sous un <strong>nom métier</strong> parlant. Au lieu de réécrire <code>filter(stock_location__gt=0)</code> partout, on écrit une bonne fois <code>louables()</code> et on le réutilise. Comme chaque méthode renvoie encore un QuerySet, on peut les <strong>enchaîner</strong> (« chaîner ») : <code>Jeu.objects.louables().de_categorie(2)</code>. C'est le même principe que les <em>scopes</em> d'Eloquent ou les <em>repositories</em> de Spring vus ailleurs : le vocabulaire du métier remplace le filtre technique recopié partout.</p>
+
+<h3>4. Écrire</h3>
+<pre class="pseudo">jeu = Jeu.objects.create(titre="Catan", prix_achat=32, prix_location=4,   # create = construire + enregistrer d'un coup
+                         stock_vente=5, stock_location=3, categorie=cat)  # (suite des valeurs du nouveau jeu)
+jeu.stock_location -= 1                       # on retire 1 au stock de location (une location de plus)
+jeu.save(update_fields=["stock_location"])   # UPDATE ciblé : n'écrit QUE cette colonne en base</pre>
+<p><code>create()</code> fait deux choses d'un coup : construire l'objet en mémoire et l'<strong>insérer</strong> dans la base (l'ordre SQL <code>INSERT</code>). <code>-=</code> est un raccourci pour « enlève 1 à la valeur actuelle ». <code>save()</code> envoie la modification à MySQL ; en précisant <code>update_fields</code>, on ne réécrit que la colonne concernée au lieu de toute la ligne.</p>
+
+<h3>5. Agréger</h3>
+<pre class="pseudo">from django.db.models import Count, Sum        # Count = compter, Sum = additionner (outils d'agrégat)
+Categorie.objects.annotate(nb=Count("jeu"))          # ajoute à chaque catégorie un nombre nb = ses jeux comptés
+Achat.objects.aggregate(total=Sum("montant"))        # additionne tous les montants → le chiffre d'affaires</pre>
+<p><strong>Agréger</strong>, c'est résumer plusieurs lignes en une valeur : compter, additionner, faire une moyenne. <code>annotate()</code> calcule une valeur <em>par ligne de résultat</em> (ici le nombre de jeux de chaque catégorie, via un <code>GROUP BY</code> en SQL) ; <code>aggregate()</code> calcule <em>un seul</em> nombre pour tout l'ensemble (ici la somme de tous les montants).</p>
+<div class="warn"><code>get()</code> lève <code>DoesNotExist</code> si rien, <code>MultipleObjectsReturned</code> si plusieurs : réservé aux recherches par identifiant ou champ unique. Pour le reste : <code>filter()</code>.</div>
+<div class="tip">Ce que l'ORM génère, tu l'as écrit à la main au cours MySQL : <code>print(q.query)</code> montre le SELECT, le WHERE, le JOIN. L'ORM n'est pas magique — il traduit.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les jeux louables :", opts: ["Jeu.objects.filter(stock_location__gt=0)", "Jeu.objects.get(stock=0)", "Jeu.louables (sans manager)", "SELECT manuel obligatoire"], a: 0, exp: "__gt = strictement supérieur." },
+    { type: "qcm", q: "titre__icontains=\"catan\" devient en SQL…", opts: ["= 'catan'", "LIKE '%catan%' (insensible à la casse)", "> 'catan'", "IS NULL"], a: 1, exp: "Recherche partielle." },
+    { type: "qcm", q: "categorie__nom=\"Stratégie\" traverse la FK grâce à…", opts: ["Un JOIN généré", "Deux requêtes", "Un cache", "Un trigger"], a: 0, exp: "Le lookup traverse la relation." },
+    { type: "qcm", q: "get(pk=12) si le jeu n'existe pas :", opts: ["None", "DoesNotExist est levée", "0", "[]"], a: 1, exp: "À attraper ou laisser remonter (404)." },
+    { type: "qcm", q: "Un QuerySet exécute son SQL…", opts: ["À chaque filter", "Seulement à l'évaluation (list, for, len…)", "Jamais", "Au démarrage"], a: 1, exp: "Paresse = composition libre." },
+    { type: "vf", q: "Composer trois filter() sur un QuerySet envoie trois requêtes SQL.", a: false, exp: "Un seul SELECT final." },
+    { type: "qcm", q: "Le QuerySet personnalisé sert à…", opts: ["Accélérer MySQL", "Donner un vocabulaire métier réutilisable (louables())", "Chiffrer", "Paginer"], a: 1, exp: "Équivalent des scopes/repositories." },
+    { type: "qcm", q: "Brancher JeuQuerySet sur le modèle :", opts: ["objects = JeuQuerySet.as_manager()", "manager = True", "un import", "rien"], a: 0, exp: "as_manager()." },
+    { type: "qcm", q: "Jeu.objects.louables().de_categorie(2) est possible car…", opts: ["Les méthodes renvoient un QuerySet (chaînables)", "C'est du SQL brut", "Django devine", "Non, impossible"], a: 0, exp: "Chaque méthode filtre et renvoie." },
+    { type: "qcm", q: "Créer un jeu en une ligne :", opts: ["Jeu.objects.create(...)", "INSERT INTO", "new Jeu().push()", "Jeu.add()"], a: 0, exp: "create = instancier + save." },
+    { type: "qcm", q: "save(update_fields=[\"stock_location\"]) :", opts: ["UPDATE de toutes les colonnes", "UPDATE ciblé sur cette colonne", "DELETE", "SELECT"], a: 1, exp: "Écriture minimale." },
+    { type: "qcm", q: "Compter les jeux par catégorie :", opts: ["annotate(nb=Count(\"jeu\"))", "len() dans une boucle", "COUNT à la main obligatoire", "sum()"], a: 0, exp: "GROUP BY généré." },
+    { type: "qcm", q: "Le chiffre d'affaires des achats :", opts: ["aggregate(total=Sum(\"montant\"))", "for + total +=", "COUNT(*)", "MAX"], a: 0, exp: "Agrégat SQL." },
+    { type: "vf", q: "print(q.query) montre le SQL que l'ORM va envoyer.", a: true, exp: "L'ORM traduit, il ne cache pas." },
+    { type: "qcm", q: "get() convient pour…", opts: ["Toutes les listes", "Les recherches par pk ou champ unique", "Les agrégats", "Les JOIN"], a: 1, exp: "Un résultat exactement." }
+  ],
+  final: {
+    title: "Exercice final — Le vocabulaire du catalogue",
+    intro: `<p>On équipe le modèle Jeu de son QuerySet métier.</p>`,
+    questions: [
+      { type: "qcm", q: "louables() renvoie :", opts: ["self.filter(stock_location__gt=0)", "self.get(...)", "une liste Python", "un SQL brut"], a: 0, exp: "Un QuerySet chaînable." },
+      { type: "qcm", q: "Les louables de la catégorie 2, triés :", opts: ["Jeu.objects.louables().de_categorie(2).order_by(\"titre\")", "trois requêtes", "un for", "impossible"], a: 0, exp: "Composition." },
+      { type: "qcm", q: "Ce chaînage envoie :", opts: ["1 requête SQL", "3", "2", "0 pour toujours"], a: 0, exp: "À l'évaluation." },
+      { type: "qcm", q: "Décrémenter un stock proprement :", opts: ["jeu.stock_location -= 1 puis save(update_fields=[...])", "DELETE", "create()", "annotate"], a: 0, exp: "La leçon 12 y ajoutera la transaction." },
+      { type: "vf", q: "Le SQL généré est celui du cours MySQL (SELECT, WHERE, JOIN).", a: true, exp: "Traduction, pas magie." }
+    ],
+    solution: `<pre class="pseudo">class JeuQuerySet(models.QuerySet):              # QuerySet maison pour le vocabulaire métier
+    def louables(self):                          # les jeux louables
+        return self.filter(stock_location__gt=0) # stock de location > 0
+    def de_categorie(self, cat_id):              # filtrer par catégorie
+        return self.filter(categorie_id=cat_id)  # identifiant de catégorie = cat_id
+
+class Jeu(models.Model):                         # le modèle Jeu
+    ...                                          # ... = les champs déjà définis
+    objects = JeuQuerySet.as_manager()           # branche le QuerySet sur Jeu.objects
+
+Jeu.objects.louables().de_categorie(2).order_by("titre")   # on enchaîne les méthodes métier
+# → SELECT ... WHERE stock_location &gt; 0 AND categorie_id = 2 ORDER BY titre   # le SQL réellement envoyé</pre>
+<p>Le projet parle le langage du métier. Demain : la couche service et les règles.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton QuerySet et tes requêtes…",
+  items: [
+  { id: "projpython-l5", title: "Le QuerySet des locations", level: 2,
+    statement: "Écris LocationQuerySet avec trois méthodes : en_cours() (date_retour IS NULL), de_client(user) et en_retard() (en cours ET date_debut antérieure à maintenant moins nb_jours — utilise une annotation ou un filtre sur date_debut avec timezone.now() - timedelta si tu simplifies à nb_jours fixe de 7). Branche-le, puis écris la requête « les locations en retard de marie ».",
+    hints: [
+      "def en_cours(self): return self.filter(date_retour__isnull=True)",
+      "Version simple : self.en_cours().filter(date_debut__lt=timezone.now() - timedelta(days=7))",
+      "Location.objects.de_client(marie).en_retard()"
+    ],
+    solution: "from datetime import timedelta   # timedelta = une durée (ex. 7 jours)\nfrom django.utils import timezone   # timezone.now() = date et heure actuelles (avec fuseau)\n\nclass LocationQuerySet(models.QuerySet):   # QuerySet maison pour les locations\n    def en_cours(self):   # les locations pas encore rendues\n        return self.filter(date_retour__isnull=True)   # date_retour IS NULL en SQL\n\n    def de_client(self, user):   # les locations d'un client donné\n        return self.filter(client=user)   # filtre sur le client (la clé étrangère)\n\n    def en_retard(self):   # les locations en cours dont le délai est dépassé\n        # simplification : durée standard de 7 jours\n        limite = timezone.now() - timedelta(days=7)   # date limite = maintenant moins 7 jours\n        return self.en_cours().filter(date_debut__lt=limite)   # en cours ET début avant la limite\n\nclass Location(models.Model):   # le modèle Location\n    ...   # ... = les champs déjà définis\n    objects = LocationQuerySet.as_manager()   # branche le QuerySet sur Location.objects\n\n# Les locations en retard de marie :\nLocation.objects.de_client(marie).en_retard()   # 1 seul SELECT avec deux conditions AND",
+    note: "Chaque méthode reste un QuerySet : la composition de_client + en_retard produit UN SELECT avec deux conditions AND. date_retour__isnull=True devient IS NULL — la modélisation de la leçon 3 (NULL = en cours) paie ici. L'espace vendeur (leçon 16) utilisera en_retard() pour relancer les clients." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

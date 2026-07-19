@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Déploiement automatisé : staging, production, santé (Health Checks)",
+  subtitle: "Le serveur se met à jour tout seul — et on le vérifie.",
+  theory: `
+<h3>1. La sonde de santé (Health Checks)</h3>
+<p><strong>Déployer</strong>, c'est mettre le programme en service sur le serveur qui répond aux utilisateurs. Avant tout, on installe une <strong>sonde de santé</strong> (<em>Health Check</em>) : une adresse spéciale qu'on peut interroger pour savoir si l'application va bien, comme prendre le pouls d'un patient.</p>
+<pre class="pseudo">// Program.cs
+builder.Services.AddHealthChecks()          // activer le service de sonde de santé
+    .AddDbContextCheck&lt;LudothequeContext&gt;();     // vérifie que la base répond
+app.MapHealthChecks("/health");              // exposer le résultat à l'adresse /health
+// /health -> 200 Healthy (base OK) ou 503 Unhealthy</pre>
+<p><code>AddHealthChecks()</code> active le service ; <code>AddDbContextCheck&lt;LudothequeContext&gt;()</code> ajoute une vérification qui teste que la <strong>base de données</strong> répond vraiment (le <code>DbContext</code> est l'objet EF Core qui parle à la base). <code>MapHealthChecks("/health")</code> publie le résultat à l'adresse <code>/health</code>. La réponse est un <strong>code HTTP</strong> : <strong>200</strong> (« OK », tout va bien) ou <strong>503</strong> (« Service Unavailable », la base ne répond pas). Une sonde qui teste la base, pas seulement le processus, dit la vérité.</p>
+
+<h3>2. Le job de déploiement (SSH)</h3>
+<p><strong>SSH</strong> (<em>Secure Shell</em>) est le canal chiffré pour piloter un serveur à distance, en ligne de commande. La <strong>clé SSH</strong> est une paire de fichiers (privé/public) qui remplace le mot de passe ; la clé privée, secrète, est rangée dans le coffre du dépôt. Le job se connecte au serveur et lui fait rejouer le geste habituel de Docker.</p>
+<pre class="pseudo">  deployer-production:                       # le job de deploiement en production
+    needs: publier                           # attend que l'image soit publiee au registre
+    environment: production                # approbation humaine requise
+    steps:                                   # ses etapes
+      - run: echo "\${{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # ecrire la cle SSH (secret) dans un fichier protege
+      - run: |                               # se connecter en SSH et deployer (commande multi-lignes ci-dessous)
+          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '
+            cd /srv/ludotheque &&
+            echo "VERSION=\${GITHUB_REF_NAME#v}" > .env.version &&
+            docker compose pull && docker compose up -d'
+      - run: sleep 12 && curl -fs https://ludotheque.example.com/health   # attendre 12 s puis verifier /health
+
+# les migrations EF sont appliquées au démarrage (db.Database.Migrate())
+# ou par une étape dédiée avant le up.</pre>
+<p>Ligne par ligne : on écrit la clé privée dans un fichier (<code>chmod 600</code> le rend lisible par son seul propriétaire), puis on se connecte en SSH pour, sur le serveur, aller dans le dossier du projet, y noter la version à déployer, récupérer la nouvelle image (<code>docker compose pull</code>) et redémarrer (<code>docker compose up -d</code>, en arrière-plan). Le mot-clé <code>environment: production</code> impose une <strong>approbation humaine</strong> : un collègue doit cliquer avant que la prod ne bouge. Les <strong>migrations</strong> EF (les mises à jour de la structure de la base) s'appliquent au démarrage de l'app.</p>
+
+<h3>3. Deux environnements</h3>
+<p>Un <strong>environnement</strong> est une installation complète du site. On en a deux : <strong>staging</strong> (« pré-production », la répétition générale) et <strong>production</strong> (le vrai site, avec de vrais clients).</p>
+<pre class="pseudo">merge sur main -> deployer-staging (automatique) -> recette
+tag v1.0.0     -> publier -> ⏸ approbation -> deployer-production
+# staging reçoit tout, tout de suite ; la prod exige un tag ET un clic humain.</pre>
+
+<h3>4. Vérifier — sinon ce n'est pas déployé</h3>
+<p><code>curl</code> est un outil qui appelle une adresse web depuis la ligne de commande. Interroger <code>/health</code> après le déploiement transforme « c'est lancé » en « c'est en ligne et ça répond ».</p>
+<pre class="pseudo">curl -fs .../health     # -f échoue si != 2xx -> le job devient rouge
+# un déploiement raté n'est pas silencieux : l'équipe est notifiée.</pre>
+
+<h3>5. Le serveur n'a besoin que de peu</h3>
+<div class="warn">Le serveur ne fait que <code>pull</code>, <code>up -d</code> — ce que tu ferais à la main. <code>StrictHostKeyChecking=accept-new</code> accepte la clé du serveur au premier contact mais refuse tout changement ultérieur (anti-MITM). La clé SSH appartient à un utilisateur <code>deploy</code> qui ne peut que lancer compose — pas root. Les migrations EF s'appliquent au démarrage de l'app.</div>
+<div class="tip">De <code>git push origin v1.0.0</code> au site à jour et vérifié : zéro connexion manuelle au serveur. Le déploiement rejoue au robot le geste du cours Docker (pull, up), avec la vérification <code>/health</code> (Health Checks + sonde base) qui transforme « c'est parti » en « c'est en ligne et ça répond ».</div>`,
+  exercises: [
+    { type: "qcm", q: "/health (Health Checks) vérifie…", opts: ["Le CSS", "Que la base répond -> 200 Healthy / 503", "Le hachage", "Le registre"], a: 1, exp: "AddDbContextCheck." },
+    { type: "qcm", q: "Le job de déploiement dépend de…", opts: ["Rien", "needs: publier (image au registre d'abord)", "needs: tests", "main"], a: 1, exp: "L'ordre." },
+    { type: "qcm", q: "Sur le serveur, le job fait…", opts: ["Un rebuild complet", "pull, up -d", "rm -rf", "git clone"], a: 1, exp: "Le geste Docker, robotisé." },
+    { type: "qcm", q: "Les migrations EF s'appliquent…", opts: ["À la main sur le serveur", "Au démarrage de l'app (ou étape dédiée)", "Jamais", "Par le DBA"], a: 1, exp: "Schéma suit le code." },
+    { type: "qcm", q: "La clé SSH appartient à…", opts: ["root", "un utilisateur deploy limité à compose", "l'admin GitHub", "tout le monde"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "AddDbContextCheck ajoute…", opts: ["Un cache", "Une sonde qui teste la connexion à la base", "Le CSS", "Un rôle"], a: 1, exp: "Santé réelle." },
+    { type: "qcm", q: "StrictHostKeyChecking=accept-new…", opts: ["Accepte tout, toujours", "Accepte la clé au 1er contact, refuse tout changement", "Refuse tout", "Désactive SSH"], a: 1, exp: "Anti-MITM." },
+    { type: "qcm", q: "Staging se déploie…", opts: ["Sur approbation", "Automatiquement au merge sur main", "Sur tag", "Jamais"], a: 1, exp: "Répétition générale." },
+    { type: "qcm", q: "La production se déploie…", opts: ["À chaque commit", "Sur tag, APRÈS approbation humaine", "Jamais", "La nuit"], a: 1, exp: "environment production." },
+    { type: "qcm", q: "curl -fs /health …", opts: ["Ignore l'échec", "Échoue si != 2xx -> job rouge", "Chiffre", "Accélère"], a: 1, exp: "Déployé = vérifié." },
+    { type: "vf", q: "Un déploiement raté par le pipeline passe inaperçu.", a: false, exp: "Job rouge + notification." },
+    { type: "qcm", q: "Le serveur a besoin de…", opts: [".NET SDK + code source", "Docker + compose.yaml + config (l'image vient du registre)", "Un IDE", "Le dépôt complet"], a: 1, exp: "pull + up -d." },
+    { type: "qcm", q: "La version déployée change en…", opts: ["Rebuild serveur", "Changeant .env.version (lu par le compose) + pull/up", "Éditant l'image", "Reboot"], a: 1, exp: "image: ...:${VERSION}." },
+    { type: "qcm", q: "De git push origin v1.0.0 au site à jour :", opts: ["Une soirée", "Zéro connexion manuelle au serveur", "Un admin la nuit", "Un ftp"], a: 1, exp: "Automatisé." },
+    { type: "vf", q: "Le déploiement rejoue au robot le geste du cours Docker (pull, up).", a: true, exp: "Automatisation." }
+  ],
+  final: {
+    title: "Exercice final — Le serveur qui se met à jour seul",
+    intro: `<p>Le tag poussé, l'image publiée, et le serveur suit — tout seul.</p>`,
+    questions: [
+      { type: "qcm", q: "La sonde de santé :", opts: ["/health (Health Checks + sonde base)", "un ping", "le CSS", "rien"], a: 0, exp: "Base incluse." },
+      { type: "qcm", q: "Le job dépend de :", opts: ["needs: publier", "rien", "needs: tests", "main"], a: 0, exp: "Image d'abord." },
+      { type: "qcm", q: "Sur le serveur :", opts: ["pull -> up -d (EF migre au démarrage)", "rebuild", "rsync du code", "réinstallation"], a: 0, exp: "Le geste Docker." },
+      { type: "qcm", q: "La preuve du succès :", opts: ["curl -fs /health en 200", "l'absence d'erreur ssh", "un sentiment", "les logs du lendemain"], a: 0, exp: "Vérifié." },
+      { type: "vf", q: "La prod exige un tag ET une approbation ; staging se met à jour au merge.", a: true, exp: "Deux environnements." }
+    ],
+    solution: `<pre class="pseudo">builder.Services.AddHealthChecks().AddDbContextCheck<LudothequeContext>();   // sonde : la base repond-elle ?
+app.MapHealthChecks("/health");   // exposer la sonde a /health (200 ou 503)
+
+  deployer-production:             # job de deploiement production
+    needs: publier                 # apres la publication de l'image
+    environment: production        # approbation requise
+    steps:                         # etapes
+      - run: echo "\${{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # cle SSH (secret) dans un fichier protege
+      # se connecter au serveur et deployer (commande multi-lignes) :
+      - run: ssh -i cle deploy@... 'cd /srv/ludotheque && docker compose pull &&
+             docker compose up -d'
+      - run: sleep 12 && curl -fs https://ludotheque.example.com/health   # attendre puis verifier /health</pre>
+<p>Le site suit les tags, tout seul. Demain : observer, sauvegarder, protéger, revenir.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton déploiement et sa vérification…",
+  items: [
+  { id: "proj6cs-l19", title: "Le déploiement à deux environnements", level: 3,
+    statement: "Écris la sonde Health Checks (avec AddDbContextCheck), le job deployer-staging (auto au merge sur main) et deployer-production (sur tag, avec approbation), et la vérification curl avec retries (pas un sleep aveugle). Explique pourquoi staging reçoit tout automatiquement mais la prod exige un tag ET une approbation.",
+    hints: [
+      "AddHealthChecks().AddDbContextCheck<LudothequeContext>() ; MapHealthChecks(\"/health\").",
+      "if: github.ref == 'refs/heads/main' pour staging ; environment: production (required reviewers) pour la prod.",
+      "Retry : for i in seq 1 12; curl && break; sleep 5 (patient, pas aveugle)."
+    ],
+    solution: "// Program.cs — sonde de sante\nbuilder.Services.AddHealthChecks()               // activer le service de sonde de sante\n    .AddDbContextCheck<LudothequeContext>();     // teste la connexion a la base\napp.MapHealthChecks(\"/health\");                  // exposer la sonde a /health\n\n# ci.yml — staging au merge\n  deployer-staging:                              # job de deploiement en pre-production\n    if: github.ref == 'refs/heads/main'          # ne se declenche que sur la branche main\n    environment: staging                         # environnement staging (sans approbation)\n    needs: [tests, qualite, securite, image]     # apres tous ces jobs verts\n    steps: [ ...ssh staging.ludotheque... 'docker compose pull && up -d'... ]   # pull + up -d sur staging (details omis)\n\n# release.yml — production sur tag + approbation\n  deployer-production:                           # job de deploiement en production\n    needs: publier                               # apres la publication de l'image\n    environment: production          # required reviewers -> approbation humaine\n    steps:                                       # ses etapes\n      - run: echo \"${{ secrets.SSH_PRIVATE_KEY }}\" > cle && chmod 600 cle   # cle SSH (secret) dans un fichier protege\n      - run: |                                   # se connecter en SSH et deployer (commande multi-lignes) :\n          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '\n            cd /srv/ludotheque && echo \"VERSION=${GITHUB_REF_NAME#v}\" > .env.version &&\n            docker compose pull && docker compose up -d'\n      - name: Verifier la sante (patient, pas aveugle)   # etape de verification\n        run: |                                   # petit script shell de retry\n          for i in $(seq 1 12); do               # jusqu'a 12 tentatives\n            curl -fs https://ludotheque.example.com/health && exit 0   # succes (2xx) -> terminer OK\n            sleep 5                              # sinon attendre 5 s et reessayer\n          done                                   # fin de la boucle\n          exit 1        # rouge seulement apres ~60 s d'echecs repetes\n\n# POURQUOI CETTE ASYMETRIE STAGING/PROD\n# Staging est la scene de REPETITION : il recoit chaque merge automatiquement,\n// pour que les surprises s'y produisent AVANT les clients. La production, elle,\n// touche de vrais utilisateurs et de vraies donnees : elle exige une DECISION\n// (un tag = 'cette version est prete') ET une APPROBATION ('deployons maintenant,\n// quelqu'un surveille'). L'automatisation execute ; l'humain decide du moment.",
+    note: "Le retry patient (boucle curl) plutôt qu'un sleep aveugle évite le faux positif qui ruine la confiance dans le pipeline : l'app met parfois quelques secondes de plus à répondre (migration EF, démarrage du runtime). AddDbContextCheck rend la sonde /health vraiment utile (elle teste la base, pas juste le process). L'asymétrie staging/production incarne le principe : automatiser tout ce qui peut l'être, réserver à l'humain les seules VRAIES décisions." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

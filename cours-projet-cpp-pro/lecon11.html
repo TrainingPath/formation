@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Louer un jeu : transaction et test d'intégration",
+  subtitle: "Une opération atomique (insertion + décrément) vérifiée contre une vraie base, en CI.",
+  theory: `
+<h3>1. Deux écritures, un tout</h3>
+<p>Louer un jeu, c'est faire deux choses en base : <strong>insérer la location</strong> ET <strong>décrémenter le stock</strong> (« décrémenter » = retirer 1). Ces deux écritures doivent réussir ensemble ou échouer ensemble : c'est une <strong>transaction</strong>. Une transaction est un groupe d'opérations traité comme un tout <strong>atomique</strong> — soit tout se fait, soit rien ne se fait, jamais à moitié (comme un virement bancaire : on ne veut pas débiter un compte sans créditer l'autre). On la protège par un garde RAII.</p>
+
+<h3>2. Le garde de transaction (rappel)</h3>
+<p>Deux mots de vocabulaire : <strong>commit</strong> (« valider ») rend les écritures définitives ; <strong>rollback</strong> (« annuler ») remet la base dans l'état d'avant. Le <code>TransactionGuard</code> applique le RAII (libération automatique) à la transaction.</p>
+<pre class="pseudo">class TransactionGuard {                          // garde qui gere une transaction automatiquement
+    sql::Connection&amp; con_; bool valide_ = false;  // la connexion + un drapeau "a-t-on valide ?" (faux au depart)
+public:                                           // partie accessible
+    explicit TransactionGuard(sql::Connection&amp; c) : con_(c) { con_.setAutoCommit(false); } // constructeur : OUVRE la transaction (coupe la validation auto)
+    void commit() { con_.commit(); valide_ = true; } // valider les ecritures et noter que c'est fait
+    ~TransactionGuard() { if (!valide_) con_.rollback(); con_.setAutoCommit(true); } // destructeur : si pas valide -> ANNULER ; puis retablir le mode normal
+};                                                // fin de la classe</pre>
+<p>Le <strong>destructeur</strong> (la méthode <code>~TransactionGuard</code>, appelée automatiquement quand l'objet disparaît) fait le <code>rollback</code> si <code>commit()</code> n'a pas été appelé — par exemple si une exception a interrompu le code. <code>explicit</code> empêche une conversion accidentelle ; <code>setAutoCommit(false)</code> demande à MySQL de ne rien valider tant qu'on ne le lui dit pas.</p>
+
+<h3>3. Le service louer</h3>
+<pre class="pseudo">void LocationService::louer(sql::Connection&amp; con, int uid, int jeuId, int jours) { // loue le jeu jeuId a l'utilisateur uid
+    validerDuree(jours);                          // 1) refuser tout de suite une duree hors [1,30]
+    Jeu j = JeuRepository::findById(con, jeuId);  // 2) charger le jeu concerne
+    if (!CatalogueService::peutLouer(j)) throw StockInsuffisant("Plus de stock"); // 3) refuser s'il n'y a plus de stock
+    TransactionGuard tx(con);                     // 4) OUVRIR la transaction (rollback auto si on sort en erreur)
+    LocationRepository::inserer(con, uid, jeuId, jours);     // 5) 1re ecriture : enregistrer la location
+    JeuRepository::decrementerStockLocation(con, jeuId);     // 6) 2e ecriture : retirer 1 au stock
+    tx.commit();                                  // 7) tout a reussi : VALIDER les deux ecritures d'un coup
+}                                                 // fin ; si une erreur survient avant commit, tout est annule</pre>
+
+<h3>4. Le test d'intégration</h3>
+<pre class="pseudo">TEST(LocationIntegration, StockDecremente) {          // test d'integration : "louer fait baisser le stock"
+    auto con = connexionTest();                       // ouvrir une connexion vers le MySQL de test (conteneur/CI)
+    int avant = JeuRepository::findById(*con, 1).stockLocation(); // lire le stock du jeu 1 AVANT (*con = l'objet pointe)
+    LocationService::louer(*con, /*uid*/ 1, /*jeuId*/ 1, /*jours*/ 4); // louer le jeu 1 pour 4 jours
+    int apres = JeuRepository::findById(*con, 1).stockLocation();  // relire le stock APRES
+    EXPECT_EQ(apres, avant - 1);                      // verifier qu'il a baisse d'exactement 1
+}                                                     // fin du test</pre>
+<div class="tip">Un <strong>test d'intégration</strong> vérifie le comportement <em>avec la vraie base</em> (contrairement au <strong>test unitaire</strong>, qui teste une fonction pure isolée, sans base ni réseau). <code>EXPECT_EQ</code> compare deux valeurs et exige leur égalité. Il tourne en CI grâce à un service MySQL éphémère.</div>
+
+<h3>5. Un MySQL éphémère en CI</h3>
+<pre class="pseudo"># .github/workflows/ci.yml (job d'integration)      # on ajoute une base au pipeline
+    services:                                       # services annexes demarres pour le job
+      mysql:                                        # un conteneur MySQL jetable
+        image: mysql:8.4                            # image officielle MySQL 8.4
+        env: { MYSQL_ROOT_PASSWORD: test, MYSQL_DATABASE: ludotheque } # mot de passe et base de TEST (aucun secret reel)
+        ports: ["3306:3306"]                        # ouvrir le port 3306 pour que les tests s'y connectent</pre>
+<div class="warn"><strong>Éphémère</strong> signifie « qui ne dure pas » : la CI démarre un MySQL jetable, y charge le schéma, exécute les tests d'intégration, puis le détruit. Un <strong>port</strong> (comme 3306) est le « numéro de porte » par lequel deux programmes communiquent sur une machine. Aucune donnée réelle, aucun secret de production : un bac à sable reproductible.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["une écriture", "deux écritures atomiques (insertion + décrément)", "aucune", "un SELECT"], a: 1, exp: "Transaction." },
+    { type: "qcm", q: "Le TransactionGuard fait le rollback…", opts: ["jamais", "dans son destructeur si commit() n'a pas eu lieu", "au démarrage", "à la main"], a: 1, exp: "RAII." },
+    { type: "qcm", q: "On valide la durée…", opts: ["après commit", "avant d'ouvrir la transaction", "jamais", "dans le destructeur"], a: 1, exp: "Rejeter tôt." },
+    { type: "qcm", q: "Un test unitaire teste…", opts: ["la vraie base", "une fonction pure sans base", "le déploiement", "le réseau"], a: 1, exp: "Isolé." },
+    { type: "qcm", q: "Un test d'intégration teste…", opts: ["une fonction pure", "le comportement avec la vraie base", "l'UI seule", "rien"], a: 1, exp: "Bout en bout partiel." },
+    { type: "qcm", q: "Le test d'intégration vérifie ici…", opts: ["la couleur", "que le stock baisse de 1", "le hash", "le YAML"], a: 1, exp: "Effet réel." },
+    { type: "qcm", q: "En CI, la base est…", opts: ["la production", "un MySQL éphémère jetable", "absente", "un fichier"], a: 1, exp: "Bac à sable." },
+    { type: "qcm", q: "services: mysql: dans le workflow…", opts: ["déploie en prod", "démarre un MySQL pour les tests", "efface le code", "logge"], a: 1, exp: "Service de test." },
+    { type: "qcm", q: "Aucune donnée de production en CI, car…", opts: ["c'est plus lent", "sécurité : bac à sable reproductible, pas de secret réel", "obligation", "sans raison"], a: 1, exp: "Isolation." },
+    { type: "qcm", q: "Si peutLouer est faux, on…", opts: ["insère", "lance StockInsuffisant avant la transaction", "commit", "rollback"], a: 1, exp: "Refus tôt." },
+    { type: "vf", q: "Une exception avant commit déclenche un rollback automatique via le garde.", a: true, exp: "RAII." },
+    { type: "qcm", q: "tx.commit() est appelé…", opts: ["au début", "après les deux écritures réussies", "jamais", "dans le catch"], a: 1, exp: "Fin du chemin correct." },
+    { type: "qcm", q: "EXPECT_EQ(apres, avant-1) vérifie…", opts: ["une exception", "l'égalité attendue du stock", "un double", "un throw"], a: 1, exp: "Effet mesuré." },
+    { type: "qcm", q: "Le schéma est chargé dans la base de CI…", opts: ["jamais", "avant d'exécuter les tests d'intégration", "après", "en prod"], a: 1, exp: "Base prête." },
+    { type: "qcm", q: "Les deux types de tests sont…", opts: ["redondants", "complémentaires (unitaire + intégration)", "identiques", "inutiles"], a: 1, exp: "Couverture large." }
+  ],
+  final: {
+    title: "Exercice final — Rendre la location atomique et testée",
+    intro: `<p>Version sans transaction ni test :</p>
+<pre class="pseudo">void louer(sql::Connection&amp; con, int uid, int jeuId, int jours) { // loue sans aucune protection
+    LocationRepository::inserer(con, uid, jeuId, jours);     // 1re ecriture : enregistrer la location
+    JeuRepository::decrementerStockLocation(con, jeuId);     // 2e ecriture : retirer 1 au stock
+}                                                          // DANGER : si la 2e echoue, la 1re reste -> base incoherente</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Le risque sans transaction :", opts: ["aucun", "si le décrément échoue, une location reste sans stock retiré", "trop lent", "trop long"], a: 1, exp: "Incohérence." },
+      { type: "qcm", q: "La solution :", opts: ["un printf", "encadrer par un TransactionGuard", "supprimer une écriture", "un sleep"], a: 1, exp: "Atomicité." },
+      { type: "qcm", q: "Pour prouver que ça marche :", opts: ["rien", "un test d'intégration vérifiant le stock -1", "un log", "l'UI"], a: 1, exp: "Contre la vraie base." },
+      { type: "qcm", q: "Ce test tourne en CI grâce à…", opts: ["la prod", "un service MySQL éphémère", "un fichier", "rien"], a: 1, exp: "Bac à sable." },
+      { type: "qcm", q: "On valide/​vérifie le stock…", opts: ["après commit", "avant d'ouvrir la transaction", "jamais", "en prod"], a: 1, exp: "Refuser tôt." }
+    ],
+    solution: `<pre class="pseudo">void LocationService::louer(sql::Connection&amp; con, int uid, int jeuId, int jours) { // version atomique et testee
+    validerDuree(jours);                          // refuser une duree hors [1,30]
+    Jeu j = JeuRepository::findById(con, jeuId);  // charger le jeu concerne
+    if (!CatalogueService::peutLouer(j)) throw StockInsuffisant("Plus de stock"); // refuser si plus de stock
+    TransactionGuard tx(con);                     // ouvrir la transaction (RAII : rollback auto en cas d'erreur)
+    LocationRepository::inserer(con, uid, jeuId, jours);     // 1re ecriture : la location
+    JeuRepository::decrementerStockLocation(con, jeuId);     // 2e ecriture : le stock -1
+    tx.commit();                                  // les deux ont reussi : valider d'un coup
+}                                                 // fin de la methode
+// TEST d'integration : stock avant/apres, EXPECT_EQ(apres, avant-1)   // preuve contre la vraie base</pre>
+<p>Opération atomique + test d'intégration en CI : le comportement réel est prouvé, pas supposé. Demain : acheter un jeu — prix figé et couverture.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code / test ici…",
+  items: [
+  { id: "projcpppro-l11", title: "Un test d'intégration de location", level: 3,
+    statement: "Écris un test d'intégration (GoogleTest) qui, avec une connexion à la base de test, lit le stock_location d'un jeu, appelle LocationService::louer, relit le stock, et vérifie qu'il a baissé de 1. Suppose connexionTest() disponible.",
+    hints: [
+      "int avant = JeuRepository::findById(*con, id).stockLocation();",
+      "Appelle louer(*con, uid, id, jours).",
+      "EXPECT_EQ(apres, avant - 1)."
+    ],
+    solution: "TEST(LocationIntegration, StockDecremente) {        // test d'integration de la location\n    auto con = connexionTest();                     // connexion vers le MySQL ephemere (conteneur/CI)\n    int avant = JeuRepository::findById(*con, 1).stockLocation(); // lire le stock du jeu 1 AVANT\n    LocationService::louer(*con, /*uid*/ 1, /*jeuId*/ 1, /*jours*/ 4); // louer le jeu 1 pour 4 jours\n    int apres = JeuRepository::findById(*con, 1).stockLocation();  // relire le stock APRES\n    EXPECT_EQ(apres, avant - 1);                    // verifier qu'il a baisse d'exactement 1 (effet reel)\n}                                                   // fin du test",
+    note: "Le test d'intégration prouve le comportement contre une vraie base MySQL (éphémère en CI), là où un test unitaire ne couvre que la logique pure. On mesure un effet concret (le stock baisse de 1), ce qui valide à la fois la transaction et les requêtes. Aucune donnée de production n'est touchée : la base de test est un bac à sable reproductible." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

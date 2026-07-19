@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Les fixtures : préparer et nettoyer le terrain",
+  subtitle: "Marre de créer le même Jeu dans chaque test ? pytest dresse la table et fait la vaisselle.",
+  theory: `
+<h3>1. Le problème : la préparation dupliquée</h3>
+<p>Regarde tes tests de location : chacun commence par créer un <code>Jeu</code>, un <code>Membre</code>, parfois un catalogue entier. Créer un objet ainsi, en écrivant <code>Jeu(...)</code>, s'appelle appeler son <strong>constructeur</strong> (la « recette de fabrication » de l'objet). Dix tests, dix copies du même Arrange. Le jour où le constructeur de <code>Jeu</code> change, tu corriges dix endroits — la duplication a encore frappé. (Les <code>...</code> ci-dessous signifient « et le reste du test ».)</p>
+<pre class="pseudo">def test_location_reussit():                   # 1er test : une location valide doit reussir
+    jeu = Jeu(titre="Catan", prix_jour=3)      # Arrange : creer un jeu (duplique dans chaque test...)
+    membre = Membre(nom="Alice")               # Arrange : creer un membre (...duplique partout aussi)
+    ...                                        # (le reste du test : Act + Assert)
+
+def test_location_refusee_si_jeu_deja_loue():  # 2e test : louer un jeu deja loue doit echouer
+    jeu = Jeu(titre="Catan", prix_jour=3)      # EXACTEMENT la meme preparation (encore...)
+    membre = Membre(nom="Alice")               # ...et encore : c'est cette duplication qu'on veut supprimer
+    ...                                        # (le reste du test)</pre>
+
+<h3>2. @pytest.fixture : l'injection par nom</h3>
+<p>Une <strong>fixture</strong> est une fonction qui fabrique un objet prêt à l'emploi. On la marque avec un <strong>décorateur</strong> : une ligne spéciale commençant par <code>@</code>, posée juste au-dessus d'une fonction pour lui ajouter un pouvoir (ici : « tu es une fixture »). Pour l'utiliser, un test la demande <strong>par le nom du paramètre</strong> : pytest voit la correspondance et <strong>injecte</strong> (fournit automatiquement) le résultat. Ni import ni appel manuel.</p>
+<pre class="pseudo">import pytest                                  # importer pytest pour utiliser le decorateur @pytest.fixture
+
+@pytest.fixture                                # DECORATEUR : transforme la fonction suivante en fixture
+def jeu_disponible():                          # nom de la fixture = "jeu_disponible" (le terrain a fournir)
+    return Jeu(titre="Catan", prix_jour=3)     # fabrique et renvoie l'objet pret a l'emploi
+
+def test_location_reussit(jeu_disponible):     # le test DEMANDE la fixture en la nommant comme parametre
+    location = louer(jeu_disponible, membre="Alice")  # pytest a injecte l'objet : on l'utilise directement
+    assert location.est_active                 # Assert : la location doit etre active</pre>
+<p>Le Arrange commun vit à UN seul endroit ; les tests ne gardent que ce qui leur est propre.</p>
+
+<h3>3. yield : préparer avant, nettoyer après</h3>
+<p>Certaines préparations laissent des traces (une base de test, des fichiers). Le mot-clé <code>yield</code> (« céder la main ») partage la fixture en deux : tout ce qui le précède est le <strong>setup</strong> (préparation), tout ce qui le suit est le <strong>teardown</strong> (nettoyage) — exécuté après le test, <strong>même s'il échoue</strong> :</p>
+<pre class="pseudo">@pytest.fixture                    # declarer une fixture
+def base_ludotheque():             # fixture qui fournit une base de donnees de test
+    base = creer_base_de_test()    # setup : creer la base AVANT le test
+    base.ajouter(Jeu(titre="Catan"))   # setup (suite) : la remplir avec un jeu
+    yield base                     # ← le test s'execute ICI ; l'objet "base" lui est fourni
+    base.vider()                   # teardown : APRES le test, vider la base (meme si le test a echoue)</pre>
+<p>C'est le remède propre à l'état partagé de la leçon 5 : chaque test reçoit un terrain neuf et le rend nettoyé. En Java : <code>@BeforeEach</code> / <code>@AfterEach</code> (JUnit) ; en C# : constructeur / <code>IDisposable</code> (xUnit) ; en PHP : <code>setUp()</code> / <code>tearDown()</code> (PHPUnit).</p>
+
+<h3>4. Les scopes : à quelle fréquence refabriquer ?</h3>
+<p>Le <strong>scope</strong> (« portée ») dit à quelle fréquence la fixture est refabriquée. Par défaut, <code>scope="function"</code> : refabriquée <strong>pour chaque test</strong> — isolation maximale. Si la fabrication est coûteuse (lente), on élargit : <code>scope="module"</code> (une fois par fichier) ou <code>scope="session"</code> (une fois pour toute la suite).</p>
+<pre class="pseudo">@pytest.fixture(scope="module")                # scope="module" : fabriquer cette fixture UNE fois par fichier
+def catalogue_complet():                       # fixture d'un gros catalogue de demonstration
+    return charger_catalogue_de_demonstration()   # chargement couteux : on evite de le refaire a chaque test</pre>
+
+<h3>5. Les fixtures intégrées et conftest.py</h3>
+<p>pytest livre des fixtures prêtes à l'emploi : <code>tmp_path</code> (un dossier temporaire jetable, parfait pour tester un export du catalogue), <code>capsys</code> (capture ce que le code affiche), <code>monkeypatch</code> (remplace temporairement une valeur ou une fonction — aperçu, on y reviendra avec les mocks). Et pour partager tes propres fixtures entre fichiers : place-les dans <code>conftest.py</code> — tous les tests du dossier les voient, <strong>sans import</strong>.</p>
+<div class="warn">Élargir le scope, c'est réintroduire de l'état partagé : si un test <strong>modifie</strong> une fixture <code>scope="session"</code>, tous les suivants héritent de la modification — bonjour les flaky. N'élargis que ce qui est en lecture seule.</div>
+<div class="tip">Nomme tes fixtures comme des états prêts : <code>jeu_disponible</code>, <code>jeu_deja_loue</code>, <code>membre_avec_retard</code>. La signature du test raconte alors son contexte : def test_location_refusee(jeu_deja_loue) se comprend sans lire le corps.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le problème que résolvent les fixtures :", opts: ["La lenteur de Python", "La préparation dupliquée dans chaque test", "Le manque de couleurs du terminal", "Les conflits Git"], a: 1, exp: "Le Arrange commun vit à un seul endroit." },
+    { type: "input", q: "Le décorateur qui transforme une fonction en fixture :", a: ["@pytest.fixture", "pytest.fixture"], ph: "décorateur", exp: "Au-dessus de la fonction de préparation." },
+    { type: "qcm", q: "Un test utilise une fixture en…", opts: ["L'important en haut du fichier", "L'appelant : jeu_disponible()", "Déclarant un paramètre du même nom", "La copiant-collant"], a: 2, exp: "L'injection par nom : pytest fait la correspondance et fournit l'objet." },
+    { type: "vf", q: "Il faut appeler soi-même la fonction fixture dans le test : jeu = jeu_disponible().", a: false, exp: "Jamais : on déclare le paramètre, pytest injecte le résultat." },
+    { type: "qcm", q: "Dans une fixture avec yield, le code situé APRÈS le yield…", opts: ["Ne s'exécute jamais", "S'exécute avant le test", "Est le teardown : nettoyage après le test", "Est ignoré si le test échoue"], a: 2, exp: "Setup avant le yield, teardown après — même si le test est rouge." },
+    { type: "vf", q: "Le teardown d'une fixture yield s'exécute même quand le test échoue.", a: true, exp: "C'est ce qui garantit un terrain propre pour le test suivant." },
+    { type: "qcm", q: "Le scope par défaut d'une fixture :", opts: ["function : refabriquée pour chaque test", "module", "session", "package"], a: 0, exp: "Isolation maximale par défaut — on n'élargit que si c'est coûteux." },
+    { type: "qcm", q: "scope=« session » signifie que la fixture est fabriquée…", opts: ["À chaque test", "Une fois par fichier", "Jamais", "Une seule fois pour toute la suite"], a: 3, exp: "Réservé aux préparations coûteuses ET en lecture seule." },
+    { type: "qcm", q: "Le danger d'une fixture scope=« session » modifiée par un test :", opts: ["Elle devient plus rapide", "Tous les tests suivants héritent de la modification : flaky", "pytest la supprime", "Aucun danger"], a: 1, exp: "Élargir le scope = réintroduire de l'état partagé." },
+    { type: "input", q: "La fixture intégrée qui fournit un dossier temporaire jetable :", a: ["tmp_path", "tmp_path (fixture)"], ph: "nom de la fixture", exp: "Parfaite pour tester l'export du catalogue sans salir le disque." },
+    { type: "qcm", q: "capsys sert à…", opts: ["Capturer ce que le code affiche à l'écran", "Chronométrer les tests", "Créer une base de données", "Simuler le réseau"], a: 0, exp: "On peut vérifier un message imprimé par la Ludothèque." },
+    { type: "qcm", q: "monkeypatch permet de…", opts: ["Corriger les bugs automatiquement", "Renommer les tests", "Remplacer temporairement une valeur ou une fonction pendant un test", "Installer des singes"], a: 2, exp: "Aperçu ici ; il reviendra avec les mocks et les doublures." },
+    { type: "qcm", q: "Pour partager des fixtures entre plusieurs fichiers de tests :", opts: ["Les copier dans chaque fichier", "Les importer avec import *", "Les mettre dans le README", "Les placer dans conftest.py"], a: 3, exp: "Tous les tests du dossier les voient, sans le moindre import." },
+    { type: "vf", q: "Les fixtures de conftest.py doivent être importées explicitement dans chaque fichier de tests.", a: false, exp: "C'est la magie de conftest.py : disponibles partout, sans import." },
+    { type: "qcm", q: "L'équivalent JUnit du couple setup/teardown :", opts: ["@Test/@Fail", "@BeforeEach/@AfterEach", "[Fact]/[Theory]", "dataProvider/tearDown"], a: 1, exp: "xUnit : constructeur/IDisposable ; PHPUnit : setUp()/tearDown()." }
+  ],
+  final: {
+    title: "Exercice final — Le terrain toujours prêt",
+    intro: `<p>Fixtures, yield, scopes, conftest : la mécanique de préparation au complet.</p>`,
+    questions: [
+      { type: "qcm", q: "Une fixture, fondamentalement, c'est…", opts: ["Un test caché", "Une fonction décorée qui fabrique un état prêt à l'emploi pour les tests", "Un fichier de configuration YAML", "Une option de pytest"], a: 1, exp: "Le Arrange partagé, injecté par nom de paramètre." },
+      { type: "input", q: "Le mot-clé Python qui sépare setup et teardown dans une fixture :", a: ["yield"], ph: "mot-clé", exp: "Avant : préparation ; après : nettoyage, même si le test échoue." },
+      { type: "qcm", q: "Une fixture coûteuse, en lecture seule, utilisée par toute la suite : quel scope ?", opts: ["function", "aucun", "session", "secret"], a: 2, exp: "Fabriquée une seule fois — acceptable car personne ne la modifie." },
+      { type: "vf", q: "tmp_path, capsys et monkeypatch sont des fixtures intégrées à pytest.", a: true, exp: "Fournies d'office : dossier temporaire, capture d'affichage, remplacement temporaire." },
+      { type: "qcm", q: "En PHP, le duo équivalent au setup/teardown des fixtures :", opts: ["setUp()/tearDown() de PHPUnit", "@BeforeEach/@AfterEach", "constructeur/IDisposable", "begin()/end()"], a: 0, exp: "@BeforeEach/@AfterEach : JUnit ; constructeur/IDisposable : xUnit." }
+    ],
+    solution: `<pre class="pseudo">Probleme : Arrange duplique dans chaque test
+Fixture  : @pytest.fixture → fabrique un etat ; injection par NOM de parametre
+Nettoyage: setup avant yield, teardown apres (execute meme si rouge)
+Scopes   : function (defaut, isole) | module | session (lecture seule !)
+Integrees: tmp_path, capsys, monkeypatch — et conftest.py pour partager
+
+Ailleurs : JUnit @BeforeEach/@AfterEach, xUnit constructeur/IDisposable,
+           PHPUnit setUp()/tearDown().</pre>
+<p>Le terrain se prépare et se nettoie tout seul. La suite : « Paramétrer : un test, dix jeux de données » — on va faire tester dix tarifs par une seule fonction.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l6", title: "La boîte à fixtures de la Ludothèque", level: 3,
+    statement: "Conçois le conftest.py de la suite de la Ludothèque. Décris quatre fixtures : jeu_disponible (un Jeu neuf), jeu_deja_loue (un Jeu déjà loué à un membre), base_ludotheque (une base de test remplie, à nettoyer après chaque test) et catalogue_demonstration (300 jeux chargés depuis un fichier, coûteux, jamais modifié par les tests). Pour chacune : son code (ou pseudo-code) complet, son scope avec justification, et la présence ou non d'un yield avec justification. Termine en réécrivant la signature de test_location_refusee_si_jeu_deja_loue pour qu'elle utilise la bonne fixture.",
+    hints: [
+      "Question à poser à chaque fixture : les tests la modifient-ils ? Si oui, scope function obligatoire.",
+      "yield ne sert que s'il y a quelque chose à nettoyer après le test — une base oui, un simple objet en mémoire non.",
+      "jeu_deja_loue peut réutiliser jeu_disponible : une fixture peut en demander une autre par paramètre."
+    ],
+    solution: "# tests/conftest.py\nimport pytest\n\n@pytest.fixture\ndef jeu_disponible():\n    return Jeu(titre='Catan', prix_jour=3)\n# scope function (défaut) : objet léger, isolation maximale.\n# Pas de yield : rien à nettoyer, l'objet meurt avec le test.\n\n@pytest.fixture\ndef jeu_deja_loue(jeu_disponible):\n    louer(jeu_disponible, membre='Alice')\n    return jeu_disponible\n# Réutilise jeu_disponible : une fixture peut en demander une autre.\n# scope function : l'état « loué » ne doit pas fuir entre tests.\n\n@pytest.fixture\ndef base_ludotheque():\n    base = creer_base_de_test()\n    base.ajouter(Jeu(titre='Catan'))\n    yield base\n    base.vider()\n# yield obligatoire : la base laisse des traces → teardown.\n# scope function : chaque test reçoit une base neuve.\n\n@pytest.fixture(scope='session')\ndef catalogue_demonstration():\n    return charger_catalogue('demo_300_jeux.json')\n# scope session : chargement coûteux, fait UNE fois.\n# Acceptable car lecture seule — aucun test ne le modifie.\n\nSignature réécrite :\ndef test_location_refusee_si_jeu_deja_loue(jeu_deja_loue):\n    with pytest.raises(JeuDejaLoueError):\n        louer(jeu_deja_loue, membre='Bob')",
+    note: "Le raisonnement scope/yield que tu viens de dérouler est exactement celui d'une revue de code senior : isolation d'abord, performance ensuite, et jamais d'état mutable partagé. Sur ton capstone Django, la base de test recréée à chaque test suivra ce même schéma — et c'est ce qui rendra ta suite parallélisable dans le pipeline CI/CD." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

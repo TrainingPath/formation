@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Créer et lire : create, find, first, all",
+  subtitle: "Les deux premières lettres du CRUD, sans écrire un seul INSERT ni SELECT.",
+  theory: `
+<h3>1. Créer : new + save, la version longue</h3>
+<p>Première façon d'insérer un jeu : instancier le modèle, remplir les attributs, sauvegarder (analogie : tu prends une fiche vierge, tu écris dessus case par case, puis tu la ranges dans le tiroir).</p>
+<pre class="pseudo">use App\\Models\\Jeu;           // rend la classe Jeu utilisable dans ce fichier
+
+$jeu = new Jeu();              // crée un objet Jeu vide en mémoire (rien n'est encore en base)
+$jeu-&gt;titre = 'Catan';         // remplit l'attribut titre
+$jeu-&gt;prix_location = 4.50;    // remplit l'attribut prix_location
+$jeu-&gt;stock = 3;              // remplit l'attribut stock
+$jeu-&gt;save();                  // envoie l'INSERT en base : la ligne est réellement créée
+// INSERT INTO jeux (titre, prix_location, stock, created_at, updated_at)   -- SQL généré par save()
+// VALUES (?, ?, ?, ?, ?)                                                   -- valeurs liées, jamais concaténées
+
+echo $jeu-&gt;id;          // 43 — la clé auto-générée par MySQL est déjà là après save() !</pre>
+<p>Après save(), Eloquent récupère l'id auto-incrémenté et remplit created_at / updated_at. L'objet en mémoire et la ligne en base sont synchronisés.</p>
+
+<h3>2. Créer : create(), la version courte</h3>
+<p><strong>create()</strong> fait new + fill + save en un appel, à partir d'un tableau — c'est l'assignation de masse de la leçon 3, donc <strong>$fillable obligatoire</strong> :</p>
+<pre class="pseudo">$jeu = Jeu::create([          // create() = new + fill + save en un seul appel
+    'titre' =&gt; '7 Wonders',   // valeur pour la colonne titre
+    'prix_location' =&gt; 5.00,  // valeur pour la colonne prix_location
+    'stock' =&gt; 2,             // valeur pour la colonne stock
+]);                           // exécute l'INSERT ; $fillable doit autoriser ces colonnes
+// $jeu est le modèle complet, id inclus                     // l'objet retourné est prêt à l'emploi
+
+// Variante idéale pour les imports et les tests :
+$membre = Membre::firstOrCreate(           // cherche d'abord, ne crée QUE si rien n'est trouvé
+    ['email' =&gt; 'lea@exemple.be'],          // critère de recherche (ce qui doit rester unique)
+    ['nom' =&gt; 'Dupont', 'prenom' =&gt; 'Léa']  // valeurs utilisées SEULEMENT en cas de création
+);   // trouve OU crée : jamais de doublon d'email</pre>
+<p>Chez Django tu écrirais Jeu.objects.create(...), chez Hibernate un em.persist(jeu), chez EF Core un Add + SaveChanges.</p>
+
+<h3>3. Lire tout : all() et les collections</h3>
+<pre class="pseudo">$jeux = Jeu::all();                 // SELECT * FROM jeux : charge TOUS les jeux dans une Collection
+
+foreach ($jeux as $jeu) {           // parcourt chaque jeu de la collection
+    echo $jeu-&gt;titre;               // affiche le titre du jeu courant
+}                                   // fin de la boucle
+
+$jeux-&gt;count();                     // 43 : nombre d'éléments (compté en mémoire, pas en SQL)
+$jeux-&gt;pluck('titre');              // extrait juste la liste des titres
+$jeux-&gt;where('stock', 0);           // filtre EN MÉMOIRE (PHP), sur la collection déjà chargée</pre>
+<p>all() ne retourne pas un simple tableau mais une <strong>Collection</strong> Laravel : une classe bourrée de méthodes (map, filter, sum, sortBy…) — analogie : un classeur de fiches livré avec ses propres outils de tri et de calcul. Attention à la nuance : <em>$jeux-&gt;where(...)</em> sur une collection filtre en PHP après avoir tout chargé ; <em>Jeu::where(...)</em> filtre en SQL avant de charger — leçon 13. Sur une table de 100 000 lignes, all() est une très mauvaise idée.</p>
+
+<h3>4. Lire un seul : find, findOrFail</h3>
+<pre class="pseudo">$jeu = Jeu::find(7);        // SELECT * FROM jeux WHERE id = 7 LIMIT 1
+// introuvable → null (à toi de tester)     // si l'id n'existe pas, find() renvoie null
+
+$jeu = Jeu::findOrFail(7);  // comme find, mais LÈVE ModelNotFoundException si absent
+// dans un contrôleur Laravel, cette exception devient une page 404
+
+$jeux = Jeu::find([1, 2, 3]);   // WHERE id IN (1, 2, 3) → retourne une Collection</pre>
+<p><strong>find</strong> cherche par clé primaire, point. La variante <strong>findOrFail</strong> est le réflexe contrôleur : pas de if null à écrire, l'utilisateur reçoit une vraie 404 au lieu d'une erreur PHP sur null (analogie : find te tend l'objet ou un silence ; findOrFail te tend l'objet ou tire la sonnette d'alarme).</p>
+
+<h3>5. Lire le premier : first, firstWhere, firstOrFail</h3>
+<p>Quand le critère n'est pas la clé primaire, on filtre puis on prend le premier :</p>
+<pre class="pseudo">$membre = Membre::where('email', 'lea@exemple.be')-&gt;first();   // filtre par email, puis prend le 1er
+// SELECT * FROM membres WHERE email = ? LIMIT 1 — null si absent
+
+$membre = Membre::firstWhere('email', 'lea@exemple.be');   // raccourci de where(...)->first()
+
+$membre = Membre::where('email', $email)-&gt;firstOrFail();   // lève une exception (→ 404) si aucun résultat</pre>
+<p>Récapitulatif mental : <strong>all()</strong> = tout ; <strong>find($id)</strong> = un, par clé primaire ; <strong>first()</strong> = le premier d'un filtre ; suffixe <strong>OrFail</strong> = exception (donc 404) au lieu de null. Ces quatre-là couvrent 90 % de tes lectures.</p>
+<div class="warn">find(999) inexistant retourne null, et l'erreur n'explose que PLUS TARD, à la première propriété lue (« Attempt to read property on null ») — souvent loin de la vraie cause. Dans un contrôleur, préfère findOrFail : l'échec est immédiat, localisé, et devient une 404 propre.</div>
+<div class="tip">Dans tinker, enchaîne : Jeu::create([...]), puis Jeu::find(43), puis Jeu::where('stock', 0)->first(). Regarde le SQL avec DB::listen. Créer-relire-vérifier en trente secondes : c'est exactement le cycle de test que tu utiliseras au Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "La version longue pour créer un jeu :", opts: ["Jeu::insert sans tableau", "new Jeu(), attributs un à un, puis save()", "Jeu::make()->push()", "INSERT INTO obligatoire"], a: 1, exp: "new + attributs + save() : l'INSERT est généré au save()." },
+    { type: "qcm", q: "Après $jeu->save() sur un nouveau modèle, $jeu->id vaut…", opts: ["null jusqu'au prochain find", "0", "La clé auto-incrémentée fraîchement générée par MySQL", "Une chaîne aléatoire"], a: 2, exp: "Eloquent rapatrie l'id immédiatement : l'objet est synchronisé avec la base." },
+    { type: "qcm", q: "Jeu::create(['titre' => 'Catan']) exige que le modèle ait…", opts: ["Un constructeur personnalisé", "$fillable incluant titre", "Une vue Blade", "Un index sur titre"], a: 1, exp: "create() = assignation de masse : la liste blanche de la leçon 3 s'applique." },
+    { type: "vf", q: "create() retourne le modèle créé, id et timestamps inclus.", a: true, exp: "new + fill + save en un appel, et l'objet complet en retour." },
+    { type: "input", q: "Quelle méthode cherche d'abord un enregistrement et ne le crée que s'il n'existe pas ?", a: ["firstOrCreate", "firstOrCreate()", "Membre::firstOrCreate"], ph: "nom de la méthode…", exp: "firstOrCreate(critères, valeurs) : l'anti-doublon des imports." },
+    { type: "qcm", q: "Jeu::all() retourne…", opts: ["Un tableau PHP brut", "Une chaîne JSON", "Un curseur MySQL", "Une Collection Laravel de modèles Jeu"], a: 3, exp: "La Collection offre map, filter, pluck, sum… en plus du foreach." },
+    { type: "qcm", q: "Différence entre Jeu::where('stock', 0)->get() et Jeu::all()->where('stock', 0) :", opts: ["Aucune", "La première filtre en SQL, la seconde charge TOUT puis filtre en PHP", "La seconde est plus rapide", "La première ne marche qu'en production"], a: 1, exp: "Filtrer côté SQL évite de charger 100 000 lignes pour en garder 12." },
+    { type: "vf", q: "Sur une table d'un million de lignes, Jeu::all() est une approche recommandée.", a: false, exp: "Tout charger en mémoire : c'est le where SQL (leçon 13) ou la pagination (leçon 16) qu'il faut." },
+    { type: "qcm", q: "Jeu::find(999) quand l'id n'existe pas retourne…", opts: ["null", "Une exception", "Un Jeu vide", "false"], a: 0, exp: "Et l'erreur n'explosera que plus tard, à la première propriété lue sur null." },
+    { type: "qcm", q: "Jeu::findOrFail(999) quand l'id n'existe pas…", opts: ["Retourne null", "Lève ModelNotFoundException, convertie en 404 par Laravel", "Crée le jeu 999", "Retourne le premier jeu"], a: 1, exp: "Le réflexe contrôleur : échec immédiat et page 404 propre." },
+    { type: "input", q: "Quelle méthode récupère un modèle par sa clé primaire en levant une exception s'il est absent ?", a: ["findOrFail", "findOrFail()", "Jeu::findOrFail"], ph: "nom de la méthode…", exp: "find + OrFail : ModelNotFoundException → 404." },
+    { type: "qcm", q: "Jeu::find([1, 2, 3]) retourne…", opts: ["Le jeu 1 seulement", "Une erreur", "Une Collection des jeux dont l'id est dans la liste", "Trois requêtes séparées"], a: 2, exp: "Un seul WHERE id IN (1,2,3) en coulisses." },
+    { type: "qcm", q: "Trouver un membre par email (colonne non-clé primaire) :", opts: ["Membre::find('lea@exemple.be')", "Membre::where('email', $email)->first()", "Membre::all()[0]", "Membre::email($email)"], a: 1, exp: "find = clé primaire uniquement ; pour le reste, where + first." },
+    { type: "vf", q: "first() sur une requête sans résultat retourne null.", a: true, exp: "Comme find : null silencieux ; firstOrFail pour l'exception." },
+    { type: "qcm", q: "L'équivalent de Jeu::create chez l'ORM Django :", opts: ["Jeu.objects.create(...)", "em.persist(jeu)", "SaveChanges()", "INSERT INTO"], a: 0, exp: "objects.create chez Django ; persist chez JPA ; Add + SaveChanges chez EF Core." }
+  ],
+  final: {
+    title: "Exercice final — Créer et lire la Ludothèque",
+    intro: `<p>Le catalogue se remplit : nouveaux jeux, nouveaux membres, premières recherches. Vérifie tes réflexes C et R du CRUD.</p>`,
+    questions: [
+      { type: "qcm", q: "Inscrire un membre depuis un formulaire validé, en une ligne :", opts: ["new Membre() sans save", "Membre::create($donneesValidees)", "DB::raw('INSERT ...')", "Membre::all()"], a: 1, exp: "create() avec un $fillable strict : rapide ET protégé." },
+      { type: "qcm", q: "Page « fiche du jeu 7 » d'un contrôleur : la méthode la plus adaptée est…", opts: ["Jeu::find(7) sans test", "Jeu::all()->get(7)", "Jeu::findOrFail(7)", "Jeu::first()"], a: 2, exp: "Id inexistant → 404 automatique, pas d'erreur sur null." },
+      { type: "input", q: "Quelle méthode de Collection extrait uniquement la colonne titre de tous les jeux chargés ?", a: ["pluck", "pluck()", "pluck('titre')"], ph: "$jeux->…('titre')", exp: "pluck('titre') : la liste des valeurs d'un attribut." },
+      { type: "vf", q: "Membre::firstOrCreate(['email' => $e], [...]) peut créer deux fois le même email si on l'appelle deux fois.", a: false, exp: "Le second appel TROUVE la ligne au lieu de la créer : c'est son intérêt anti-doublon." },
+      { type: "qcm", q: "Le premier jeu en rupture de stock, filtré côté SQL :", opts: ["Jeu::where('stock', 0)->first()", "Jeu::all()->where('stock', 0)", "Jeu::find('stock = 0')", "Jeu::first('stock')"], a: 0, exp: "where SQL puis first : une seule ligne voyage entre MySQL et PHP." }
+    ],
+    solution: `<pre class="pseudo">CRÉER
+  new Jeu() + attributs + save()        → INSERT, id récupéré
+  Jeu::create([...])                    → new + fill + save ($fillable !)
+  firstOrCreate(critères, valeurs)      → anti-doublon
+
+LIRE
+  Jeu::all()                            → tout (Collection) — petites tables !
+  Jeu::find(7) / find([1,2,3])          → par clé primaire (null si absent)
+  Jeu::findOrFail(7)                    → ModelNotFoundException → 404
+  Membre::where('email', $e)-&gt;first()   → premier d'un filtre (null si absent)
+  … -&gt;firstOrFail()                     → version exception
+
+Collection : count, pluck, map, filter — mais filtrer en SQL reste la règle.</pre>
+<p>Créer et lire, c'est fait. Leçon 6 : modifier et supprimer — update, delete, et les soft deletes qui gardent une trace de tout.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l5", title: "find, first, all : choisir la bonne porte d'entrée", level: 1,
+    statement: "Pour cinq besoins de la Ludothèque — (1) la fiche du jeu numéro 12 demandée par URL, (2) le membre correspondant à un email saisi au login, (3) la liste complète des 8 catégories pour un menu déroulant, (4) l'import d'un fichier de membres sans créer de doublons d'email, (5) vérifier si un jeu nommé « Catan » existe déjà avant insertion — choisis la méthode Eloquent exacte (create, find, findOrFail, first, firstOrCreate, all…), écris l'appel, et justifie chaque choix en une phrase, notamment le comportement voulu en cas d'absence (null, exception, création).",
+    hints: [
+      "Le critère est-il la clé primaire ? Alors famille find. Sinon, famille where + first.",
+      "Demande-toi pour chaque cas ce qui doit se passer si rien n'est trouvé : page 404, message d'erreur doux, ou création automatique ?",
+      "all() n'est légitime que si la table est petite et qu'il faut vraiment tout — un seul des cinq besoins correspond."
+    ],
+    solution: "(1) Fiche du jeu 12 (URL)\n    Jeu::findOrFail(12);\n    Clé primaire + absence = 404 propre → findOrFail, jamais find nu.\n\n(2) Membre par email au login\n    Membre::where('email', $email)->first();\n    Pas la clé primaire → where + first ; null attendu pour afficher\n    « identifiants invalides » sans exception.\n\n(3) Les 8 catégories du menu\n    Categorie::all();\n    Petite table, tout est nécessaire : le seul cas légitime pour all().\n\n(4) Import sans doublons\n    Membre::firstOrCreate(['email' => $ligne['email']],\n                          ['nom' => $ligne['nom'], 'ville' => $ligne['ville']]);\n    Trouve OU crée : rejouable sans jamais dupliquer un email.\n\n(5) « Catan » existe-t-il ?\n    Jeu::where('titre', 'Catan')->first();   // null = libre, on peut créer\n    (variante : ->exists() qui retourne un booléen sans charger la ligne)\n\nFil conducteur : le comportement en cas d'absence guide le choix —\nnull (first/find), exception 404 (OrFail), création (firstOrCreate).",
+    note: "Ce raisonnement « que se passe-t-il si rien n'est trouvé ? » est universel : Optional chez Spring Data (findById), DoesNotExist chez Django (get), FirstOrDefault chez EF Core. Au Niveau 6, chaque route de ton API devra répondre proprement à l'absence — 404, message ou création — et ce tableau sera ta grille de décision." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Écrire dans la base : requêtes préparées (anti-injection)",
+  subtitle: "Insérer une saisie utilisateur sans ouvrir la porte à l'injection SQL.",
+  theory: `
+<h3>1. Le danger : la concaténation</h3>
+<p><strong>Concaténer</strong>, c'est <em>coller bout à bout</em> deux morceaux de texte. Ici, le piège consiste à coller la saisie de l'utilisateur directement à l'intérieur d'une requête SQL. La fonction <code>sprintf</code> écrit dans une chaîne en remplaçant les « trous » (<code>%s</code> pour du texte) par des valeurs :</p>
+<pre class="pseudo">// À NE JAMAIS FAIRE avec une saisie utilisateur :
+sprintf(sql, "INSERT INTO jeu(nom) VALUES('%s')", nom_saisi);   // colle la saisie directement dans le SQL : DANGER</pre>
+<p>Si <code>nom_saisi</code> vaut <code>x'); DROP TABLE jeu;--</code>, la saisie <em>referme</em> la chaîne de texte et ajoute sa propre commande : la base exécute alors <code>DROP TABLE jeu</code> qui <strong>détruit la table</strong>. C'est l'<strong>injection SQL</strong> : faire passer du <em>code</em> pour une simple <em>donnée</em>. C'est la faille web n°1 (elle figure en tête du classement OWASP des failles de sécurité).</p>
+
+<h3>2. La parade : la requête préparée</h3>
+<p>Une <strong>requête préparée</strong> (en anglais <em>prepared statement</em>) sépare pour de bon le <em>squelette</em> de la requête et les <em>valeurs</em>. On envoie d'abord un <strong>modèle</strong> avec des <strong>?</strong> à la place des valeurs (ces <code>?</code> s'appellent des <em>emplacements</em> ou <em>placeholders</em>), puis on <strong>lie</strong> (on rattache) les valeurs séparément. Le SQL et les données voyagent par deux canaux distincts et ne se mélangent jamais.</p>
+<pre class="pseudo">MYSQL_STMT *st = mysql_stmt_init(c);      // crée un « statement » : une requête préparée, encore vide
+const char *sql = "INSERT INTO jeu(nom,prix_location,prix_achat) VALUES(?,?,0)";  // le modèle : les ? sont les trous à remplir
+mysql_stmt_prepare(st, sql, strlen(sql)); // envoie le modèle à MySQL, qui l'analyse une fois pour toutes
+
+MYSQL_BIND b[2];                          // un tableau de 2 « liaisons » : une description par ?
+memset(b, 0, sizeof(b));                  // met tout le tableau à zéro (état neutre : étape obligatoire)
+unsigned long len = strlen(nom);          // longueur du texte nom (MySQL en a besoin pour le lier)
+b[0].buffer_type = MYSQL_TYPE_STRING; b[0].buffer = (char*)nom;   // 1er ? = du texte, pointant sur la variable nom
+b[0].buffer_length = len; b[0].length = &amp;len;                     // taille du texte, et où lire sa longueur
+b[1].buffer_type = MYSQL_TYPE_DOUBLE; b[1].buffer = &amp;prix;        // 2e ? = un nombre réel, pointant sur la variable prix
+
+mysql_stmt_bind_param(st, b);             // attache les valeurs décrites dans b aux ? du modèle
+mysql_stmt_execute(st);                   // exécute la requête ainsi remplie
+mysql_stmt_close(st);                     // libère la requête préparée (fin du cycle)</pre>
+<p>Décryptage des mots techniques : <code>MYSQL_BIND</code> est une petite fiche qui <em>décrit</em> une valeur à lier (son type, où elle est en mémoire, sa longueur). Un <strong>buffer</strong> (« tampon ») est simplement la zone mémoire qui contient la donnée. <code>memset(b, 0, sizeof(b))</code> remplit cette fiche de zéros au départ (sinon elle contiendrait n'importe quoi). <code>strlen(nom)</code> compte le nombre de caractères de <code>nom</code>. <code>MYSQL_TYPE_STRING</code> et <code>MYSQL_TYPE_DOUBLE</code> annoncent respectivement « c'est du texte » et « c'est un nombre à virgule ».</p>
+
+<h3>3. Pourquoi c'est sûr</h3>
+<p>Une valeur liée est traitée comme une <strong>donnée pure</strong>, jamais comme du code SQL. Même <code>'); DROP TABLE...</code> devient un simple texte inséré tel quel dans la colonne <code>nom</code> — un titre de jeu bizarre, rien de plus. Le <code>?</code> est une <em>frontière infranchissable</em> entre le code (le squelette) et les données (ce que l'utilisateur a tapé).</p>
+<div class="warn">Les requêtes préparées sont <strong>obligatoires</strong> dès qu'une valeur vient de l'extérieur (saisie clavier, fichier, réseau). Peu importe que la saisie soit courte ou longue : la longueur n'a rien à voir. Elles apportent en prime de meilleures performances si la requête est réexécutée (MySQL n'analyse le modèle qu'une fois).</div>
+
+<h3>4. Le cycle d'une requête préparée</h3>
+<pre class="pseudo">init → prepare (le modèle avec ?) → bind (lier les valeurs)
+     → execute → (éventuellement lire) → close</pre>
+<div class="tip">Toujours vérifier le retour de chaque étape (<code>mysql_stmt_prepare</code>, <code>execute</code>…) et lire <code>mysql_stmt_error(st)</code> en cas d'échec. On isole ce code dans le DAO : le service demande juste « ajoute ce jeu », sans savoir qu'il existe des <code>?</code> ni des buffers.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'injection SQL vient de…", opts: ["requêtes préparées", "la concaténation d'une saisie dans le SQL", "MySQL lui-même", "l'UI"], a: 1, exp: "Coller une saisie dans la requête est dangereux." },
+    { type: "qcm", q: "La parade principale est…", opts: ["chiffrer", "la requête préparée (avec des ?)", "cacher le SQL", "un mot de passe long"], a: 1, exp: "Séparer code et données." },
+    { type: "qcm", q: "Dans une requête préparée, le ? représente…", opts: ["un commentaire", "un emplacement de valeur à lier", "une erreur", "une colonne"], a: 1, exp: "On lie la valeur ensuite." },
+    { type: "qcm", q: "Une valeur liée est traitée comme…", opts: ["du code SQL", "une donnée pure, jamais du code", "un commentaire", "une colonne"], a: 1, exp: "Impossible de l'interpréter comme SQL." },
+    { type: "qcm", q: "Quelle fonction prépare le modèle ?", opts: ["mysql_query", "mysql_stmt_prepare", "mysql_store_result", "mysql_init"], a: 1, exp: "Après mysql_stmt_init." },
+    { type: "qcm", q: "À quoi sert MYSQL_BIND ?", opts: ["à trier", "à décrire chaque valeur liée (type, buffer)", "à fermer", "à afficher"], a: 1, exp: "On lie une valeur par ?." },
+    { type: "qcm", q: "Quand les requêtes préparées sont-elles obligatoires ?", opts: ["jamais", "dès qu'une valeur vient de l'extérieur (saisie, fichier, réseau)", "seulement pour les SELECT", "pour les DROP"], a: 1, exp: "Toute donnée externe." },
+    { type: "qcm", q: "Le cycle correct est…", opts: ["execute → prepare → bind", "init → prepare → bind → execute → close", "bind → init → execute", "close → execute"], a: 1, exp: "Dans cet ordre." },
+    { type: "qcm", q: "Que fait mysql_stmt_close ?", opts: ["ouvre la base", "libère la requête préparée", "exécute", "lie"], a: 1, exp: "On ferme le statement en fin." },
+    { type: "qcm", q: "En cas d'échec d'une étape, on lit…", opts: ["mysql_error(c) seulement", "mysql_stmt_error(st)", "rien", "le Makefile"], a: 1, exp: "Message d'erreur du statement." },
+    { type: "vf", q: "Concaténer une saisie utilisateur dans une requête est acceptable si elle est courte.", a: false, exp: "Faux : la longueur n'a rien à voir. Toujours une requête préparée." },
+    { type: "qcm", q: "MYSQL_TYPE_STRING indique…", opts: ["un entier lié", "une valeur texte liée", "un double", "une date"], a: 1, exp: "Le type de la valeur." },
+    { type: "qcm", q: "L'injection SQL est classée…", opts: ["anecdotique", "parmi les failles les plus graves (top OWASP)", "obsolète", "impossible en C"], a: 1, exp: "Faille majeure, quel que soit le langage." },
+    { type: "qcm", q: "Où isole-t-on ce code ?", opts: ["dans l'UI", "dans le DAO", "dans le Makefile", "dans main"], a: 1, exp: "Le service demande juste « ajoute ce jeu »." },
+    { type: "qcm", q: "Un bénéfice bonus des requêtes préparées :", opts: ["moins de code toujours", "de meilleures perfs si réexécutées", "pas besoin de vérifier", "elles chiffrent"], a: 1, exp: "Le plan de requête est réutilisé." }
+  ],
+  final: {
+    title: "Exercice final — Repérer la faille",
+    intro: `<p>Un vendeur ajoute un jeu dont le nom est saisi. Analyse :</p>
+<pre class="pseudo">char sql[256];                            // tampon pour construire la requête
+sprintf(sql, "INSERT INTO jeu(nom,prix_location) VALUES('%s', %f)", nom, prix);  // BUG : le nom saisi est collé dans le SQL
+mysql_query(c, sql);                      // exécute une requête ouverte à l'injection SQL</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel est le risque avec <code>nom</code> saisi ?", opts: ["Aucun", "Injection SQL : le nom peut contenir du SQL malveillant", "Trop lent", "Trop long"], a: 1, exp: "Une saisie collée dans le SQL est dangereuse." },
+      { type: "qcm", q: "Exemple d'attaque possible via nom :", opts: ["un nom vide", "x'); DROP TABLE jeu;--", "un nombre", "un espace"], a: 1, exp: "La saisie referme la chaîne et injecte une commande." },
+      { type: "qcm", q: "La bonne solution :", opts: ["échapper les apostrophes à la main", "utiliser une requête préparée avec des ?", "raccourcir le nom", "chiffrer"], a: 1, exp: "L'échappement manuel est fragile ; la requête préparée est sûre." },
+      { type: "qcm", q: "Le prix (un double) est-il, lui, un vecteur d'injection ?", opts: ["Oui autant que le nom", "Moins (c'est un nombre), mais on le lie quand même pour l'uniformité", "Toujours dangereux", "Jamais un souci"], a: 1, exp: "Un double ne porte pas de SQL, mais on uniformise avec le bind." },
+      { type: "qcm", q: "Après execute, il faut…", opts: ["rien", "fermer le statement (mysql_stmt_close)", "rouvrir la base", "supprimer la table"], a: 1, exp: "Libérer la requête préparée." }
+    ],
+    solution: `<pre class="pseudo">int dao_ajouter_jeu(MYSQL *c, const char *nom, double prix) {   // ajoute un jeu en sécurité ; 0 = OK, -1 = erreur
+    MYSQL_STMT *st = mysql_stmt_init(c);          // crée la requête préparée (statement)
+    const char *sql = "INSERT INTO jeu(nom,prix_location,prix_achat) VALUES(?,?,0)";  // modèle avec 2 emplacements ?
+    if (mysql_stmt_prepare(st, sql, strlen(sql))) { mysql_stmt_close(st); return -1; }   // prépare ; si échec : fermer + -1
+
+    MYSQL_BIND b[2];                              // 2 fiches de liaison (une par ?)
+    memset(b, 0, sizeof(b));                      // remise à zéro obligatoire
+    unsigned long len = strlen(nom);              // longueur du texte nom
+    b[0].buffer_type = MYSQL_TYPE_STRING;         // 1er ? = du texte
+    b[0].buffer = (char*)nom; b[0].buffer_length = len; b[0].length = &amp;len;   // valeur, taille et longueur du nom
+    b[1].buffer_type = MYSQL_TYPE_DOUBLE; b[1].buffer = &amp;prix;   // 2e ? = un réel (le prix)
+
+    mysql_stmt_bind_param(st, b);                 // attache les valeurs aux ? du modèle
+    int ok = mysql_stmt_execute(st) == 0 ? 0 : -1;   // exécute : 0 si succès, sinon -1
+    mysql_stmt_close(st);                         // libère la requête préparée
+    return ok;                                    // renvoie le code de résultat
+}</pre>
+<p>Le <code>?</code> sépare définitivement code et données : plus d'injection possible. C'est un réflexe non négociable. Demain : la couche service et les règles métier.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l06", title: "Chercher par nom, en sûreté", level: 3,
+    statement: "Explique (en commentaires) puis écris le squelette d'une recherche de jeux par nom saisi utilisant une requête préparée avec « WHERE nom LIKE CONCAT('%', ?, '%') ». Montre la préparation et la liaison du paramètre texte (pas besoin de lire les résultats en détail).",
+    hints: [
+      "Le modèle contient un seul ? pour le terme recherché.",
+      "MYSQL_BIND avec MYSQL_TYPE_STRING pour le terme.",
+      "Le % du LIKE est côté SQL (CONCAT), pas dans la valeur liée."
+    ],
+    solution: "#include <mysql/mysql.h>\n#include <string.h>\n\nint dao_chercher_par_nom(MYSQL *c, const char *terme) {\n    MYSQL_STMT *st = mysql_stmt_init(c);\n    // le % appartient au SQL ; le terme est une simple donnee liee\n    const char *sql =\n        \"SELECT id,nom FROM jeu WHERE nom LIKE CONCAT('%', ?, '%') ORDER BY nom\";\n    if (mysql_stmt_prepare(st, sql, strlen(sql))) { mysql_stmt_close(st); return -1; }\n\n    MYSQL_BIND b[1];\n    memset(b, 0, sizeof(b));\n    unsigned long len = strlen(terme);\n    b[0].buffer_type   = MYSQL_TYPE_STRING;\n    b[0].buffer        = (char *)terme;\n    b[0].buffer_length = len;\n    b[0].length        = &len;\n\n    mysql_stmt_bind_param(st, b);\n    int ok = mysql_stmt_execute(st) == 0 ? 0 : -1;\n    // ... (lecture des resultats via mysql_stmt_bind_result / fetch)\n    mysql_stmt_close(st);\n    return ok;\n}",
+    note: "Le terme de recherche est une donnée liée : impossible d'injecter, même avec un % ou une apostrophe. Les caractères jokers du LIKE restent côté SQL, dans le CONCAT." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Modifier et supprimer : save, update, delete, soft deletes",
+  subtitle: "Le U et le D du CRUD — et l'art de supprimer sans rien perdre.",
+  theory: `
+<h3>1. Modifier un modèle : charger, changer, save()</h3>
+<pre class="pseudo">$jeu = Jeu::find(7);           // charge le jeu n°7 depuis la base
+$jeu-&gt;prix_location = 5.50;    // modifie l'attribut prix_location en mémoire
+$jeu-&gt;stock = 4;               // modifie l'attribut stock en mémoire
+$jeu-&gt;save();                  // envoie l'UPDATE : seules les colonnes changées partent
+// UPDATE jeux SET prix_location = ?, stock = ?, updated_at = ? WHERE id = 7   -- SQL généré par save()</pre>
+<p>Le même <strong>save()</strong> que pour la création : Eloquent sait si le modèle vient de la base (UPDATE) ou pas (INSERT). Mieux : il ne met dans l'UPDATE que les colonnes <strong>réellement modifiées</strong> — le <em>dirty tracking</em> (analogie : un post-it « modifié » collé uniquement sur les cases que tu as touchées ; les autres ne bougent pas). Tu peux l'interroger :</p>
+<pre class="pseudo">$jeu-&gt;isDirty();               // true s'il reste des changements NON sauvegardés
+$jeu-&gt;isDirty('stock');        // ce champ précis a-t-il changé depuis le chargement ?
+$jeu-&gt;getOriginal('stock');    // récupère la valeur d'avant modification</pre>
+
+<h3>2. update() et les mises à jour de masse</h3>
+<p><strong>update()</strong> sur un modèle chargé combine fill + save (soumis à $fillable). Sur une <strong>requête</strong>, il modifie toutes les lignes filtrées, en un seul UPDATE SQL :</p>
+<pre class="pseudo">// Sur UN modèle chargé
+$jeu-&gt;update(['prix_location' =&gt; 5.50]);   // fill + save en un appel (soumis à $fillable)
+
+// Sur une requête : mise à jour de masse
+Jeu::where('editeur_id', 3)-&gt;update(['prix_location' =&gt; 4.00]);   // modifie TOUTES les lignes filtrées
+// UPDATE jeux SET prix_location = 4.00 WHERE editeur_id = 3      -- un seul UPDATE SQL
+
+// Compteurs : atomique et concis
+$jeu-&gt;decrement('stock');          // UPDATE jeux SET stock = stock - 1 (calcul fait côté MySQL)
+$jeu-&gt;increment('stock', 3);       // UPDATE jeux SET stock = stock + 3</pre>
+<p>Attention : la mise à jour de masse <strong>ne charge aucun modèle</strong> : pas d'events (leçon 19), pas de mise à jour d'updated_at automatique par modèle — c'est du SQL direct habillé. increment/decrement sont parfaits pour le stock de la Ludothèque : l'opération se fait côté MySQL, sans lecture préalable (<strong>atomique</strong> = une seule opération indivisible, impossible de lire une valeur périmée entre-temps).</p>
+
+<h3>3. Supprimer : delete() et destroy()</h3>
+<pre class="pseudo">$avis = Avis::find(12);            // charge l'avis n°12
+$avis-&gt;delete();                   // DELETE FROM avis WHERE id = 12
+
+Avis::destroy(12);                 // supprime l'avis 12 sans le charger d'abord
+Avis::destroy([3, 7, 12]);         // supprime plusieurs avis d'un coup (liste d'ids)
+
+Avis::where('note', 1)-&gt;where('commentaire', null)-&gt;delete();   // supprime toutes les lignes filtrées
+// suppression de masse filtrée   -- un seul DELETE ... WHERE côté MySQL</pre>
+<p>Mais rappelle-toi le Niveau 4 : la table locations porte des clés étrangères vers jeux. Supprimer un jeu référencé par des locations déclenche une <strong>erreur de contrainte</strong> (sauf ON DELETE CASCADE). Et surtout : veut-on vraiment effacer l'historique de la Ludothèque ?</p>
+
+<h3>4. Soft deletes : supprimer sans effacer</h3>
+<p>Souvent, la bonne réponse métier est : <strong>marquer comme supprimé sans détruire la ligne</strong>. C'est le soft delete (analogie : la corbeille de ton bureau — le fichier disparaît de la vue mais reste récupérable tant que tu ne vides pas la corbeille). Deux ingrédients : une colonne <em>deleted_at</em> (migration) et le trait <em>SoftDeletes</em> (modèle). Un <strong>trait</strong> est un bloc de code réutilisable qu'on greffe dans une classe pour lui ajouter des capacités toutes prêtes (analogie : une greffe qui donne au modèle de nouveaux réflexes sans les réécrire).</p>
+<pre class="pseudo">// Migration
+$table-&gt;softDeletes();             // ajoute la colonne deleted_at (NULL par défaut)
+
+// Modèle
+use Illuminate\\Database\\Eloquent\\Model;        // classe de base Model
+use Illuminate\\Database\\Eloquent\\SoftDeletes;  // trait qui apporte le soft delete
+
+class Jeu extends Model
+{
+    use SoftDeletes;                              // greffe le comportement soft delete sur ce modèle
+    protected $table = 'jeux';                    // toujours la bonne table
+}</pre>
+<p>À partir de là, <strong>delete() ne supprime plus</strong> : il remplit deleted_at. Et toutes les requêtes du modèle excluent automatiquement les lignes « supprimées » : Jeu::all(), find, where… ne voient plus le jeu retiré du catalogue, mais la ligne existe toujours en base.</p>
+<pre class="pseudo">$jeu-&gt;delete();      // UPDATE jeux SET deleted_at = NOW() WHERE id = 7 (ne supprime PAS la ligne)
+Jeu::find(7);        // null ! la ligne existe mais elle est filtrée automatiquement</pre>
+
+<h3>5. Voir, restaurer, détruire pour de bon</h3>
+<pre class="pseudo">Jeu::withTrashed()-&gt;get();         // récupère TOUT, y compris les jeux soft-deletes
+Jeu::onlyTrashed()-&gt;get();         // récupère SEULEMENT les jeux soft-deletes
+$jeu-&gt;trashed();                   // true si ce modèle est soft-deleted
+
+$jeu = Jeu::withTrashed()-&gt;find(7);   // retrouve le jeu 7 même s'il est "supprimé"
+$jeu-&gt;restore();                   // deleted_at = NULL : le jeu revient au catalogue
+
+$jeu-&gt;forceDelete();               // VRAI DELETE, définitif et irréversible</pre>
+<p>Pour la Ludothèque : un jeu retiré du catalogue garde ses locations et ses avis, les statistiques restent justes, et une erreur de manipulation se répare avec restore(). Django n'a pas de soft delete natif (on ajoute un champ ou un paquet), EF Core le fait via des query filters globaux, Hibernate avec @SQLDelete + @Where — Eloquent l'offre en une ligne de trait.</p>
+<div class="warn">Une mise à jour ou une suppression de masse (Jeu::where(...)->update(...) / ->delete()) court-circuite les modèles : pas d'events, pas de dirty tracking. Et un where oublié transforme la ligne en « UPDATE de toute la table ». Vérifie ton filtre avec un count() ou un toSql() AVANT d'exécuter la version destructrice.</div>
+<div class="tip">Réserve les soft deletes aux données à valeur historique (jeux, membres) ; pour des données vraiment jetables (tokens expirés, paniers abandonnés), un vrai delete garde la table légère. Et pense au stock : $jeu->decrement('stock') est atomique, c'est lui que tu utiliseras dans la transaction de location (leçon 17).</div>`,
+  exercises: [
+    { type: "qcm", q: "Sur un modèle chargé puis modifié, save() génère…", opts: ["Un INSERT", "Un UPDATE limité aux colonnes modifiées", "Un DELETE", "Un TRUNCATE"], a: 1, exp: "Dirty tracking : seules les colonnes changées partent dans l'UPDATE." },
+    { type: "qcm", q: "Comment Eloquent sait-il si save() doit faire INSERT ou UPDATE ?", opts: ["Il demande à MySQL", "Au hasard", "Le modèle sait s'il provient de la base ou d'un new", "Par la taille du tableau"], a: 2, exp: "Un modèle chargé (exists = true) déclenche un UPDATE ; un new, un INSERT." },
+    { type: "input", q: "Quelle méthode indique si un modèle a des changements non sauvegardés ?", a: ["isDirty", "isDirty()", "->isDirty()"], ph: "$jeu->…", exp: "isDirty(), ou isDirty('stock') pour un champ précis." },
+    { type: "qcm", q: "Jeu::where('editeur_id', 3)->update(['prix_location' => 4]) exécute…", opts: ["Une requête par jeu concerné", "Un seul UPDATE SQL sur toutes les lignes filtrées", "Rien sans save()", "Un DELETE"], a: 1, exp: "Mise à jour de masse : efficace, mais sans events ni dirty tracking." },
+    { type: "vf", q: "Une mise à jour de masse via une requête déclenche les events des modèles concernés.", a: false, exp: "Aucun modèle n'est chargé : c'est du SQL direct, les events (leçon 19) ne voient rien." },
+    { type: "qcm", q: "Décrémenter le stock d'un jeu de façon atomique :", opts: ["$jeu->stock--; sans save", "$jeu->decrement('stock')", "Jeu::all()->map(...)", "DB::raw seul"], a: 1, exp: "UPDATE jeux SET stock = stock - 1 : l'opération se fait côté MySQL." },
+    { type: "qcm", q: "Supprimer l'avis d'id 12 sans le charger d'abord :", opts: ["Avis::destroy(12)", "Avis::find(12) obligatoire d'abord", "Avis::remove(12)", "unset(Avis::$12)"], a: 0, exp: "destroy accepte un id ou un tableau d'ids." },
+    { type: "qcm", q: "Supprimer un jeu encore référencé par des locations (sans cascade) provoque…", opts: ["La suppression des locations", "Rien", "Une erreur de contrainte de clé étrangère", "Un soft delete automatique"], a: 2, exp: "La FK du Niveau 4 protège l'intégrité : MySQL refuse." },
+    { type: "qcm", q: "Les deux ingrédients du soft delete :", opts: ["Un trigger et une vue", "Un index et une FK", "Un cron et un backup", "La colonne deleted_at (softDeletes()) et le trait SoftDeletes"], a: 3, exp: "Migration + trait : delete() devient un UPDATE de deleted_at." },
+    { type: "input", q: "Quel trait faut-il ajouter au modèle pour activer les soft deletes ?", a: ["SoftDeletes", "use SoftDeletes", "SoftDeletes;"], ph: "use …;", exp: "use SoftDeletes; dans la classe (import Illuminate\\Database\\Eloquent\\SoftDeletes)." },
+    { type: "vf", q: "Avec SoftDeletes actif, Jeu::all() retourne aussi les jeux supprimés.", a: false, exp: "Les lignes avec deleted_at non NULL sont exclues automatiquement de toutes les requêtes." },
+    { type: "qcm", q: "Pour inclure les supprimés dans une requête :", opts: ["withTrashed()", "includeDeleted()", "all(true)", "force()"], a: 0, exp: "withTrashed() les inclut ; onlyTrashed() ne garde qu'eux." },
+    { type: "input", q: "Quelle méthode annule un soft delete (deleted_at remis à NULL) ?", a: ["restore", "restore()", "->restore()"], ph: "$jeu->…", exp: "restore() : le jeu revient au catalogue, historique intact." },
+    { type: "qcm", q: "forceDelete() sur un modèle soft-deletable…", opts: ["Remplit deleted_at", "Supprime définitivement la ligne (vrai DELETE)", "Archive dans une autre table", "Ne fait rien"], a: 1, exp: "La sortie de secours définitive — irréversible." },
+    { type: "qcm", q: "Le soft delete chez les autres ORM :", opts: ["Natif partout", "Impossible ailleurs", "Query filters chez EF Core, @SQLDelete/@Where chez Hibernate, champ maison chez Django", "Uniquement en NoSQL"], a: 2, exp: "Eloquent est le plus direct : un trait et une colonne." }
+  ],
+  final: {
+    title: "Exercice final — Retirer un jeu sans effacer l'histoire",
+    intro: `<p>La Ludothèque retire « Monopoly » du catalogue mais veut garder locations, avis et statistiques. Le scénario parfait pour tout réviser.</p>`,
+    questions: [
+      { type: "qcm", q: "La stratégie adaptée pour retirer le jeu du catalogue :", opts: ["forceDelete()", "TRUNCATE jeux", "Soft delete : trait SoftDeletes + $jeu->delete()", "Supprimer aussi les locations"], a: 2, exp: "La ligne reste, l'historique et les FK survivent, le catalogue ne l'affiche plus." },
+      { type: "qcm", q: "Après le soft delete, Jeu::find($id) sur ce jeu retourne…", opts: ["null", "Le jeu normalement", "Une exception", "Un jeu vide"], a: 0, exp: "Filtré automatiquement — il faut withTrashed()->find($id) pour le revoir." },
+      { type: "input", q: "Le gérant se ravise : quelle méthode fait revenir le jeu au catalogue ?", a: ["restore", "restore()", "->restore()"], ph: "nom de la méthode…", exp: "Jeu::withTrashed()->find($id)->restore();" },
+      { type: "vf", q: "$jeu->decrement('stock') exécute l'opération côté MySQL, sans lire la valeur en PHP d'abord.", a: true, exp: "stock = stock - 1 atomique : pas de valeur périmée entre lecture et écriture." },
+      { type: "qcm", q: "Avant Avis::where('note', 1)->delete(), le bon réflexe :", opts: ["Exécuter puis compter", "Vérifier le filtre avec count() ou toSql()", "Supprimer la table", "Désactiver les FK"], a: 1, exp: "On mesure ce que le filtre attrape AVANT le geste destructeur." }
+    ],
+    solution: `<pre class="pseudo">MODIFIER
+  $jeu-&gt;prix = X; $jeu-&gt;save()      → UPDATE des colonnes modifiées (dirty)
+  $jeu-&gt;update([...])                → fill + save ($fillable)
+  Jeu::where(...)-&gt;update([...])     → masse : 1 UPDATE, pas d'events
+  increment / decrement              → compteurs atomiques (stock !)
+
+SUPPRIMER
+  $avis-&gt;delete() · Avis::destroy(id) · where(...)-&gt;delete()
+  FK du Niveau 4 : un jeu référencé ne se supprime pas (sans cascade)
+
+SOFT DELETES
+  Migration $table-&gt;softDeletes() + trait SoftDeletes
+  delete() → deleted_at rempli, requêtes filtrées automatiquement
+  withTrashed / onlyTrashed / trashed / restore / forceDelete</pre>
+<p>Le CRUD est complet. Avant d'attaquer les relations, un pas de recul : leçon 7, comprendre le pattern Active Record qui rend tout cela possible — et son rival Data Mapper.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l6", title: "Politique de suppression de la Ludothèque", level: 2,
+    statement: "Rédige la politique de suppression de la Ludothèque : pour chaque entité (Jeu, Membre, Location, Avis), décide entre vrai delete, soft delete ou interdiction de supprimer, en justifiant par les contraintes de clés étrangères du Niveau 4 ET par la valeur métier des données (historique, statistiques, RGPD pour les membres). Écris ensuite le code des changements nécessaires : migrations softDeletes() et traits SoftDeletes là où tu as choisi cette option.",
+    hints: [
+      "Regarde qui est référencé par qui : jeux et membres sont pointés par locations et avis — que se passe-t-il si on les supprime vraiment ?",
+      "Les locations sont l'historique financier : peut-on les perdre ? Les avis, eux, ont-ils la même valeur ?",
+      "Pour les membres, pense RGPD : le droit à l'effacement peut exiger un forceDelete ou une anonymisation — nuance ta réponse."
+    ],
+    solution: "Entité   | Politique      | Justification\n---------+----------------+------------------------------------------------\nJeu      | soft delete    | référencé par locations et avis (FK) ;\n         |                | retirer du catalogue sans casser l'historique\nMembre   | soft delete    | référencé par locations/avis ; départ d'un\n         | + forceDelete  | membre = désactivation ; RGPD : effacement réel\n         |   sur demande  | ou anonymisation sur demande explicite\nLocation | pas de delete  | historique financier et statistique :\n         | (ni soft)      | on ne supprime pas une transaction passée\nAvis     | vrai delete    | donnée jetable : un avis retiré (modération)\n         |                | n'a pas de valeur historique à conserver\n\nCode :\n// migrations\nSchema::table('jeux', fn (Blueprint $t) => $t->softDeletes());\nSchema::table('membres', fn (Blueprint $t) => $t->softDeletes());\n\n// modèles\nclass Jeu extends Model    { use SoftDeletes; protected $table = 'jeux'; }\nclass Membre extends Model { use SoftDeletes; }\n\nLocation et Avis restent sans trait : Location ne se supprime pas\n(règle applicative), Avis se supprime pour de bon.",
+    note: "Décider « delete, soft delete ou jamais » entité par entité est un vrai travail d'architecte de données, pas un détail technique : il croise l'intégrité référentielle du Niveau 4, le métier et le droit (RGPD). EF Core formalise le même choix avec ses global query filters, Hibernate avec @SQLDelete — au Niveau 6, cette politique figurera dans le dossier d'analyse de ton projet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

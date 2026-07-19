@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Le QuerySet : paresseux, chaînable, évalué tard",
+  subtitle: "Construire une requête et l'exécuter sont deux moments différents — et c'est une force.",
+  theory: `
+<h3>1. Créer un QuerySet ne coûte RIEN</h3>
+<p>Rappel : un <strong>QuerySet</strong> est l'objet Django qui décrit une requête et contiendra son résultat. Surprise de taille pour qui vient du SQL brut (Niveau 4) : la ligne suivante <strong>ne touche pas MySQL</strong>. Aucune connexion, aucune requête, zéro octet échangé. Un QuerySet est <strong>paresseux</strong> (en anglais <em>lazy</em>) : à sa création, Django se contente de mémoriser une <em>description</em> de requête — comme noter une commande sur un carnet sans encore la passer au cuisinier.</p>
+<pre class="pseudo">from ludotheque.models import Jeu           # on importe la classe Jeu
+
+qs = Jeu.objects.filter(disponible=True)   # 0 requête SQL !   # on decrit "les jeux disponibles", rien n'est execute
+# qs est une "recette" de requête, pas un résultat.           # qs = le plan de la requete, pas les donnees
+# La base ne sera interrogée que quand on aura BESOIN des données.   # MySQL n'est appele qu'au dernier moment</pre>
+<p>Même philosophie ailleurs : l'<em>IQueryable</em> différé d'EF Core (C#), le Query Builder d'Eloquent (PHP/Laravel) ou les requêtes JPA/Hibernate avant leur exécution.</p>
+
+<h3>2. Chaîner = construire, pas exécuter</h3>
+<p><strong>Chaîner</strong>, c'est accrocher plusieurs appels de méthode à la suite (qs.filter(...).exclude(...)...). Chaque appel <strong>affine la description</strong> sans rien exécuter. Tu peux empiler autant d'étapes que tu veux : toujours <strong>0 requête</strong>.</p>
+<pre class="pseudo">qs = (Jeu.objects                        # on part du manager objects...
+        .filter(disponible=True)     # 0 requête   # ... garde les jeux disponibles (WHERE)
+        .exclude(stock=0)            # 0 requête   # ... enleve ceux dont le stock vaut 0 (NOT)
+        .order_by("titre"))          # 0 requête... toujours rien !   # ... trie par titre (ORDER BY)
+
+print(qs.query)   # le réflexe de la leçon 2 : voir le SQL PRÉVU   # affiche le SQL sans l'executer
+# SELECT ... FROM ludotheque_jeu                    -- lire dans la table des jeux
+# WHERE disponible = 1 AND NOT (stock = 0)          -- conditions : disponible ET stock non nul
+# ORDER BY titre ASC                                -- tri par titre croissant (ASC = ascending)</pre>
+<p>Django fusionne tout le chaînage en <strong>une seule requête SQL</strong> — il n'envoie pas trois requêtes successives. C'est tout l'intérêt : on décrit d'abord, la base travaille une fois.</p>
+
+<h3>3. Les déclencheurs d'évaluation</h3>
+<p>Un <strong>déclencheur d'évaluation</strong> est une action qui force enfin l'envoi de la requête. Le QuerySet s'exécute au moment précis où ton code a besoin des <em>données réelles</em>. Apprends cette liste par cœur :</p>
+<pre class="pseudo">for jeu in qs:            # itération            → REQUÊTE   # parcourir a besoin des donnees
+list(qs)                  # conversion en liste   → REQUÊTE   # construire la liste exige les lignes
+len(qs)                   # longueur              → REQUÊTE   # compter exige d'avoir les resultats
+if qs:                    # bool() / test         → REQUÊTE   # savoir s'il y a des resultats
+qs[0:10:2]                # slicing AVEC step     → REQUÊTE   # une tranche AVEC pas (step) force l'evaluation
+qs                        # repr dans le shell    → REQUÊTE   # l'afficher = l'evaluer
+                          # (le shell affiche → il doit évaluer)   # taper qs + Entree declenche l'affichage</pre>
+<p>Attention à la subtilité du shell : taper <em>qs</em> puis Entrée dans <em>manage.py shell</em> affiche <em>&lt;QuerySet [&lt;Jeu: Catan&gt;, ...]&gt;</em> — le shell appelle <em>repr()</em> (la fonction qui donne le texte représentant un objet), donc il évalue. Dans un fichier .py, la même ligne ne déclenche rien.</p>
+
+<h3>4. Le cache interne du QuerySet</h3>
+<p>Un <strong>cache</strong> est une réserve où l'on garde un résultat déjà calculé pour ne pas le refaire. À la <strong>première évaluation</strong>, le QuerySet stocke les résultats dans son cache interne. Toute réutilisation du <strong>même objet</strong> relit ce cache : gratuit.</p>
+<pre class="pseudo">qs = Jeu.objects.filter(disponible=True)   # 0 requete (description)
+for j in qs: print(j.titre)     # 1re itération → 1 requête, cache rempli   # la base est interrogee une fois
+for j in qs: print(j.prix)      # 2e itération  → 0 requête (cache !)        # on relit les memes objets en memoire
+
+# MAIS deux querysets construits à l'identique = deux objets :
+list(Jeu.objects.filter(disponible=True))   # requête n°1   # premier objet QuerySet, premier cache
+list(Jeu.objects.filter(disponible=True))   # requête n°2 (autre objet !)   # deuxieme objet = deuxieme requete</pre>
+<p>Règle pratique : si tu dois parcourir les mêmes résultats plusieurs fois, <strong>garde le QuerySet dans une variable</strong> et réutilise-la.</p>
+
+<h3>5. Chaque méthode renvoie un NOUVEAU queryset</h3>
+<p>Les QuerySets sont <strong>immuables</strong> (on ne les modifie pas sur place) : <em>filter()</em>, <em>exclude()</em>, <em>order_by()</em>… ne changent jamais l'objet d'origine, ils en fabriquent un nouveau. Piège classique :</p>
+<pre class="pseudo">qs = Jeu.objects.all()          # qs = tous les jeux (description)
+qs.filter(prix__lt=30)          # PIÈGE : résultat jeté, qs inchangé !   # le nouveau queryset n'est stocke nulle part
+qs = qs.filter(prix__lt=30)     # correct : on récupère le nouveau queryset   # on reaffecte qs avec la version filtree
+
+# Avantage : construire par étapes selon des conditions
+qs = Jeu.objects.filter(disponible=True)   # etape de base
+if seulement_en_stock:                     # selon une condition Python...
+    qs = qs.exclude(stock=0)    # nouvelle version, toujours 0 requête   # ... on ajoute un filtre (toujours lazy)
+print(qs.query)                 # on vérifie le SQL final AVANT d'évaluer   # controler la requete avant l'envoi</pre>
+<div class="warn">Le cache appartient à <strong>un objet QuerySet précis</strong>. Chaîner crée un nouvel objet au cache vide : <em>qs.filter(...)</em> après une évaluation de <em>qs</em> repartira en base. Et deux <em>len(qs)</em> ne coûtent qu'une requête, mais <em>len()</em> puis <em>len()</em> sur deux querysets identiques en coûtent deux.</div>
+<div class="tip">Devant tout doute « ça requête ou pas ? » : <em>print(qs.query)</em> pour voir le SQL prévu, et en développement le panneau SQL de <em>django-debug-toolbar</em> (vu au Niveau 3) pour compter les requêtes réellement parties.</div>`,
+  exercises: [
+    { type: "qcm", q: "La ligne qs = Jeu.objects.filter(disponible=True) déclenche…", opts: ["Une requête SELECT", "Aucune requête SQL", "Une requête par jeu", "Une transaction"], a: 1, exp: "Le QuerySet est paresseux : création = simple description, 0 requête." },
+    { type: "qcm", q: "Jeu.objects.filter(...).exclude(...).order_by(...) sans rien en faire ensuite, c'est…", opts: ["3 requêtes", "1 requête", "0 requête", "Une erreur"], a: 2, exp: "Chaîner construit la description ; rien n'est exécuté tant qu'on n'a pas besoin des données." },
+    { type: "qcm", q: "Quand le chaînage sera finalement évalué, Django enverra…", opts: ["Une requête par méthode chaînée", "Une seule requête SQL fusionnée", "Deux requêtes minimum", "Un appel réseau par ligne de résultat"], a: 1, exp: "filter + exclude + order_by fusionnent en un seul SELECT ... WHERE ... ORDER BY." },
+    { type: "input", q: "L'adjectif anglais qui décrit un QuerySet qui ne s'exécute pas à sa création :", a: ["lazy", "Lazy", "paresseux"], ph: "un mot", exp: "Lazy : la requête part au dernier moment, quand les données sont réellement nécessaires." },
+    { type: "qcm", q: "Lequel de ces gestes N'évalue PAS un QuerySet ?", opts: ["for jeu in qs:", "list(qs)", "qs.order_by(«titre»)", "len(qs)"], a: 2, exp: "order_by renvoie un nouveau queryset, toujours paresseux ; les trois autres exigent les données." },
+    { type: "vf", q: "Dans manage.py shell, taper qs puis Entrée déclenche une requête SQL.", a: true, exp: "Le shell appelle repr() pour afficher &lt;QuerySet [...]&gt; : il doit évaluer. Dans un fichier .py, non." },
+    { type: "qcm", q: "if qs: (tester un QuerySet dans un if)…", opts: ["Ne coûte rien", "Évalue le QuerySet", "Lève une exception", "Vide le cache"], a: 1, exp: "bool() est un déclencheur d'évaluation : Django doit savoir s'il y a des résultats." },
+    { type: "qcm", q: "qs = Jeu.objects.all() puis deux boucles for successives sur qs : combien de requêtes ?", opts: ["0", "1", "2", "Une par jeu"], a: 1, exp: "La première itération remplit le cache interne ; la seconde relit le cache." },
+    { type: "qcm", q: "list(Jeu.objects.all()) exécuté deux fois de suite : combien de requêtes ?", opts: ["1, grâce au cache", "2, ce sont deux objets QuerySet distincts", "0", "4"], a: 1, exp: "Le cache appartient à un objet précis ; deux constructions identiques = deux objets = deux requêtes." },
+    { type: "vf", q: "qs.filter(prix__lt=30) modifie le queryset qs sur place.", a: false, exp: "Les QuerySets sont immuables : la méthode renvoie un NOUVEAU queryset qu'il faut récupérer (qs = qs.filter(...))." },
+    { type: "qcm", q: "Pour affiner un queryset selon une condition Python (if seulement_dispo: ...), on écrit…", opts: ["qs.filter(disponible=True) seul sur sa ligne", "qs = qs.filter(disponible=True)", "qs.append(disponible=True)", "Jeu.objects.refresh(qs)"], a: 1, exp: "Sans réaffectation, le nouveau queryset est jeté et qs reste inchangé — le piège classique." },
+    { type: "input", q: "L'attribut du QuerySet qu'on imprime pour voir le SQL prévu sans l'exécuter :", a: ["query", ".query", "qs.query"], ph: "un attribut", exp: "print(qs.query) — le réflexe posé dès la leçon 2, à dégainer au moindre doute." },
+    { type: "qcm", q: "L'équivalent du QuerySet différé chez EF Core (C#/ASP.NET Core) :", opts: ["IQueryable", "DataFrame", "ResultSet", "ArrayList"], a: 0, exp: "IQueryable se compose puis s'exécute tard, comme le Query Builder d'Eloquent ou les requêtes Hibernate." },
+    { type: "vf", q: "La paresse est un défaut du QuerySet qu'il faut contourner au plus vite.", a: false, exp: "C'est une force : on compose librement la requête, la base n'est sollicitée qu'une fois, au bon moment." },
+    { type: "qcm", q: "Après une évaluation de qs, le queryset qs.filter(stock__gt=0)…", opts: ["Réutilise le cache de qs", "Est un nouvel objet au cache vide : il requêtera", "Est déjà évalué", "Est invalide"], a: 1, exp: "Chaîner crée un objet neuf ; le cache de l'ancien ne se transmet pas." }
+  ],
+  final: {
+    title: "Exercice final — Compter les requêtes de tête",
+    intro: `<p>Le jeu du jour : pour chaque extrait de code de la Ludothèque, dire combien de requêtes SQL partent réellement vers MySQL. C'est LA compétence qui te sauvera à la leçon 18 (problème N+1).</p>`,
+    questions: [
+      { type: "qcm", q: "qs = Jeu.objects.filter(prix__lt=40).exclude(stock=0).order_by(«-prix») — combien de requêtes ?", opts: ["0", "1", "3", "2"], a: 0, exp: "Que de la construction : aucune donnée demandée, aucune requête." },
+      { type: "qcm", q: "On ajoute ensuite jeux = list(qs) — combien de requêtes pour cette ligne ?", opts: ["0", "1", "3", "Une par jeu"], a: 1, exp: "list() évalue : un seul SELECT fusionnant filter, exclude et order_by." },
+      { type: "qcm", q: "Puis if qs: print(len(qs)) — combien de requêtes supplémentaires ?", opts: ["2", "1", "0", "3"], a: 2, exp: "qs a été évalué par list() : bool() et len() relisent le cache interne. 0 requête." },
+      { type: "vf", q: "print(qs.query) déclenche l'exécution de la requête en base.", a: false, exp: "Il affiche seulement le SQL prévu : parfait pour vérifier sans rien coûter." },
+      { type: "qcm", q: "for j in Jeu.objects.all(): ... puis for j in Jeu.objects.all(): ... — combien de requêtes en tout ?", opts: ["1", "2", "0", "4"], a: 1, exp: "Deux querysets distincts, deux caches distincts, deux requêtes. Une variable partagée n'en aurait coûté qu'une." }
+    ],
+    solution: `<pre class="pseudo">Paresseux   : créer/chaîner un QuerySet = 0 requête (description seule)   # rien n'est envoye a la construction
+Fusion      : tout le chaînage → UNE seule requête SQL au final          # filter+exclude+order_by = 1 SELECT
+Déclencheurs: itération, list(), len(), bool()/if, slice avec step,      # les gestes qui forcent l'execution
+              repr dans le shell                                        # afficher qs = l'evaluer
+Cache       : 1re évaluation remplit le cache ; réutiliser LE MÊME objet  # garder qs dans une variable
+              = gratuit ; reconstruire le même queryset = re-requête      # un nouvel objet = un nouveau cache
+Immutable   : chaque méthode renvoie un NOUVEAU queryset → réaffecter !   # qs = qs.filter(...)
+Vérif       : print(qs.query) avant, debug-toolbar pendant               # controler prevu et reel</pre>
+<p>Tu sais maintenant QUAND l'ORM parle à MySQL. Prochaine leçon : relier enfin nos tables — « La relation N-1 : ForeignKey (une location a un jeu et un membre) ».</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l7", title: "L'audit du script bavard", level: 1,
+    statement: "Un collègue a écrit ce script pour la page d'accueil de la Ludothèque : (1) dispo = Jeu.objects.filter(disponible=True) ; (2) if Jeu.objects.filter(disponible=True): afficher la section ; (3) print(len(Jeu.objects.filter(disponible=True)), « jeux dispo ») ; (4) for j in dispo: afficher j.titre ; (5) for j in dispo: afficher j.prix. Analyse ligne par ligne : pour chacune, dis si une requête SQL part vers MySQL et pourquoi (paresse, déclencheur, cache, nouvel objet). Donne le total, puis réécris le script pour atteindre le minimum de requêtes en expliquant chaque changement.",
+    hints: [
+      "Ligne 1 : y a-t-il un déclencheur d'évaluation, ou seulement une construction ?",
+      "Lignes 2 et 3 reconstruisent chacune un queryset tout neuf : le cache de qui pourrait-il servir ?",
+      "Les lignes 4 et 5 itèrent sur LE MÊME objet dispo : que se passe-t-il à la deuxième itération ?"
+    ],
+    solution: "Ligne 1 : dispo = Jeu.objects.filter(disponible=True) → 0 requête (lazy, simple description).\nLigne 2 : if Jeu.objects.filter(...) → 1 requête. bool() est un déclencheur, et c'est un NOUVEL objet : aucun cache disponible.\nLigne 3 : len(Jeu.objects.filter(...)) → 1 requête. Encore un objet neuf, encore un déclencheur.\nLigne 4 : for j in dispo → 1 requête. Première évaluation de dispo, son cache se remplit.\nLigne 5 : for j in dispo → 0 requête. Même objet, cache déjà rempli.\nTotal : 3 requêtes pour un travail qui en vaut 1.\n\nVersion corrigée :\ndispo = Jeu.objects.filter(disponible=True)   # 0 requête\nif dispo:                                     # 1 requête, cache rempli\n    print(len(dispo), « jeux dispo »)          # 0 (cache)\n    for j in dispo: afficher j.titre           # 0 (cache)\n    for j in dispo: afficher j.prix            # 0 (cache)\nTotal : 1 requête. Règle d'or : construire UNE fois, stocker dans UNE variable, réutiliser cet objet.",
+    note: "Cet audit est exactement ce que fait le panneau SQL de django-debug-toolbar, que tu as croisé au Niveau 3 : compter les requêtes réelles d'une page. Au Niveau 4 tu écrivais chaque SELECT à la main, donc tu les voyais ; l'ORM les cache, d'où l'importance du réflexe print(qs.query). Dans le projet full-stack du Niveau 6, cette discipline fera la différence entre une page qui répond en 50 ms et une page qui s'écroule." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

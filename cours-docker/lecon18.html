@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Observer : logs, inspect, stats, exec",
+  subtitle: "En production conteneurisée, pas de debugger : on observe de l'extérieur.",
+  theory: `
+<h3>1. Les logs : la sortie standard</h3>
+<p>En production, on ne peut pas mettre de point d'arrêt dans un debugger : on <strong>observe</strong> le conteneur de l'extérieur. Le premier outil, ce sont les <strong>logs</strong>. En conteneur, l'application n'écrit PAS dans des fichiers : elle écrit sur la <strong>sortie standard</strong> (stdout) et la <strong>sortie d'erreur</strong> (stderr), et Docker les collecte pour toi.</p>
+<pre class="pseudo">docker compose logs -f --tail 50 app     # -f = suivre en direct ; --tail 50 = partir des 50 dernières lignes du service 'app'
+docker compose logs --since 10m bdd      # --since 10m : seulement les logs des 10 dernières minutes du service 'bdd'
+docker compose logs -t app | grep ERROR  # -t = horodater chaque ligne ; '| grep ERROR' filtre celles contenant ERROR (les pipes du cours Linux)</pre>
+<p>En conteneur, on ne journalise <strong>pas dans des fichiers</strong> : le processus écrit sur stdout/stderr, Docker collecte. Les <code>logger.info</code> du capstone arrivent donc ici directement.</p>
+
+<h3>2. inspect : la vérité effective</h3>
+<p><code>inspect</code> montre l'état RÉEL d'un conteneur tel que Docker le connaît — utile quand « ça devrait marcher ». Le <code>--format</code> permet d'extraire un champ précis (langage de gabarits Go). <strong>OOMKilled</strong> (« Out Of Memory Killed ») indique que le conteneur a été tué pour avoir dépassé sa limite mémoire.</p>
+<pre class="pseudo">docker inspect app --format '{{.State.Status}}'            # extrait l'état : le conteneur tourne-t-il (running) ?
+docker inspect app --format '{{.State.Health.Status}}'     # extrait la santé : healthy / unhealthy / starting (leçon 13)
+docker inspect app --format '{{json .Config.Env}}'         # affiche les variables d'environnement RÉELLEMENT injectées (leçon 10)
+docker inspect app --format '{{json .Mounts}}'             # affiche les montages réels (volumes, bind mounts)
+docker inspect app --format '{{.State.ExitCode}} {{.State.OOMKilled}}'   # code de sortie + tué pour dépassement mémoire (OOM) ?</pre>
+<p>Quand « ça devrait marcher », <code>inspect</code> montre ce qui <strong>est</strong>, pas ce qu'on croit avoir configuré.</p>
+
+<h3>3. stats : CPU et mémoire en direct</h3>
+<p><code>stats</code> affiche la consommation en temps réel. On y voit une fuite mémoire <em>monter</em> avant qu'elle ne provoque un OOM.</p>
+<pre class="pseudo">docker stats --no-stream                # --no-stream : un instantané unique (sinon ça défile en continu)
+NAME         CPU %   MEM USAGE / LIMIT   # en-tête : nom du conteneur, % de CPU, mémoire utilisée / limite
+ludo-app-1   0.5%    120MiB / 512MiB     # l'app consomme 120 Mio sur une limite de 512 : marge confortable
+ludo-bdd-1   1.2%    450MiB / 1GiB       # MySQL consomme 450 Mio sur 1 Gio : sain</pre>
+<p>La fuite mémoire se voit <em>monter</em> ici, avant l'OOM. <code>docker compose top</code> liste les processus internes.</p>
+
+<h3>4. exec : le diagnostic dans l'environnement réel</h3>
+<p><code>exec</code> (leçon 3) permet de tester depuis L'INTÉRIEUR du conteneur, dans son environnement réel.</p>
+<pre class="pseudo">docker compose exec app python manage.py check --database default   # vérifie, DEPUIS l'app, que la connexion à la base fonctionne
+docker compose exec app env | sort                                  # liste et trie les variables vues par le processus (config réelle)
+docker compose exec bdd mysql -uludo_app -psecret ludotheque -e "SELECT 1"   # teste MySQL directement avec une requête minimale</pre>
+
+<h3>5. events : qui a fait quoi, quand</h3>
+<p><code>events</code> est le journal des évènements du démon : démarrages, morts, OOM, changements de santé.</p>
+<pre class="pseudo">docker events --since 1h --filter container=ludo-app-1   # affiche les évènements de la dernière heure pour ce conteneur précis
+# start, die, oom, health_status... l'historique des événements   # chaque évènement horodaté : reconstitue la chronologie d'un incident</pre>
+<div class="warn">Les logs Docker ne sont pas infinis : par défaut ils grossissent sans limite (json-file). En prod : <code>logging: options: max-size: "10m", max-file: "3"</code> dans compose — sinon le disque se remplit en silence.</div>
+<div class="tip">La méthode en cas d'incident : <code>ps</code> (état) → <code>logs</code> (que dit l'app ?) → <code>inspect</code> (que dit Docker ?) → <code>stats</code> (ressources ?) → <code>exec</code> (vérifier de l'intérieur). Dans cet ordre — du moins intrusif au plus intrusif.</div>`,
+  exercises: [
+    { type: "qcm", q: "En conteneur, l'application journalise…", opts: ["Dans /var/log/app.log", "Sur stdout/stderr (Docker collecte)", "Dans MySQL", "Nulle part"], a: 1, exp: "docker logs les lit." },
+    { type: "qcm", q: "Suivre les logs en direct :", opts: ["docker compose logs -f app", "cat logs", "tail app.log", "docker watch"], a: 0, exp: "-f = follow." },
+    { type: "qcm", q: "Les logs des 10 dernières minutes :", opts: ["--since 10m", "--last 10", "-n 10", "--time 10"], a: 0, exp: "Fenêtre temporelle." },
+    { type: "qcm", q: "Filtrer les erreurs :", opts: ["logs | grep ERROR (pipes du cours Linux)", "logs --errors", "un clic", "impossible"], a: 0, exp: "Les outils Linux s'appliquent." },
+    { type: "qcm", q: "inspect montre…", opts: ["Ce qu'on croit avoir configuré", "La configuration EFFECTIVE (env, montages, état)", "Le code source", "Les mots de passe hachés"], a: 1, exp: "La vérité du démon." },
+    { type: "qcm", q: "Vérifier la santé :", opts: ["inspect --format '{{.State.Health.Status}}'", "docker health", "ping", "logs"], a: 0, exp: "healthy / unhealthy / starting." },
+    { type: "qcm", q: "OOMKilled=true dans inspect signifie…", opts: ["Un bug Docker", "Le conteneur a été tué pour dépassement mémoire", "Un arrêt propre", "Un healthcheck raté"], a: 1, exp: "La limite mémoire a parlé." },
+    { type: "qcm", q: "Voir CPU/mémoire en direct :", opts: ["docker stats", "docker logs", "docker ps", "top sur l'hôte seul"], a: 0, exp: "--no-stream pour un instantané." },
+    { type: "qcm", q: "Une fuite mémoire se repère par…", opts: ["MEM USAGE qui monte continûment dans stats", "Les logs vides", "Le CPU à 0", "La couleur"], a: 0, exp: "Avant l'OOM." },
+    { type: "qcm", q: "Vérifier la connexion base depuis l'app :", opts: ["compose exec app python manage.py check --database default", "ping bdd depuis l'hôte", "docker ps", "rien"], a: 0, exp: "Le diagnostic de l'intérieur." },
+    { type: "qcm", q: "docker events montre…", opts: ["Les logs applicatifs", "L'historique des événements (start, die, oom, health…)", "Les commits", "Les images"], a: 1, exp: "Qui a fait quoi, quand." },
+    { type: "vf", q: "Par défaut, les logs Docker sont limités en taille.", a: false, exp: "json-file illimité : configurer max-size/max-file." },
+    { type: "qcm", q: "Limiter les logs en prod :", opts: ["logging: options: max-size/max-file dans compose", "les supprimer", "ne pas logger", "un cron rm"], a: 0, exp: "Rotation automatique." },
+    { type: "qcm", q: "L'ordre de la méthode d'incident :", opts: ["exec → stats → ps", "ps → logs → inspect → stats → exec", "reboot d'abord", "au hasard"], a: 1, exp: "Du moins au plus intrusif." },
+    { type: "vf", q: "Les logger.info du capstone (leçon 19 Niveau 6) arrivent dans docker logs.", a: true, exp: "stdout → collecte Docker : la boucle est bouclée." }
+  ],
+  final: {
+    title: "Exercice final — L'incident du samedi soir",
+    intro: `<p>L'app ne répond plus. On applique la méthode, dans l'ordre.</p>`,
+    questions: [
+      { type: "qcm", q: "Étape 1 :", opts: ["docker compose ps (état et santé)", "reboot", "rebuild", "rm -f"], a: 0, exp: "L'état d'abord." },
+      { type: "qcm", q: "Étape 2 — app est unhealthy :", opts: ["docker compose logs --tail 100 app", "supprimer le volume", "push", "rien"], a: 0, exp: "Que dit l'application ?" },
+      { type: "qcm", q: "Étape 3 — les logs montrent des timeouts MySQL :", opts: ["inspect bdd (santé, OOMKilled) + stats", "réinstaller Docker", "changer le code", "vider Git"], a: 0, exp: "Que dit Docker de bdd ?" },
+      { type: "qcm", q: "Étape 4 — bdd est OOMKilled :", opts: ["Augmenter mem_limit de bdd et surveiller stats", "supprimer les logs", "passer en latest", "--privileged"], a: 0, exp: "Leçon 19 : les limites." },
+      { type: "vf", q: "À aucun moment on n'a eu besoin d'un accès SSH dans le conteneur.", a: true, exp: "L'observation externe a suffi." }
+    ],
+    solution: `<pre class="pseudo">$ docker compose ps                        # étape 1 : app: unhealthy, bdd: restarting -> quelque chose ne va pas
+$ docker compose logs --tail 100 app       # étape 2 : les logs de l'app montrent des timeouts vers MySQL
+$ docker inspect ludo-bdd-1 --format '{{.State.OOMKilled}}'   # étape 3 : bdd a-t-elle été tuée pour mémoire ?
+true                                       # -> oui : bdd tuée, mémoire dépassée
+$ docker stats --no-stream                 # confirmation : bdd colle à sa limite mémoire
+
+# Correctif : mem_limit: 2g pour bdd, up -d, surveiller stats   # on augmente la limite et on observe
+# Post-mortem : pourquoi la mémoire a-t-elle monté ? (requêtes, index...)   # on cherche la cause de fond, pas juste le symptôme</pre>
+<p>L'observation a mené droit à la cause. Demain : justement, les limites de ressources.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta procédure d'observation…",
+  items: [
+  { id: "docker-l18", title: "Le runbook d'incident", level: 3,
+    statement: "Rédige le runbook « L'application Ludothèque ne répond plus » : les 5 étapes de la méthode (ps, logs, inspect, stats, exec) avec pour chacune la commande exacte, ce qu'on y cherche, et la bifurcation (si X alors étape suivante / si Y alors correctif direct). Termine par la config de rotation des logs à ajouter au compose.",
+    hints: [
+      "Chaque étape : COMMANDE / ON CHERCHE / SI...ALORS.",
+      "Bifurcations types : Exited → logs ; unhealthy → logs+inspect ; OOMKilled → limites ; env faux → .env.",
+      "logging: driver: json-file, options: max-size: \"10m\", max-file: \"3\""
+    ],
+    solution: "RUNBOOK — « La Ludothèque ne répond plus »\n\n1. ÉTAT       docker compose ps\n   On cherche : services Up ? healthy ?\n   → un service Exited/unhealthy : étape 2 sur CE service.\n   → tout est healthy : problème réseau/proxy en amont.\n\n2. LOGS       docker compose logs -t --tail 100 <service>\n   On cherche : exception, refus de connexion, dernier événement avant le silence.\n   → erreur applicative claire : corriger, redéployer.\n   → timeouts vers bdd : étape 3 sur bdd.\n\n3. INSPECT    docker inspect <conteneur> --format\n              '{{.State.Status}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.State.Health.Status}}'\n   On cherche : OOMKilled, exit code, santé, env/mounts réels.\n   → OOMKilled=true : étape 4 (mémoire).\n   → env inattendu : corriger .env, up -d.\n\n4. STATS      docker stats --no-stream\n   On cherche : service collé à sa limite mémoire/CPU.\n   → limite trop basse : l'augmenter dans compose, up -d, surveiller.\n   → montée continue : fuite -> post-mortem applicatif.\n\n5. EXEC       docker compose exec app python manage.py check --database default\n   On cherche : la confirmation de l'intérieur (base joignable, config vue).\n\n# Rotation des logs (à ajouter à chaque service) :\n    logging:\n      driver: json-file\n      options:\n        max-size: \"10m\"\n        max-file: \"3\"",
+    note: "Un runbook écrit AVANT l'incident vaut de l'or à 23 h un samedi : plus personne ne réfléchit bien sous pression. La structure commande/cherche/bifurcation le rend exécutable par n'importe quel membre de l'équipe — et, à terme, automatisable en partie (alerte si unhealthy, cours CI/CD)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

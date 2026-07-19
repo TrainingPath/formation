@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Requêtes SQL natives : FromSqlInterpolated",
+  subtitle: "Quand LINQ atteint ses limites, ton SQL du Niveau 4 reprend le volant — ceinture anti-injection bouclée.",
+  theory: `
+<h3>1. Quand LINQ ne suffit plus</h3>
+<p>Depuis la leçon 13, LINQ traduit fidèlement tes filtres, tris, projections et agrégats. Mais il y a une frontière : certaines requêtes dépassent ce que la traduction sait produire, ou ce qu'elle produit <em>bien</em>. Les cas classiques : un rapport tordu avec CTE ou fonctions de fenêtrage (le OVER / PARTITION BY de ton Niveau 4), une <strong>procédure stockée</strong> (un bout de SQL enregistré dans la base et appelé par son nom, comme une macro) qui existe déjà dans la base Ludotheque, un hint d'optimisation exigé par le DBA (l'administrateur de la base), ou une requête que tu sais écrire plus efficacement à la main. Un bon ORM l'assume : <strong>95 % de LINQ, 5 % de SQL natif</strong> — et EF Core offre des portes officielles pour redescendre au SQL sans quitter l'ORM ni sacrifier la sécurité.</p>
+<pre class="pseudo">// Ce que LINQ traduit très bien : Where, OrderBy, Select, GroupBy...
+// Ce qui appelle du SQL natif :
+//   - le rapport « classement des jeux par saison » à base de RANK() OVER (...)
+//   - EXEC dbo.CalculerRetards  (procédure stockée héritée du Niveau 4)
+//   - la requête chirurgicale optimisée par le DBA, à ne pas « retraduire »</pre>
+
+<h3>2. FromSqlInterpolated : du SQL qui renvoie des entités</h3>
+<p>La porte principale s'appelle <strong>FromSqlInterpolated</strong>. Elle s'accroche à un DbSet et prend une <strong>chaîne interpolée C#</strong> (le préfixe $ devant les guillemets, qui autorise à insérer des variables entre accolades). Chaque trou {variable} de la chaîne est intercepté par EF Core et transformé en <strong>paramètre SQL</strong> — exactement le @__prixMax_0 que tu as vu naître des lambdas LINQ à la leçon 13.</p>
+<pre class="pseudo">var prixMax = 30m;                                     // variable C# : le prix maximum voulu
+var jeux = ctx.Jeux                                    // on part du DbSet Jeux (donc des entités suivies)
+    .FromSqlInterpolated($"SELECT * FROM Jeux WHERE Prix &lt; {prixMax}")   // SQL natif ; {prixMax} deviendra un paramètre
+    .ToList();                                         // exécute la requête et matérialise en objets Jeu
+
+-- SQL réellement envoyé à SQL Server :
+SELECT * FROM Jeux WHERE Prix &lt; @p0        -- @p0 = 30 : paramètre typé, jamais fondu dans le texte</pre>
+<p>Deux règles du contrat : la requête doit renvoyer <strong>toutes les colonnes mappées</strong> de l'entité (un SELECT partiel qui oublie EstDisponible fera planter la matérialisation), et les objets obtenus sont de <strong>vraies entités suivies</strong> par le change tracker — modifiables et sauvegardables comme n'importe quel Jeu sorti d'un Where.</p>
+
+<h3>3. Pourquoi jamais de concaténation : l'injection SQL</h3>
+<p>La tentation historique : coller la saisie de l'utilisateur dans la chaîne avec un +. C'est LA faille la plus célèbre du web, l'<strong>injection SQL</strong> (faire passer du code SQL malveillant à la place d'une simple donnée). Observe ce que devient une recherche « innocente » quand un visiteur malveillant tape autre chose qu'un titre :</p>
+<pre class="pseudo">// CODE CRIMINEL — NE JAMAIS ÉCRIRE ÇA
+var sql = "SELECT * FROM Jeux WHERE Titre = '" + recherche + "'";   // concaténation : la saisie se fond DANS le SQL → faille
+
+// L'utilisateur tape :  ' OR 1=1 --
+// La chaîne devient :   SELECT * FROM Jeux WHERE Titre = '' OR 1=1 --'
+//                       → TOUT le catalogue sort, le filtre est mort.
+
+// L'utilisateur tape :  '; DELETE FROM Jeux; --
+// La chaîne devient :   ... WHERE Titre = ''; DELETE FROM Jeux; --'
+//                       → la table est vidée. Bonne soirée.</pre>
+<p>Avec un <strong>paramètre</strong>, ces mêmes caractères ne sont jamais interprétés comme du SQL : la valeur arrive à part, typée, et SQL Server la traite comme un simple texte à comparer. C'est ce que FromSqlInterpolated garantit — et c'est pour cela que la concaténation est interdite, même « juste pour un test », même quand la variable vient « de chez nous ».</p>
+
+<h3>4. Composer avec LINQ, procédures stockées et commandes</h3>
+<p>FromSqlInterpolated renvoie un <strong>IQueryable</strong> : tu peux enchaîner Where, OrderBy, Skip, Take derrière — EF Core enveloppe alors ton SQL dans une sous-requête (SELECT ... FROM (ton SQL) AS j WHERE ...). Exception notable : une <strong>procédure stockée</strong> (EXEC) s'exécute mais n'est <strong>pas composable</strong> — impossible d'envelopper un EXEC dans une sous-requête, donc pas de Where LINQ derrière. Pour les écritures en masse et les commandes sans résultat, la porte s'appelle <strong>ExecuteSqlInterpolated</strong> (sur ctx.Database) : elle renvoie le nombre de lignes affectées et <strong>contourne le change tracker</strong> — les entités déjà en mémoire ne sont pas prévenues. Enfin, pour un résultat qui n'est pas une entité (un scalaire, un total), <strong>ctx.Database.SqlQuery&lt;decimal&gt;(...)</strong> fait le pont.</p>
+<pre class="pseudo">// Composable : ton SQL + du LINQ par-dessus
+var chers = ctx.Jeux                                   // on part du DbSet Jeux
+    .FromSqlInterpolated($"SELECT * FROM Jeux WHERE Prix &gt; {seuil}")   // SQL natif paramétré ({seuil} → @p0)
+    .Where(j =&gt; j.EstDisponible)          // → sous-requête + WHERE   // LINQ ajouté : EF enveloppe le SQL en sous-requête
+    .OrderBy(j =&gt; j.Titre)                             // …puis ajoute un ORDER BY
+    .ToList();                                         // exécute le tout
+
+// Procédure stockée : OK, mais rien de composable derrière
+var top = ctx.Jeux                                     // on part du DbSet Jeux
+    .FromSqlInterpolated($"EXEC dbo.TopJeux {nombre}")  // exécute la procédure stockée ({nombre} → paramètre)
+    .ToList();                                         // matérialise ; aucun Where LINQ possible derrière un EXEC
+
+// Commande sans résultat : UPDATE massif, tracker contourné
+int touchees = ctx.Database.ExecuteSqlInterpolated(    // exécute une commande qui ne renvoie pas d'entités…
+    $"UPDATE Jeux SET EstDisponible = 0 WHERE Prix &gt; {seuil}");   // …UPDATE paramétré ; renvoie le nombre de lignes touchées</pre>
+
+<h3>5. Les règles de la maison — et les cousins</h3>
+<p>Le SQL natif est un <strong>outil d'exception</strong> : rare, localisé (une méthode dédiée, pas éparpillé dans les contrôleurs), toujours interpolé, toujours relu au LogTo. Souviens-toi aussi qu'il <strong>contourne le modèle</strong> : si ta Fluent API renomme une colonne, ton SQL natif doit utiliser le vrai nom SQL, pas le nom C#. Une ligne pour ta culture : Hibernate/JPA a <strong>createNativeQuery</strong> avec ses paramètres :nommés, Eloquent propose DB::select('... ?', [valeur]) et whereRaw avec bindings, Django a Jeu.objects.raw('... %s', [valeur]) — partout le même duo « SQL libre + paramètres obligatoires ».</p>
+<div class="warn"><strong>Le piège mortel : FromSqlRaw nourri d'une chaîne interpolée.</strong> Il existe une méthode sœur, FromSqlRaw, prévue pour des placeholders {0} avec paramètres séparés. Or FromSqlRaw($"... {recherche}") <em>compile parfaitement</em>... et injecte : la chaîne C# est construite AVANT l'appel, la valeur est déjà fondue dans le texte. Règle absolue : une chaîne avec $ et des trous → <strong>FromSqlInterpolated</strong>, uniquement.</div>
+<div class="tip">Teste chaque requête native avec « L'Île interdite » dans le catalogue : une apostrophe dans un titre casse instantanément une concaténation (erreur de syntaxe SQL) mais ne dérange jamais un paramètre. Si le test à l'apostrophe passe et que LogTo montre des @p0, ta porte SQL est bien gardée.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans un projet EF Core sain, le SQL natif sert à…", opts: ["Remplacer LINQ partout, c'est plus rapide", "Couvrir les cas que LINQ traduit mal : rapports complexes, procédures stockées, requêtes du DBA", "Éviter d'apprendre LINQ", "Créer les tables"], a: 1, exp: "95 % de LINQ, 5 % de natif : l'exception assumée, pas la règle." },
+    { type: "qcm", q: "Dans FromSqlInterpolated($&quot;... WHERE Prix &lt; {prixMax}&quot;), le trou {prixMax} devient…", opts: ["Une concaténation dans le texte SQL", "Un paramètre SQL typé (@p0)", "Un commentaire", "Une colonne calculée"], a: 1, exp: "EF Core intercepte la chaîne interpolée : chaque trou part comme paramètre, jamais fondu dans le texte." },
+    { type: "vf", q: "Concaténer une variable dans une chaîne SQL est acceptable si cette variable est un int, pas une saisie utilisateur.", a: false, exp: "Un int est difficile à injecter, mais la règle est zéro concaténation : le motif se copie-colle et finira sur une chaîne saisie. Le paramètre ne coûte rien." },
+    { type: "qcm", q: "Un visiteur tape ' OR 1=1 -- dans le champ de recherche d'un code concaténé. Résultat :", opts: ["Une erreur de compilation C#", "Le filtre WHERE est neutralisé : toutes les lignes sortent", "SQL Server bloque automatiquement", "Rien, les apostrophes sont interdites en HTTP"], a: 1, exp: "La condition devient Titre = '' OR 1=1 : toujours vraie. Le -- commente le reste. Injection classique." },
+    { type: "input", q: "Quelle méthode d'EF Core exécute du SQL natif renvoyant des entités, à partir d'une chaîne interpolée ?", a: ["FromSqlInterpolated", "FromSqlInterpolated()"], ph: "Nom de la méthode…", exp: "FromSqlInterpolated : le $ et les trous {variable} deviennent des paramètres SQL." },
+    { type: "qcm", q: "FromSqlRaw($&quot;SELECT ... WHERE Titre = {recherche}&quot;) :", opts: ["Ne compile pas", "Compile et paramètre correctement", "Compile mais injecte : la chaîne est construite AVANT l'appel, la valeur est déjà dans le texte", "Lève une exception à l'exécution, toujours"], a: 2, exp: "Le piège mortel : FromSqlRaw reçoit une chaîne déjà interpolée. Chaîne à trous → FromSqlInterpolated, uniquement." },
+    { type: "qcm", q: "Le SELECT passé à FromSqlInterpolated sur ctx.Jeux doit…", opts: ["Renvoyer toutes les colonnes mappées de l'entité Jeu", "Renvoyer uniquement l'Id", "Contenir un ORDER BY", "Être écrit en majuscules"], a: 0, exp: "Une colonne mappée manquante (EstDisponible…) fait échouer la matérialisation des entités." },
+    { type: "vf", q: "Les entités renvoyées par FromSqlInterpolated sont suivies par le change tracker comme celles d'un Where LINQ.", a: true, exp: "Ce sont de vraies entités : modifiables, sauvegardables par SaveChanges — le natif ne change que la façon de les CHERCHER." },
+    { type: "qcm", q: "ctx.Jeux.FromSqlInterpolated(...).Where(j =&gt; j.EstDisponible).OrderBy(j =&gt; j.Titre) — que fait EF Core ?", opts: ["Il refuse : natif et LINQ sont incompatibles", "Il enveloppe le SQL natif dans une sous-requête et ajoute WHERE et ORDER BY autour", "Il filtre en mémoire", "Il ignore le Where"], a: 1, exp: "FromSqlInterpolated renvoie un IQueryable composable : SELECT ... FROM (ton SQL) AS j WHERE ..." },
+    { type: "qcm", q: "FromSqlInterpolated($&quot;EXEC dbo.TopJeux {n}&quot;).Where(...) :", opts: ["Fonctionne comme un SELECT", "Échoue : un EXEC n'est pas composable, impossible de l'envelopper dans une sous-requête", "Exécute la procédure deux fois", "Transforme la procédure en vue"], a: 1, exp: "Les procédures stockées s'exécutent mais ne se composent pas : le filtrage doit être un paramètre de la procédure ou se faire après ToList." },
+    { type: "input", q: "Quelle méthode de ctx.Database exécute un UPDATE ou DELETE natif paramétré, sans renvoyer d'entités ?", a: ["ExecuteSqlInterpolated", "ExecuteSqlInterpolated()", "ExecuteSqlInterpolatedAsync"], ph: "Nom de la méthode…", exp: "ExecuteSqlInterpolated renvoie le nombre de lignes affectées — idéale pour les écritures en masse." },
+    { type: "qcm", q: "Particularité d'ExecuteSqlInterpolated vis-à-vis du change tracker :", opts: ["Il met à jour les entités en mémoire", "Il contourne le tracker : les entités déjà chargées ne sont pas prévenues du changement", "Il vide le tracker", "Il exige SaveChanges après"], a: 1, exp: "La commande part directement en base : un Jeu déjà en mémoire garde ses anciennes valeurs. À savoir avant de relire tes objets." },
+    { type: "qcm", q: "Pour récupérer un simple decimal (chiffre d'affaires) via du SQL natif, tu utilises…", opts: ["ctx.Database.SqlQuery&lt;decimal&gt;(...)", "FromSqlInterpolated sur ctx.Jeux", "ExecuteSqlInterpolated", "ToQueryString"], a: 0, exp: "SqlQuery&lt;T&gt; matérialise des résultats qui ne sont pas des entités : scalaires, lignes de rapport." },
+    { type: "vf", q: "Le SQL passé à FromSqlInterpolated est vérifié à la compilation comme une requête LINQ.", a: false, exp: "C'est le prix du natif : la chaîne n'est validée qu'à l'exécution par SQL Server. D'où : rare, localisé, testé." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA de FromSqlInterpolated est…", opts: ["createNativeQuery", "merge", "JOIN FETCH", "flush"], a: 0, exp: "createNativeQuery avec paramètres nommés côté JPA, DB::select('... ?', [x]) chez Laravel, raw('... %s', [x]) chez Django : partout SQL libre + paramètres obligatoires." }
+  ],
+  final: {
+    title: "Exercice final — Le rapport du DBA, sans la faille",
+    intro: `<p>Le DBA de la Ludothèque te livre une requête SQL optimisée à la main : les jeux jamais loués depuis une date donnée. Ton travail : la brancher dans EF Core, paramétrée, composable, et blindée contre l'apostrophe comme contre l'injection.</p>`,
+    questions: [
+      { type: "qcm", q: "L'appel correct pour exécuter ce SQL avec la variable depuis :", opts: ["FromSqlInterpolated($&quot;SELECT * FROM Jeux WHERE ... {depuis}&quot;)", "FromSqlRaw(&quot;SELECT ... &quot; + depuis)", "ToQueryString(depuis)", "ExecuteSqlInterpolated sans $"], a: 0, exp: "Chaîne interpolée + FromSqlInterpolated : la variable part en paramètre @p0." },
+      { type: "qcm", q: "Dans LogTo, la valeur de depuis apparaîtra…", opts: ["Fondue dans le texte SQL", "Comme paramètre séparé (@p0) de la commande", "Chiffrée", "Pas du tout, c'est interdit"], a: 1, exp: "Le SQL contient @p0, la valeur voyage à part : c'est ta preuve visuelle d'une requête sûre." },
+      { type: "vf", q: "Tu peux ajouter .OrderBy(j =&gt; j.Titre).Skip(0).Take(20) derrière ce FromSqlInterpolated.", a: true, exp: "Un SELECT natif reste un IQueryable composable : EF l'enveloppe en sous-requête. Seul un EXEC refuserait." },
+      { type: "input", q: "Le DBA fournit aussi un script UPDATE de remise en stock. Quelle méthode l'exécute proprement ?", a: ["ExecuteSqlInterpolated", "ExecuteSqlInterpolated()", "ExecuteSqlInterpolatedAsync"], ph: "Nom de la méthode…", exp: "Commande sans entités → ctx.Database.ExecuteSqlInterpolated, qui renvoie le nombre de lignes touchées." },
+      { type: "qcm", q: "Ton test de non-régression sécurité consiste à chercher…", opts: ["Un titre très long", "« L'Île interdite » : l'apostrophe casse une concaténation, jamais un paramètre", "Un titre en majuscules", "Un jeu inexistant"], a: 1, exp: "Le test à l'apostrophe : s'il passe et que LogTo montre @p0, la porte SQL est bien gardée." }
+    ],
+    solution: `<pre class="pseudo">SQL natif EF Core — la carte des portes
+FromSqlInterpolated($&quot;SELECT ...&quot;)   → entités, {x} = paramètre, composable
+FromSqlInterpolated($&quot;EXEC proc {x}&quot;) → entités, PAS composable
+ExecuteSqlInterpolated($&quot;UPDATE ...&quot;) → lignes affectées, contourne le tracker
+SqlQuery&lt;T&gt;($&quot;SELECT ...&quot;)            → scalaires et résultats hors entités
+
+Interdits : concaténation (+) · FromSqlRaw nourri d'une chaîne $
+Réflexes  : LogTo (chercher @p0) · test à l'apostrophe · natif rare et localisé
+Ailleurs  : createNativeQuery (JPA), DB::select + bindings (Laravel), raw() (Django)</pre>
+<p>Tu sais désormais quitter LINQ sans quitter la sécurité. Mais rapatrier 5 000 jeux d'un coup, même en SQL parfait, reste une mauvaise idée… Prochaine leçon : servir le catalogue page par page avec <strong>Skip et Take</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l15", title: "Audit de sécurité : la recherche à trous", level: 3,
+    statement: "Un stagiaire a livré l'endpoint GET /api/jeux/recherche?q=... ainsi : ctx.Jeux.FromSqlRaw(\"SELECT * FROM Jeux WHERE Titre LIKE '%\" + q + \"%'\").ToList(). Rédige l'audit de sécurité complet : (1) démontre la faille avec au moins une valeur de q qui exfiltre ou détruit des données, en écrivant la chaîne SQL finale obtenue ; (2) explique le mécanisme (pourquoi la base ne peut pas distinguer le SQL du développeur de celui de l'attaquant) ; (3) propose DEUX corrections — l'une en SQL natif paramétré, l'autre en LINQ pur — avec leur code ; (4) indique comment vérifier au LogTo que la version corrigée est sûre, et quel titre du catalogue sert de test permanent.",
+    hints: [
+      "Construis l'attaque : que devient la chaîne si q vaut ' OR 1=1 -- ? Et si q contient un point-virgule suivi d'un DELETE ?",
+      "Pour la correction native : le motif LIKE se prépare dans une variable C# (var motif = \"%\" + q + \"%\") puis part comme UN paramètre dans FromSqlInterpolated — pourquoi est-ce sûr alors qu'il y a une concaténation ?",
+      "Pour la correction LINQ : quelle méthode string dans un Where se traduit en LIKE ? Que montre LogTo dans les deux cas ?"
+    ],
+    solution: "1. DÉMONSTRATION DE LA FAILLE\n   q = ' OR 1=1 --\n   Chaîne finale : SELECT * FROM Jeux WHERE Titre LIKE '%' OR 1=1 --%'\n   → le LIKE est neutralisé, TOUT le catalogue sort (fuite de données).\n   q = '; DELETE FROM Avis; --\n   Chaîne finale : ... WHERE Titre LIKE '%'; DELETE FROM Avis; --%'\n   → deux ordres SQL : le SELECT, puis un DELETE. Table vidée.\n\n2. MÉCANISME\n   La concaténation fond la saisie DANS le texte SQL : au moment où la\n   chaîne arrive à SQL Server, rien ne distingue le code du développeur\n   des caractères de l'attaquant. L'apostrophe ferme le littéral, le\n   reste devient du SQL exécutable, -- commente la fin légitime.\n\n3. CORRECTIONS\n   a) Natif paramétré :\n      var motif = \"%\" + q + \"%\";\n      ctx.Jeux.FromSqlInterpolated(\n          $\"SELECT * FROM Jeux WHERE Titre LIKE {motif}\").ToList();\n      La concaténation construit une VALEUR C#, pas du SQL : motif part\n      comme paramètre @p0, les apostrophes n'y sont jamais interprétées.\n   b) LINQ pur (préférable ici, le cas est simple) :\n      ctx.Jeux.Where(j => j.Titre.Contains(q)).ToList();\n      Contains se traduit en LIKE paramétré automatiquement.\n\n4. VÉRIFICATION\n   LogTo doit montrer : ... WHERE Titre LIKE @p0 (ou @__q_0 en LINQ),\n   la valeur voyageant à part. Test permanent : rechercher\n   « L'Île interdite » — l'apostrophe casse une concaténation (erreur de\n   syntaxe) mais traverse un paramètre sans bruit. Bonus défense en\n   profondeur : compte SQL applicatif sans droits DELETE inutiles.",
+    note: "Cet audit est un classique d'entretien ET d'OWASP Top 10 : l'injection ne meurt jamais, elle change de framework. PDO et ses requêtes préparées (PHP), les bindings d'Eloquent, les %s de Django raw() : partout la même parade — la valeur voyage séparée du code. Au Niveau 6, ton front enverra q directement depuis un champ de recherche : cette leçon est ta ligne de défense." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

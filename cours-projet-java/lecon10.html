@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Authentification avec Spring Security",
+  subtitle: "Protéger l'application et permettre la connexion.",
+  theory: `
+<h3>1. Authentification vs autorisation</h3>
+<p><strong>Authentifier</strong> = vérifier <em>qui</em> est l'utilisateur (son identité), comme un vigile qui contrôle une carte d'identité. <strong>Autoriser</strong> = décider <em>ce qu'il a le droit de faire</em> (leçon 11), comme le badge qui n'ouvre que certaines portes. On commence par l'identité. <strong>Spring Security</strong> est le module de Spring dédié à ces deux questions.</p>
+
+<h3>2. Hacher les mots de passe : BCrypt</h3>
+<p><strong>Hacher</strong> un mot de passe, c'est le passer dans une fonction à sens unique qui produit une empreinte illisible : on ne peut pas revenir en arrière. On stocke cette empreinte, jamais le mot de passe. Pour vérifier une connexion, on hache la saisie et on compare les deux empreintes.</p>
+<pre class="pseudo">@Bean                                                 // @Bean : cet objet est fabriqué et géré par Spring (réutilisable partout)
+PasswordEncoder encoder() {                           // fournit l'outil qui hache et vérifie les mots de passe
+    return new BCryptPasswordEncoder();               // on utilise l'algorithme BCrypt (lent et salé)
+}                                                     // fin de la méthode
+// à l'inscription : String hache = encoder.encode(motDePasseClair);   // transformer le mot de passe clair en haché
+// à la connexion : encoder.matches(saisi, hache)  -> true / false     // comparer la saisie au haché stocké (sans jamais déchiffrer)</pre>
+<p><strong>BCrypt</strong> est un algorithme de hachage volontairement <em>lent</em> et <em>salé</em> : « salé » signifie qu'un grain de hasard (le <em>sel</em>) est ajouté, si bien que deux mots de passe identiques donnent des empreintes différentes ; « lent » rend une attaque par <strong>force brute</strong> (essayer des milliards de combinaisons) beaucoup trop coûteuse. À l'inverse, <strong>Base64</strong> n'est PAS du hachage : c'est un simple encodage réversible, inutile pour protéger un secret.</p>
+
+<h3>3. Charger l'utilisateur : UserDetailsService</h3>
+<p>Quand quelqu'un se connecte, Spring Security a besoin de retrouver le compte correspondant. Le <code>UserDetailsService</code> est le service chargé de cette recherche par email.</p>
+<pre class="pseudo">@Bean                                                 // objet géré par Spring
+UserDetailsService utilisateurs(UtilisateurRepository repo) {   // service appelé par Spring Security pour charger un utilisateur
+    return email -&gt; {                                  // fonction : reçoit l'email saisi à la connexion
+        Utilisateur u = repo.findByEmail(email)        // chercher l'utilisateur par email
+            .orElseThrow(() -&gt; new UsernameNotFoundException(email));   // sinon : erreur « utilisateur inconnu »
+        return User.withUsername(u.getEmail())         // construire l'objet attendu par Spring Security…
+                   .password(u.getMotDePasse())        // …avec son mot de passe haché…
+                   .roles(u.getRole().name())   // CLIENT / VENDEUR / ADMINISTRATEUR (rôle pour l'autorisation)
+                   .build();                           // finaliser la construction
+    };                                                // fin de la fonction
+}                                                     // fin de la méthode</pre>
+<p>La syntaxe <code>email -&gt; { ... }</code> est une <em>lambda</em> (une fonction écrite sur place) : elle reçoit l'email et renvoie les informations du compte. Spring compare ensuite le mot de passe haché stocké à la saisie.</p>
+
+<h3>4. La chaîne de filtres de sécurité</h3>
+<p>Un <strong>filtre</strong> est un poste de contrôle que traverse chaque requête avant d'atteindre le code. La <code>SecurityFilterChain</code> décrit les règles d'accès.</p>
+<pre class="pseudo">@Bean                                                 // objet géré par Spring
+SecurityFilterChain chaine(HttpSecurity http) throws Exception {   // définit les règles de sécurité des requêtes
+    http.authorizeHttpRequests(a -&gt; a                  // configurer qui a le droit d'accéder à quoi
+        .requestMatchers(HttpMethod.GET, "/api/jeux/**").permitAll() // GET du catalogue : autorisé à tous (public)
+        .anyRequest().authenticated())                              // toute autre requête : identité obligatoire
+      .httpBasic(Customizer.withDefaults());           // méthode de connexion : HTTP Basic (email + mot de passe)
+    return http.build();                               // construire la chaîne de filtres
+}                                                     // fin de la méthode</pre>
+<p><code>permitAll()</code> ouvre l'accès à tous, <code>authenticated()</code> l'exige connecté. Le catalogue reste consultable par tous ; toute autre requête exige une identité valide. <code>httpBasic</code> précise la façon de fournir email + mot de passe.</p>
+
+<h3>5. Où s'applique la sécurité ?</h3>
+<div class="tip">La sécurité est un <strong>filtre</strong> placé AVANT les contrôleurs : une requête non authentifiée est rejetée (code 401, « non autorisé ») sans jamais atteindre ton code métier. C'est la première ligne de défense de l'application.</div>
+<div class="warn">Ne jamais désactiver le hachage « pour tester » ni écrire un mot de passe dans les journaux (logs). Un mot de passe compromis l'est définitivement — la rigueur ici n'est pas optionnelle.</div>`,
+  exercises: [
+    { type: "qcm", q: "Authentifier, c'est vérifier…", opts: ["Les droits", "L'identité (qui est l'utilisateur)", "Le stock", "Le réseau"], a: 1, exp: "Qui." },
+    { type: "qcm", q: "L'algorithme de hachage de mot de passe :", opts: ["MD5", "BCrypt", "Base64", "ROT13"], a: 1, exp: "BCrypt (lent, salé)." },
+    { type: "qcm", q: "BCrypt est salé : deux mots de passe identiques…", opts: ["Donnent le même haché", "Donnent des hachés différents", "Sont refusés", "Sont en clair"], a: 1, exp: "Sel aléatoire." },
+    { type: "qcm", q: "Vérifier un mot de passe saisi :", opts: ["==", "encoder.matches(saisi, haché)", "equals", "compare"], a: 1, exp: "matches." },
+    { type: "qcm", q: "Charger l'utilisateur par email :", opts: ["PasswordEncoder", "UserDetailsService", "SecurityFilterChain", "Controller"], a: 1, exp: "Chargement des identités." },
+    { type: "qcm", q: "Base64, pour un mot de passe…", opts: ["Convient", "N'est PAS du hachage (réversible)", "Est plus sûr que BCrypt", "Est salé"], a: 1, exp: "Encodage ≠ hachage." },
+    { type: "qcm", q: "Le catalogue reste public via…", opts: ["anyRequest().authenticated()", "permitAll() sur GET /api/jeux/**", "denyAll()", "hasRole"], a: 1, exp: "Lecture ouverte." },
+    { type: "qcm", q: "Le reste des requêtes est…", opts: ["public", "authenticated()", "supprimé", "trié"], a: 1, exp: "Protégé." },
+    { type: "qcm", q: "Une requête non authentifiée reçoit…", opts: ["200", "401 (rejetée avant le contrôleur)", "201", "500"], a: 1, exp: "Non autorisée." },
+    { type: "qcm", q: "La sécurité s'applique…", opts: ["Après le service", "Comme un filtre AVANT les contrôleurs", "Dans la base", "Dans le DTO"], a: 1, exp: "Filtre en amont." },
+    { type: "vf", q: "On ne stocke jamais un mot de passe en clair.", a: true, exp: "Toujours haché." },
+    { type: "qcm", q: ".roles(u.getRole().name()) fournit…", opts: ["Le mot de passe", "le rôle à Spring Security", "l'email", "le stock"], a: 1, exp: "Rôle pour l'autorisation." },
+    { type: "vf", q: "BCrypt est volontairement lent pour résister à la force brute.", a: true, exp: "Coût de calcul." },
+    { type: "qcm", q: "PasswordEncoder est déclaré comme…", opts: ["@Entity", "@Bean", "@Controller", "@Table"], a: 1, exp: "Bean de configuration." },
+    { type: "qcm", q: "Logguer un mot de passe…", opts: ["Est pratique", "Est à proscrire (fuite définitive)", "Sécurise", "Est neutre"], a: 1, exp: "Jamais." }
+  ],
+  final: {
+    title: "Exercice final — Mettre en place la sécurité",
+    intro: `<p>On configure le hachage, le chargement des comptes et l'accès.</p>`,
+    questions: [
+      { type: "qcm", q: "Le bean de hachage :", opts: ["new BCryptPasswordEncoder()", "new MD5()", "new Base64()", "new PlainEncoder()"], a: 0, exp: "BCrypt." },
+      { type: "qcm", q: "Retrouver l'utilisateur à la connexion :", opts: ["findById", "findByEmail via UserDetailsService", "findAll", "getUser"], a: 1, exp: "Par email." },
+      { type: "qcm", q: "Garder le catalogue public :", opts: ["permitAll() sur GET /api/jeux/**", "authenticated() partout", "denyAll()", "hasRole('ADMIN')"], a: 0, exp: "Lecture ouverte." },
+      { type: "qcm", q: "Vérifier le mot de passe :", opts: ["encoder.matches(saisi, haché)", "saisi == haché", "equals", "compareTo"], a: 0, exp: "matches." },
+      { type: "vf", q: "La sécurité rejette une requête non authentifiée avant d'atteindre le contrôleur.", a: true, exp: "Filtre en amont." }
+    ],
+    solution: `<pre class="pseudo">@Bean PasswordEncoder encoder() { return new BCryptPasswordEncoder(); }   // outil de hachage BCrypt géré par Spring
+
+@Bean                                                 // objet géré par Spring
+UserDetailsService utilisateurs(UtilisateurRepository repo) {   // charge un utilisateur pour Spring Security
+  return email -&gt; {                                    // reçoit l'email saisi à la connexion
+    Utilisateur u = repo.findByEmail(email)            // chercher par email
+        .orElseThrow(() -&gt; new UsernameNotFoundException(email));   // sinon erreur « inconnu »
+    return User.withUsername(u.getEmail())             // construire l'utilisateur de sécurité…
+               .password(u.getMotDePasse())            // …avec son mot de passe haché…
+               .roles(u.getRole().name()).build();     // …et son rôle
+  };
+}
+
+@Bean                                                 // objet géré par Spring
+SecurityFilterChain chaine(HttpSecurity http) throws Exception {   // règles d'accès aux requêtes
+  http.authorizeHttpRequests(a -&gt; a                    // configurer les autorisations
+      .requestMatchers(HttpMethod.GET, "/api/jeux/**").permitAll()   // catalogue en lecture : public
+      .anyRequest().authenticated())                   // le reste : connexion obligatoire
+    .httpBasic(Customizer.withDefaults());             // connexion en HTTP Basic
+  return http.build();                                 // construire la chaîne de filtres
+}</pre>
+<p>On sait qui se connecte. Demain : décider qui a le droit de faire quoi.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta configuration de sécurité…",
+  items: [
+  { id: "projjava-l10", title: "Inscription avec mot de passe haché", level: 3,
+    statement: "Écris une méthode inscrire(email, motDePasseClair, role) dans un AuthService qui hache le mot de passe avec un PasswordEncoder injecté, puis délègue la création à UtilisateurService.inscrire(...). Le mot de passe clair ne doit jamais être stocké tel quel.",
+    hints: [
+      "Injecte PasswordEncoder et UtilisateurService par le constructeur.",
+      "String hache = encoder.encode(motDePasseClair);",
+      "return utilisateurs.inscrire(email, hache, role);"
+    ],
+    solution: "@Service\npublic class AuthService {                              // service d'authentification / inscription\n  private final PasswordEncoder encoder;                // outil de hachage injecte\n  private final UtilisateurService utilisateurs;        // service des comptes injecte\n  public AuthService(PasswordEncoder encoder, UtilisateurService utilisateurs) {   // injection par constructeur\n    this.encoder = encoder;\n    this.utilisateurs = utilisateurs;\n  }\n\n  public Utilisateur inscrire(String email, String motDePasseClair, Role role) {   // inscrire un utilisateur\n    String hache = encoder.encode(motDePasseClair);      // hacher le mot de passe clair AVANT tout stockage\n    return utilisateurs.inscrire(email, hache, role);    // deleguer la creation (avec le hache) au service des comptes\n  }\n}",
+    note: "Le mot de passe clair est haché immédiatement par BCrypt, avant toute persistance : seul le haché atteint la base. On sépare les responsabilités — AuthService gère la sécurité (hachage), UtilisateurService la persistance et l'unicité. C'est le point d'entrée sûr de la création de comptes." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

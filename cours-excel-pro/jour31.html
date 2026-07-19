@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : un tableau de bord automatisé",
+  subtitle: "Assembler Power Query, le modèle de données, les TCD et VBA en une seule application qui se met à jour d'un clic.",
+  theory: `
+<h3>1. Ce que tu vas construire</h3>
+<p>Trente jours de techniques isolées deviennent aujourd'hui <em>un produit</em>. L'objectif : un classeur <strong>.xlsm</strong> qu'un responsable ouvre, dont il clique un bouton, et qui affiche en trois secondes l'état de son activité — sans qu'il ait à comprendre ce qu'il y a dessous.</p>
+<pre class="pseudo">CHAINE COMPLETE DU PROJET
+
+  Fichiers sources (dossier de CSV / classeurs)
+            |
+            v
+  [1] POWER QUERY        importer + nettoyer + fusionner   -> requetes rejouables
+            |
+            v
+  [2] MODELE DE DONNEES  tables reliees en etoile + mesures -> logique metier
+            |
+            v
+  [3] TCD + GRAPHIQUES   la restitution visuelle           -> le tableau de bord
+            |
+            v
+  [4] MACRO VBA          un bouton : tout actualiser       -> l'automatisation
+            |
+            v
+  [5] OUVERTURE          Power BI / Office Script / Copilot -> le passage a l'echelle</pre>
+<h3>2. Étape 1 — Importer et nettoyer avec Power Query</h3>
+<p>Rappel : <strong>Power Query</strong> est l'outil d'importation d'Excel (<strong>Données ▸ Obtenir des données</strong>). Chaque manipulation devient une <strong>étape appliquée</strong>, rejouée à l'identique à chaque actualisation. C'est ce qui rend le tableau de bord <em>reproductible</em>.</p>
+<pre class="pseudo">Donnees > Obtenir des donnees > A partir d'un fichier > A partir d'un dossier
+   -> Combiner et transformer : tous les CSV du dossier empiles en une table
+Etapes indispensables dans l'editeur
+   Utiliser la premiere ligne pour les en-tetes
+   Definir le TYPE de chaque colonne (date, nombre entier, nombre decimal, texte)
+   Supprimer les colonnes inutiles et les lignes vides
+   Remplacer les valeurs erronees, supprimer les doublons
+   Fusionner les requetes (equivalent d'une RECHERCHEX, mais a l'import)
+Puis : Accueil > Fermer et charger dans... > Ne creer que la connexion
+       + cocher Ajouter ces donnees au modele de donnees</pre>
+<div class="warn">Charger « Ne créer que la connexion + Ajouter au modèle » évite de déverser des centaines de milliers de lignes dans une feuille. Les données vivent dans le modèle ; la feuille n'affiche que les synthèses.</div>
+<h3>3. Étape 2 — Le modèle et les mesures</h3>
+<p>Le <strong>modèle de données</strong> d'Excel (moteur Power Pivot, identique à celui de Power BI) relie les tables. Adopte le <strong>schéma en étoile</strong> : une table de faits au centre, des dimensions autour.</p>
+<pre class="pseudo">Donnees > Relations       ' ou : Power Pivot > Gerer > Vue de diagramme
+   Clients[IDClient]    -> Ventes[IDClient]     ' 1 client -> plusieurs ventes (1:*)
+   Produits[IDProduit]  -> Ventes[IDProduit]    ' 1 produit -> plusieurs ventes (1:*)
+   Calendrier[Date]     -> Ventes[DateVente]    ' 1 date -> plusieurs ventes (1:*)</pre>
+<p>Les <strong>mesures</strong> s'écrivent en DAX, dans <strong>Power Pivot ▸ Mesures ▸ Nouvelle mesure</strong>. Elles se recalculent selon les filtres du TCD :</p>
+<pre class="pseudo">CA Total := SUM(Ventes[Montant])                      // somme du chiffre d'affaires
+Nb Commandes := DISTINCTCOUNT(Ventes[IDVente])        // commandes distinctes
+Panier Moyen := DIVIDE([CA Total], [Nb Commandes], 0) // division protegee
+CA N-1 := CALCULATE([CA Total], SAMEPERIODLASTYEAR(Calendrier[Date]))  // an dernier
+Evolution % := DIVIDE([CA Total] - [CA N-1], [CA N-1], 0)              // progression</pre>
+<h3>4. Étape 3 — La restitution</h3>
+<pre class="pseudo">Insertion > Tableau croise dynamique > A partir du modele de donnees
+   TCD 1 : CA par mois                 -> alimente le graphique d'evolution
+   TCD 2 : CA par categorie de produit -> histogramme trie
+   TCD 3 : top clients                 -> filtre des 10 premieres valeurs
+   TCD 4 : les mesures KPI seules       -> cartes de synthese
+Insertion > Segment / Chronologie      -> filtres visuels
+   Connexions de rapport : brancher UN segment sur TOUS les TCD
+Mise en forme conditionnelle           -> jeux d'icones, barres de donnees
+Feuille TABLEAU DE BORD dediee          -> les graphiques y sont regroupes,
+                                          les feuilles de calcul sont masquees</pre>
+<div class="tip">Un segment ne pilote par défaut qu'un seul TCD. Clic droit sur le segment ▸ <strong>Connexions de rapport</strong> ▸ cocher tous les TCD : c'est ce qui donne l'impression d'un vrai tableau de bord interactif.</div>
+<h3>5. Étape 4 — La macro d'actualisation</h3>
+<p>La touche finale : un bouton unique qui rejoue toute la chaîne. C'est du VBA classique, mais qui pilote Power Query et le modèle.</p>
+<pre class="pseudo">Sub ActualiserTableauBord()
+    Application.ScreenUpdating = False     ' fige l'ecran : nettement plus rapide
+    ThisWorkbook.RefreshAll                ' rejoue TOUTES les requetes et TCD
+    DoEvents                               ' laisse Excel terminer l'actualisation
+    Range("Z1").Value = Now                ' horodate la derniere mise a jour
+    Application.ScreenUpdating = True
+    MsgBox "Tableau de bord actualise.", vbInformation
+End Sub</pre>
+<div class="warn"><code>RefreshAll</code> est <strong>asynchrone</strong> par défaut : la macro continue pendant que les requêtes travaillent, et la date horodatée peut être écrite trop tôt. La parade : décocher <strong>Actualisation en arrière-plan</strong> dans les propriétés de chaque connexion (<strong>Données ▸ Requêtes et connexions ▸ clic droit ▸ Propriétés</strong>), ou forcer par code avec <code>BackgroundQuery = False</code>.</div>
+<h3>6. Étape 5 — L'ouverture</h3>
+<pre class="pseudo">Vers Power BI Desktop  ' quand le volume depasse Excel, quand il faut publier
+                       ' et partager en ligne : Obtenir les donnees > Classeur Excel
+                       ' Les requetes M et les mesures DAX sont reutilisables telles quelles
+Vers Office Script     ' pour que la mise en forme tourne aussi dans Excel web
+Vers Power Automate    ' pour declencher l'actualisation a heure fixe, sans ouvrir Excel
+Vers Copilot           ' pour explorer et resumer, apres verification des chiffres</pre>
+<h3>7. La check-list de livraison</h3>
+<pre class="pseudo">[ ] Classeur enregistre en .xlsm (sinon la macro disparait)
+[ ] Option Explicit en tete de chaque module
+[ ] Gestion d'erreur sur chaque procedure publique (On Error GoTo)
+[ ] ScreenUpdating et DisplayAlerts systematiquement restaures
+[ ] Points d'arret supprimes (Ctrl+Maj+F9), projet compile (Debogage > Compiler)
+[ ] Chemins de fichiers non codes en dur : utiliser ThisWorkbook.Path
+[ ] Feuilles techniques masquees, feuille Tableau de bord protegee
+[ ] Une notice d'une page : source des donnees, frequence, contact
+[ ] Test sur une COPIE des donnees reelles, avec un utilisateur reel
+[ ] Rappel securite : le fichier vient d'une source connue, il est signe
+    ou depose dans un emplacement approuve</pre>
+<div class="tip">Le meilleur tableau de bord n'est pas le plus sophistiqué : c'est celui qui est <em>encore utilisé</em> six mois plus tard. Simplicité de la page d'accueil, actualisation en un clic, et une notice courte — voilà ce qui fait la différence.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans la chaîne du projet, quel outil intervient en PREMIER ?", opts: ["Le TCD", "Power Query", "La macro VBA", "Power BI"], a: 1, exp: "On importe et on nettoie d'abord avec Power Query ; tout le reste en dépend." },
+    { type: "input", q: "Quelle option de chargement Power Query évite de déverser les lignes dans une feuille ?", a: ["Ne créer que la connexion", "ne créer que la connexion", "Ne creer que la connexion", "Connexion uniquement"], ph: "Ne créer …", exp: "Fermer et charger dans… ▸ Ne créer que la connexion + Ajouter au modèle de données." },
+    { type: "input", q: "Quelle instruction VBA actualise toutes les requêtes et tous les TCD du classeur ?", a: ["ThisWorkbook.RefreshAll", "RefreshAll", "ActiveWorkbook.RefreshAll", "refreshall"], ph: "…RefreshAll", exp: "RefreshAll rejoue les requêtes Power Query puis recalcule les tableaux croisés." },
+    { type: "qcm", q: "Pourquoi RefreshAll peut-il horodater une mise à jour trop tôt ?", opts: ["À cause de ScreenUpdating", "Parce que l'actualisation en arrière-plan est asynchrone", "Parce que le fichier est en .xlsx", "Parce qu'il manque Option Explicit"], a: 1, exp: "La macro continue pendant que les requêtes travaillent : il faut désactiver l'actualisation en arrière-plan." },
+    { type: "input", q: "Quelle commande (clic droit sur un segment) le branche sur plusieurs TCD à la fois ?", a: ["Connexions de rapport", "connexions de rapport", "Connexions du rapport"], ph: "Connexions …", exp: "Sans cela, un segment ne pilote que le TCD sur lequel il a été créé." },
+    { type: "vf", q: "Un classeur contenant une macro doit être enregistré en .xlsm.", a: true, exp: "Le .xlsx supprime purement et simplement le projet VBA à l'enregistrement." },
+    { type: "input", q: "Quelle propriété VBA donne le dossier du classeur courant, pour éviter un chemin codé en dur ?", a: ["ThisWorkbook.Path", "thisworkbook.path", "ThisWorkbook.Path "], ph: "ThisWorkbook…", exp: "ThisWorkbook.Path rend le classeur portable d'un poste à l'autre." },
+    { type: "qcm", q: "Dans le modèle en étoile du projet, quelle table est la table de faits ?", opts: ["Clients", "Produits", "Ventes", "Calendrier"], a: 2, exp: "Ventes contient les événements mesurables (quantités, montants)." },
+    { type: "input", q: "Écris la mesure DAX du panier moyen à partir de [CA Total] et [Nb Commandes], avec une division protégée.", a: ["DIVIDE([CA Total], [Nb Commandes], 0)", "divide([CA Total], [Nb Commandes], 0)", "DIVIDE([CA Total],[Nb Commandes],0)"], ph: "DIVIDE(…", exp: "DIVIDE évite l'erreur quand aucune commande n'est présente dans le contexte." },
+    { type: "vf", q: "Les requêtes Power Query et les mesures DAX créées dans Excel sont réutilisables dans Power BI Desktop.", a: true, exp: "C'est le même moteur : le passage à Power BI ne fait pas repartir de zéro." },
+    { type: "qcm", q: "Quelle paire d'instructions doit toujours être restaurée en fin de macro ?", opts: ["Dim et Set", "ScreenUpdating et DisplayAlerts", "For et Next", "Open et Close"], a: 1, exp: "Sinon Excel reste figé ou muet pour l'utilisateur après l'exécution." },
+    { type: "input", q: "Quelle commande de l'éditeur VBA détecte les fautes de syntaxe sans exécuter le code ?", a: ["Compiler VBAProject", "Débogage ▸ Compiler VBAProject", "Compiler", "compiler vbaproject"], ph: "Compiler …", exp: "Débogage ▸ Compiler VBAProject : à faire systématiquement avant livraison." },
+    { type: "qcm", q: "Quel outil permettrait de déclencher l'actualisation chaque lundi sans ouvrir Excel ?", opts: ["Une macro VBA", "Power Automate", "Une mise en forme conditionnelle", "Un segment"], a: 1, exp: "Power Automate exécute un flux planifié côté cloud, classeur fermé." },
+    { type: "input", q: "Quel type de graphique est le plus adapté à l'évolution mensuelle du CA ?", a: ["courbe", "graphique en courbes", "une courbe", "Courbe", "graphique en ligne"], ph: "un type", exp: "La courbe met en évidence la tendance sur l'axe du temps." },
+    { type: "vf", q: "Avant de livrer, il est recommandé de tester le classeur sur une copie des données réelles.", a: true, exp: "Les données réelles révèlent les cas particuliers qu'un jeu de test propre ne contient jamais." }
+  ],
+  final: {
+    title: "Examen final — Le tableau de bord commercial de A à Z",
+    intro: `<p><strong>Le contexte.</strong> La société DistriPlus te confie son suivi commercial. Chaque mois, ses trois agences déposent un fichier CSV dans le dossier <em>C:\\DistriPlus\\Exports</em> (Ventes_2026_01.csv, Ventes_2026_02.csv…). Un classeur <em>Referentiel.xlsx</em> contient les feuilles Clients et Produits.</p>
+<pre class="pseudo">Ventes_AAAA_MM.csv : IDVente ; DateVente ; IDClient ; IDProduit ; Quantite ; PrixUnitaire
+Referentiel.xlsx
+   Clients  : IDClient  | NomClient  | Ville   | Segment
+   Produits : IDProduit | NomProduit | Categorie | CoutUnitaire</pre>
+<p><strong>La demande.</strong> Livrer un classeur <strong>DistriPlus_TableauDeBord.xlsm</strong> qui : (1) importe et nettoie automatiquement tous les CSV du dossier, (2) construit un modèle en étoile avec les mesures de pilotage, (3) affiche une feuille Tableau de bord avec KPI, évolution mensuelle, top 10 clients, répartition par catégorie et segments, (4) propose un bouton « Actualiser » qui rejoue toute la chaîne, (5) documente la façon de passer à Power BI.</p>`,
+    questions: [
+      { type: "input", q: "Quel connecteur Power Query utiliser pour importer d'un coup tous les CSV du dossier Exports ?", a: ["Dossier", "À partir d'un dossier", "A partir d'un dossier", "dossier", "connecteur Dossier"], ph: "À partir d'un …", exp: "Données ▸ Obtenir des données ▸ À partir d'un fichier ▸ À partir d'un dossier, puis Combiner et transformer." },
+      { type: "input", q: "Écris la mesure DAX qui calcule le CA en multipliant Quantite par PrixUnitaire ligne par ligne.", a: ["SUMX(Ventes, Ventes[Quantite] * Ventes[PrixUnitaire])", "sumx(Ventes, Ventes[Quantite] * Ventes[PrixUnitaire])", "SUMX(Ventes,Ventes[Quantite]*Ventes[PrixUnitaire])"], ph: "SUMX(…", exp: "SUMX itère sur chaque ligne : multiplier deux SUM globales donnerait un résultat faux." },
+      { type: "qcm", q: "Quelle cardinalité relie Clients[IDClient] à Ventes[IDClient] ?", opts: ["Un à un", "Un à plusieurs", "Plusieurs à plusieurs", "Aucune"], a: 1, exp: "Un client passe plusieurs commandes : relation 1:* dans le sens dimension vers faits." },
+      { type: "input", q: "Écris la ligne VBA qui actualise toutes les requêtes et TCD du classeur.", a: ["ThisWorkbook.RefreshAll", "thisworkbook.refreshall", "RefreshAll", "ActiveWorkbook.RefreshAll"], ph: "ThisWorkbook…", exp: "RefreshAll rejoue Power Query puis recalcule le modèle et les tableaux croisés." },
+      { type: "qcm", q: "Sous quel format enregistrer le livrable final ?", opts: [".xlsx", ".csv", ".xlsm", ".pbix"], a: 2, exp: "Le .xlsm est le seul format Excel courant qui conserve la macro d'actualisation." }
+    ],
+    solution: `<h3>ÉTAPE 1 — Importer et nettoyer (Power Query)</h3>
+<pre class="pseudo">A. Requete "Ventes"
+   Donnees > Obtenir des donnees > A partir d'un fichier > A partir d'un dossier
+   Dossier : C:\\DistriPlus\\Exports
+   Bouton  : Combiner et transformer les donnees
+   Etapes appliquees a verifier :
+      Source                  ' liste des fichiers du dossier
+      Fichiers combines       ' tous les CSV empiles en une seule table
+      En-tetes promus         ' Accueil > Utiliser la 1re ligne pour les en-tetes
+      Type modifie            ' IDVente entier, DateVente date, Quantite entier,
+                              ' PrixUnitaire decimal
+      Colonnes supprimees     ' retirer Source.Name si inutile
+      Lignes filtrees         ' supprimer les lignes ou IDVente est vide
+      Doublons supprimes      ' sur IDVente
+   Renommer la requete : Ventes
+
+B. Requetes "Clients" et "Produits"
+   Donnees > Obtenir des donnees > A partir d'un classeur Excel > Referentiel.xlsx
+   Cocher les feuilles Clients et Produits, verifier les types, supprimer les vides
+
+C. Chargement (le point qui fait la difference)
+   Accueil > Fermer et charger dans...
+      Ne creer que la connexion
+      [x] Ajouter ces donnees au modele de donnees</pre>
+<h3>ÉTAPE 2 — Le modèle en étoile et les mesures</h3>
+<pre class="pseudo">A. Table de dates : Power Pivot > Gerer > Concevoir > Table de dates > Nouvelle
+   (ou une requete Power Query generant une ligne par jour)
+
+B. Relations : Donnees > Relations (ou Power Pivot > Vue de diagramme)
+   Clients[IDClient]   -> Ventes[IDClient]    ' 1:*
+   Produits[IDProduit] -> Ventes[IDProduit]   ' 1:*
+   Calendrier[Date]    -> Ventes[DateVente]   ' 1:*
+   -> Ventes au centre, les trois dimensions autour : c'est l'etoile</pre>
+<pre class="pseudo">C. Mesures : Power Pivot > Mesures > Nouvelle mesure
+
+CA Total :=
+SUMX(                                        // itere ligne par ligne...
+    Ventes,
+    Ventes[Quantite] * Ventes[PrixUnitaire]  // ...puis additionne
+)
+
+Cout Total :=
+SUMX(
+    Ventes,
+    Ventes[Quantite] * RELATED(Produits[CoutUnitaire])   // suit la relation vers Produits
+)
+
+Marge := [CA Total] - [Cout Total]                       // marge en valeur
+Taux de Marge := DIVIDE([Marge], [CA Total], 0)          // en % du CA
+
+Nb Commandes := DISTINCTCOUNT(Ventes[IDVente])           // commandes distinctes
+Nb Clients := DISTINCTCOUNT(Ventes[IDClient])            // clients uniques
+Panier Moyen := DIVIDE([CA Total], [Nb Commandes], 0)    // division protegee
+
+CA N-1 :=
+CALCULATE(                                               // change le contexte de filtre
+    [CA Total],
+    SAMEPERIODLASTYEAR(Calendrier[Date])                 // meme periode, an dernier
+)
+Evolution % := DIVIDE([CA Total] - [CA N-1], [CA N-1], 0)</pre>
+<h3>ÉTAPE 3 — Les TCD, les graphiques et la feuille Tableau de bord</h3>
+<pre class="pseudo">Creer une feuille "Donnees_TCD" (qui sera masquee) et y poser quatre TCD :
+   Insertion > Tableau croise dynamique > A partir du modele de donnees
+
+   TCD_KPI       Valeurs : [CA Total] [Marge] [Nb Commandes] [Panier Moyen] [Evolution %]
+   TCD_Mois      Lignes : Calendrier[NomMois]        Valeurs : [CA Total] [CA N-1]
+                 -> Graphique en courbes (evolution + comparaison)
+   TCD_Categorie Lignes : Produits[Categorie]         Valeurs : [CA Total]
+                 -> Histogramme, trie par valeur decroissante
+   TCD_Clients   Lignes : Clients[NomClient]          Valeurs : [CA Total]
+                 -> Filtre des valeurs > 10 premiers elements
+                 -> Barres horizontales
+
+Feuille "Tableau de bord" :
+   Coller les quatre graphiques, aligner sur une grille
+   Zones de texte liees aux cellules de KPI (=Donnees_TCD!B3) pour les grands chiffres
+   Insertion > Segment : Calendrier[Annee], Clients[Ville], Produits[Categorie]
+   Insertion > Chronologie : Calendrier[Date]
+   Clic droit sur CHAQUE segment > Connexions de rapport > cocher les 4 TCD
+   Mise en forme conditionnelle : jeu d'icones sur Evolution %
+   Affichage : decocher Quadrillage, En-tetes, Barre de formule
+   Clic droit sur Donnees_TCD > Masquer
+   Revision > Proteger la feuille (sans mot de passe : on protege des maladresses)</pre>
+<h3>ÉTAPE 4 — La macro d'actualisation</h3>
+<pre class="pseudo">Option Explicit                          ' declaration obligatoire des variables
+
+Sub ActualiserTableauBord()
+    Dim cn As WorkbookConnection         ' pour parcourir les connexions
+    Dim ws As Worksheet
+
+    On Error GoTo Gestion                ' filet de securite des l'entree
+    Application.ScreenUpdating = False   ' fige l'ecran : beaucoup plus rapide
+    Application.DisplayAlerts = False    ' pas de boite de confirmation
+    Application.StatusBar = "Actualisation en cours..."   ' message discret
+
+    ' --- 1. Forcer l'actualisation SYNCHRONE des requetes ---
+    For Each cn In ThisWorkbook.Connections        ' parcourt chaque connexion
+        On Error Resume Next                       ' certaines connexions n'ont pas OLEDB
+        cn.OLEDBConnection.BackgroundQuery = False ' attendre la fin avant de continuer
+        On Error GoTo Gestion                      ' on referme le parachute local
+    Next cn
+
+    ' --- 2. Rejouer toute la chaine ---
+    ThisWorkbook.RefreshAll              ' requetes Power Query + modele + TCD
+    DoEvents                             ' laisse Excel terminer son travail
+    ThisWorkbook.Model.Refresh           ' recalcule explicitement le modele
+
+    ' --- 3. Horodater la mise a jour ---
+    Set ws = ThisWorkbook.Worksheets("Tableau de bord")
+    ws.Range("H1").Value = "Derniere actualisation : " &amp; Format(Now, "dd/mm/yyyy hh:mm")
+
+Sortie:                                  ' point de sortie unique
+    Application.StatusBar = False        ' rend la barre d'etat a Excel
+    Application.DisplayAlerts = True     ' on restaure TOUJOURS l'environnement
+    Application.ScreenUpdating = True
+    Exit Sub                             ' sans ceci, on tomberait dans Gestion
+
+Gestion:                                 ' bloc de gestion d'erreur
+    MsgBox "Actualisation impossible." &amp; vbCrLf &amp; _
+           "Erreur " &amp; Err.Number &amp; " : " &amp; Err.Description &amp; vbCrLf &amp; _
+           "Verifie que le dossier C:\\DistriPlus\\Exports est accessible.", vbCritical
+    Resume Sortie                        ' repart au nettoyage puis sort
+End Sub</pre>
+<p>Poser le bouton : <strong>Développeur ▸ Insérer ▸ Contrôles de formulaire ▸ Bouton</strong>, le dessiner sur la feuille Tableau de bord, affecter <em>ActualiserTableauBord</em>, puis clic droit ▸ <strong>Modifier le texte</strong> ▸ « Actualiser les données ». Enfin, dans <strong>ThisWorkbook</strong> :</p>
+<pre class="pseudo">Private Sub Workbook_Open()
+    Worksheets("Tableau de bord").Activate   ' l'utilisateur arrive toujours ici
+End Sub</pre>
+<h3>ÉTAPE 5 — L'ouverture vers Power BI et Copilot</h3>
+<pre class="pseudo">Passage a Power BI Desktop (logiciel separe, telechargement gratuit)
+   1. Accueil > Obtenir les donnees > Classeur Excel > DistriPlus_TableauDeBord.xlsm
+      (ou refaire les requetes vers le dossier : les etapes M sont identiques)
+   2. Les mesures DAX se recopient telles quelles : meme langage, meme moteur
+   3. Vue Modele : recreer les trois relations 1:*
+   4. Vue Rapport : cartes KPI, courbe, barres, segments
+   5. Accueil > Publier > espace de travail
+      -> le partage avec des collegues exige une licence Power BI Pro
+      -> une source locale exige une passerelle de donnees pour l'actualisation planifiee
+
+Automatisation complete
+   Office Script    : rejouer la mise en forme dans Excel web
+   Power Automate   : flux planifie tous les lundis 7 h, mail + message Teams
+   Copilot          : "Compare le CA par ville a la moyenne et signale les baisses"
+                      -> licence Microsoft 365 Copilot requise, et VERIFIER les chiffres</pre>
+<h3>Livraison</h3>
+<pre class="pseudo">[ ] Enregistre en .xlsm            [ ] Option Explicit partout
+[ ] Gestion d'erreur en place      [ ] ScreenUpdating restaure
+[ ] Projet compile, points d'arret retires
+[ ] Feuille Donnees_TCD masquee, Tableau de bord protegee
+[ ] Notice d'une page : source, frequence d'actualisation, contact
+[ ] Teste sur une copie des donnees reelles, avec l'utilisateur final
+[ ] Fichier depose dans un emplacement approuve ou projet signe numeriquement</pre>
+<p>Ce classeur est un aboutissement : Power Query pour la fiabilité, le modèle pour la logique métier, les TCD pour la lisibilité, VBA pour le confort d'usage, et une porte ouverte vers le cloud quand les volumes ou le partage l'exigeront. Voilà exactement ce que recouvre le mot « expert Excel ».</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code (VBA, DAX, ou tes étapes Power Query)…",
+  items: [
+  { id: "excelpro-j31", title: "Projet — La chaîne de données complète", level: 3,
+    statement: "Une clinique veut piloter son activité. Chaque semaine, un export CSV arrive dans <em>C:\\Clinique\\Exports</em> : <em>ID_Consultation ; Date ; ID_Praticien ; ID_Patient ; Specialite ; Duree_Min ; Montant</em>. Un classeur <em>Referentiel.xlsx</em> contient Praticiens (ID_Praticien ; Nom ; Service) et Patients (ID_Patient ; Ville ; Tranche_Age). Décris et code la chaîne complète : (1) les étapes Power Query, (2) les relations du modèle, (3) cinq mesures DAX commentées (CA, nombre de consultations, durée moyenne, patients uniques, évolution vs année précédente), (4) les TCD et graphiques du tableau de bord.",
+    hints: [
+      "Le connecteur À partir d'un dossier empile automatiquement tous les CSV : déposer un nouvel export suffira ensuite.",
+      "Charge avec Ne créer que la connexion + Ajouter ces données au modèle de données : les lignes ne doivent pas encombrer une feuille.",
+      "Toute comparaison temporelle (SAMEPERIODLASTYEAR) exige une table de dates reliée à la colonne Date de la table de faits."
+    ],
+    solution: "' ============ 1. POWER QUERY : import et nettoyage ============\n' Donnees > Obtenir des donnees > A partir d'un fichier > A partir d'un dossier\n' Dossier : C:\\Clinique\\Exports  -> bouton Combiner et transformer les donnees\n' Etapes appliquees (volet de droite) :\n'    Source                 ' liste des fichiers du dossier\n'    Fichiers combines      ' tous les CSV empiles en une table unique\n'    En-tetes promus        ' Accueil > Utiliser la 1re ligne pour les en-tetes\n'    Type modifie           ' Date -> Date ; Duree_Min -> entier ; Montant -> decimal\n'    Lignes filtrees        ' supprimer les ID_Consultation vides\n'    Doublons supprimes     ' sur ID_Consultation\n'    Colonnes supprimees    ' retirer Source.Name\n'    Renommer la requete    ' -> Consultations\n' Referentiel.xlsx : Obtenir des donnees > A partir d'un classeur Excel\n'    -> requetes Praticiens et Patients, types verifies\n' Chargement des trois requetes :\n'    Accueil > Fermer et charger dans... > Ne creer que la connexion\n'                                        [x] Ajouter au modele de donnees\n\n' ============ 2. MODELE : relations en etoile ============\n' Donnees > Relations (ou Power Pivot > Gerer > Vue de diagramme)\n'    Praticiens[ID_Praticien] -> Consultations[ID_Praticien]   ' 1:*\n'    Patients[ID_Patient]     -> Consultations[ID_Patient]     ' 1:*\n'    Calendrier[Date]         -> Consultations[Date]           ' 1:*\n' Table Calendrier : Power Pivot > Concevoir > Table de dates > Nouvelle\n' -> Consultations est la table de FAITS ; les trois autres sont les DIMENSIONS\n\n// ============ 3. MESURES DAX (Power Pivot > Mesures) ============\nCA Total := SUM(Consultations[Montant])            // chiffre d'affaires du contexte\n\nNb Consultations := COUNTROWS(Consultations)       // nombre de lignes filtrees\n\nDuree Moyenne :=\nDIVIDE(                                            // division protegee contre le zero\n    SUM(Consultations[Duree_Min]),                 // total des minutes\n    [Nb Consultations],                            // nombre de consultations\n    0                                              // valeur si aucune consultation\n)\n\nPatients Uniques :=\nDISTINCTCOUNT(Consultations[ID_Patient])           // chaque patient compte une seule fois\n\nCA N-1 :=\nCALCULATE(                                         // modifie le contexte de filtre\n    [CA Total],\n    SAMEPERIODLASTYEAR(Calendrier[Date])           // meme periode, annee precedente\n)\n\nEvolution % :=\nDIVIDE( [CA Total] - [CA N-1], [CA N-1], 0 )       // progression annuelle en %\n\n' ============ 4. TCD ET GRAPHIQUES ============\n' Insertion > Tableau croise dynamique > A partir du modele de donnees\n'    TCD_KPI        Valeurs : [CA Total] [Nb Consultations] [Patients Uniques]\n'                             [Duree Moyenne] [Evolution %]\n'                   -> zones de texte liees, en haut a gauche du tableau de bord\n'    TCD_Mois       Lignes : Calendrier[NomMois]   Valeurs : [CA Total] [CA N-1]\n'                   -> graphique en COURBES : evolution et comparaison N-1\n'    TCD_Specialite Lignes : Consultations[Specialite]  Valeurs : [CA Total]\n'                   -> HISTOGRAMME trie par valeur decroissante\n'    TCD_Service    Lignes : Praticiens[Service]   Valeurs : [Nb Consultations]\n'                   -> BARRES horizontales (libelles longs)\n'    TCD_Age        Lignes : Patients[Tranche_Age] Valeurs : [Patients Uniques]\n'                   -> barres empilees (et non un camembert)\n' Segments : Calendrier[Annee], Praticiens[Service], Patients[Ville]\n'    Clic droit sur chaque segment > Connexions de rapport > cocher TOUS les TCD\n' Chronologie sur Calendrier[Date]\n' Feuille Tableau de bord : graphiques alignes, quadrillage masque, feuille protegee\n' Feuille technique des TCD : clic droit > Masquer\n\nResultat attendu :\n   Une feuille Tableau de bord unique ou l'on lit d'un coup d'oeil le CA du mois,\n   sa progression vs N-1, la specialite la plus rentable et la duree moyenne.\n   Deposer un nouveau CSV dans C:\\Clinique\\Exports puis actualiser suffit\n   a mettre tout le tableau de bord a jour, sans retoucher une seule requete.",
+    note: "L'ordre compte : nettoyer en Power Query (jamais a la main dans la feuille), calculer en DAX (mesures plutot que colonnes), restituer en TCD. Un modele en etoile propre rend toutes les analyses futures possibles sans refonte." },
+
+  { id: "excelpro-j31b", title: "Projet — La macro d'actualisation et la livraison", level: 3,
+    statement: "Suite du projet clinique. Écris la macro <strong>ActualiserTableauBord</strong> qui : rejoue toutes les requêtes Power Query et les TCD de façon synchrone (sans actualisation en arrière-plan), recalcule le modèle de données, horodate la mise à jour en cellule H1 de la feuille « Tableau de bord », protège l'utilisateur de toute erreur d'exécution, et restaure systématiquement l'environnement Excel. Ajoute l'événement d'ouverture qui affiche la bonne feuille, et rédige la check-list de livraison du fichier (format, sécurité, documentation).",
+    hints: [
+      "Structure obligatoire : On Error GoTo Gestion en tête, étiquette Sortie: avec Exit Sub, puis étiquette Gestion: terminée par Resume Sortie.",
+      "RefreshAll est asynchrone : parcours ThisWorkbook.Connections et mets BackgroundQuery = False, sinon l'horodatage est écrit avant la fin de l'actualisation.",
+      "L'événement Workbook_Open se place dans le module ThisWorkbook, jamais dans un module standard. Le fichier doit être en .xlsm."
+    ],
+    solution: "Option Explicit                              ' toute variable doit etre declaree\n\n' ================= MACRO PRINCIPALE (module standard) =================\nSub ActualiserTableauBord()\n    Dim cn As WorkbookConnection             ' pour parcourir les connexions\n    Dim ws As Worksheet                      ' la feuille du tableau de bord\n    Dim debut As Single                      ' pour mesurer la duree\n\n    On Error GoTo Gestion                    ' filet de securite pour toute la procedure\n    debut = Timer                            ' chronometre de depart\n\n    Application.ScreenUpdating = False       ' fige l'ecran : execution bien plus rapide\n    Application.DisplayAlerts = False        ' supprime les demandes de confirmation\n    Application.EnableEvents = False         ' evite de declencher des evenements parasites\n    Application.StatusBar = \"Actualisation des donnees en cours...\"   ' message discret\n\n    ' --- 1. Forcer une actualisation SYNCHRONE ---\n    For Each cn In ThisWorkbook.Connections  ' chaque connexion du classeur\n        On Error Resume Next                 ' toutes n'exposent pas OLEDBConnection\n        cn.OLEDBConnection.BackgroundQuery = False   ' attendre la fin avant de continuer\n        cn.ODBCConnection.BackgroundQuery = False    ' idem pour les connexions ODBC\n        On Error GoTo Gestion                ' on referme aussitot le parachute local\n    Next cn\n\n    ' --- 2. Rejouer toute la chaine de traitement ---\n    ThisWorkbook.RefreshAll                  ' requetes Power Query + TCD\n    DoEvents                                 ' laisse Excel terminer son travail\n    On Error Resume Next                     ' Model.Refresh echoue si pas de modele\n    ThisWorkbook.Model.Refresh               ' recalcule explicitement le modele\n    On Error GoTo Gestion\n\n    ' --- 3. Horodater la mise a jour ---\n    Set ws = ThisWorkbook.Worksheets(\"Tableau de bord\")\n    ws.Unprotect                             ' la feuille est protegee : on la libere\n    ws.Range(\"H1\").Value = \"Derniere actualisation : \" & _\n                           Format(Now, \"dd/mm/yyyy hh:mm\")\n    ws.Protect UserInterfaceOnly:=True       ' on la reprotege (les macros gardent l'acces)\n\n    MsgBox \"Tableau de bord actualise en \" & Format(Timer - debut, \"0.0\") & \" s.\", _\n           vbInformation, \"DistriPlus\"\n\nSortie:                                      ' point de sortie unique et propre\n    Application.StatusBar = False             ' rend la barre d'etat a Excel\n    Application.EnableEvents = True           ' on restaure TOUJOURS l'environnement\n    Application.DisplayAlerts = True\n    Application.ScreenUpdating = True\n    Exit Sub                                 ' indispensable : sinon on tombe dans Gestion\n\nGestion:                                     ' bloc de gestion d'erreur\n    MsgBox \"L'actualisation a echoue.\" & vbCrLf & vbCrLf & _\n           \"Erreur \" & Err.Number & \" : \" & Err.Description & vbCrLf & vbCrLf & _\n           \"Verifie que le dossier des exports est accessible \" & _\n           \"et que les fichiers ne sont pas ouverts ailleurs.\", vbCritical\n    Resume Sortie                            ' repart au nettoyage puis sort\nEnd Sub\n\n' ================= EVENEMENT (module ThisWorkbook) =================\nPrivate Sub Workbook_Open()\n    ' Se declenche automatiquement a chaque ouverture du classeur\n    Application.ScreenUpdating = False\n    Worksheets(\"Tableau de bord\").Activate   ' l'utilisateur arrive toujours au bon endroit\n    Range(\"A1\").Select                       ' vue calee en haut a gauche\n    Application.ScreenUpdating = True\nEnd Sub\n\n' ================= BOUTON =================\n' Developpeur > Inserer > Controles de formulaire > Bouton\n' Le dessiner sur la feuille Tableau de bord, affecter ActualiserTableauBord,\n' puis clic droit > Modifier le texte > \"Actualiser les donnees\"\n\n' ================= CHECK-LIST DE LIVRAISON =================\n' FORMAT\n'   [ ] Enregistre en .xlsm (le .xlsx supprimerait la macro)\n'   [ ] Chemins non codes en dur : privilegier ThisWorkbook.Path\n' CODE\n'   [ ] Option Explicit en tete de chaque module\n'   [ ] On Error GoTo sur chaque procedure publique\n'   [ ] ScreenUpdating / DisplayAlerts / EnableEvents restaures sur TOUS les chemins\n'   [ ] Debogage > Compiler VBAProject : aucune erreur\n'   [ ] Points d'arret supprimes (Ctrl+Maj+F9)\n' PRESENTATION\n'   [ ] Feuilles techniques masquees, feuille Tableau de bord protegee\n'   [ ] Un seul bouton visible : l'utilisateur ne doit rien avoir a comprendre\n' SECURITE\n'   [ ] Projet signe (Outils > Signature electronique) OU fichier depose dans un\n'       emplacement approuve (Fichier > Options > Centre de gestion de la confidentialite)\n'   [ ] Rappeler aux utilisateurs : ne jamais activer les macros d'un fichier inconnu\n' DOCUMENTATION ET TEST\n'   [ ] Notice d'une page : source des donnees, frequence, procedure, contact\n'   [ ] Teste sur une COPIE des donnees reelles, avec l'utilisateur final\n\nResultat attendu :\n   Un clic sur le bouton -> barre d'etat \"Actualisation en cours...\",\n   toutes les requetes rejouees, le modele recalcule, H1 horodate,\n   message \"Tableau de bord actualise en 4.2 s.\"\n   Fichier absent ou verrouille -> message clair, aucun ecran fige, aucune fenetre jaune.",
+    note: "Le patron On Error GoTo / Sortie: / Exit Sub / Gestion: / Resume Sortie garantit qu'aucun chemin d'execution ne laisse Excel dans un etat degrade. Le detail qui trahit le professionnel : BackgroundQuery = False avant RefreshAll, sans quoi l'horodatage ment." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

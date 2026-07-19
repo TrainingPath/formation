@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Tester l'existant : le code legacy",
+  subtitle: "8000 lignes, zéro test, et on te demande d'y toucher : la trousse de survie.",
+  theory: `
+<h3>1. Legacy = code sans tests</h3>
+<p>Le TDD, c'est le luxe du code neuf. Mais la première version de la Ludothèque existe : une fonction <code>calculer_facture(membre)</code> de 120 lignes qui mélange calculs, <code>date.today()</code>, lectures en base et affichage — et <strong>pas un seul test</strong>. C'est la définition de Michael Feathers : le <strong>code legacy</strong>, c'est du code sans tests, quel que soit son âge. Le dilemme est un cercle vicieux : on a peur de le modifier <em>parce qu'il n'a pas de tests</em>, et on ne peut pas le tester <em>sans le modifier</em> (impossible d'isoler l'horloge ou la base). Cette leçon casse le cercle.</p>
+
+<h3>2. Les tests de caractérisation : photographier l'existant</h3>
+<p>Premier réflexe, contre-intuitif : on n'écrit PAS des tests de ce que le code <em>devrait</em> faire, mais de ce qu'il <strong>fait aujourd'hui</strong>. On appelle la fonction, on <strong>observe</strong> le résultat, et on le grave dans un assert — même s'il semble bizarre :</p>
+<pre class="pseudo"># 1. On ecrit un assert volontairement faux pour OBSERVER :
+def test_caracterisation_facture():                 # on cree un test dont le seul but est d'observer
+    assert calculer_facture(membre_type) == -999    # valeur bidon
+
+# 2. pytest repond : assert 23.50 == -999
+# 3. On grave la valeur observee :
+def test_caracterisation_facture():                 # on reecrit le test avec la vraie valeur vue
+    assert calculer_facture(membre_type) == 23.50   # comportement ACTUEL</pre>
+<p>Ces <strong>tests de caractérisation</strong> ne jugent pas : ils <strong>documentent</strong>. Leur promesse : « tant que je suis vert, le comportement n'a pas changé ». C'est exactement le filet qu'il faut avant de refactorer ou corriger.</p>
+
+<h3>3. Casser les dépendances : trouver la couture</h3>
+<p>Problème : <code>calculer_facture</code> appelle <code>date.today()</code> et lit MySQL en plein milieu — impossible de la caractériser de façon reproductible. Il faut une <strong>couture</strong> (<em>seam</em>) : un point où l'on peut substituer une dépendance <strong>sans réécrire la logique</strong>. La technique la plus sûre : <strong>remonter la dépendance en paramètre</strong>, avec une valeur par défaut qui préserve tous les appels existants :</p>
+<pre class="pseudo"># AVANT : l'horloge est enterree dans la fonction
+def calculer_facture(membre):                       # la fonction ne recoit que le membre
+    aujourd_hui = date.today()                      # elle lit l'horloge elle-meme : impossible a figer dans un test
+    ...                                             # (reste de la logique, non montre)
+
+# APRES : parametre par defaut → AUCUN appelant ne change
+def calculer_facture(membre, aujourd_hui=None):     # on AJOUTE un parametre optionnel (None par defaut)
+    aujourd_hui = aujourd_hui or date.today()       # si rien n'est fourni, on retombe sur date.today() (comportement inchange)
+    ...                                             # (reste de la logique, non montre)
+
+# Le test peut enfin figer le temps, sans meme un mock :
+calculer_facture(membre_type, aujourd_hui=date(2026, 7, 9))   # le test IMPOSE la date : resultat reproductible</pre>
+<p>Même geste pour la base : extraire la lecture dans une petite fonction, puis l'injecter ou la patcher (leçon 10). Chaque couture est une modification <strong>minuscule et mécanique</strong>, au risque quasi nul.</p>
+
+<h3>4. Sprout method : le neuf pousse à côté du vieux</h3>
+<p>On te demande d'AJOUTER une règle (une majoration week-end) dans ce monstre de 120 lignes ? Ne la code pas au milieu. La technique du <strong>sprout method</strong> (méthode bourgeon) : écrire la nouvelle logique dans une <strong>fonction neuve, développée en TDD</strong>, puis n'ajouter qu'UNE ligne d'appel dans le legacy :</p>
+<pre class="pseudo"># Fonction neuve, nee en TDD, testee a 100%
+def majoration_weekend(prix, date_location):        # petite fonction isolee, donc facile a tester
+    if date_location.weekday() &gt;= 5:                # weekday() : 0=lundi ... 5=samedi, 6=dimanche → 5 ou + = week-end
+        return round(prix * 1.20, 2)                # week-end : +20%, arrondi a 2 decimales
+    return prix                                     # en semaine : prix inchange
+
+# Dans le legacy : une seule ligne ajoutee
+def calculer_facture(membre, aujourd_hui=None):     # le vieux code, quasiment intact
+    ...                                             # (les 120 lignes existantes)
+    prix = majoration_weekend(prix, aujourd_hui)   # ← le bourgeon
+    ...                                             # (suite des 120 lignes)</pre>
+<p>Le vieux code reste couvert par la caractérisation ; le neuf est couvert par le TDD. Personne n'a réécrit les 120 lignes.</p>
+
+<h3>5. La stratégie d'ensemble</h3>
+<p>L'ordre de survie en legacy : <strong>1)</strong> caractériser le comportement actuel autour de la zone à modifier ; <strong>2)</strong> casser les dépendances a minima (coutures) pour rendre la caractérisation reproductible ; <strong>3)</strong> modifier ou faire pousser le neuf en TDD ; <strong>4)</strong> refactorer sous le filet (leçon 19). Et la <strong>règle du boy-scout</strong> : laisse chaque fichier un peu plus propre — et un peu plus testé — que tu ne l'as trouvé. Pas besoin de tout couvrir : couvre <strong>ce que tu touches</strong>. En une ligne : mêmes techniques en Java, C# ou PHP — le livre de Feathers, « Working Effectively with Legacy Code », les décline dans tous les langages.</p>
+<div class="warn">Pendant la caractérisation, tu VAS découvrir des bugs (« ce plafond est appliqué avant la remise, c'est louche »). Ne corrige RIEN à ce stade : grave le comportement actuel, note le bug dans un ticket. Corriger et caractériser en même temps, c'est ne plus savoir si le rouge vient de toi ou du bug.</div>
+<div class="tip">Ne cherche pas à couvrir les 8000 lignes : caractérise UNIQUEMENT la zone que ta prochaine modification va toucher. Le legacy s'apprivoise par petites conquêtes, modification après modification.</div>`,
+  exercises: [
+    { type: "qcm", q: "La définition du code legacy selon Michael Feathers :", opts: ["Du code de plus de dix ans", "Du code sans tests", "Du code en COBOL", "Du code commenté"], a: 1, exp: "Quel que soit son âge : sans tests, on a peur d'y toucher." },
+    { type: "qcm", q: "Le cercle vicieux du legacy :", opts: ["Trop de tests, pas assez de code", "On a peur de le modifier sans tests, et on ne peut pas le tester sans le modifier", "Il compile trop lentement", "Personne ne connaît Git"], a: 1, exp: "Les coutures cassent ce cercle par des modifications minuscules et mécaniques." },
+    { type: "qcm", q: "Un test de caractérisation vérifie…", opts: ["Ce que le code devrait faire selon la spec", "Ce que le code fait AUJOURD'HUI, même si c'est bizarre", "La vitesse du code", "Le style du code"], a: 1, exp: "Il documente l'existant : « tant que je suis vert, rien n'a changé »." },
+    { type: "qcm", q: "L'astuce de l'assert volontairement faux (== -999) sert à…", opts: ["Casser la suite", "Faire afficher par pytest la valeur réellement renvoyée, pour la graver ensuite", "Tester les nombres négatifs", "Mesurer la couverture"], a: 1, exp: "pytest devient un outil d'observation : assert 23.50 == -999 révèle le 23.50." },
+    { type: "vf", q: "Pendant la caractérisation, si on repère un bug, on le corrige immédiatement.", a: false, exp: "On grave le comportement actuel et on note le bug : corriger viendra après, sous le filet." },
+    { type: "input", q: "Le nom (français ou anglais) du point où l'on peut substituer une dépendance sans réécrire la logique :", a: ["couture", "seam", "une couture"], ph: "un mot…", exp: "La couture (seam) : là où l'on découd la dépendance pour tester." },
+    { type: "qcm", q: "Remonter date.today() en paramètre aujourd_hui=None avec valeur par défaut…", opts: ["Casse tous les appelants", "Ne casse aucun appelant et ouvre une couture pour les tests", "Rend le code plus lent", "Nécessite un mock obligatoire"], a: 1, exp: "Les appels existants gardent leur comportement ; le test injecte sa date figée." },
+    { type: "qcm", q: "La technique du sprout method consiste à…", opts: ["Réécrire tout le fichier", "Écrire la nouvelle logique dans une fonction neuve testée en TDD, appelée par une ligne dans le legacy", "Supprimer le legacy", "Commenter l'ancien code"], a: 1, exp: "Le neuf pousse à côté du vieux : couverture TDD pour l'un, caractérisation pour l'autre." },
+    { type: "qcm", q: "Pourquoi ne pas coder la majoration week-end au milieu des 120 lignes ?", opts: ["Python l'interdit", "Le code ajouté là serait aussi intestable que le reste", "C'est trop rapide", "La fonction est privée"], a: 1, exp: "Dans le monstre, la règle neuve hériterait de toutes les dépendances enterrées." },
+    { type: "qcm", q: "L'ordre de survie en legacy :", opts: ["Refactorer, puis tester, puis corriger", "Caractériser → casser les dépendances a minima → TDD pour le neuf → refactorer sous le filet", "Tout réécrire de zéro", "Corriger d'abord, tester ensuite"], a: 1, exp: "Le filet d'abord, les modifications ensuite." },
+    { type: "vf", q: "Il faut couvrir les 8000 lignes de tests avant la moindre modification.", a: false, exp: "On caractérise uniquement la zone que la prochaine modification va toucher." },
+    { type: "input", q: "La règle qui dit de laisser chaque fichier un peu plus propre qu'on ne l'a trouvé : la règle du…", a: ["boy-scout", "boy scout", "boyscout"], ph: "deux mots…", exp: "Petites conquêtes : le legacy s'apprivoise modification après modification." },
+    { type: "qcm", q: "La promesse d'un test de caractérisation vert :", opts: ["Le code est sans bug", "Le comportement n'a pas changé depuis la photo", "Le code est rapide", "La spec est respectée"], a: 1, exp: "Il ne juge pas la justesse : il détecte tout changement de comportement." },
+    { type: "vf", q: "Les techniques de cette leçon sont propres à Python.", a: false, exp: "Feathers les décline en Java, C#, C++ : coutures et caractérisation sont universelles." },
+    { type: "qcm", q: "Une fois calculer_facture caractérisée et la couture posée, corriger le vrai bug du plafond devient…", opts: ["Impossible", "Un changement fait sous filet : on ajuste le test de caractérisation en connaissance de cause", "Inutile", "Automatique"], a: 1, exp: "Le rouge attendu du test caractérisant confirme que SEUL le comportement visé a changé." }
+  ],
+  final: {
+    title: "Exercice final — Opération sauvetage",
+    intro: `<p>La fonction calculer_facture, 120 lignes, zéro test, et une majoration week-end à ajouter pour lundi. Déroule le plan.</p>`,
+    questions: [
+      { type: "qcm", q: "Ta toute première action sur ce code :", opts: ["Réécrire la fonction proprement", "Écrire des tests de caractérisation autour de la zone à modifier", "Ajouter la majoration directement", "Supprimer les 120 lignes"], a: 1, exp: "Photographier avant de toucher : le filet d'abord." },
+      { type: "qcm", q: "calculer_facture appelle date.today() en plein milieu. La couture la plus sûre :", opts: ["Changer l'horloge du serveur", "Un paramètre aujourd_hui=None avec valeur par défaut date.today()", "Supprimer la ligne", "Un sleep dans le test"], a: 1, exp: "Aucun appelant ne change, et le test injecte sa date figée." },
+      { type: "vf", q: "Un test de caractérisation peut graver un résultat qu'on soupçonne d'être un bug.", a: true, exp: "Il documente l'existant ; le bug part dans un ticket et sera corrigé sous filet." },
+      { type: "input", q: "La technique qui fait naître la majoration week-end dans une fonction neuve testée en TDD : la … method.", a: ["sprout", "sprout method"], ph: "un mot anglais…", exp: "Le bourgeon : une ligne d'appel dans le legacy, toute la logique testée à côté." },
+      { type: "qcm", q: "Après la livraison, la règle du boy-scout te demande…", opts: ["De tout réécrire", "De laisser la zone touchée un peu plus propre et testée qu'avant", "De supprimer les tests de caractérisation", "De fermer le projet"], a: 1, exp: "Conquête par conquête, le legacy recule." }
+    ],
+    solution: `<pre class="pseudo">Legacy         : code sans tests (Feathers) — le cercle vicieux
+Caracterisation: graver le comportement ACTUEL (assert -999 → observer)
+Couture (seam) : parametre par defaut → dependance substituable
+                 sans casser un seul appelant
+Sprout method  : le neuf nait en TDD a cote, UNE ligne dans le vieux
+Strategie      : caracteriser → decoudre → TDD → refactorer
+Boy-scout      : couvrir CE QU'ON TOUCHE, pas les 8000 lignes</pre>
+<p>Le filet est posé sur l'existant. Mais couvre-t-il vraiment ce qu'on croit ? Prochaine leçon : mesurer la couverture de code — sans se mentir.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l13", title: "Le plan de sauvetage de calculer_facture", level: 3,
+    statement: "Voici le squelette du legacy de la Ludothèque : calculer_facture(membre) — 120 lignes qui : a) appellent date.today() pour les frais de retard ; b) lisent les locations du membre directement en MySQL ; c) impriment la facture avec print() ; d) renvoient le total. On te demande d'ajouter une remise de 5 % pour les membres de plus d'un an d'ancienneté. Rédige ton plan de sauvetage complet : les tests de caractérisation que tu écris d'abord (comment obtenir les valeurs à graver ?), la couture pour chacune des trois dépendances (horloge, base, affichage — quelle technique pour chaque ?), la naissance de la remise en sprout method (signature + deux tests TDD), et la ligne unique ajoutée au legacy.",
+    hints: [
+      "Pour l'affichage : capsys (leçon 6) capture les print sans toucher au code — toutes les coutures ne demandent pas une modification.",
+      "Pour la base : extraire la lecture dans une fonction locations_du_membre(membre_id), puis la patcher (leçon 10) — ou l'injecter en paramètre.",
+      "La remise d'ancienneté a besoin d'une date de référence : passe-la en paramètre dès la naissance, le TDD t'y pousse."
+    ],
+    solution: "1) CARACTÉRISATION (avant tout changement)\n   - Choisir 2 membres types (avec et sans retard).\n   - assert calculer_facture(m) == -999 → pytest révèle 23.50 et 12.00.\n   - Graver : test_caracterisation_facture_avec_retard == 23.50, etc.\n   - Le print est capturé avec capsys pour figer aussi le texte.\n\n2) COUTURES (minimales, mécaniques)\n   - Horloge : calculer_facture(membre, aujourd_hui=None) ;\n     aujourd_hui = aujourd_hui or date.today() → tests reproductibles.\n   - Base : extraire locations_du_membre(membre_id) puis\n     patch('ludo.factures.locations_du_membre') dans les tests.\n   - Affichage : aucune modification — capsys suffit.\n   - Relancer la caractérisation : toujours verte → rien n'a changé.\n\n3) SPROUT METHOD — la remise naît en TDD à côté :\n   def remise_anciennete(total, membre, aujourd_hui):\n       ...\n   Test 1 : membre inscrit il y a 2 ans → total x 0.95\n   Test 2 : membre inscrit il y a 6 mois → total inchangé\n   (+ test du palier : pile 1 an → remise, à fixer par la règle)\n\n4) LA LIGNE DANS LE LEGACY :\n   total = remise_anciennete(total, membre, aujourd_hui)\n   → caractérisation rouge ATTENDUE pour le membre ancien :\n   on met à jour sa valeur en connaissance de cause, et on\n   documente : « changement voulu, ticket LUDO-142 ».",
+    note: "Ce plan en quatre temps est LA compétence qui distingue un junior d'un confirmé en entretien : personne ne te demandera de réécrire le legacy, on te demandera d'y survivre proprement. La caractérisation qui devient rouge « en connaissance de cause » à l'étape 4 sera revue en pull request au cours CI/CD — le relecteur verra exactement quel comportement a changé, et pourquoi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

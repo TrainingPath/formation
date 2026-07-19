@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "LINQ to Entities : Where, OrderBy, Select",
+  subtitle: "Tu écris du C#, EF Core écrit le SQL — mais seulement si tu ne le prends pas de vitesse.",
+  theory: `
+<h3>1. Tu écris du C#, EF Core écrit le SQL</h3>
+<p>Depuis douze leçons, tu manipules la Ludothèque avec <strong>Find</strong>, <strong>Add</strong>, <strong>Include</strong>… Il est temps de passer aux vraies requêtes. <strong>LINQ to Entities</strong>, c'est l'idée centrale de tout ORM : tu écris une <strong>requête</strong> (une demande de données adressée à la base) en C#, typée et vérifiée à la compilation, et EF Core la <strong>traduit en SQL</strong> exécuté par SQL Server. Toi qui sais écrire un SELECT à la main depuis le Niveau 4, tu vas jouer les inspecteurs : à chaque requête LINQ, on regardera le SQL généré en face.</p>
+<pre class="pseudo">// LINQ (C#)
+var jeux = ctx.Jeux.ToList();                         // demande TOUS les jeux ; ToList() déclenche la requête
+
+-- SQL généré
+SELECT [j].[Id], [j].[Titre], [j].[Prix], [j].[EstDisponible], [j].[CategorieId]   -- toutes les colonnes de l'entité Jeu
+FROM [Jeux] AS [j]                                    -- table Jeux, désignée par l'alias [j]</pre>
+<p>Chez les voisins, même principe : Hibernate a JPQL et l'API Criteria, Laravel a le query builder et Eloquent, Django a ses QuerySets avec <strong>filter()</strong>. Les noms changent, l'idée est identique.</p>
+
+<h3>2. Where : le filtre qui devient un WHERE paramétré</h3>
+<p><strong>Where</strong> prend une <strong>lambda</strong> : une petite fonction anonyme (sans nom, écrite à la volée) qui reçoit chaque jeu et renvoie vrai ou faux. Tout ce que tu écrirais dans un WHERE SQL s'écrit ici en C# : comparaisons, &amp;&amp; (ET), || (OU), appels comme StartsWith.</p>
+<pre class="pseudo">var prixMax = 30m;                                    // variable C# : le prix maximum voulu
+var jeuxPasChers = ctx.Jeux                           // on part de la table Jeux
+    .Where(j =&gt; j.EstDisponible &amp;&amp; j.Prix &lt; prixMax)  // filtre : disponible ET prix inférieur au maximum
+    .ToList();                                        // matérialise : la requête part vers SQL Server
+
+-- SQL généré (paramétré !)
+SELECT [j].[Id], [j].[Titre], [j].[Prix], ...        -- toutes les colonnes du jeu
+FROM [Jeux] AS [j]                                    -- table Jeux
+WHERE [j].[EstDisponible] = CAST(1 AS bit) AND [j].[Prix] &lt; @__prixMax_0   -- la variable C# devient le paramètre @__prixMax_0</pre>
+<p>Remarque le <strong>@__prixMax_0</strong> : la variable C# devient un <strong>paramètre SQL</strong>, jamais une concaténation. Injection SQL impossible par ce chemin, et SQL Server peut réutiliser son plan d'exécution. En Eloquent tu écrirais where('prix', '&lt;', 30), en Django Jeu.objects.filter(prix__lt=30) : même contrat.</p>
+
+<h3>3. OrderBy, OrderByDescending, ThenBy</h3>
+<p>Un tri se déclare avec <strong>OrderBy</strong> (croissant) ou <strong>OrderByDescending</strong> (décroissant). Pour un critère secondaire — l'équivalent de ORDER BY Prix, Titre — on enchaîne avec <strong>ThenBy</strong> ou <strong>ThenByDescending</strong>, jamais un second OrderBy qui écraserait le premier.</p>
+<pre class="pseudo">var catalogue = ctx.Jeux                              // on part de la table Jeux
+    .Where(j =&gt; j.EstDisponible)                      // ne garder que les jeux disponibles
+    .OrderBy(j =&gt; j.Prix)                             // trier par prix croissant (critère principal)
+    .ThenBy(j =&gt; j.Titre)                             // puis par titre croissant (critère secondaire)
+    .ToList();                                        // matérialise le catalogue
+
+-- SQL généré
+SELECT [j].[Id], [j].[Titre], [j].[Prix], ...        -- colonnes du jeu
+FROM [Jeux] AS [j]                                    -- table Jeux
+WHERE [j].[EstDisponible] = CAST(1 AS bit)            -- filtre de disponibilité
+ORDER BY [j].[Prix], [j].[Titre]                      -- tri : prix d'abord, titre ensuite</pre>
+
+<h3>4. Select : ne ramène que ce dont tu as besoin</h3>
+<p>Sans <strong>Select</strong>, EF Core rapatrie <em>toutes</em> les colonnes de l'entité. Pour afficher une liste de titres, c'est du gâchis réseau. Select <strong>projette</strong> (transforme chaque ligne en ne gardant que ce qui t'intéresse) vers exactement les colonnes utiles — comme quand tu remplaçais SELECT * par une liste de colonnes au Niveau 4.</p>
+<pre class="pseudo">var titres = ctx.Jeux                                 // on part de la table Jeux
+    .Where(j =&gt; j.EstDisponible)                      // seulement les jeux disponibles
+    .Select(j =&gt; j.Titre)          // List&lt;string&gt;    // projection : ne garder que le titre de chaque jeu
+    .ToList();                                        // matérialise en List&lt;string&gt;
+
+-- SQL généré : UNE seule colonne voyage
+SELECT [j].[Titre]                                    -- seule la colonne Titre est ramenée
+FROM [Jeux] AS [j]                                    -- table Jeux
+WHERE [j].[EstDisponible] = CAST(1 AS bit)            -- filtre de disponibilité</pre>
+<p>On peut aussi projeter plusieurs colonnes vers un type anonyme — Select(j =&gt; new { j.Titre, j.Prix }) — mais on garde le gros de ce sujet pour la leçon 14.</p>
+
+<h3>5. IQueryable, exécution différée et le piège du ToList() trop tôt</h3>
+<p>Point crucial : ctx.Jeux.Where(...) ne renvoie pas des jeux. Ça renvoie un <strong>IQueryable&lt;Jeu&gt;</strong> : un <strong>arbre d'expression</strong> (la structure qui décrit la requête, un peu comme une recette écrite mais pas encore cuisinée), la <em>description</em> d'une requête pas encore partie. Chaque Where, OrderBy, Select enrichit cet arbre. La requête n'est envoyée à SQL Server qu'au moment où tu <strong>matérialises</strong> : ToList(), First(), Count(), ou un foreach. C'est l'<strong>exécution différée</strong>.</p>
+<pre class="pseudo">// BIEN : tout est traduit, SQL Server filtre et trie
+var bons = ctx.Jeux                                   // IQueryable : rien n'est encore parti
+    .Where(j =&gt; j.Prix &lt; 30)                          // filtre décrit (pas exécuté)
+    .OrderBy(j =&gt; j.Prix)                             // tri décrit (pas exécuté)
+    .ToList();                     // ← la requête part ICI, complète   // SQL Server filtre et trie, puis renvoie ~40 lignes
+
+// PIÈGE : ToList() trop tôt
+var tous = ctx.Jeux.ToList();      // SELECT * : TOUTE la table en mémoire !   // 10 000 lignes rapatriées d'un coup
+var bons2 = tous                                      // on est désormais en mémoire (IEnumerable)
+    .Where(j =&gt; j.Prix &lt; 30)       // filtré en C#, sur IEnumerable   // le filtre s'exécute côté C#, plus en SQL
+    .ToList();                     // 10 000 lignes transférées pour en garder 40   // gâchis réseau et mémoire</pre>
+<p>Après ToList(), tu n'as plus un IQueryable mais un <strong>IEnumerable</strong> en mémoire : les mêmes méthodes existent (c'est LINQ to Objects), mais elles s'exécutent en C#, plus rien n'est traduit en SQL. Autre limite : si ta lambda contient une méthode que EF ne sait pas traduire (une méthode métier à toi, par exemple), tu obtiens une <strong>exception de traduction</strong> claire — depuis EF Core 3, plus d'évaluation client silencieuse, sauf sur la projection finale.</p>
+<div class="warn">Le symptôme classique du ToList() prématuré : l'appli marche en dev avec 50 jeux, puis s'écroule en prod avec 100 000. Vérifie toujours <strong>où</strong> ta requête se matérialise ; tant que c'est un IQueryable, le filtre voyage vers SQL Server, après c'est ta RAM qui trinque.</div>
+<div class="tip">Pour voir le SQL sans deviner : <strong>requete.ToQueryString()</strong> te donne le SQL d'un IQueryable, et optionsBuilder.LogTo(Console.WriteLine) journalise toutes les requêtes. Prends l'habitude de relire ce SQL comme tu relisais tes SELECT au Niveau 4.</div>`,
+  exercises: [
+    { type: "qcm", q: "LINQ to Entities, c'est…", opts: ["Un dialecte SQL propre à Microsoft", "Des requêtes C# que EF Core traduit en SQL exécuté par le serveur", "Une bibliothèque de tri en mémoire uniquement", "Le langage des migrations"], a: 1, exp: "Tu écris du C# typé, EF Core génère le SQL correspondant." },
+    { type: "input", q: "Quelle méthode LINQ correspond au WHERE de SQL ?", a: ["Where", "where"], ph: "Nom de la méthode…", exp: "Where(j =&gt; …) devient une clause WHERE dans le SQL généré." },
+    { type: "qcm", q: "Where(j =&gt; j.Prix &lt; prixMax) avec une variable C# produit…", opts: ["Une concaténation du prix dans le SQL", "Une erreur de compilation", "Un WHERE avec un paramètre SQL (@__prixMax_0)", "Un filtre exécuté en mémoire"], a: 2, exp: "Les variables capturées deviennent des paramètres : anti-injection et plan réutilisable." },
+    { type: "qcm", q: "Pour trier par prix décroissant PUIS par titre croissant :", opts: ["OrderByDescending(j =&gt; j.Prix).ThenBy(j =&gt; j.Titre)", "OrderByDescending(j =&gt; j.Prix).OrderBy(j =&gt; j.Titre)", "OrderBy(j =&gt; j.Prix).ThenByDescending(j =&gt; j.Titre)", "Sort(j =&gt; j.Prix, j =&gt; j.Titre)"], a: 0, exp: "Un second OrderBy écraserait le premier tri ; le critère secondaire passe par ThenBy." },
+    { type: "vf", q: "ctx.Jeux.Where(j =&gt; j.EstDisponible) envoie immédiatement une requête à SQL Server.", a: false, exp: "Exécution différée : rien ne part avant ToList(), First(), Count() ou un foreach." },
+    { type: "qcm", q: "Un IQueryable&lt;Jeu&gt;, c'est…", opts: ["Une liste de jeux déjà chargés", "Un arbre d'expression décrivant une requête pas encore exécutée", "Un curseur SQL ouvert en permanence", "Un cache de second niveau"], a: 1, exp: "C'est la description de la requête ; EF la traduit en SQL au moment de la matérialisation." },
+    { type: "qcm", q: "Quel appel déclenche réellement l'envoi de la requête ?", opts: ["Where", "OrderBy", "Select", "ToList"], a: 3, exp: "ToList, First, Single, Count, foreach… matérialisent ; Where/OrderBy/Select ne font qu'enrichir l'arbre." },
+    { type: "qcm", q: "ctx.Jeux.ToList().Where(j =&gt; j.Prix &lt; 30) : quel est le problème ?", opts: ["Le code ne compile pas", "Toute la table est chargée en mémoire avant le filtre, exécuté en C#", "Le WHERE SQL est doublé", "Where n'existe pas sur une liste"], a: 1, exp: "Après ToList(), on est sur un IEnumerable en mémoire : le SELECT a déjà tout rapatrié sans WHERE." },
+    { type: "vf", q: "Après ToList(), les Where suivants s'exécutent en mémoire (LINQ to Objects) et non en SQL.", a: true, exp: "Mêmes noms de méthodes, mais plus aucune traduction : c'est du C# pur sur la collection." },
+    { type: "qcm", q: "Select(j =&gt; j.Titre) a pour effet…", opts: ["De renommer la colonne Titre", "De générer un SELECT ne ramenant que la colonne Titre", "De trier par titre", "De charger le jeu complet puis d'extraire le titre en C#"], a: 1, exp: "La projection est traduite : une seule colonne voyage sur le réseau." },
+    { type: "qcm", q: "Ta lambda appelle une méthode métier C# intraduisible dans un Where. EF Core 3+ réagit comment ?", opts: ["Il l'ignore silencieusement", "Il lève une exception de traduction explicite", "Il télécharge la table et filtre en mémoire sans prévenir", "Il exécute la méthode dans SQL Server via CLR"], a: 1, exp: "Plus d'évaluation client silencieuse (sauf projection finale) : tu es prévenu au lieu de subir." },
+    { type: "input", q: "Quelle méthode d'un IQueryable te montre le SQL qui serait exécuté ?", a: ["ToQueryString", "ToQueryString()"], ph: "Nom de la méthode…", exp: "requete.ToQueryString() affiche le SQL généré : ton réflexe d'inspecteur du Niveau 4." },
+    { type: "qcm", q: "L'équivalent Django de Where(j =&gt; j.Prix &lt; 30) est…", opts: ["Jeu.objects.filter(prix__lt=30)", "Jeu.objects.where(prix &lt; 30)", "Jeu.objects.having(prix=30)", "Jeu.objects.raw(30)"], a: 0, exp: "filter() côté QuerySet Django, where() côté Eloquent, WHERE en JPQL : même idée partout." },
+    { type: "vf", q: "Grâce aux paramètres SQL générés par LINQ, une variable C# injectée dans un Where ne peut pas provoquer d'injection SQL.", a: true, exp: "La valeur part comme paramètre (@__x_0), jamais concaténée dans le texte de la requête." },
+    { type: "qcm", q: "OrderBy(j =&gt; j.Prix).OrderBy(j =&gt; j.Titre) trie finalement…", opts: ["Par prix puis titre", "Par titre uniquement (le second écrase le premier)", "Par prix uniquement", "Aléatoirement"], a: 1, exp: "Chaque OrderBy repart de zéro ; c'est ThenBy qui ajoute un critère secondaire." }
+  ],
+  final: {
+    title: "Exercice final — Le SQL derrière le C#",
+    intro: `<p>Une requête complète pour la page catalogue de la Ludothèque : jeux disponibles à moins de 25 euros, triés par prix puis titre, en ne ramenant que titre et prix. Vérifions que tu sais prédire chaque morceau du SQL généré.</p>`,
+    questions: [
+      { type: "qcm", q: "Dans quel ordre logique écrire la chaîne LINQ ?", opts: ["Where → OrderBy → ThenBy → Select → ToList", "ToList → Where → OrderBy → Select", "Select → ToList → Where → OrderBy", "OrderBy → ToList → Where → Select"], a: 0, exp: "On décrit tout (filtre, tri, projection) puis on matérialise en dernier." },
+      { type: "qcm", q: "Le j.Prix &lt; 25 avec 25 stocké dans une variable devient en SQL…", opts: ["[j].[Prix] &lt; 25 en dur", "[j].[Prix] &lt; @__max_0 (paramètre)", "PRIX_LT(25)", "Un filtre en mémoire"], a: 1, exp: "Variable capturée = paramètre SQL nommé." },
+      { type: "vf", q: "Avec Select(j =&gt; new { j.Titre, j.Prix }), le SQL généré ne contient que les colonnes Titre et Prix.", a: true, exp: "La projection est traduite : SELECT [j].[Titre], [j].[Prix] et rien d'autre." },
+      { type: "input", q: "Quelle méthode ajoute le critère de tri secondaire (le titre) après OrderBy(j =&gt; j.Prix) ?", a: ["ThenBy", "ThenBy()"], ph: "Nom de la méthode…", exp: "ThenBy complète l'ORDER BY : ORDER BY [Prix], [Titre]." },
+      { type: "qcm", q: "Si tu insères ToList() juste après ctx.Jeux, le tri et le filtre…", opts: ["Sont quand même traduits en SQL", "S'exécutent en mémoire sur toute la table déjà chargée", "Provoquent une exception", "Sont ignorés"], a: 1, exp: "La matérialisation précoce coupe la traduction : tout le reste devient du LINQ to Objects." }
+    ],
+    solution: `<pre class="pseudo">var max = 25m;                                     // le prix maximum, stocké dans une variable
+var catalogue = ctx.Jeux
+    .Where(j =&gt; j.EstDisponible &amp;&amp; j.Prix &lt; max)   // WHERE paramétré (max → @__max_0)
+    .OrderBy(j =&gt; j.Prix)                          // ORDER BY [Prix]
+    .ThenBy(j =&gt; j.Titre)                          //        , [Titre]
+    .Select(j =&gt; new { j.Titre, j.Prix })          // SELECT deux colonnes seulement
+    .ToList();                                     // ← la requête part ICI
+
+-- SQL généré
+SELECT [j].[Titre], [j].[Prix]
+FROM [Jeux] AS [j]
+WHERE [j].[EstDisponible] = CAST(1 AS bit) AND [j].[Prix] &lt; @__max_0
+ORDER BY [j].[Prix], [j].[Titre]
+
+Règle d'or : IQueryable = SQL côté serveur ; ToList() = tout bascule en mémoire.</pre>
+<p>Tu sais filtrer, trier et projeter. Leçon 14 : on pousse Select vers les DTO, puis on attaque les agrégats et GroupBy — ton GROUP BY du Niveau 4, version LINQ.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l13", title: "Traducteur SQL → LINQ assermenté", level: 2,
+    statement: "Reprends trois requêtes que tu écrivais à la main au Niveau 4 sur la Ludothèque : 1) les jeux disponibles triés par prix croissant ; 2) les avis du jeu n°7 triés du plus récent au plus ancien ; 3) les membres inscrits depuis le 1er janvier de cette année. Pour chacune : écris le SQL d'origine, la version LINQ to Entities équivalente, puis le SQL que tu prédis que EF Core va générer. Termine par deux ou trois lignes sur les différences constatées (paramètres, alias, colonnes ramenées) et sur ce que la version LINQ t'apporte ou te coûte par rapport au SQL brut.",
+    hints: [
+      "Chaque clause SQL a son miroir : WHERE → Where, ORDER BY … DESC → OrderByDescending, la liste de colonnes → Select.",
+      "Pour la date d'inscription, stocke le 1er janvier dans une variable C# : que devient-elle dans le SQL généré ?",
+      "Compare ce que ramène EF sans Select (toutes les colonnes) à ton SELECT explicite du Niveau 4 : qui est le plus économe ?"
+    ],
+    solution: "1) Jeux disponibles triés par prix\nSQL Niveau 4 : SELECT Id, Titre, Prix FROM Jeux WHERE EstDisponible = 1 ORDER BY Prix;\nLINQ : ctx.Jeux.Where(j => j.EstDisponible).OrderBy(j => j.Prix).ToList();\nSQL prédit : SELECT [j].[Id], [j].[Titre], [j].[Prix], … FROM [Jeux] AS [j] WHERE [j].[EstDisponible] = CAST(1 AS bit) ORDER BY [j].[Prix]\nDifférence : sans Select, EF ramène TOUTES les colonnes, là où mon SQL n'en listait que trois.\n\n2) Avis du jeu 7, plus récents d'abord\nSQL Niveau 4 : SELECT * FROM Avis WHERE JeuId = 7 ORDER BY DateAvis DESC;\nLINQ : ctx.Avis.Where(a => a.JeuId == jeuId).OrderByDescending(a => a.DateAvis).ToList();\nSQL prédit : … WHERE [a].[JeuId] = @__jeuId_0 ORDER BY [a].[DateAvis] DESC\nDifférence : le 7 en dur devient un paramètre @__jeuId_0.\n\n3) Membres inscrits cette année\nSQL Niveau 4 : SELECT * FROM Membres WHERE DateInscription >= '2026-01-01';\nLINQ : var debut = new DateTime(2026, 1, 1); ctx.Membres.Where(m => m.DateInscription >= debut).ToList();\nSQL prédit : … WHERE [m].[DateInscription] >= @__debut_0\n\nBilan : LINQ m'apporte le typage, la compilation et des paramètres automatiques (anti-injection) ; il me coûte le contrôle fin des colonnes tant que je n'ajoute pas de Select, et il faut vérifier le SQL généré avec ToQueryString() au lieu de le connaître par cœur.",
+    note: "Cet aller-retour SQL ↔ LINQ est exactement le réflexe qui te servira en entretien et en revue de code : un dev qui lit le SQL généré détecte les requêtes obèses avant la prod. Tu referas la même gymnastique avec JPQL sous Hibernate et les QuerySets Django — l'investissement du Niveau 4 paie sur tous les ORM." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

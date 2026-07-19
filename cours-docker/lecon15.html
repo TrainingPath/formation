@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Images légères : multi-stage builds",
+  subtitle: "Séparer construire et exécuter : l'image finale ne porte que le nécessaire.",
+  theory: `
+<h3>1. Pourquoi alléger ?</h3>
+<p>Une image lourde coûte cher sur trois plans. Elle se <strong>télécharge</strong> lentement (à chaque déploiement), elle <strong>expose</strong> plus de failles (chaque outil embarqué agrandit la <strong>surface d'attaque</strong>, leçon 9), et elle <strong>occupe</strong> du stockage. Or l'exécution n'a pas besoin des <strong>compilateurs</strong> (les programmes qui transforment du code source en programme installable), des caches et des outils qui ont servi uniquement à la construction.</p>
+
+<h3>2. Le multi-stage build</h3>
+<p>Le <strong>multi-stage build</strong> (« construction en plusieurs étages ») divise le Dockerfile en plusieurs parties. Un premier <strong>étage</strong> (« stage ») construit ; un second exécute. On nomme un étage avec <code>AS builder</code>, et on récupère seulement les fichiers utiles d'un étage à l'autre avec <code>COPY --from=builder</code>. Tout le reste du premier étage est <strong>jeté</strong>.</p>
+<pre class="pseudo"># Étage 1 : CONSTRUIRE (peut être « sale » et lourd : il sera jeté)
+FROM python:3.14-slim AS builder         # 'AS builder' NOMME ce premier étage 'builder' pour pouvoir y piocher ensuite
+WORKDIR /app
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels   # 'pip wheel' pré-compile les dépendances en paquets .whl, rangés dans /wheels
+
+# Étage 2 : EXÉCUTER (ne garde que le strict nécessaire)
+FROM python:3.14-slim                    # nouvel étage, tout neuf : on repart d'une base propre
+WORKDIR /app
+COPY --from=builder /wheels /wheels      # récupère UNIQUEMENT /wheels depuis l'étage 'builder' (le pont entre étages)
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels   # installe les paquets pré-compilés puis supprime le dossier (image propre)
+COPY . .                                 # copie le code de l'application
+EXPOSE 8000                              # documente le port
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # commande de démarrage (inchangée)</pre>
+<p><code>COPY --from=builder</code> ne prend que les <strong>wheels</strong> compilés (les paquets Python prêts à installer) : gcc, en-têtes et caches restent dans l'étage builder, qui est <strong>jeté</strong> à la fin. L'image finale ne contient donc plus rien de l'outillage de build.</p>
+
+<h3>3. Le même motif pour toutes les piles</h3>
+<p>Ce motif « gros outillage pour construire, runtime minimal pour exécuter » est universel : seuls les noms changent selon le langage.</p>
+<pre class="pseudo">Java  : FROM maven AS builder (mvn package) -> FROM temurin-jre + le seul .jar     # Maven+JDK pour compiler, puis juste le JRE + l'artefact
+C#    : FROM sdk AS builder (dotnet publish) -> FROM aspnet + publish/             # le SDK complet pour publier, puis juste le runtime + les fichiers publiés
+JS    : FROM node AS builder (npm run build) -> FROM nginx + dist/                 # Node pour construire le site, puis juste nginx + les fichiers statiques</pre>
+<p>Partout la même idée : l'outillage de build dans un étage, l'<strong>artefact</strong> seul (le produit fini) dans l'image finale.</p>
+
+<h3>4. Mesurer</h3>
+<p>On ne devine pas les gains, on les mesure.</p>
+<pre class="pseudo">docker images | grep ludotheque           # filtre la liste des images pour comparer les tailles avant/après
+docker history ludotheque:0.2             # montre quelles couches pèsent quoi (autopsie du poids)
+docker build --target builder -t debug .  # '--target builder' construit UN étage précis (le builder), pour le déboguer</pre>
+
+<h3>5. Les autres kilos faciles à perdre</h3>
+<p>Quelques réglages supplémentaires font maigrir l'image sans effort.</p>
+<pre class="pseudo">--no-cache-dir sur pip                    # empêche pip d'embarquer son cache dans la couche
+apt-get install --no-install-recommends + rm -rf /var/lib/apt/lists/*   # installe le strict minimum (pas les paquets « recommandés ») puis efface la liste des paquets apt
+.dockerignore complet                     # exclut artefacts et secrets du contexte (leçon 6)
+alpine ?                                  # base encore plus petite, MAIS musl casse certains paquets compilés (leçon 4) : à peser</pre>
+<div class="warn">Alléger n'est pas un concours : une image <em>fonctionnelle et sûre</em> de 180 Mo vaut mieux qu'une image alpine de 60 Mo qui casse mysqlclient. On optimise <strong>après</strong> avoir fonctionné, en mesurant.</div>
+<div class="tip">Le multi-stage améliore aussi la <strong>sécurité</strong> : pas de compilateur dans l'image de prod = un outil de moins pour un attaquant. La leçon 16 continue ce durcissement.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une image lourde pose problème car…", opts: ["Elle est moche", "Téléchargements lents, surface d'attaque, coût de stockage", "Elle plante", "Docker la refuse"], a: 1, exp: "Trois raisons concrètes." },
+    { type: "qcm", q: "Le multi-stage sépare…", opts: ["Dev et prod", "La construction de l'exécution", "Le code des données", "Les ports"], a: 1, exp: "Builder / final." },
+    { type: "qcm", q: "FROM python:3.14-slim AS builder — AS builder sert à…", opts: ["Renommer l'image finale", "Nommer l'étage pour COPY --from", "Créer un tag", "Rien"], a: 1, exp: "Référence entre étages." },
+    { type: "qcm", q: "COPY --from=builder /wheels /wheels copie…", opts: ["Depuis l'hôte", "Depuis l'étage builder vers l'étage final", "Depuis Docker Hub", "Depuis un volume"], a: 1, exp: "Le pont entre étages." },
+    { type: "qcm", q: "Que devient l'étage builder à la fin ?", opts: ["Il est dans l'image finale", "Il est jeté : seule la copie explicite passe", "Il est publié", "Il devient un volume"], a: 1, exp: "gcc et caches restent dedans." },
+    { type: "qcm", q: "pip wheel -w /wheels produit…", opts: ["Des paquets compilés prêts à installer", "Des images", "Des logs", "Des tests"], a: 0, exp: "L'artefact transmis à l'étage final." },
+    { type: "qcm", q: "L'équivalent Java du motif :", opts: ["maven AS builder → temurin-jre + le .jar", "tout dans une image maven", "pas possible", "un war sur l'hôte"], a: 0, exp: "Même idée, autre pile." },
+    { type: "qcm", q: "L'équivalent C# :", opts: ["sdk AS builder (publish) → aspnet + publish/", "sdk seul en prod", "mono", "un zip"], a: 0, exp: "SDK pour builder, runtime pour exécuter." },
+    { type: "qcm", q: "Comparer avant/après :", opts: ["docker images", "docker ps", "docker logs", "du -sh"], a: 0, exp: "Les tailles côte à côte." },
+    { type: "qcm", q: "Voir quelles couches pèsent :", opts: ["docker history", "docker stats", "docker top", "docker inspect --size"], a: 0, exp: "L'autopsie des kilos." },
+    { type: "qcm", q: "docker build --target builder sert à…", opts: ["Construire un seul étage (débogage)", "Tout supprimer", "Publier", "Alléger"], a: 0, exp: "Inspecter l'étage intermédiaire." },
+    { type: "qcm", q: "--no-install-recommends sur apt-get…", opts: ["Installe plus", "Évite les paquets recommandés non indispensables", "Casse apt", "Est obligatoire"], a: 1, exp: "Des kilos faciles." },
+    { type: "vf", q: "Le multi-stage améliore aussi la sécurité de l'image finale.", a: true, exp: "Pas de compilateur pour l'attaquant." },
+    { type: "vf", q: "Il faut toujours viser l'image la plus petite possible, même au prix de la stabilité.", a: false, exp: "Fonctionnelle et sûre d'abord ; on optimise en mesurant." },
+    { type: "qcm", q: "Le piège d'alpine (rappel leçon 4) :", opts: ["Trop chère", "musl : les paquets compilés (mysqlclient) posent problème", "Pas de tags", "Trop grosse"], a: 1, exp: "Économie ≠ toujours bon choix." }
+  ],
+  final: {
+    title: "Exercice final — L'image au régime",
+    intro: `<p>On transforme le Dockerfile de la Ludothèque en multi-stage.</p>`,
+    questions: [
+      { type: "qcm", q: "L'étage builder :", opts: ["FROM python:3.14-slim AS builder + pip wheel -w /wheels", "FROM alpine direct", "FROM mysql", "pas d'étage"], a: 0, exp: "Construit les wheels." },
+      { type: "qcm", q: "L'étage final installe :", opts: ["COPY --from=builder /wheels + pip install /wheels/*", "requirements depuis Internet", "gcc", "rien"], a: 0, exp: "Que les artefacts." },
+      { type: "qcm", q: "gcc et les caches pip finissent :", opts: ["Dans l'étage builder, jeté", "dans l'image finale", "dans un volume", "sur l'hôte"], a: 0, exp: "C'est tout le gain." },
+      { type: "qcm", q: "On vérifie le gain avec :", opts: ["docker images + docker history", "un chronomètre", "docker ps", "rien"], a: 0, exp: "Mesurer, toujours." },
+      { type: "vf", q: "Le CMD final reste gunicorn, inchangé.", a: true, exp: "L'exécution ne change pas, l'emballage si." }
+    ],
+    solution: `<pre class="pseudo">FROM python:3.14-slim AS builder             # étage 1 nommé 'builder' : la construction
+WORKDIR /app
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels   # pré-compile les dépendances en .whl dans /wheels
+
+FROM python:3.14-slim                        # étage 2 : base neuve pour l'exécution
+WORKDIR /app
+COPY --from=builder /wheels /wheels          # récupère SEULEMENT les wheels de l'étage builder
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels   # installe puis nettoie (aucun outillage de build ne reste)
+COPY . .                                     # le code de l'application
+EXPOSE 8000                                  # documente le port
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # démarrage inchangé
+
+$ docker build -t ludotheque:0.2 . && docker images | grep ludotheque   # construit et compare la taille obtenue</pre>
+<p>L'image a fondu sans rien perdre. Demain : le conteneur qui n'est pas root.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile multi-stage…",
+  items: [
+  { id: "docker-l15", title: "Le multi-stage d'une autre pile", level: 3,
+    statement: "Écris le Dockerfile multi-stage de la Ludothèque pour la pile Java · Spring (capstone Niveau 6) : étage builder maven:3.9-eclipse-temurin-21 (COPY pom.xml + dependency:go-offline pour le cache, puis COPY src + mvn package -DskipTests), étage final eclipse-temurin:25-jre avec le seul .jar, EXPOSE 8080 et CMD java -jar. Commente le rôle de chaque choix de cache.",
+    hints: [
+      "COPY pom.xml . && RUN mvn dependency:go-offline — le pendant Java de requirements.txt d'abord.",
+      "COPY --from=builder /app/target/ludotheque.jar app.jar",
+      "-DskipTests au build d'image : les tests tournent en CI, pas à chaque build d'image."
+    ],
+    solution: "# Étage 1 : builder — Maven + JDK (lourd, jeté à la fin)\nFROM maven:3.9-eclipse-temurin-21 AS builder\nWORKDIR /app\n\n# Le pom d'abord : le téléchargement des dépendances est mis en cache\n# tant que pom.xml ne change pas (pendant Java du requirements.txt)\nCOPY pom.xml .\nRUN mvn dependency:go-offline\n\n# Le code ensuite (change souvent, n'invalide pas le cache Maven)\nCOPY src ./src\nRUN mvn package -DskipTests\n#   -DskipTests : les tests tournent en CI (cours suivant),\n#   pas à chaque build d'image\n\n# Étage 2 : final — JRE seul (pas de Maven, pas de JDK complet)\nFROM eclipse-temurin:25-jre\nWORKDIR /app\nCOPY --from=builder /app/target/ludotheque.jar app.jar\nEXPOSE 8080\nCMD [\"java\", \"-jar\", \"app.jar\"]",
+    note: "Le motif traverse les langages : « gros outillage pour construire, runtime minimal pour exécuter ». En Java le gain est spectaculaire (image Maven ~800 Mo → JRE + jar ~300 Mo). Le -DskipTests annonce le cours CI/CD : chaque outil à sa place — les tests en pipeline, le build d'image en artefact final." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

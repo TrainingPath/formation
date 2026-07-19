@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Appeler la libc (printf)",
+  subtitle: "Profiter des fonctions C toutes faites depuis l'assembleur : printf, et la liaison avec gcc.",
+  theory: `
+<h3>1. Pourquoi appeler la libc ?</h3>
+<p>La <strong>libc</strong> est la « bibliothèque standard du C » : une grande boîte à outils de fonctions toutes prêtes (afficher, calculer, gérer la mémoire…) fournie avec le système. Une <strong>fonction</strong> est un bout de code réutilisable qu'on appelle par son nom. <strong>printf</strong> est la fonction qui affiche du texte formaté (« Stock: 115 », etc.).</p>
+<p>Afficher un nombre « à la main » (le convertir en chiffres) est fastidieux. Plutôt que tout réécrire, on peut appeler <strong>printf</strong> directement depuis l'assembleur. On suit alors la <strong>convention d'appel</strong> (les règles System V : dans quels registres passer les arguments) et on <strong>lie</strong> avec <code>gcc</code>. « Lier » (avec l'<strong>éditeur de liens</strong>, ou lieur) veut dire : rassembler notre code et le code de la libc en un seul programme exécutable.</p>
+
+<h3>2. Déclarer et appeler</h3>
+<p>La convention System V dit : le 1er argument d'une fonction va dans <code>rdi</code>, le 2e dans <code>rsi</code>, etc. <code>call</code> saute dans la fonction (et retient où revenir) ; la fonction fait son travail puis rend la main.</p>
+<pre class="pseudo">section .data                    ; section des données initialisées
+    fmt db "Stock: %d", 10, 0    ; chaîne de format ; db = octets ; 10 = saut de ligne ; 0 = fin de chaîne C
+section .text                    ; section du code exécutable
+    global main                  ; on expose "main" (pas _start) car gcc fournira le vrai démarrage
+    extern printf                ; printf vient d'ailleurs (la libc) : "extern" = définie à l'extérieur
+main:                            ; début de notre fonction principale
+    mov rdi, fmt                 ; 1er argument : l'adresse de la chaîne de format
+    mov rsi, 115                 ; 2e argument : la valeur qui remplacera le %d
+    xor eax, eax                 ; met eax à 0 : "aucun registre à virgule flottante utilisé" (printf variadique)
+    call printf                  ; appelle printf : il affiche "Stock: 115"
+    xor eax, eax                 ; met eax à 0 : ce sera la valeur de retour (return 0)
+    ret                          ; revient à l'appelant (fin de main)</pre>
+
+<h3>3. Les points de vigilance</h3>
+<div class="warn">Trois détails : on utilise <code>main</code> (pas <code>_start</code>) et on lie avec <code>gcc</code> ; <code>extern printf</code> annonce la fonction externe ; et <code>xor eax, eax</code> avant l'appel indique à printf (fonction <strong>variadique</strong>, c'est-à-dire acceptant un nombre variable d'arguments) qu'aucun registre à virgule flottante n'est utilisé. Oublier ce dernier point peut planter.</div>
+
+<h3>4. L'alignement de la pile</h3>
+<p>La <strong>pile</strong> (stack) est une zone de mémoire qui fonctionne comme une pile d'assiettes : on empile (<code>push</code>) et on dépile (<code>pop</code>). « Aligner sur 16 octets » signifie que l'adresse du sommet de la pile doit être un multiple de 16 au moment de l'appel — une exigence de la convention.</p>
+<pre class="pseudo">main:                  ; début de la fonction
+    push rbp           ; empile rbp : réaligne la pile sur 16 octets avant le call
+    ; ... call printf ...   ; entre-temps on appelle printf, pile bien alignée
+    pop rbp            ; dépile rbp : restaure la pile comme avant
+    ret                ; revient à l'appelant</pre>
+<p>La convention exige que la pile soit alignée sur <strong>16 octets</strong> au moment d'un <code>call</code>. Un <code>push</code> en début de fonction rétablit souvent cet alignement.</p>
+
+<h3>5. Assembler et lier</h3>
+<p>L'<strong>assembleur</strong> (ici <code>nasm</code>) traduit notre texte en code machine (un fichier objet <code>.o</code>). Le <strong>lieur</strong> (ici via <code>gcc</code>) réunit ce fichier avec la libc pour produire le programme final. Les lignes suivantes sont des <strong>commandes shell</strong> (tapées dans le terminal), pas de l'assembleur.</p>
+<pre class="pseudo">nasm -f elf64 prog.asm -o prog.o     # assemble prog.asm en fichier objet 64 bits prog.o
+gcc prog.o -o prog -no-pie           # gcc lie prog.o avec la libc -> exécutable "prog"
+./prog                               # lance le programme  -> affiche "Stock: 115"</pre>
+<div class="tip">Appeler la libc, c'est le pont entre l'assembleur et l'écosystème C : on récupère printf, malloc, strlen… gratuitement. En échange, on suit strictement la convention d'appel. C'est aussi ce que fait tout programme C compilé : du code machine qui appelle des fonctions de bibliothèque.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi appeler printf depuis l'assembleur ?", opts: ["obligatoire", "pour formater/afficher sans tout réécrire", "pour trier", "aucune raison"], a: 1, exp: "Réutiliser la libc." },
+    { type: "qcm", q: "Quand on appelle la libc, le point d'entrée est…", opts: ["_start", "main (lié avec gcc)", "printf", "start"], a: 1, exp: "gcc fournit le vrai _start." },
+    { type: "qcm", q: "<code>extern printf</code> déclare…", opts: ["une variable", "une fonction externe (venue de la libc)", "une section", "un registre"], a: 1, exp: "Résolue à la liaison." },
+    { type: "qcm", q: "Le 1er argument de printf (le format) va dans…", opts: ["rax", "rdi", "rsi", "rsp"], a: 1, exp: "System V." },
+    { type: "qcm", q: "La valeur pour %d va dans…", opts: ["rdi", "rsi (2e argument)", "rax", "rbp"], a: 1, exp: "Argument suivant." },
+    { type: "qcm", q: "Pourquoi <code>xor eax, eax</code> avant call printf ?", opts: ["retour 0", "indiquer 0 registre vectoriel (printf est variadique)", "vider printf", "aucune raison"], a: 1, exp: "Détail de la convention variadique." },
+    { type: "qcm", q: "Oublier le xor eax, eax avant printf peut…", opts: ["accélérer", "faire planter l'appel", "trier", "afficher deux fois"], a: 1, exp: "ABI non respectée." },
+    { type: "qcm", q: "La chaîne de format doit être terminée par…", opts: ["un espace", "un 0", "un saut de ligne", "rien"], a: 1, exp: "Chaîne C." },
+    { type: "qcm", q: "La pile doit être alignée sur … avant un call", opts: ["4 octets", "16 octets", "1 octet", "8 octets"], a: 1, exp: "Contrainte d'ABI." },
+    { type: "qcm", q: "Comment lier avec la libc ?", opts: ["ld seul", "gcc prog.o -o prog", "nasm", "make"], a: 1, exp: "gcc fait la liaison." },
+    { type: "vf", q: "Appeler la libc donne accès à printf, malloc, strlen… depuis l'assembleur.", a: true, exp: "Le pont vers le C." },
+    { type: "qcm", q: "printf est une fonction…", opts: ["à arguments fixes", "variadique (nombre variable d'arguments)", "sans argument", "interne au CPU"], a: 1, exp: "%d, %s… variables." },
+    { type: "qcm", q: "Un programme C compilé, c'est…", opts: ["du Python", "du code machine appelant des fonctions de bibliothèque", "du HTML", "rien"], a: 1, exp: "Comme ici." },
+    { type: "qcm", q: "push rbp en début de main sert souvent à…", opts: ["afficher", "réaligner la pile sur 16 octets", "trier", "additionner"], a: 1, exp: "Alignement." },
+    { type: "qcm", q: "%d dans le format printf affiche…", opts: ["une chaîne", "un entier", "un flottant", "un caractère"], a: 1, exp: "Formatage d'entier." }
+  ],
+  final: {
+    title: "Exercice final — Afficher un total",
+    intro: `<p>On veut afficher « Total: 115 ». Analyse :</p>
+<pre class="pseudo">section .data              ; section des données initialisées
+    fmt db "Total: %d", 10, 0   ; format C : %d = entier, 10 = saut de ligne, 0 = fin de chaîne
+section .text              ; section du code
+    global _start          ; PROBLÈME : _start ne convient pas si on lie avec gcc/la libc
+    extern printf          ; printf est externe (libc)
+_start:                    ; point d'entrée (à remplacer par main)
+    mov rdi, fmt           ; 1er argument : la chaîne de format
+    mov rsi, 115           ; 2e argument : la valeur pour %d
+    call printf            ; appelle printf ... mais il manque xor eax, eax avant !
+    ret                    ; revient (mais sans exit/return propre)</pre>`,
+    questions: [
+      { type: "qcm", q: "Problème n°1 — <code>_start</code> avec la libc :", opts: ["correct", "pour appeler printf, on utilise main et on lie avec gcc", "il faut ld", "rien"], a: 1, exp: "gcc fournit _start." },
+      { type: "qcm", q: "Manque n°2 — avant call printf :", opts: ["rien", "xor eax, eax (0 registre vectoriel)", "un mov de plus", "un cmp"], a: 1, exp: "printf variadique." },
+      { type: "qcm", q: "rdi et rsi sont-ils corrects ?", opts: ["non", "oui : format dans rdi, valeur dans rsi", "inversés", "inutiles"], a: 1, exp: "Convention respectée." },
+      { type: "qcm", q: "Comment assembler et lier ?", opts: ["nasm puis ld", "nasm puis gcc prog.o -o prog -no-pie", "gcc seul", "python"], a: 1, exp: "gcc pour la libc." },
+      { type: "qcm", q: "La fin de main devrait faire…", opts: ["ret sans rien", "xor eax, eax (return 0) puis ret", "exit syscall", "un jmp"], a: 1, exp: "Retour propre." }
+    ],
+    solution: `<pre class="pseudo">section .data              ; section des données initialisées
+    fmt db "Total: %d", 10, 0   ; format : %d = entier, 10 = saut de ligne, 0 = fin de chaîne C
+section .text              ; section du code exécutable
+    global main            ; on expose "main" (gcc fournira le vrai démarrage)
+    extern printf          ; printf vient de la libc (fonction externe)
+main:                      ; début de la fonction principale
+    push rbp               ; aligner la pile sur 16 octets avant le call
+    mov rdi, fmt           ; 1er argument : l'adresse de la chaîne de format
+    mov rsi, 115           ; 2e argument : valeur pour %d
+    xor eax, eax           ; 0 registre à virgule flottante utilisé (printf variadique)
+    call printf            ; appelle printf : affiche "Total: 115"
+    pop rbp                ; restaure la pile (dépile rbp)
+    xor eax, eax           ; return 0 (valeur de retour de main)
+    ret                    ; revient au système d'exécution
+# nasm -f elf64 p.asm -o p.o && gcc p.o -o p -no-pie && ./p   # assemble, lie avec la libc, lance
+#  -> Total: 115                                              # résultat affiché</pre>
+<p><code>main</code> + <code>extern printf</code> + <code>xor eax, eax</code> + liaison <code>gcc</code> : le pont vers la libc. Demain : les trois syntaxes en profondeur.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur (NASM) ici…",
+  items: [
+  { id: "asm-l16", title: "Afficher un nombre avec printf", level: 3,
+    statement: "Écris un programme qui affiche « Prix: 44\\n » en appelant printf. Utilise le point d'entrée main, extern printf, xor eax, eax avant l'appel, et donne la commande d'assemblage + liaison avec gcc.",
+    hints: [
+      "fmt db \"Prix: %d\", 10, 0 en .data.",
+      "global main ; extern printf ; rdi=fmt, rsi=44, xor eax,eax, call printf.",
+      "nasm -f elf64 p.asm -o p.o && gcc p.o -o p -no-pie"
+    ],
+    solution: "section .data          ; section des données initialisées\n    fmt db \"Prix: %d\", 10, 0   ; format : %d = entier, 10 = saut de ligne, 0 = fin de chaine C\nsection .text          ; section du code exécutable\n    global main         ; on expose main (gcc fournit le vrai démarrage)\n    extern printf       ; printf vient de la libc (fonction externe)\nmain:                   ; début de la fonction principale\n    push rbp            ; aligner la pile sur 16 octets avant le call\n    mov rdi, fmt        ; 1er argument : adresse de la chaine de format\n    mov rsi, 44         ; 2e argument : valeur pour %d\n    xor eax, eax        ; printf variadique : 0 registre à virgule flottante\n    call printf         ; appelle printf : affiche \"Prix: 44\"\n    pop rbp             ; restaure la pile (dépile rbp)\n    xor eax, eax        ; return 0 (valeur de retour de main)\n    ret                 ; revient au système d'exécution\n# nasm -f elf64 p.asm -o p.o && gcc p.o -o p -no-pie && ./p   # assemble, lie, lance\n#  ->  Prix: 44                                               # résultat affiché",
+    note: "Appeler printf donne le formatage gratuitement : on suit la convention (rdi = format, rsi = valeur), on met eax à 0 (variadique), on aligne la pile (push rbp), et on lie avec gcc (pas ld) car on utilise la libc. C'est le pont entre l'assembleur et l'écosystème C." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

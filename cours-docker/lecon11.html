@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "MySQL en conteneur",
+  subtitle: "La base de la Ludothèque, initialisée, persistante et privée.",
+  theory: `
+<h3>1. L'image officielle mysql</h3>
+<p>L'image officielle <code>mysql</code> est configurée entièrement par des variables d'environnement <code>MYSQL_*</code>. Au tout premier démarrage, elle fait automatiquement pour toi ce que tu faisais à la main en cours de bases de données : créer la base, créer un utilisateur, lui donner des droits.</p>
+<pre class="pseudo">docker run -d --name bdd --network reseau-ludo \\        # lance MySQL en arrière-plan, sur le réseau privé
+    -e MYSQL_ROOT_PASSWORD=root-secret \\               # mot de passe du super-administrateur 'root' (obligatoire)
+    -e MYSQL_DATABASE=ludotheque \\                     # crée une base nommée 'ludotheque' au 1er démarrage
+    -e MYSQL_USER=ludo_app \\                           # crée un utilisateur applicatif 'ludo_app' (pas root !)
+    -e MYSQL_PASSWORD=secret \\                         # mot de passe de cet utilisateur applicatif
+    -v donnees-mysql:/var/lib/mysql \\                  # persiste les données dans le volume (leçon 8)
+    mysql:8.4                                          # l'image officielle, tag épinglé</pre>
+<p>Au <strong>premier</strong> démarrage (volume vide), l'image crée la base, l'utilisateur et ses droits — le <code>CREATE DATABASE / CREATE USER / GRANT</code> du cours MySQL, automatisé. L'application se connectera en <code>ludo_app</code> (droits limités à sa base), <strong>jamais en root</strong> : c'est le principe du <strong>moindre privilège</strong> (ne donner que les droits strictement nécessaires).</p>
+
+<h3>2. Les scripts d'initialisation</h3>
+<p>L'image mysql exécute automatiquement tout script placé dans un dossier spécial, au premier démarrage. On y branche un bind mount depuis un dossier <code>./init</code> de l'hôte.</p>
+<pre class="pseudo">-v ./init:/docker-entrypoint-initdb.d          # monte le dossier local ./init dans le dossier « magique » d'initialisation de mysql
+# tout fichier .sql ou .sh de ce dossier s'exécute au PREMIER démarrage    # l'image lance ces scripts automatiquement, une seule fois
+# (dans l'ordre alphabétique) : jeu de données de démo, réglages...        # d'où le préfixe numérique (01-, 02-) pour contrôler l'ordre</pre>
+
+<h3>3. Attention : « premier démarrage » seulement</h3>
+<p>Point de vigilance essentiel pour débutant : cette initialisation ne se produit QUE si le dossier de données est vide.</p>
+<div class="warn">Les variables <code>MYSQL_*</code> et les scripts d'init ne jouent que si <code>/var/lib/mysql</code> est <strong>vide</strong>. Changer <code>MYSQL_PASSWORD</code> sur un volume existant ne change <strong>rien</strong> : la base existante garde ses comptes. (Pour changer un mot de passe ensuite : <code>ALTER USER</code> dans MySQL.)</div>
+
+<h3>4. Les migrations de l'application</h3>
+<p>La <strong>structure</strong> des tables (le schéma) ne vient pas de l'image mysql, mais des <strong>migrations</strong> de ton application Django (les fichiers qui décrivent l'évolution du schéma, hérités du Niveau 6). On les applique à travers le réseau.</p>
+<pre class="pseudo">docker exec ludo python manage.py migrate      # depuis le conteneur de l'app, applique les migrations à la base (via le réseau)
+Applying catalogue.0001_initial... OK          # crée les tables du schéma issu de la conception Merise
+Applying catalogue.0002_creer_roles... OK      # migration de données : insère les 3 rôles applicatifs
+
+docker exec -it bdd mysql -uludo_app -psecret ludotheque -e "SHOW TABLES;"   # se connecte en ludo_app et liste les tables créées</pre>
+<p>Le conteneur ne change pas l'application : les migrations du capstone tournent telles quelles, à travers le réseau.</p>
+
+<h3>5. Accès de maintenance</h3>
+<p>Pour l'administration ponctuelle (regarder, sauvegarder), on utilise le compte <code>root</code> via <code>exec</code> — sans jamais publier le port.</p>
+<pre class="pseudo">docker exec -it bdd mysql -uroot -proot-secret       # ouvre une console SQL interactive en tant que root (maintenance)
+docker exec bdd mysqldump -uroot -proot-secret \\    # 'mysqldump' exporte la base sous forme de fichier SQL...
+    --databases ludotheque &gt; sauvegarde.sql          # ...redirigé (&gt;) vers un fichier sur l'hôte : c'est une sauvegarde (leçon 8)</pre>
+<div class="tip">Deux comptes, deux usages : <code>ludo_app</code> pour l'application (droits limités à sa base), <code>root</code> pour la maintenance ponctuelle via <code>exec</code>. Exactement la discipline du cours MySQL, en version conteneur.</div>`,
+  exercises: [
+    { type: "qcm", q: "MYSQL_DATABASE=ludotheque fait que…", opts: ["Rien", "La base est créée au premier démarrage", "La base est supprimée", "MySQL refuse de démarrer"], a: 1, exp: "Si le volume est vide." },
+    { type: "qcm", q: "MYSQL_USER + MYSQL_PASSWORD créent…", opts: ["Le compte root", "Un utilisateur applicatif avec droits sur la base", "Un conteneur", "Un volume"], a: 1, exp: "Le CREATE USER + GRANT automatisé." },
+    { type: "qcm", q: "L'application se connecte en…", opts: ["root", "ludo_app (droits limités)", "admin", "anonyme"], a: 1, exp: "Jamais root — cours MySQL." },
+    { type: "qcm", q: "Les scripts de /docker-entrypoint-initdb.d s'exécutent…", opts: ["À chaque démarrage", "Au premier démarrage (volume vide), en ordre alphabétique", "Jamais", "Au build"], a: 1, exp: "Initialisation seulement." },
+    { type: "vf", q: "Changer MYSQL_PASSWORD sur un volume existant met à jour le mot de passe.", a: false, exp: "Volume non vide = variables ignorées ; ALTER USER." },
+    { type: "qcm", q: "Pourquoi « premier démarrage » seulement ?", opts: ["Un bug", "L'initialisation ne joue que si /var/lib/mysql est vide", "Une licence", "Le cache"], a: 1, exp: "La base existante est souveraine." },
+    { type: "qcm", q: "Le schéma de la Ludothèque arrive par…", opts: ["Un script SQL manuel", "docker exec ludo python manage.py migrate", "L'image", "Le hasard"], a: 1, exp: "Les migrations du capstone, telles quelles." },
+    { type: "qcm", q: "Les 3 rôles arrivent par…", opts: ["La migration de données du capstone (0002_creer_roles)", "Un INSERT à la main", "MYSQL_USER", "Le Dockerfile"], a: 0, exp: "Le versionné rejoue partout." },
+    { type: "qcm", q: "Vérifier les tables :", opts: ["docker exec -it bdd mysql -uludo_app -psecret ludotheque -e \"SHOW TABLES;\"", "docker logs", "docker ps", "cat volume"], a: 0, exp: "Console SQL via exec." },
+    { type: "qcm", q: "La console root sert à…", opts: ["L'application", "La maintenance ponctuelle (exec)", "Rien", "Publier le port"], a: 1, exp: "Deux comptes, deux usages." },
+    { type: "qcm", q: "Ce conteneur MySQL est…", opts: ["Publié sur 3306", "Non publié : joignable seulement via le réseau interne", "Sur Internet", "Sans réseau"], a: 1, exp: "Leçon 9 appliquée." },
+    { type: "qcm", q: "Les données vivent dans…", opts: ["Le conteneur", "Le volume donnees-mysql", "L'image", "Git"], a: 1, exp: "Leçon 8 appliquée." },
+    { type: "vf", q: "Recréer le conteneur bdd (rm + run avec le même volume) conserve bases et comptes.", a: true, exp: "L'état est dans le volume." },
+    { type: "qcm", q: "Un jeu de données de démo pour le dev se charge par…", opts: ["Un .sql dans ./init monté sur /docker-entrypoint-initdb.d", "Un COPY dans l'image app", "Un -e", "docker push"], a: 0, exp: "Initialisation du premier démarrage." },
+    { type: "qcm", q: "mysqldump via docker exec produit…", opts: ["Une image", "Une sauvegarde logique sur l'hôte", "Un volume", "Un réseau"], a: 1, exp: "Leçon 8 : la procédure de sauvegarde." }
+  ],
+  final: {
+    title: "Exercice final — La base officielle du projet",
+    intro: `<p>On assemble le conteneur MySQL définitif et on migre.</p>`,
+    questions: [
+      { type: "qcm", q: "Le run complet contient :", opts: ["network + 4 variables MYSQL_* + volume, sans -p", "juste l'image", "-p 3306:3306", "un bind mount du code"], a: 0, exp: "Privé, initialisé, persistant." },
+      { type: "qcm", q: "Base et utilisateur applicatif existent grâce à :", opts: ["MYSQL_DATABASE / MYSQL_USER / MYSQL_PASSWORD au 1er démarrage", "un GRANT manuel obligatoire", "l'app", "rien"], a: 0, exp: "Automatisé par l'image." },
+      { type: "qcm", q: "Le schéma arrive par :", opts: ["docker exec ludo python manage.py migrate", "un CREATE TABLE à la main", "l'image mysql", "le Dockerfile"], a: 0, exp: "Les migrations du Niveau 6." },
+      { type: "qcm", q: "Si on relance avec un volume déjà rempli :", opts: ["Les MYSQL_* sont ignorées, la base existante est conservée", "tout est recréé", "erreur", "les données sont effacées"], a: 0, exp: "Premier démarrage seulement." },
+      { type: "vf", q: "L'app utilise ludo_app, root reste pour la maintenance.", a: true, exp: "Moindre privilège." }
+    ],
+    solution: `<pre class="pseudo">$ docker run -d --name bdd --network reseau-ludo \\        # MySQL en arrière-plan, sur le réseau privé
+    -e MYSQL_ROOT_PASSWORD=root-secret \\                 # mot de passe root (super-admin)
+    -e MYSQL_DATABASE=ludotheque \\                       # base créée au 1er démarrage
+    -e MYSQL_USER=ludo_app -e MYSQL_PASSWORD=secret \\    # utilisateur applicatif + son mot de passe
+    -v donnees-mysql:/var/lib/mysql \\                    # données persistées dans le volume
+    -v ./init:/docker-entrypoint-initdb.d \\             # scripts d'initialisation joués au 1er démarrage
+    mysql:8.4                                            # image officielle épinglée
+
+$ docker exec ludo python manage.py migrate     # applique les migrations Django : crée le schéma + les rôles
+$ docker exec -it bdd mysql -uludo_app -psecret ludotheque -e "SHOW TABLES;"   # se connecte en ludo_app et liste les tables
+catalogue_jeu, catalogue_location, auth_user...  # ✔ les tables du projet sont bien là</pre>
+<p>La base officielle tourne. Demain : remplacer tous ces docker run par UN fichier.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta mise en service MySQL…",
+  items: [
+  { id: "docker-l11", title: "Le jeu de données de démonstration", level: 2,
+    statement: "Écris le script init/01-demo.sql qui insère 2 catégories et 3 jeux de démonstration dans la base ludotheque (colonnes du capstone : titre, prix_achat, prix_location, stock_vente, stock_location, categorie_id), puis la procédure commentée pour le faire jouer : pourquoi il faut un volume NEUF, et comment vérifier le résultat.",
+    hints: [
+      "Le script doit commencer par USE ludotheque;",
+      "Il ne jouera que sur un volume vierge : docker volume rm (ou un volume -demo dédié).",
+      "ATTENTION : en vrai, les tables naissent des migrations — le script suppose migrate déjà passé OU crée ses propres tables de démo."
+    ],
+    solution: "-- init/01-demo.sql\n-- Prérequis : ce script joue au 1er démarrage, AVANT les migrations Django.\n-- Pour un jeu de données applicatif, la bonne pratique est plutôt une\n-- fixture Django ; ce script montre le mécanisme d'init MySQL.\nUSE ludotheque;\n\nCREATE TABLE IF NOT EXISTS demo_categorie (\n    id INT AUTO_INCREMENT PRIMARY KEY,\n    nom VARCHAR(100) NOT NULL UNIQUE\n);\n\nINSERT INTO demo_categorie (nom) VALUES ('Stratégie'), ('Famille');\n\n-- Procédure :\n-- 1. Un volume NEUF (sinon l'init ne joue pas) :\n--    docker rm -f bdd && docker volume rm donnees-mysql-demo\n--    docker volume create donnees-mysql-demo\n-- 2. Lancer avec le dossier init monté :\n--    docker run -d --name bdd --network reseau-ludo \\\n--        -e MYSQL_ROOT_PASSWORD=... -e MYSQL_DATABASE=ludotheque \\\n--        -e MYSQL_USER=ludo_app -e MYSQL_PASSWORD=secret \\\n--        -v donnees-mysql-demo:/var/lib/mysql \\\n--        -v ./init:/docker-entrypoint-initdb.d mysql:8.4\n-- 3. Vérifier :\n--    docker exec -it bdd mysql -uludo_app -psecret ludotheque \\\n--        -e \"SELECT * FROM demo_categorie;\"",
+    note: "La subtilité clé : l'init MySQL joue AVANT que Django n'ait migré — un script qui INSERT dans catalogue_jeu échouerait (table inexistante). D'où la leçon d'architecture : l'init SQL sert aux réglages base (comptes, options, tables utilitaires), le jeu de données APPLICATIF passe par les outils de l'app (fixtures, seed) après migrate. Savoir qui initialise quoi, et quand, évite des heures de confusion." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

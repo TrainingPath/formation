@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Les espaces client, vendeur et administrateur",
+  subtitle: "Trois portes, trois clés — on assemble les services existants, on n'invente rien.",
+  theory: `
+<h3>1. Trois espaces, trois rôles</h3>
+<p>Un <strong>espace</strong> est une zone du site réservée à un profil d'utilisateur. Un <strong>rôle</strong> est une étiquette portée par un compte (« Client », « Vendeur », « Admin ») qui décrit ce qu'il a le droit de faire — comme un badge d'accès dans une entreprise. Trois portes, trois clés :</p>
+<pre class="pseudo">/Client   -> ses locations, ses achats            (role Client)
+/Vendeur  -> stocks, retards, mises en vente        (policy GererCatalogue)
+/Gestion  -> comptes, promotions, catégories        (role Admin)</pre>
+<p>Aucune logique métier <strong>nouvelle</strong> : chaque espace orchestre les services (leçons 6-12) et les requêtes (leçon 15) déjà écrits et testés. Une <strong>policy</strong> (« politique ») est une règle d'autorisation nommée (ici <code>GererCatalogue</code>) qu'on peut réutiliser partout sans répéter sa définition.</p>
+
+<h3>2. Les contrôleurs protégés</h3>
+<p>Un <strong>contrôleur</strong> (<code>Controller</code>) est la classe qui regroupe les actions d'un espace — le standardiste qui reçoit les requêtes d'une zone et les aiguille. L'étiquette <code>[Authorize]</code> posée dessus est un <strong>garde</strong> : elle exige un utilisateur connecté avant d'entrer, et peut préciser un rôle ou une policy. C'est une protection <em>déclarative</em> : on la déclare en une ligne, ASP.NET l'applique.</p>
+<pre class="pseudo">[Authorize]                                    // exige un utilisateur connecté ; l'accès aux données est filtré par ressource
+public class ClientController : Controller {   // le contrôleur de l'espace client
+    public async Task&lt;IActionResult&gt; Index() {   // page d'accueil de l'espace
+        var uid = _userManager.GetUserId(User);  // identifiant de l'utilisateur CONNECTÉ
+        return View(new EspaceClientVm(          // construire le sac de données de la vue…
+            await _db.Locations.Where(l => l.ClientId == uid).Include(l => l.Jeu).ToListAsync(),   // …SES locations (+ le jeu associé)
+            await _db.Achats.Where(a => a.ClientId == uid).Include(a => a.Jeu).ToListAsync()));     // …SES achats (+ le jeu associé)
+    }                                            // fin de l'action Index
+}                                                // fin du contrôleur client
+[Authorize(Policy = "GererCatalogue")]         // espace vendeur : réservé à qui possède la policy GererCatalogue
+public class VendeurController : Controller { ... }   // stocks, retards, mises en vente (détails omis)
+[Authorize(Roles = "Admin")]                   // espace gestion : réservé au rôle Admin
+public class GestionController : Controller { ... }   // comptes, promotions, catégories (détails omis)</pre>
+<p><code>GetUserId(User)</code> renvoie l'identifiant de l'utilisateur <strong>connecté</strong> (<code>User</code> représente la personne derrière la requête). L'espace client s'en sert pour ne montrer que SES données : <code>Where(l =&gt; l.ClientId == uid)</code> filtre les locations sur son identifiant — c'est l'autorisation « par ressource », qui empêche de voir les données d'autrui.</p>
+
+<h3>3. L'action d'écriture protégée</h3>
+<p>Modifier des données (promouvoir un utilisateur) est une action sensible : elle se fait en <strong>POST</strong> (une requête qui ENVOIE un changement, pas qui lit une page), protégée par le rôle Admin ET le jeton antiforgery.</p>
+<pre class="pseudo">[Authorize(Roles = "Admin")]                    // seul un Admin peut appeler cette action
+[HttpPost, ValidateAntiForgeryToken]            // écriture = POST ; le jeton antiforgery est vérifié
+public async Task&lt;IActionResult&gt; Promouvoir(string id) {   // promouvoir l'utilisateur d'identifiant id
+    await _userManager.AddToRoleAsync(await _userManager.FindByIdAsync(id), "Vendeur");   // le retrouver, puis lui donner le rôle Vendeur
+    return RedirectToAction("Index");           // rediriger vers la page de liste après l'action
+}                                               // fin de l'action</pre>
+<p><code>AddToRoleAsync</code> donne un rôle à un compte ; <code>RedirectToAction("Index")</code> renvoie ensuite l'utilisateur vers la page de liste. Le double filtre <code>[Authorize(Roles="Admin")]</code> + <code>[ValidateAntiForgeryToken]</code> ferme à la fois l'accès non autorisé et le CSRF.</p>
+
+<h3>4. Le test de refus croisé, par espace</h3>
+<p>Un <strong>test de refus croisé</strong> vérifie qu'un rôle ne peut PAS entrer dans l'espace d'un autre. Le code <strong>403</strong> (<em>Forbidden</em>, « interdit ») est la réponse standard du serveur qui dit « tu es identifié, mais tu n'as pas le droit ».</p>
+<pre class="pseudo">[Fact] public async Task Client_naccede_pas_a_la_gestion() {   // test : un client ne doit PAS entrer dans /Gestion
+    var r = await ConnecterEnTantQue(client).GetAsync("/Gestion");   // se connecter en client, puis tenter d'ouvrir /Gestion
+    r.StatusCode.Should().Be(HttpStatusCode.Forbidden);      // exiger la réponse 403 (accès interdit)
+}                                                            // fin du test</pre>
+<p>Chaque tentative interdite doit renvoyer 403. Le test le prouve, la CI le garde pour toujours.</p>
+
+<h3>5. Le dividende de l'architecture en couches</h3>
+<div class="warn">Chaque espace a son test de refus croisé, verrouillé par la CI : la matrice « qui accède à quoi » est prouvée, pas supposée. Une régression d'autorisation (un <code>[Authorize]</code> oublié) redevient rouge immédiatement.</div>
+<div class="tip">Les espaces n'ajoutent presque pas de code : ils <strong>assemblent</strong> ce qui existe. C'est le dividende d'une architecture montée proprement dès la semaine 1 — la dernière ligne droite compose des briques testées, elle ne réinvente pas la mécanique. Quand la fondation est saine, la finition est rapide.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les trois espaces correspondent à…", opts: ["Trois bases", "Trois rôles (client, vendeur, admin)", "Trois serveurs", "Trois langues"], a: 1, exp: "Cloisonnement par profil." },
+    { type: "qcm", q: "Les espaces ajoutent…", opts: ["Beaucoup de métier neuf", "Presque aucun métier (ils assemblent)", "Une base", "Un WAF"], a: 1, exp: "Orchestration." },
+    { type: "qcm", q: "L'espace client filtre par…", opts: ["L'URL", "GetUserId(User) (l'utilisateur courant)", "Le rôle brut", "Le cookie"], a: 1, exp: "Par ressource." },
+    { type: "qcm", q: "L'espace admin se protège par…", opts: ["Un menu caché", "[Authorize(Roles=\"Admin\")]", "Rien", "Un cookie"], a: 1, exp: "Par rôle." },
+    { type: "qcm", q: "Le test de refus croisé vérifie…", opts: ["Le CSS", "Qu'un rôle n'accède pas à l'espace d'un autre", "La vitesse", "Le port"], a: 1, exp: "403 attendu." },
+    { type: "qcm", q: "[Authorize] sur un contrôleur…", opts: ["Ne fait rien", "Exige un utilisateur authentifié (+ rôle/policy)", "Chiffre", "Déploie"], a: 1, exp: "Protection déclarative." },
+    { type: "qcm", q: "Une régression d'autorisation…", opts: ["Passe inaperçue", "Redevient rouge (test croisé en CI)", "Casse la base", "Est ignorée"], a: 1, exp: "Filet permanent." },
+    { type: "qcm", q: "Les services réutilisés viennent des leçons…", opts: ["Aucune", "6-15 (déjà écrits et testés)", "20-21", "Externes"], a: 1, exp: "On assemble." },
+    { type: "qcm", q: "La matrice « qui accède à quoi » est…", opts: ["Supposée", "Prouvée par les tests", "Aléatoire", "Décorative"], a: 1, exp: "Vérifiée." },
+    { type: "qcm", q: "La finition est rapide car…", opts: ["On code vite", "La fondation (couches) est saine", "On saute les tests", "Par chance"], a: 1, exp: "Dividende de l'archi." },
+    { type: "vf", q: "Chaque espace a son test de refus croisé.", a: true, exp: "Cloisonnement prouvé." },
+    { type: "qcm", q: "Promouvoir se fait en…", opts: ["GET", "POST + [Authorize(Roles) + ValidateAntiForgeryToken]", "HEAD", "Sans protection"], a: 1, exp: "Écrire = POST protégé." },
+    { type: "qcm", q: "Un [Authorize] oublié serait détecté par…", opts: ["Rien", "Le test de refus croisé (rouge)", "Le CSS", "L'utilisateur"], a: 1, exp: "La CI garde la matrice." },
+    { type: "qcm", q: "L'espace client ne montre que…", opts: ["Tout", "Les données de l'utilisateur courant", "Les données admin", "Rien"], a: 1, exp: "Where(ClientId == uid)." },
+    { type: "vf", q: "Une architecture en couches saine rend la dernière ligne droite rapide.", a: true, exp: "Assembler, pas réinventer." }
+  ],
+  final: {
+    title: "Exercice final — Trois espaces cloisonnés",
+    intro: `<p>Espaces + protection + refus croisé.</p>`,
+    questions: [
+      { type: "qcm", q: "L'espace client montre :", opts: ["les données de l'utilisateur courant", "tout", "les comptes", "rien"], a: 0, exp: "GetUserId(User)." },
+      { type: "qcm", q: "L'espace gestion est protégé par :", opts: ["[Authorize(Roles=\"Admin\")]", "un menu caché", "rien", "un cookie"], a: 0, exp: "Par rôle." },
+      { type: "qcm", q: "Le cloisonnement est prouvé par :", opts: ["un test de refus croisé par espace", "un screenshot", "la confiance", "un WAF"], a: 0, exp: "403 attendu." },
+      { type: "qcm", q: "Les espaces contiennent :", opts: ["quasiment aucune logique neuve (assemblage)", "tout le métier", "une nouvelle base", "un cache"], a: 0, exp: "Dividende des couches." },
+      { type: "vf", q: "Un [Authorize] oublié est rattrapé par la CI.", a: true, exp: "Test croisé." }
+    ],
+    solution: `<pre class="pseudo">[Authorize] class ClientController : Controller {   // connexion requise ; accès filtré par ressource
+  public async Task<IActionResult> Index() {        // page de l'espace client
+    var uid = _userManager.GetUserId(User);         // identifiant de l'utilisateur connecté
+    return View(await _db.Locations.Where(l => l.ClientId == uid).ToListAsync());   // ne rendre QUE ses locations
+  }
+}
+[Authorize(Policy="GererCatalogue")] class VendeurController { ... }   // espace vendeur : par policy
+[Authorize(Roles="Admin")] class GestionController { ... }            // espace gestion : par rôle
+// test : ConnecterEnTantQue(client).GetAsync("/Gestion") -> 403 (refus croisé)</pre>
+<p>Les espaces sont cloisonnés. Demain : l'image de production, durcie.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes espaces et leurs tests de refus…",
+  items: [
+  { id: "proj6cs-l16", title: "Trois espaces cloisonnés, prouvés par refus croisé", level: 2,
+    statement: "Écris les trois contrôleurs protégés ([Authorize] par rôle/policy), l'espace client filtré par l'utilisateur courant, une action admin d'écriture protégée, et deux tests de refus croisé. Explique en 2-3 lignes pourquoi les espaces n'ajoutent presque pas de code et ce que le test de refus croisé garantit.",
+    hints: [
+      "[Authorize(Policy=\"GererCatalogue\")] pour le vendeur ; [Authorize(Roles=\"Admin\")] pour la gestion.",
+      "Espace client : _db.Locations.Where(l => l.ClientId == GetUserId(User)).",
+      "Tests : ConnecterEnTantQue(...).GetAsync(...) attendant 403."
+    ],
+    solution: "[Authorize]                                    // espace client (par ressource)\npublic class ClientController : Controller {   // contrôleur de l'espace client\n    public async Task<IActionResult> Index() { // page d'accueil de l'espace\n        var uid = _userManager.GetUserId(User);   // identifiant de l'utilisateur connecte\n        return View(new EspaceClientVm(           // construire le sac de donnees de la vue…\n            await _db.Locations.Where(l => l.ClientId == uid).Include(l => l.Jeu).ToListAsync(),   // …SES locations (+ le jeu)\n            await _db.Achats.Where(a => a.ClientId == uid).Include(a => a.Jeu).ToListAsync()));     // …SES achats (+ le jeu)\n    }                                          // fin de l'action Index\n}                                              // fin du controleur client\n\n[Authorize(Policy = \"GererCatalogue\")]         // espace vendeur (par role)\npublic class VendeurController : Controller { /* stocks, retards */ }   // details omis\n\n[Authorize(Roles = \"Admin\")]                   // espace gestion\npublic class GestionController : Controller {  // controleur reserve au role Admin\n    [HttpPost, ValidateAntiForgeryToken]       // ecriture = POST + jeton antiforgery verifie\n    public async Task<IActionResult> Promouvoir(string id) {   // promouvoir l'utilisateur id\n        var u = await _userManager.FindByIdAsync(id);   // retrouver le compte par son identifiant\n        await _userManager.AddToRoleAsync(u!, \"Vendeur\");   // lui ajouter le role Vendeur\n        return RedirectToAction(\"Index\");      // rediriger vers la liste apres l'action\n    }                                          // fin de l'action\n}                                              // fin du controleur gestion\n\n// Tests de refus croise (verrouilles par la CI)\n[Fact] public async Task Client_naccede_pas_a_la_gestion() {   // un client ne doit PAS entrer dans /Gestion\n    var r = await ConnecterEnTantQue(_client).GetAsync(\"/Gestion\");   // se connecter en client, tenter /Gestion\n    r.StatusCode.Should().Be(HttpStatusCode.Forbidden);   // exiger 403 (interdit)\n}                                              // fin du test\n[Fact] public async Task Vendeur_ne_promeut_pas() {   // un vendeur ne doit PAS promouvoir\n    var r = await ConnecterEnTantQue(_vendeur).PostAsync(\"/Gestion/Promouvoir/1\", Antiforgery());   // tenter le POST admin\n    r.StatusCode.Should().Be(HttpStatusCode.Forbidden);   // exiger 403 (interdit)\n}                                              // fin du test\n\n// POURQUOI SI PEU DE CODE, CE QUE GARANTIT LE REFUS CROISE\n// Les espaces ne font qu'APPELER des services et des requetes deja ecrits et\n// testes (leçons 6-15) : ils cablent des vues sur des briques existantes. C'est\n// le dividende d'une architecture en couches montee proprement -- la finition\n// assemble, elle ne reinvente pas.\n// Le test de refus croise transforme la matrice 'qui accede a quoi' en propriete\n// VERIFIEE : un [Authorize] oublie fait echouer la CI. Sans lui, une regression\n// d'autorisation ne se decouvre qu'en... incident de securite.",
+    note: "Cette leçon illustre le paiement des intérêts d'un bon investissement : parce que le métier a été construit en couches, testé et sécurisé au fil de l'eau, l'ouverture des trois espaces se réduit à du câblage de contrôleurs. Les attributs [Authorize] d'ASP.NET rendent le cloisonnement déclaratif et lisible. La matrice d'autorisation, prouvée espace par espace, documente et garantit simultanément qui peut faire quoi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

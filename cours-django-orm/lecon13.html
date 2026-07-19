@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Trier, trancher, compter : order_by, slicing, count",
+  subtitle: "ORDER BY, LIMIT, OFFSET et COUNT : les derniers mots du SQL que ton QuerySet apprend à dire.",
+  theory: `
+<h3>1. order_by : le ORDER BY du monde objet</h3>
+<p><strong>Trier</strong>, c'est ranger les résultats dans un ordre précis (par prix, par titre…). Tu passes le nom d'un champ à <strong>order_by()</strong> pour trier en <em>croissant</em> (du plus petit au plus grand) ; tu préfixes d'un <strong>tiret</strong> pour trier en <em>décroissant</em> ; tu passes plusieurs champs pour départager les ex æquo ; et le double underscore permet même de trier sur un champ d'une table liée (avec le JOIN qui va bien).</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.order_by("prix")             # ORDER BY prix ASC   # ASC = ascending = croissant
+&gt;&gt;&gt; Jeu.objects.order_by("-prix")            # ORDER BY prix DESC  # le tiret = DESC = decroissant
+&gt;&gt;&gt; Jeu.objects.order_by("editeur", "-prix") # ORDER BY editeur ASC, prix DESC   # 2 cles : departage les ex aequo
+&gt;&gt;&gt; Location.objects.order_by("jeu__titre")  # JOIN + ORDER BY jeu.titre   # trie sur un champ de la table liee</pre>
+<p>Un modèle peut aussi déclarer un tri par défaut via <em>class Meta: ordering = ["titre"]</em> — pratique, mais je te conseille de rester <strong>explicite</strong> dans tes requêtes : un ordering caché dans le modèle s'applique partout, y compris là où il coûte cher pour rien. Et souviens-toi du Niveau 4 : <strong>sans ORDER BY, l'ordre des lignes n'est PAS garanti</strong>. MySQL renvoie ce qui l'arrange ; si l'ordre compte, dis-le.</p>
+
+<h3>2. Trancher : le slicing Python devient LIMIT / OFFSET</h3>
+<p><strong>Trancher</strong> (en anglais <em>slicing</em>), c'est prendre une portion des résultats (les 10 premiers, du 11e au 20e…). La syntaxe de tranche de Python, que tu connais sur les listes, se traduit directement en SQL : <strong>LIMIT</strong> = « au plus N lignes », <strong>OFFSET</strong> = « en sautant les N premières ».</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.order_by("prix")[:10]       # LIMIT 10   # les 10 premiers
+&gt;&gt;&gt; Jeu.objects.order_by("prix")[10:20]     # LIMIT 10 OFFSET 10   # saute 10, prend les 10 suivants
+# Toujours paresseux ! Le slice affine la description, il n'exécute rien   # aucune requete pour l'instant
+# (une seule exception : un slice AVEC step, qs[0:10:2], évalue — leçon 7).   # le "pas" force l'evaluation
+
+&gt;&gt;&gt; Jeu.objects.order_by("prix")[0]          # évalue : LIMIT 1 → un objet Jeu   # [0] = le premier, requete immediate
+&gt;&gt;&gt; Jeu.objects.order_by("prix").first()     # pareil… mais None si vide   # first() ne plante pas sur une table vide</pre>
+<p>Deux différences à connaître entre <strong>qs[0]</strong> et <strong>.first()</strong> : sur un QuerySet vide, [0] lève IndexError (« indice hors limites ») alors que first() renvoie <strong>None</strong>. Et les <strong>indices négatifs sont interdits</strong> : qs[-1] lève TypeError, car MySQL ne sait pas compter depuis la fin. Pour « le dernier », inverse le tri puis prends le premier : order_by("-prix").first().</p>
+
+<h3>3. Compter : count() contre len()</h3>
+<p>Deux façons de compter, deux SQL très différents. <strong>.count()</strong> demande à MySQL de compter : un SELECT COUNT(*) minuscule, aucune ligne transférée. <strong>len(qs)</strong>, lui, évalue le QuerySet : toutes les lignes traversent le réseau et sont <em>hydratées</em> (transformées) en objets… juste pour être comptées.</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(disponible=True).count()   # je ne veux QUE le nombre
+# SELECT COUNT(*) FROM ludotheque_jeu WHERE disponible = 1   -- MySQL compte lui-meme
+# → MySQL renvoie UN nombre. Rien d'autre ne circule.        # aucune ligne transferee
+
+&gt;&gt;&gt; len(Jeu.objects.filter(disponible=True))       # compter via len()
+# SELECT ... (toutes les colonnes, toutes les lignes !)      -- on rapatrie TOUT
+# → hydratation de tous les objets, puis comptage en Python. # gaspillage si on ne veut qu'un nombre</pre>
+<p>Règle : si tu ne veux <strong>que</strong> le nombre, count(). En revanche, si le QuerySet est <strong>déjà évalué</strong> (tu viens de boucler dessus, son cache est rempli — leçon 7), len(qs) est gratuit et même préférable : count() repartirait inutilement en base.</p>
+
+<h3>4. exists, last, earliest, latest</h3>
+<p>Pour la question « y en a-t-il au moins un ? », l'outil dédié est <strong>.exists()</strong> : Django génère une requête minimale (SELECT 1 … LIMIT 1) qui s'arrête à la première ligne trouvée. C'est le bon test pour un if, bien plus léger que count() ou len().</p>
+<pre class="pseudo">&gt;&gt;&gt; Location.objects.filter(date_retour__isnull=True).exists()   # y a-t-il des locations en cours ?
+# SELECT (1) AS a FROM ludotheque_location                        -- ne selectionne qu'un "1"
+# WHERE date_retour IS NULL LIMIT 1                               -- s'arrete a la premiere ligne
+True                                                              # oui, il en existe au moins une</pre>
+<p>En mention rapide, la même famille : <strong>.last()</strong> (le premier du tri inversé), <strong>.reverse()</strong> (inverse un tri existant), et <strong>.earliest("date_debut")</strong> / <strong>.latest("date_debut")</strong> — le plus ancien / le plus récent selon un champ de date, parfaits pour « la dernière location de ce membre ».</p>
+
+<h3>5. Tout combiner : le top 5 de la page d'accueil</h3>
+<p>La vitrine de la Ludothèque veut les cinq jeux disponibles les moins chers. Filtre, trie, tranche — dans cet ordre :</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Jeu.objects.filter(disponible=True).order_by("prix")[:5]   # filtrer, trier, prendre les 5 premiers
+&gt;&gt;&gt; print(qs.query)                             # afficher le SQL prevu
+# SELECT ... FROM ludotheque_jeu                 -- lire dans la table des jeux
+# WHERE disponible = 1                           -- garder les disponibles
+# ORDER BY prix ASC                              -- trier du moins cher au plus cher
+# LIMIT 5                                        -- ne garder que 5 lignes</pre>
+<p>Note que filter().order_by() ou order_by().filter() produisent le <strong>même SQL</strong> : l'ordre des méthodes dans la chaîne ne change rien… à une exception près, le <strong>slicing</strong>, qui doit venir en dernier (section warn ci-dessous). En une ligne, les équivalents ailleurs : OrderBy / Take / Skip et Count en LINQ (EF Core), orderBy / limit chez Eloquent, setMaxResults / setFirstResult chez Hibernate/JPA.</p>
+<div class="warn">Trancher PUIS filtrer est <strong>interdit</strong> : après un slice, le QuerySet est figé et <em>qs[:10].filter(…)</em> lève une erreur (TypeError ou AssertionError selon les versions). L'ordre logique est toujours : <strong>filtrer et trier d'abord, trancher en dernier</strong> — comme en SQL, où LIMIT s'écrit à la fin.</div>
+<div class="tip">Pour « le jeu le moins cher », préfère <em>order_by("prix").first()</em> à <em>order_by("prix")[0]</em> : si le catalogue est vide, tu récupères None à tester tranquillement, au lieu d'une IndexError qui fait tomber la page.</div>`,
+  exercises: [
+    { type: "qcm", q: "Jeu.objects.order_by('-prix') trie…", opts: ["Par prix croissant", "Par prix décroissant (le tiret = DESC)", "Par titre", "Au hasard"], a: 1, exp: "Le préfixe - inverse le tri : ORDER BY prix DESC." },
+    { type: "qcm", q: "order_by('editeur', '-prix') signifie…", opts: ["Éditeur croissant, puis prix décroissant pour départager", "Prix d'abord, éditeur ensuite", "Un tri aléatoire entre les deux", "Une erreur : un seul champ autorisé"], a: 0, exp: "Les clés se lisent de gauche à droite, chacune avec son propre sens." },
+    { type: "qcm", q: "class Meta: ordering = ['titre'] dans le modèle Jeu…", opts: ["Impose un tri par défaut à toutes les requêtes sur Jeu", "Trie uniquement dans l'admin", "Crée un index MySQL", "Interdit order_by ailleurs"], a: 0, exp: "Pratique mais implicite : mieux vaut souvent un order_by explicite là où l'ordre compte." },
+    { type: "qcm", q: "Jeu.objects.all()[:10] génère…", opts: ["OFFSET 10", "LIMIT 10", "COUNT(10)", "Dix requêtes"], a: 1, exp: "Le slice [:10] devient LIMIT 10 dans le SQL." },
+    { type: "qcm", q: "qs[10:20] correspond en SQL à…", opts: ["LIMIT 20", "LIMIT 10 OFFSET 10", "LIMIT 10 OFFSET 20", "BETWEEN 10 AND 20"], a: 1, exp: "On saute 10 lignes (OFFSET) puis on en prend 10 (LIMIT) — la base de la pagination, leçon 16." },
+    { type: "vf", q: "qs[:10] déclenche immédiatement une requête SQL.", a: false, exp: "Un slice sans step reste paresseux : il ajoute LIMIT à la description. Seul un slice avec step évalue." },
+    { type: "input", q: "La méthode qui renvoie le premier résultat, ou None si le QuerySet est vide :", a: ["first", "first()", ".first()"], ph: "qs.…", exp: "first() encaisse le vide ; qs[0] lèverait IndexError." },
+    { type: "qcm", q: "Jeu.objects.order_by('prix')[-1]…", opts: ["Renvoie le jeu le plus cher", "Lève TypeError : indices négatifs interdits", "Renvoie None", "Vide la table"], a: 1, exp: "MySQL ne compte pas depuis la fin : inverse le tri (order_by('-prix')) et prends le premier." },
+    { type: "input", q: "La méthode qui génère SELECT COUNT(*) sans rapatrier les lignes :", a: ["count", "count()", ".count()"], ph: "qs.…", exp: "MySQL compte et renvoie un seul nombre." },
+    { type: "qcm", q: "len(Jeu.objects.all()) sur un QuerySet jamais évalué…", opts: ["Fait compter MySQL avec COUNT(*)", "Rapatrie et hydrate toutes les lignes pour les compter en Python", "Ne coûte rien", "Lève une erreur"], a: 1, exp: "len() évalue tout le QuerySet : ruineux si tu ne voulais qu'un nombre." },
+    { type: "vf", q: "Si le QuerySet vient d'être évalué (cache rempli), len(qs) ne coûte aucune requête et vaut mieux que count().", a: true, exp: "Le cache de la leçon 7 : len() lit la liste en mémoire, count() repartirait en base." },
+    { type: "qcm", q: "Pour un simple « y a-t-il des locations en retard ? » dans un if, l'outil idéal :", opts: [".count() &gt; 0", "len(qs)", ".exists()", "list(qs)"], a: 2, exp: "exists() génère un SELECT 1 … LIMIT 1 : la requête s'arrête à la première ligne trouvée." },
+    { type: "qcm", q: "Sans order_by (ni Meta.ordering), l'ordre des lignes renvoyées est…", opts: ["Alphabétique sur la clé primaire", "Celui de l'insertion, garanti", "Non garanti : MySQL renvoie ce qui l'arrange", "Toujours aléatoire volontairement"], a: 2, exp: "Le rappel du Niveau 4 : si l'ordre compte, il faut le dire avec ORDER BY." },
+    { type: "qcm", q: "Les équivalents LINQ (EF Core) de order_by et du slicing :", opts: ["OrderBy, Take et Skip", "Sort et Cut", "GroupBy et Split", "Where et Select"], a: 0, exp: "OrderBy/Take/Skip + Count ; Eloquent dit orderBy/limit, JPA setMaxResults." },
+    { type: "vf", q: "On peut encore appeler filter() sur un QuerySet déjà tranché : qs[:10].filter(disponible=True) est valide.", a: false, exp: "Après un slice, le QuerySet est figé : filtre et trie d'abord, tranche en dernier." }
+  ],
+  final: {
+    title: "Exercice final — La vitrine de la Ludothèque",
+    intro: `<p>La page d'accueil réclame ses requêtes : top 5, compteurs, tests d'existence. À toi de choisir le bon outil à chaque fois.</p>`,
+    questions: [
+      { type: "qcm", q: "Le top 5 des jeux disponibles les moins chers :", opts: ["Jeu.objects.order_by('prix')[:5].filter(disponible=True)", "Jeu.objects.filter(disponible=True).order_by('prix')[:5]", "Jeu.objects.filter(disponible=True)[:5].order_by('prix')", "Jeu.objects.count(5)"], a: 1, exp: "Filtrer, trier, trancher — le slice toujours en dernier." },
+      { type: "qcm", q: "Le SQL généré par ce top 5 :", opts: ["SELECT … WHERE disponible = 1 ORDER BY prix ASC LIMIT 5", "SELECT … LIMIT 5 puis un tri en Python", "Cinq SELECT successifs", "SELECT COUNT(*) … LIMIT 5"], a: 0, exp: "Une seule requête : WHERE + ORDER BY + LIMIT, dans l'ordre du SQL." },
+      { type: "input", q: "La méthode pour tester « existe-t-il au moins une location en retard ? » au moindre coût :", a: ["exists", "exists()", ".exists()"], ph: "qs.…", exp: "SELECT 1 … LIMIT 1 : la réponse sans transférer une seule ligne de données." },
+      { type: "vf", q: "Jeu.objects.order_by('prix').first() renvoie None si le catalogue est vide, sans lever d'exception.", a: true, exp: "Contrairement à [0] qui lèverait IndexError — first() est le choix robuste." },
+      { type: "qcm", q: "Pour afficher « N jeux disponibles » sans rien afficher d'autre, on utilise…", opts: ["len(Jeu.objects.filter(disponible=True))", "Jeu.objects.filter(disponible=True).count()", "list(...) puis len()", "exists()"], a: 1, exp: "On ne veut qu'un nombre : COUNT(*) côté MySQL, zéro ligne transférée." }
+    ],
+    solution: `<pre class="pseudo">Trier    : order_by("prix") ASC · order_by("-prix") DESC                 # tiret = decroissant
+           plusieurs clés · champ lié ("jeu__titre") · sans ORDER BY = non garanti   # dire l'ordre si il compte
+Trancher : qs[:10] → LIMIT 10 · qs[10:20] → LIMIT 10 OFFSET 10           # slice = LIMIT/OFFSET
+           paresseux (sauf step) · qs[0] IndexError / first() → None     # first() encaisse le vide
+           pas d'indice négatif → inverser le tri puis trancher          # qs[-1] interdit
+Compter  : .count() → SELECT COUNT(*) · len(qs) rapatrie tout            # count = un nombre, len = tout
+           (len OK si cache déjà rempli — leçon 7)                       # sinon count() gagne
+Tester   : .exists() → SELECT 1 … LIMIT 1, l'outil du « y en a-t-il ? »  # le plus leger pour un if
+Combiner : filter → order_by → [:5]   (le slice TOUJOURS en dernier)     # trancher a la fin
+Ailleurs : OrderBy/Take/Skip (LINQ) · orderBy/limit (Eloquent) · setMaxResults (JPA)   # equivalents</pre>
+<p>Filtrer, trier, trancher, compter : le SELECT classique est complet. Mais comment comparer deux colonnes entre elles, ou écrire un vrai OU ? Réponse à la leçon 14 : <strong>F, Q et les requêtes complexes</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l13", title: "Les quatre requêtes de la page d'accueil", level: 2,
+    statement: "La page d'accueil de la Ludothèque affiche quatre blocs, à toi d'écrire leurs requêtes en justifiant chaque choix d'outil. (1) « Les nouveautés » : les 5 jeux les plus récents (date_sortie), en excluant ceux sans date — quel tri, quelle tranche, et pourquoi faut-il traiter les NULL ? (2) « Les mieux notés » : sans agrégat pour l'instant (leçon 15), affiche les 3 derniers avis à 5 étoiles — tri et tranche sur Avis. (3) Le compteur « N jeux disponibles » : count() ou len(), justifie. (4) Le bandeau d'alerte « des locations sont en retard » (date_retour dépassée… approximons : locations en cours ouvertes depuis longtemps, date_retour__isnull=True) : exists(), count() ou [0], justifie. Pour les blocs 1 et 2, prédis le SQL généré (ORDER BY ? LIMIT ? OFFSET ?), puis indique pour chaque bloc ce qui se passerait si la table était vide (exception ou pas ?).",
+    hints: [
+      "Bloc 1 : les NULL de date_sortie perturberaient le tri — un lookup de la leçon 12 les écarte avant l'order_by ; le plus récent = tri décroissant, donc un tiret.",
+      "Blocs 3 et 4 : demande-toi ce qui circule sur le réseau — toutes les lignes (len), un nombre (count) ou un simple 1 (exists) ?",
+      "Table vide : un slice [:5] renvoie simplement un QuerySet vide (aucune exception), alors que [0] lèverait IndexError — c'est first() qui encaisse le vide."
+    ],
+    solution: "1) Nouveautés :\nJeu.objects.filter(date_sortie__isnull=False).order_by('-date_sortie')[:5]\n# isnull=False écarte les jeux sans date (sinon MySQL les classerait à sa façon),\n# -date_sortie = plus récent d'abord, [:5] = LIMIT 5.\nSQL : SELECT ... WHERE date_sortie IS NOT NULL ORDER BY date_sortie DESC LIMIT 5\nTable vide : QuerySet vide, aucun crash — un slice ne lève jamais d'exception.\n\n2) Mieux notés (approximation sans agrégat) :\nAvis.objects.filter(note=5).order_by('-id')[:3]\n# les 3 derniers avis 5 étoiles ; le vrai classement moyen attendra Avg (leçon 15).\nSQL : SELECT ... WHERE note = 5 ORDER BY id DESC LIMIT 3\n\n3) Compteur :\nnb = Jeu.objects.filter(disponible=True).count()\n# count() → SELECT COUNT(*) : MySQL renvoie UN nombre.\n# len() rapatrierait et hydraterait tous les jeux juste pour les compter.\n# (len ne serait justifié que si la liste était déjà évaluée ailleurs sur la page.)\n\n4) Bandeau d'alerte :\nif Location.objects.filter(date_retour__isnull=True).exists():\n    afficher le bandeau\n# exists() → SELECT 1 ... LIMIT 1 : la base s'arrête à la première location trouvée.\n# count() compterait tout pour rien ; [0] lèverait IndexError s'il n'y en a aucune.\n\nBilan : 4 blocs = 4 requêtes, chacune minimale — et first()/slice/exists\nrendent la page insensible aux tables vides.",
+    note: "Ces quatre blocs sont typiquement ce qu'une vue Django du Niveau 3 passera à son template, et chaque LIMIT/COUNT prédit ici est du SQL que tu sais lire depuis le Niveau 4. Le slicing [10:20] que tu viens d'apprivoiser est exactement ce que Paginator industrialisera à la leçon 16, et dans ton projet full-stack du Niveau 6, choisir exists() plutôt que len() sur la page d'accueil fera la différence sous charge réelle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

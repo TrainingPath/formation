@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "La première entité : DbSet, conventions et data annotations",
+  subtitle: "La classe Jeu devient la table Jeux — sans écrire une ligne de SQL.",
+  theory: `
+<h3>1. Une entité, c'est une classe C# ordinaire</h3>
+<p>Le contexte de la leçon 2 est branché sur SQL Server, mais il ne connaît encore aucune donnée. On lui présente sa première <strong>entité</strong> : la classe <strong>Jeu</strong>. Une <strong>entité</strong> est simplement une classe dont chaque objet correspondra à une ligne de table — imagine une fiche cartonnée dont chaque exemplaire rempli est une entrée dans un fichier. Techniquement, c'est un <strong>POCO</strong> (Plain Old CLR Object, « bon vieil objet C# tout simple ») : une classe C# banale, avec des propriétés publiques en get/set — pas d'héritage imposé, pas d'interface magique. C'est le cœur du contrat d'un ORM : <em>une classe = une table, une propriété = une colonne, un objet = une ligne</em>.</p>
+<pre class="pseudo">public class Jeu                              // déclare la classe Jeu = le moule d'une ligne de la table Jeux
+{
+    public int Id { get; set; }              // identifiant entier ; par convention EF en fera la clé primaire
+    public string Nom { get; set; }          // le nom du jeu (texte) → deviendra une colonne texte
+    public decimal Prix { get; set; }        // le prix (nombre à décimales exactes, idéal pour de l'argent)
+    public int DureeMinutes { get; set; }    // la durée d'une partie en minutes (nombre entier)
+}</pre>
+<p>Rien dans cette classe ne parle de SQL Server. Et pourtant, elle contient déjà tout ce qu'il faut pour générer une table — grâce aux conventions qu'on décortique dans un instant.</p>
+
+<h3>2. Le DbSet : la porte d'entrée vers la table</h3>
+<p>Pour que le contexte prenne l'entité en charge, on l'expose via une propriété <strong>DbSet&lt;Jeu&gt;</strong> dans le LudothequeContext. Le <strong>DbSet</strong> est ta « table vue depuis C# » : une collection d'objets qui représente la table — la vitrine par laquelle tu accèdes aux lignes. C'est sur lui que tu appelleras Add, Find, Where… dans les leçons 5 et suivantes. Toute classe atteinte par un DbSet (ou référencée par une entité connue) entre dans le <strong>modèle</strong> d'EF Core (la carte mentale que se fait EF de ta base).</p>
+<pre class="pseudo">public class LudothequeContext : DbContext        // notre session de travail avec la base
+{
+    public DbSet&lt;Jeu&gt; Jeux { get; set; }          // expose la table Jeux : collection d'objets Jeu manipulable en C#
+    public DbSet&lt;Membre&gt; Membres { get; set; }    // expose la table Membres : collection d'objets Membre
+    // Locations et Avis arriveront avec les relations (leçons 8 à 11)
+}</pre>
+<p>Détail qui compte : par convention, le <strong>nom de la propriété DbSet</strong> devient le <strong>nom de la table</strong>. DbSet&lt;Jeu&gt; Jeux → table <em>Jeux</em>, DbSet&lt;Membre&gt; Membres → table <em>Membres</em>. Ton entité s'appelle au singulier, sa table au pluriel — exactement la convention de nommage que tu appliquais à la main au Niveau 4.</p>
+
+<h3>3. Les conventions : la magie a des règles précises</h3>
+<p>EF Core applique des <strong>conventions</strong> : des règles de déduction automatiques, silencieuses, qui transforment ta classe en schéma — comme un formulaire administratif qui remplit tout seul les cases évidentes selon ce que tu as écrit. Les connaître par cœur, c'est savoir ce que l'ORM fera <em>sans</em> que tu le lui demandes.</p>
+<pre class="pseudo">Propriété C#            → Colonne SQL Server
+------------------------------------------------------
+Id (ou JeuId)           → clé primaire + IDENTITY(1,1)
+string Nom              → nvarchar(max) NOT NULL
+string? Description     → nvarchar(max) NULL
+int DureeMinutes        → int NOT NULL
+decimal Prix            → decimal(18,2) NOT NULL
+DateTime DateAjout      → datetime2 NOT NULL
+bool EstDisponible      → bit NOT NULL</pre>
+<p>Ce tableau se lit de gauche (la propriété C#) à droite (la colonne SQL générée). Trois règles à retenir absolument. <strong>La clé</strong> : une propriété nommée <em>Id</em> ou <em>NomDeLaClasse + Id</em> devient la clé primaire, auto-incrémentée si elle est numérique (IDENTITY = SQL Server attribue lui-même le numéro suivant). <strong>La nullabilité</strong> (le fait qu'une colonne accepte ou non l'absence de valeur) : elle suit le type C# — <em>string?</em> donne une colonne NULL, <em>string</em> une colonne NOT NULL (avec les types référence nullables activés). <strong>Les types</strong> : chaque type C# a son type SQL par défaut… et certains défauts sont discutables — nvarchar(max) pour tous les strings, c'est généreux mais rarement ce que ton MCD du Niveau 4 prévoyait.</p>
+
+<h3>4. Les data annotations : corriger les conventions au plus près de la classe</h3>
+<p>Quand une convention ne convient pas, la première parade s'écrit directement sur l'entité : les <strong>data annotations</strong>, des attributs C# posés entre crochets (des étiquettes collées sur une propriété pour donner une consigne précise). Elles viennent de l'espace de noms <em>System.ComponentModel.DataAnnotations</em> (et <em>.Schema</em> pour celles orientées base).</p>
+<pre class="pseudo">[Table("Jeux")]                       // étiquette sur la classe : force le nom de table à "Jeux"
+public class Jeu                       // le moule d'une ligne de la table Jeux
+{
+    [Key]                             // désigne explicitement cette propriété comme clé primaire
+    public int Id { get; set; }       // l'identifiant
+
+    [Required]                        // impose NOT NULL : cette colonne ne pourra pas être vide
+    [MaxLength(200)]                  // borne la longueur → nvarchar(200) au lieu de nvarchar(max)
+    public string Nom { get; set; }   // le nom du jeu
+
+    [Column(TypeName = "decimal(8,2)")]   // impose le type SQL exact de la colonne
+    public decimal Prix { get; set; }     // le prix, stocké en decimal(8,2)
+
+    [NotMapped]                       // exclut cette propriété du mapping : AUCUNE colonne ne sera créée
+    public string Resume =&gt; Nom + " (" + DureeMinutes + " min)";   // propriété calculée à la volée en C#
+
+    public int DureeMinutes { get; set; }   // la durée en minutes (convention : int NOT NULL)
+}</pre>
+<p>Le quinté gagnant : <strong>[Key]</strong> désigne la clé quand le nom ne suit pas la convention, <strong>[Required]</strong> impose NOT NULL, <strong>[MaxLength(n)]</strong> borne la longueur (et donc le type nvarchar(n)), <strong>[Column]</strong> renomme ou retype une colonne, <strong>[Table]</strong> renomme la table, et <strong>[NotMapped]</strong> exclut une propriété du mapping. Bonus déjà croisé en ASP.NET Core : [Required] et [MaxLength] sont <em>aussi</em> lues par la validation des formulaires — une annotation, deux usages.</p>
+
+<h3>5. La deuxième entité : Membre — et la suite du programme</h3>
+<p>Même recette pour le <strong>Membre</strong> de la Ludothèque : une classe, ses annotations, son DbSet. En une ligne pour ta culture ORM : Hibernate/JPA fait pareil avec <strong>@Entity</strong>, <strong>@Id</strong> et <strong>@Column(length = 200)</strong> ; Eloquent déduit la table du nom du modèle ; Django déclare les types dans le modèle (<em>models.CharField(max_length=200)</em>).</p>
+<pre class="pseudo">public class Membre                       // le moule d'une ligne de la table Membres
+{
+    public int Id { get; set; }           // identifiant → clé primaire par convention
+
+    [Required]                            // NOT NULL : un membre a forcément un pseudo
+    [MaxLength(50)]                        // pseudo limité à 50 caractères → nvarchar(50)
+    public string Pseudo { get; set; }    // le pseudonyme du membre
+
+    [Required]                            // NOT NULL : l'email est obligatoire
+    [MaxLength(320)]                       // 320 = longueur maximale normalisée d'une adresse e-mail
+    public string Email { get; set; }     // l'adresse e-mail du membre
+
+    public DateTime DateInscription { get; set; }   // date d'inscription → datetime2 NOT NULL par convention
+}</pre>
+<p>Garde en tête les <strong>limites</strong> des annotations : impossible d'exprimer un index unique sur Email, une valeur par défaut côté base ou une relation fine. Ces cas relèvent de la Fluent API — c'est la leçon 7. Et surtout : rien de tout cela n'existe encore dans SQL Server. Tes classes décrivent un schéma <em>en mémoire</em> ; le transformer en vraies tables, c'est le travail des migrations, dès la prochaine leçon.</p>
+<div class="warn">Les conventions travaillent <strong>en silence</strong> : un string oublié sans [MaxLength] devient nvarchar(max), une propriété renommée sans [Key] peut priver ta table de clé primaire (erreur au moment de construire le modèle). Relis chaque entité en te demandant : « quelle colonne SQL cette propriété va-t-elle produire ? » — ton MCD du Niveau 4 est le juge de paix.</div>
+<div class="tip">Nomme tes clés « Id » et tes DbSet au pluriel du nom d'entité : en suivant les conventions au lieu de les combattre, 80 % de ton mapping s'écrit tout seul, et tes annotations ne signalent plus que les vraies exceptions — c'est ça, « convention over configuration ».</div>`,
+  exercises: [
+    { type: "qcm", q: "Une entité EF Core est…", opts: ["Une classe qui hérite obligatoirement de EntityBase", "Une classe C# ordinaire (POCO) avec des propriétés get/set", "Un fichier XML de mapping", "Une table SQL exportée en C#"], a: 1, exp: "Aucun héritage ni interface imposés : une classe banale suffit, les conventions font le reste." },
+    { type: "qcm", q: "Le contrat de base d'un ORM :", opts: ["Une classe = une table, une propriété = une colonne, un objet = une ligne", "Une classe = une base, une méthode = une table", "Un objet = une colonne", "Une propriété = une ligne"], a: 0, exp: "C'est la correspondance objet-relationnel qui donne son nom au mapping." },
+    { type: "input", q: "Quel type générique expose une entité dans le contexte et sert de « table vue depuis C# » ?", a: ["DbSet", "DbSet<T>", "DbSet&lt;T&gt;"], ph: "Db…", exp: "DbSet&lt;Jeu&gt; Jeux : la porte d'entrée pour Add, Find, Where…" },
+    { type: "qcm", q: "Avec public DbSet&lt;Jeu&gt; Jeux { get; set; }, la table générée s'appellera par convention…", opts: ["Jeu", "Jeux", "TableJeu", "dbo_Jeu"], a: 1, exp: "Le nom de la propriété DbSet devient le nom de la table : entité au singulier, table au pluriel." },
+    { type: "qcm", q: "Quelle propriété devient clé primaire par convention ?", opts: ["La première propriété déclarée", "N'importe quelle propriété int", "Une propriété nommée Id ou JeuId", "Une propriété nommée Cle"], a: 2, exp: "Id ou NomDeLaClasse + Id : la convention de découverte de la clé." },
+    { type: "vf", q: "Par convention, une clé primaire int est auto-incrémentée (IDENTITY) dans SQL Server.", a: true, exp: "EF Core configure IDENTITY(1,1) : c'est SQL Server qui attribuera les valeurs (leçon 5)." },
+    { type: "qcm", q: "Sans annotation, une propriété string Nom devient une colonne…", opts: ["varchar(50) NULL", "nvarchar(max) NOT NULL", "text NULL", "nvarchar(200) NOT NULL"], a: 1, exp: "nvarchar(max) par défaut — d'où l'intérêt de [MaxLength] pour coller à ton MCD." },
+    { type: "qcm", q: "Comment obtenir une colonne NULL pour la description d'un jeu ?", opts: ["Déclarer la propriété string? Description", "Ajouter [Required]", "Ajouter [Key]", "C'est impossible avec EF Core"], a: 0, exp: "La nullabilité suit le type C# : string? → NULL, string → NOT NULL." },
+    { type: "input", q: "Quelle annotation limite le Nom d'un jeu à 200 caractères ?", a: ["[MaxLength(200)]", "MaxLength(200)", "MaxLength"], ph: "[…(200)]", exp: "[MaxLength(200)] → nvarchar(200), et l'attribut sert aussi à la validation ASP.NET Core." },
+    { type: "qcm", q: "L'annotation [NotMapped] sur une propriété signifie que…", opts: ["La propriété est obligatoire", "La propriété devient la clé", "Aucune colonne n'est créée pour elle", "La colonne est indexée"], a: 2, exp: "Parfait pour une propriété calculée en C# qui n'a rien à faire dans la table." },
+    { type: "qcm", q: "Pour stocker le Prix en decimal(8,2) via une annotation :", opts: ["[MaxLength(8)]", "[Column(TypeName = &quot;decimal(8,2)&quot;)]", "[Required]", "[Precision]  n'existe dans aucune version"], a: 1, exp: "[Column(TypeName = ...)] fixe le type SQL exact — la version Fluent (HasColumnType) arrive leçon 7." },
+    { type: "vf", q: "Les annotations [Required] et [MaxLength] sont aussi utilisées par la validation des formulaires ASP.NET Core.", a: true, exp: "Une annotation, deux usages : contrainte en base ET validation web — souviens-toi du cours ASP.NET Core." },
+    { type: "qcm", q: "Quelle contrainte est IMPOSSIBLE à poser par annotation (rendez-vous leçon 7) ?", opts: ["Un index unique sur Membre.Email", "Une longueur maximale", "Un nom de table", "Une clé primaire"], a: 0, exp: "L'index unique exige la Fluent API : HasIndex(...).IsUnique()." },
+    { type: "vf", q: "Dès que la classe Jeu et son DbSet existent, la table Jeux est créée dans SQL Server.", a: false, exp: "Le modèle ne vit qu'en mémoire : il faudra une migration (leçon 4) pour créer les tables." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA de notre entité annotée est…", opts: ["@Entity, @Id et @Column", "un fichier .csv", "une interface Repository", "un script Flyway"], a: 0, exp: "@Entity déclare la classe, @Id la clé, @Column(length = 200) l'équivalent de [MaxLength] — même philosophie, autre dialecte." }
+  ],
+  final: {
+    title: "Exercice final — L'entité Jeu passée au scanner",
+    intro: `<p>Tu relis l'entité Jeu (Id, Nom string, Prix decimal, DureeMinutes int) avant la première migration. Pour chaque propriété, sais-tu prédire la colonne SQL Server qui sortira ?</p>`,
+    questions: [
+      { type: "qcm", q: "La propriété Id produira…", opts: ["Une colonne int NULL", "La clé primaire int IDENTITY(1,1)", "Un index non unique", "Une colonne uniqueidentifier"], a: 1, exp: "Convention de la clé : Id → PK auto-incrémentée." },
+      { type: "qcm", q: "Sans annotation, Nom (string) produira…", opts: ["nvarchar(max) NOT NULL", "nvarchar(50) NULL", "varchar(255)", "text"], a: 0, exp: "Le défaut généreux des conventions — que [MaxLength(200)] viendra raisonner." },
+      { type: "vf", q: "Ajouter [MaxLength(200)] sur Nom changera la colonne en nvarchar(200).", a: true, exp: "L'annotation corrige la convention, au plus près de la classe." },
+      { type: "input", q: "Quelle annotation poserais-tu pour exclure une propriété calculée Resume du mapping ?", a: ["[NotMapped]", "NotMapped"], ph: "[…]", exp: "[NotMapped] : la propriété reste utilisable en C#, aucune colonne n'est créée." },
+      { type: "qcm", q: "Pour que tout cela devienne de vraies tables dans SQL Server, la prochaine étape est…", opts: ["Redémarrer SQL Server", "Écrire les CREATE TABLE à la main", "Générer et appliquer une migration", "Appeler SaveChanges"], a: 2, exp: "Le modèle est prêt ; la leçon 4 le photographie et l'applique à la base." }
+    ],
+    solution: `<pre class="pseudo">Entité   : classe POCO — Jeu { Id, Nom, Prix, DureeMinutes }
+DbSet    : DbSet&lt;Jeu&gt; Jeux dans LudothequeContext → table "Jeux"
+Conventions :
+  Id / JeuId          → PK + IDENTITY
+  string / string?    → nvarchar(max) NOT NULL / NULL
+  decimal             → decimal(18,2) ; DateTime → datetime2
+Annotations (corrigent les conventions) :
+  [Key] [Required] [MaxLength(200)]
+  [Table("Jeux")] [Column(TypeName = "decimal(8,2)")] [NotMapped]
+Limites  : index unique, valeur par défaut, relations fines → Fluent API (leçon 7)
+Ailleurs : @Entity/@Id/@Column (JPA), modèle Eloquent, models.CharField (Django)</pre>
+<p>Tes classes décrivent le schéma, mais SQL Server ne le sait pas encore. Prochaine leçon : les <strong>migrations</strong> — le pont versionné entre tes entités et tes tables.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l3", title: "Du MCD du Niveau 4 à l'entité annotée", level: 1,
+    statement: "Reprends la table Jeu de ton schéma SQL Server du Niveau 4 : Id INT PK IDENTITY, Nom NVARCHAR(200) NOT NULL, Prix DECIMAL(8,2) NOT NULL, DureeMinutes INT NOT NULL, Description NVARCHAR(MAX) NULL. Rédige l'analyse de sa traduction en entité EF Core : écris la classe C# complète (en pseudo-code), puis justifie propriété par propriété ce que tu confies aux CONVENTIONS et ce que tu imposes par ANNOTATION. Termine en listant ce que cette entité ne sait PAS encore exprimer (et quelle leçon du cours s'en chargera).",
+    hints: [
+      "Pars des conventions : lesquelles produisent déjà exactement la colonne voulue (Id, DureeMinutes) ? Celles-là ne méritent aucune annotation.",
+      "Compare les défauts aux types du Niveau 4 : nvarchar(max) contre NVARCHAR(200), decimal(18,2) contre DECIMAL(8,2) — qui doit corriger ?",
+      "Pour Description NULL, la réponse n'est pas une annotation : quel type C# exprime la nullabilité ?"
+    ],
+    solution: "Classe proposée :\n  public class Jeu {\n      public int Id { get; set; }                      // convention\n      [Required] [MaxLength(200)]\n      public string Nom { get; set; }                  // annotation\n      [Column(TypeName = \"decimal(8,2)\")]\n      public decimal Prix { get; set; }                // annotation\n      public int DureeMinutes { get; set; }            // convention\n      public string? Description { get; set; }         // type C# nullable\n  }\n\nJustification :\n- Id : la convention Id → PK IDENTITY colle exactement au schéma. Rien à écrire.\n- Nom : la convention donnerait nvarchar(max) ; [MaxLength(200)] impose\n  nvarchar(200), et [Required] documente le NOT NULL (aussi lu par la\n  validation ASP.NET Core : une règle, deux usages).\n- Prix : le défaut decimal(18,2) ne respecte pas le MCD ; [Column(TypeName)]\n  fixe decimal(8,2) au caractère près.\n- DureeMinutes : int NOT NULL par convention, conforme. Rien à écrire.\n- Description : string? suffit — la nullabilité vient du TYPE, pas d'une\n  annotation. nvarchar(max) NULL est ici exactement ce que veut le schéma.\n\nCe que l'entité ne sait pas encore exprimer :\n- l'index unique (Email du Membre) → Fluent API, leçon 7 ;\n- les valeurs par défaut côté base → Fluent API, leçon 7 ;\n- les relations vers Location, Avis, Categorie → leçons 8 à 11 ;\n- et surtout : RIEN n'existe en base tant que la migration (leçon 4)\n  n'a pas transformé ce modèle en CREATE TABLE.",
+    note: "Cet exercice est le pont exact entre le Niveau 4 et ce cours : chaque colonne de ton MLD trouve sa traduction C#, et tu sais désormais QUI la produit (convention ou annotation). Un développeur Java ferait le même exercice avec @Column(length = 200, nullable = false) ; Django l'écrit directement dans le modèle. Garde cette grille de lecture : elle resservira à chaque nouvelle entité de ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

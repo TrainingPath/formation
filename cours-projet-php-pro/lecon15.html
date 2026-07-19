@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Recherche, pagination et qualité (Pint, couverture)",
+  subtitle: "Soigner l'expérience — sans N+1, avec la performance prouvée.",
+  theory: `
+<h3>1. Recherche + pagination</h3>
+<p>La <strong>recherche</strong> filtre la liste selon un mot-clé ; la <strong>pagination</strong> découpe une longue liste en pages de taille fixe (ici 10) pour ne pas tout charger d'un coup. <code>when($r->q, …)</code> n'applique le filtre que <em>si</em> une recherche a été saisie. <code>where('titre', 'like', "%{$q}%")</code> cherche les titres <em>contenant</em> le mot ; le <code>%</code> signifie « n'importe quoi » avant et après. <code>paginate(10)</code> renvoie une page de 10 résultats, et <code>withQueryString()</code> reporte la recherche dans les liens de pages, si bien que l'URL <code>/catalogue?q=catan&amp;page=2</code> reste partageable et rechargeable.</p>
+<pre class="pseudo">// app/Http/Controllers/CatalogueController.php
+public function index(Request $r) {                            // affiche le catalogue (recherche + pagination)
+    $jeux = Jeu::louables()->with('categorie')                 // eager load : pas de N+1
+        ->when($r->q, fn($query, $q) => $query->where('titre', 'like', "%{$q}%"))   // filtre par titre SEULEMENT si une recherche est saisie
+        ->orderBy('titre')                                     // trie par titre
+        ->paginate(10)->withQueryString();                     // état dans l'URL
+    return view('catalogue', compact('jeux'));                 // envoie les résultats à la vue
+}</pre>
+<p><code>paginate()->withQueryString()</code> conserve la recherche dans les liens de pagination : <code>/catalogue?q=catan&amp;page=2</code> est partageable, rechargeable.</p>
+
+<h3>2. Le problème N+1</h3>
+<p>Le <strong>N+1</strong> est le piège de performance le plus courant avec Eloquent. Par défaut, Eloquent charge une relation seulement quand on y accède (<strong>lazy loading</strong>, « chargement paresseux ») : afficher 10 jeux avec leur catégorie déclenche 1 requête pour les jeux, puis 1 par jeu — 11 en tout. L'<strong>eager loading</strong> (via <code>with('categorie')</code>) charge tout d'avance en 2 requêtes, quel que soit le nombre de lignes.</p>
+<pre class="pseudo">// SANS with('categorie') : 1 requête pour les 10 jeux + 10 requêtes pour leurs catégories
+//   = 11 requêtes (N+1). Sur 100 lignes -> 101 requêtes : la page rame.
+// AVEC with('categorie') : 2 requêtes au total (eager loading).</pre>
+
+<h3>3. La performance devient testable</h3>
+<p><code>DB::enableQueryLog()</code> demande à Laravel d'enregistrer toutes les requêtes SQL exécutées ; <code>DB::getQueryLog()</code> les récupère et <code>count(…)</code> les compte. <code>assertLessThanOrEqual(3, …)</code> exige au plus 3 requêtes : si un N+1 se réintroduisait, ce nombre exploserait et le test deviendrait rouge. La performance devient ainsi une garantie <em>vérifiée</em>, pas espérée.</p>
+<pre class="pseudo">public function test_catalogue_sans_n_plus_un(): void {        // prouve l'absence de N+1
+    Jeu::factory()->count(5)->create();                       // crée 5 jeux de test
+    DB::enableQueryLog();                                      // commence à enregistrer les requêtes SQL
+    $this->get('/catalogue');                                 // affiche le catalogue
+    $this->assertLessThanOrEqual(3, count(DB::getQueryLog()));  // pas 1 requête par jeu
+}</pre>
+<p>C'est l'équivalent Laravel de <code>assertNumQueries</code> : « pas de N+1 » n'est plus un espoir, c'est une <strong>garantie vérifiée</strong> par la CI.</p>
+
+<h3>4. Pint resserre le style</h3>
+<p><strong>Pint</strong> est le formateur de code de Laravel. Lancé sans option, il réaligne le code ; avec <code>--test</code> (en CI), il ne modifie rien mais échoue si un fichier n'est pas au format. Le style est ainsi tranché par la machine, une fois pour toutes.</p>
+<pre class="pseudo">./vendor/bin/pint          # en local : reformate les fichiers avant de committer
+./vendor/bin/pint --test   # en CI : rouge si un fichier n'est pas au format
+# le format est tranché une fois pour toutes ; la revue porte sur la logique</pre>
+
+<h3>5. Un pipeline qui garde tout</h3>
+<div class="warn">Compter les requêtes SQL en test transforme la performance en propriété vérifiable, au même titre que la correction (tests) ou la sécurité (accès croisé). Le N+1 est le piège de performance le plus courant avec Eloquent : il passe inaperçu sur 3 lignes de données de test et écroule la prod sur 10 000. Le test le fige pour de bon.</div>
+<div class="tip">À ce stade, le pipeline garde le code <strong>correct</strong> (tests), <strong>sûr</strong> (accès croisé, gitleaks), <strong>rapide</strong> (compte de requêtes) ET <strong>propre</strong> (Pint) — sans effort humain répété. C'est le dividende de l'outillage posé dès la semaine 1.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'état de recherche/page vit dans…", opts: ["La session", "L'URL (withQueryString)", "Un cookie", "La RAM"], a: 1, exp: "?q=…&page=…" },
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Trop de RAM", "1 requête + N requêtes filles au lieu de 2", "Un chiffrement", "Un cache"], a: 1, exp: "Explose avec le volume." },
+    { type: "qcm", q: "with('categorie')…", opts: ["Ralentit", "Charge la catégorie en une requête (anti-N+1)", "Chiffre", "Pagine"], a: 1, exp: "Eager loading." },
+    { type: "qcm", q: "paginate(10)…", opts: ["Charge tout", "Pagine (10 par page)", "Trie l'URL", "Chiffre"], a: 1, exp: "Pas de scan complet." },
+    { type: "qcm", q: "where('titre','like',...) fait…", opts: ["Un tri", "Une recherche par titre", "Un delete", "Un cache"], a: 1, exp: "Filtre." },
+    { type: "qcm", q: "On PROUVE l'absence de N+1 en…", opts: ["Regardant l'écran", "Comptant les requêtes (DB::getQueryLog)", "Espérant", "Chiffrant"], a: 1, exp: "assertLessThanOrEqual." },
+    { type: "qcm", q: "Le N+1 passe inaperçu…", opts: ["Toujours", "Sur peu de données de test, puis écroule la prod", "Jamais", "En CI"], a: 1, exp: "D'où le test." },
+    { type: "qcm", q: "DB::enableQueryLog() sert à…", opts: ["Chiffrer", "Enregistrer les requêtes exécutées (pour les compter)", "Déployer", "Le CSS"], a: 1, exp: "Équivalent assertNumQueries." },
+    { type: "qcm", q: "Pint en CI…", opts: ["Reformate en douce", "Échoue si le format n'est pas respecté", "Déploie", "Chiffre"], a: 1, exp: "pint (sans --test) reformate." },
+    { type: "qcm", q: "Le pipeline garde le code…", opts: ["Juste correct", "Correct, sûr, rapide ET propre", "Rien", "En prod"], a: 1, exp: "Dividende de l'outillage." },
+    { type: "vf", q: "Compter les requêtes rend la performance vérifiable, comme la correction.", a: true, exp: "Propriété testée." },
+    { type: "qcm", q: "when($r->q, ...) applique le filtre…", opts: ["Toujours", "Seulement si une recherche est fournie", "Jamais", "En prod"], a: 1, exp: "Requête conditionnelle." },
+    { type: "qcm", q: "Sans with(), 100 jeux = …", opts: ["1 requête", "101 requêtes (N+1)", "0", "10"], a: 1, exp: "La page rame." },
+    { type: "qcm", q: "La revue humaine, grâce à Pint, porte sur…", opts: ["Les espaces", "La logique", "Rien", "Le CSS"], a: 1, exp: "Format automatisé." },
+    { type: "vf", q: "Le N+1 est le piège de performance le plus courant avec Eloquent.", a: true, exp: "Fréquent et sournois." }
+  ],
+  final: {
+    title: "Exercice final — Recherche paginée, sans N+1",
+    intro: `<p>Pagination + anti-N+1 prouvé + Pint.</p>`,
+    questions: [
+      { type: "qcm", q: "La recherche paginée met l'état :", opts: ["dans l'URL (withQueryString)", "en session", "dans un cookie", "en RAM"], a: 0, exp: "Partageable." },
+      { type: "qcm", q: "Le N+1 est évité par :", opts: ["with('categorie')", "plus de RAM", "un cache maison", "la chance"], a: 0, exp: "2 requêtes." },
+      { type: "qcm", q: "On le PROUVE par :", opts: ["un test qui compte les requêtes", "un screenshot", "un log", "rien"], a: 0, exp: "DB::getQueryLog." },
+      { type: "qcm", q: "Le format est garanti par :", opts: ["Pint en CI", "la relecture manuelle", "personne", "un cron"], a: 0, exp: "Tranché." },
+      { type: "vf", q: "À ce stade le pipeline garde correct, sûr, rapide et propre.", a: true, exp: "Dividende." }
+    ],
+    solution: `<pre class="pseudo">public function index(Request $r) {                            // catalogue : recherche + pagination
+  $jeux = Jeu::louables()->with('categorie')                   // eager load (anti-N+1)
+    ->when($r->q, fn($query,$q) => $query->where('titre','like',"%{$q}%"))   // filtre si recherche
+    ->orderBy('titre')->paginate(10)->withQueryString();       // trié, paginé, état dans l'URL
+  return view('catalogue', compact('jeux'));                   // vers la vue
+}
+public function test_sans_n_plus_un(): void {                  // preuve anti-N+1
+  Jeu::factory()->count(5)->create();                          // 5 jeux de test
+  DB::enableQueryLog(); $this->get('/catalogue');              // enregistre les requêtes, affiche
+  $this->assertLessThanOrEqual(3, count(DB::getQueryLog()));   // au plus 3 requêtes
+}
+// ./vendor/bin/pint --test en CI                              // format garanti par la machine</pre>
+<p>Recherche rapide et prouvée. Demain : les trois espaces client/vendeur/admin, cloisonnés.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta recherche paginée et son test de perf…",
+  items: [
+  { id: "proj6php-l15", title: "Recherche paginée sans N+1, prouvée", level: 3,
+    statement: "Écris le contrôleur de catalogue (recherche conditionnelle, pagination avec état dans l'URL, with('categorie') anti-N+1) et le test qui compte les requêtes SQL pour prouver l'absence de N+1. Explique en 3-4 lignes ce qu'est le N+1 et pourquoi il faut le TESTER, pas juste l'éviter.",
+    hints: [
+      "Jeu::with('categorie')->when($r->q, ...)->paginate(10)->withQueryString().",
+      "Test : DB::enableQueryLog(); $this->get('/catalogue'); count(DB::getQueryLog()).",
+      "Le N+1 est invisible en dev (peu de données), écroule la prod sous volume."
+    ],
+    solution: "// app/Http/Controllers/CatalogueController.php\npublic function index(Request $r) {                            // catalogue : recherche + pagination\n    $jeux = Jeu::louables()->with('categorie')          // eager load : pas de N+1\n        ->when($r->q, fn($query, $q) => $query->where('titre', 'like', \"%{$q}%\"))   // filtre par titre si recherche saisie\n        ->orderBy('titre')                                     // tri par titre\n        ->paginate(10)->withQueryString();              // 10 par page, etat dans l'URL\n    return view('catalogue', compact('jeux'));                 // vers la vue\n}\n\n// tests/Feature/CatalogueTest.php\npublic function test_catalogue_sans_n_plus_un(): void {        // prouve l'absence de N+1\n    Jeu::factory()->count(5)->create();                       // 5 jeux de test\n    DB::enableQueryLog();                                      // enregistre les requetes SQL\n    $this->get('/catalogue');                                 // affiche le catalogue\n    $this->assertLessThanOrEqual(3, count(DB::getQueryLog()));   // pas 1 par jeu\n}\n\n// LE N+1, ET POURQUOI LE TESTER\n// N+1 : pour afficher 10 jeux et leur categorie, Eloquent fait 1 requete pour les\n// jeux, puis 1 requete par jeu pour charger sa categorie en lazy -> 11 requetes.\n// Sur 10 000 lignes, 10 001 requetes : la page s'effondre. with('categorie') ramene\n// tout en 2 requetes (jeux + categories).\n// POURQUOI TESTER : le N+1 est INVISIBLE en dev (3 lignes de donnees = imperceptible)\n// et n'apparait qu'en prod sous volume. Un test qui COMPTE les requetes le fige :\n// toute regression future (quelqu'un retire le with()) redevient rouge. La\n// performance rejoint la correction et la securite : une propriete verifiee, pas esperee.",
+    note: "Le test de comptage de requêtes est l'un des plus sous-utilisés et des plus précieux : il attrape en CI une classe entière de régressions de performance qui, sinon, ne se manifestent qu'en production sous charge — au pire moment. Avec Eloquent, le lazy loading rend le N+1 particulièrement facile à introduire sans s'en rendre compte. En posant ce test dès l'ajout de la recherche, on inscrit la performance dans la même discipline que le reste : construite, mesurée, verrouillée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

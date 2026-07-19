@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "PDO : requêtes préparées",
+  subtitle: "Écrire dans la base sans se faire pirater : le bouclier anti-injection.",
+  theory: `
+<h3>1. La menace : l'injection SQL</h3>
+<p>Que se passe-t-il si on construit une requête en collant directement la saisie utilisateur ?</p>
+<pre class="pseudo">// CATASTROPHE — ne JAMAIS faire ça :
+$sql = "SELECT * FROM membres WHERE nom = '" . $_POST["nom"] . "'";  // on colle la saisie DANS le texte du SQL : très dangereux</pre>
+<p>Si l'utilisateur tape <code>' OR '1'='1</code>, la requête devient <code>… WHERE nom = '' OR '1'='1'</code> → la condition est toujours vraie, TOUS les membres sortent. Pire, <code>'; DROP TABLE membres;--</code> peut DÉTRUIRE la table. C'est l'<strong>injection SQL</strong>, la sœur du XSS de la leçon 13 : cette fois, le poison vise la base.</p>
+
+<h3>2. Le bouclier : les requêtes préparées</h3>
+<p>Une <strong>requête préparée</strong> envoie d'abord le SQUELETTE de la requête à la base, puis les VALEURS séparément. La base ne confond donc jamais une donnée avec du code.</p>
+<pre class="pseudo">$stmt = $pdo->prepare("SELECT * FROM membres WHERE nom = :nom");  // :nom = un MARQUEUR (un trou à remplir), pas la valeur
+$stmt->execute([":nom" => $_POST["nom"]]);                       // on fournit la valeur À PART, dans un tableau
+$membres = $stmt->fetchAll(PDO::FETCH_ASSOC);                    // récupère les lignes trouvées (liste d'enregistrements)</pre>
+<p>Le <code>:nom</code> est un <strong>marqueur</strong> (placeholder). PHP envoie la <em>structure</em> de la requête et les <em>données</em> SÉPARÉMENT à la base : la valeur est alors traitée comme une DONNÉE, jamais comme du SQL. L'injection devient impossible par construction.</p>
+<div class="warn">Règle absolue et non négociable : TOUTE valeur d'origine utilisateur dans une requête passe par un marqueur préparé. JAMAIS de concaténation de saisie dans du SQL. C'est le réflexe sécurité n°1 côté base.</div>
+
+<h3>3. INSERT préparé (créer)</h3>
+<pre class="pseudo">$stmt = $pdo->prepare(                                                   // prépare la requête d'insertion
+    "INSERT INTO membres (nom, email, age) VALUES (:nom, :email, :age)"  // trois marqueurs, un par colonne
+);                                                                      // fin de prepare
+$stmt->execute([                                                        // fournit les valeurs des marqueurs
+    ":nom" => $nom,             // le marqueur :nom reçoit la valeur $nom
+    ":email" => $email,         // le marqueur :email reçoit $email
+    ":age" => $age              // le marqueur :age reçoit $age
+]);                                                                     // fin d'execute
+$nouvelId = $pdo->lastInsertId();          // récupère l'id AUTO-généré de la ligne qu'on vient de créer</pre>
+
+<h3>4. UPDATE et DELETE préparés</h3>
+<pre class="pseudo">$stmt = $pdo->prepare("UPDATE membres SET age = :age WHERE id = :id");  // le WHERE cible UNE ligne précise
+$stmt->execute([":age" => 21, ":id" => 1]);   // met l'âge à 21 pour le membre d'id 1
+$modifs = $stmt->rowCount();               // nombre de lignes réellement modifiées (0 si aucune ne correspondait)
+
+$stmt = $pdo->prepare("DELETE FROM membres WHERE id = :id");  // sans WHERE, on viderait TOUTE la table !
+$stmt->execute([":id" => 3]);              // supprime le membre d'id 3</pre>
+
+<h3>5. Marqueurs nommés ou positionnels</h3>
+<pre class="pseudo">// NOMMÉS (lisibles, recommandés) :
+prepare("... WHERE nom = :nom AND age &gt; :age");   // marqueurs avec un nom (:nom, :age)
+execute([":nom" => $n, ":age" => $a]);      // on associe chaque marqueur à sa valeur par son nom
+// POSITIONNELS (avec des ?) :
+prepare("... WHERE nom = ? AND age &gt; ?");         // marqueurs anonymes (des ?)
+execute([$n, $a]);                          // l'ORDRE du tableau correspond à l'ordre des ?</pre>
+
+<h3>6. Les deux boucliers réunis</h3>
+<pre class="pseudo">ENTRÉE  vers la BASE   → requête PRÉPARÉE (anti-injection SQL)     // en écrivant dans la base
+SORTIE  vers le HTML   → htmlspecialchars (anti-XSS, leçon 13)    // en affichant dans la page</pre>
+<div class="tip">Deux failles, deux boucliers, jamais interchangeables. On <strong>prépare</strong> en entrant dans la base, on <strong>échappe</strong> en sortant vers la page. Ces deux réflexes te suivront toute ta carrière web.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'injection SQL consiste à…", opts: ["Voler un cookie", "Écrire du SQL malveillant dans un champ, qui s'EXÉCUTE dans ta requête", "Saturer le serveur", "Changer le CSS"], a: 1, exp: "La sœur du XSS : cette fois le poison vise la base, pas le navigateur." },
+    { type: "qcm", q: "Pourquoi <code>\"... WHERE nom = '\" . $_POST[\"nom\"] . \"'\"</code> est-il dangereux ?", opts: ["Trop lent", "La saisie devient du CODE SQL : ' OR '1'='1 sort toute la table, ; DROP la détruit", "Trop long", "Aucun danger"], a: 1, exp: "La concaténation de saisie dans du SQL = la porte ouverte." },
+    { type: "qcm", q: "Le :nom dans une requête préparée est…", opts: ["Une variable PHP", "Un MARQUEUR : la place où la base insérera la valeur, traitée comme DONNÉE pure", "Un commentaire", "Le nom de la table"], a: 1, exp: "Requête et données voyagent séparément : l'injection n'a plus de prise." },
+    { type: "qcm", q: "prepare() puis execute([...]) : pourquoi en DEUX temps ?", opts: ["Habitude", "La base reçoit d'abord la STRUCTURE (avec marqueurs), puis les VALEURS à part : séparation = sécurité", "C'est plus lent", "prepare affiche"], a: 1, exp: "La séparation structure/données EST le mécanisme de protection." },
+    { type: "qcm", q: "L'utilisateur tape <code>' OR '1'='1</code> dans une requête PRÉPARÉE. Résultat ?", opts: ["Toute la table sort", "On cherche littéralement un membre dont le nom EST la chaîne \"' OR '1'='1\" : aucun résultat, zéro danger", "La base est détruite", "Erreur SQL"], a: 1, exp: "La valeur reste une valeur : l'attaque devient une recherche inoffensive." },
+    { type: "qcm", q: "Insérer un membre du formulaire :", opts: ["Concaténer dans INSERT", "prepare(\"INSERT ... VALUES (:nom, :email, :age)\") puis execute avec les valeurs", "file_put_contents", "session"], a: 1, exp: "INSERT préparé : créer sans risque." },
+    { type: "qcm", q: "$pdo->lastInsertId() retourne…", opts: ["Le nombre de lignes", "L'id AUTO-GÉNÉRÉ de la ligne qu'on vient d'insérer", "true", "Le nom"], a: 1, exp: "Pratique pour enchaîner (rediriger vers la fiche du nouveau membre)." },
+    { type: "qcm", q: "rowCount() après un UPDATE donne…", opts: ["L'id", "Le NOMBRE de lignes modifiées : utile pour confirmer (« 1 membre mis à jour »)", "La table", "true toujours"], a: 1, exp: "0 = aucune ligne ne correspondait au WHERE : info précieuse." },
+    { type: "qcm", q: "Requête préparée ET htmlspecialchars : redondant ?", opts: ["Oui, l'un suffit", "NON : la préparation protège la BASE (injection), l'échappement protège la PAGE (XSS) — deux failles distinctes", "Oui si HTTPS", "L'échappement suffit"], a: 1, exp: "Deux moments, deux boucliers : entrée base vs sortie HTML." },
+    { type: "qcm", q: "Les marqueurs positionnels utilisent…", opts: [": devant chaque nom", "des ? , remplis dans l'ORDRE par le tableau d'execute", "des { }", "des $"], a: 1, exp: "execute([$a, $b]) : le 1ᵉʳ ? reçoit $a, etc. Les nommés (:x) sont plus lisibles." },
+    { type: "qcm", q: "Un WHERE id = :id avec un DELETE sans WHERE oublié :", opts: ["Supprime une ligne", "SANS WHERE, DELETE FROM membres VIDE TOUTE la table : le WHERE n'est pas optionnel ici !", "Erreur", "Rien"], a: 1, exp: "Le cas limite le plus coûteux : toujours vérifier le WHERE d'un DELETE/UPDATE." },
+    { type: "qcm", q: "Faut-il préparer une requête SANS aucune donnée utilisateur (SELECT * FROM pays fixe) ?", opts: ["Obligatoire", "query() suffit : pas de donnée externe = pas d'injection possible. La préparation est pour les VALEURS variables", "Interdit", "Toujours préparer"], a: 1, exp: "query pour le SQL 100 % fixe, prepare dès qu'une valeur externe entre." },
+    { type: "qcm", q: "Le cycle CRUD complet (Create, Read, Update, Delete) en SQL :", opts: ["SELECT seulement", "INSERT / SELECT / UPDATE / DELETE : les 4 opérations d'une vraie application", "GET/POST", "JSON"], a: 1, exp: "CRUD : le socle de tout logiciel de gestion — ton livre d'or (leçon 20) en fera au moins C, R, D." },
+    { type: "qcm", q: "Combien de fois réutiliser un même $stmt préparé (ex : insérer 100 membres) ?", opts: ["Une fois", "Autant qu'on veut : prepare UNE fois, execute() en boucle avec des valeurs différentes — efficace ET sûr", "100 prepare", "Impossible"], a: 1, exp: "La préparation se rentabilise sur les insertions en masse." },
+    { type: "vf", q: "Une requête préparée neutralise l'injection SQL, mais les données restent à échapper (htmlspecialchars) au moment de les AFFICHER.", a: true, exp: "Les deux boucliers cohabitent : entrée sécurisée ≠ sortie sécurisée." }
+  ],
+  final: {
+    title: "Exercice final — L'inscription en base",
+    intro: `<p>Le formulaire d'inscription (leçon 13, validé) enregistre enfin en base :</p>
+<pre class="pseudo">// (données déjà validées : $nom, $email, $age, $erreurs vide)
+$stmt = $pdo->prepare(                                            // prépare l'insertion
+    "INSERT INTO membres (nom, email, age) VALUES (:nom, :email, :age)"   -- trois marqueurs
+);                                                               // fin de prepare
+$stmt->execute([":nom" => $nom, ":email" => $email, ":age" => $age]);   // (1) fournit les valeurs À PART
+$id = $pdo->lastInsertId();                                      // récupère l'id du nouveau membre
+
+// Réaffichage de la liste (leçon 18) :
+$membres = $pdo->query("SELECT nom FROM membres ORDER BY nom")   // lit tous les noms, triés
+               ->fetchAll(PDO::FETCH_ASSOC);                     // en liste d'enregistrements
+foreach ($membres as $m) {                                       // parcourt chaque membre
+    echo htmlspecialchars($m["nom"]) . "&lt;br&gt;";                 // (2) affiche le nom ÉCHAPPÉ (anti-XSS)
+}                                                                // fin du parcours</pre>`,
+    questions: [
+      { type: "qcm", q: "(1) Un attaquant a rempli nom = <code>Bob'); DROP TABLE membres;--</code>. Que se passe-t-il ?", opts: ["La table est détruite", "RIEN de grave : la requête préparée insère un membre au nom bizarre — le SQL malveillant reste une simple donnée texte", "Erreur fatale", "Tous les membres supprimés"], a: 1, exp: "Le bouclier tient : la chaîne entière devient la valeur du champ nom." },
+      { type: "qcm", q: "Pourquoi les données étaient déjà validées (leçon 13) AVANT l'INSERT ?", opts: ["Inutile", "Valider (rejeter le faux) et préparer (neutraliser l'injection) sont COMPLÉMENTAIRES : l'un filtre le contenu, l'autre sécurise la requête", "La base valide seule", "Pour la vitesse"], a: 1, exp: "Défense en profondeur : chaque couche son rôle." },
+      { type: "qcm", q: "(2) Pourquoi htmlspecialchars alors que les données viennent de NOTRE base ?", opts: ["Réflexe inutile", "Elles ont été SAISIES par des utilisateurs : un nom contenant du HTML attaquerait à l'affichage (XSS, leçon 13)", "La base est sale", "Pour le tri"], a: 1, exp: "Préparer à l'écriture, échapper à la lecture : le cycle complet." },
+      { type: "qcm", q: "Ce script réalise quelles lettres de CRUD ?", opts: ["Seulement Read", "Create (INSERT) + Read (SELECT) : deux des quatre opérations d'une vraie app", "Update + Delete", "Aucune"], a: 1, exp: "C et R ici ; U et D avec UPDATE/DELETE préparés." },
+      { type: "qcm", q: "BILAN sécurité du parcours web : quels boucliers as-tu posés ?", opts: ["Un seul", "?? (accès direct) + cast (types) + filter_var (formats) + encadrements (métier) + htmlspecialchars (XSS) + requêtes préparées (injection SQL)", "Le HTTPS suffit", "Aucun"], a: 1, exp: "Six réflexes de défense : tu codes désormais comme un pro. Demain, le PROJET assemble tout." }
+    ],
+    solution: `<pre class="pseudo">INSERT préparé → même une saisie « DROP TABLE » reste une DONNÉE   // le SQL malveillant devient du texte
+lastInsertId → l'id du nouveau membre                            // pratique pour la suite
+SELECT + foreach + htmlspecialchars → liste réaffichée, sûre     // lecture + affichage sécurisé
+
+Les DEUX boucliers du web :                        // à ne jamais dissocier
+· requête préparée   → protège la BASE (injection SQL)   // à l'écriture
+· htmlspecialchars   → protège la PAGE (XSS)             // à l'affichage
+Jamais l'un sans l'autre.</pre>
+<p>Tu sais lire ET écrire en base, en sécurité. Il ne reste qu'à tout assembler : demain, le projet du livre d'or.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code PHP ici…",
+  items: [
+  { id: "php-livredor", title: "Le livre d'or (PDO)", level: 3,
+    statement: "Une table <code>messages(id, auteur, texte)</code> existe. Écris le code qui : se connecte en PDO à la base <code>livredor</code>, <strong>insère</strong> un message avec une <strong>requête préparée</strong>, puis affiche tous les messages (sécurisés avec htmlspecialchars).",
+    hints: [
+      "Connexion : new PDO(\"mysql:host=localhost;dbname=livredor;charset=utf8mb4\", \"root\", \"\") dans un try/catch (PDOException).",
+      "Requête préparée : $pdo->prepare(\"INSERT INTO messages (auteur, texte) VALUES (?, ?)\") puis ->execute([$auteur, $texte]). JAMAIS de variable directement dans le SQL !",
+      "Lecture : $pdo->query(\"SELECT * FROM messages\") puis foreach ($stmt as $ligne) { … $ligne[\"auteur\"] … }"
+    ],
+    solution: "<?php                                        // ouvre la zone PHP\ntry {                                        // la connexion peut échouer → zone surveillée\n    $pdo = new PDO(                          // crée l'objet de connexion\n        \"mysql:host=localhost;dbname=livredor;charset=utf8mb4\", // serveur + base + encodage\n        \"root\",                              // utilisateur MySQL\n        \"\"                                   // mot de passe (vide en local)\n    );                                       // fin du new PDO\n    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); // les erreurs SQL lèveront des exceptions\n} catch (PDOException $e) {                  // attrape l'échec de connexion\n    die(\"Connexion impossible : \" . $e->getMessage()); // die : affiche et ARRÊTE tout\n}                                            // fin du try/catch\n\n$auteur = \"Aurélia\";                         // données à insérer (viendraient d'un formulaire)\n$texte = \"Super site !\";                     // le message\n$stmt = $pdo->prepare(\"INSERT INTO messages (auteur, texte) VALUES (?, ?)\"); // SQL avec ? = emplacements\n$stmt->execute([$auteur, $texte]);           // les valeurs remplacent les ? SANS toucher au SQL (anti-injection)\n\n$resultat = $pdo->query(\"SELECT auteur, texte FROM messages ORDER BY id DESC\"); // lecture directe (pas de variable → query suffit)\nforeach ($resultat as $ligne) {              // parcourt chaque ligne du résultat\n    $a = htmlspecialchars($ligne[\"auteur\"]); // neutralise le HTML stocké en base (anti-XSS)\n    $t = htmlspecialchars($ligne[\"texte\"]);  // idem pour le texte\n    echo \"<p><strong>$a</strong> : $t</p>\";  // affichage sécurisé\n}                                            // fin du parcours\n?>",
+    note: "Requête préparée = anti-injection SQL, htmlspecialchars = anti-XSS : les deux réflexes vitaux du web." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Pousser l'image au registre depuis la CI",
+  subtitle: "Le tag Git déclenche build et push — plus aucune main humaine.",
+  theory: `
+<h3>1. Le deuxième workflow</h3>
+<p>Jusqu'ici, un seul fichier (<code>ci.yml</code>) vérifiait chaque commit. On ajoute maintenant un <strong>second workflow</strong> dédié à la livraison, déclenché uniquement par un tag de version.</p>
+<pre class="pseudo"># .github/workflows/release.yml         # un nouveau fichier de workflow, dédié à la livraison
+name: Release                            # son nom, affiché dans l'onglet Actions
+on:
+  push:
+    tags: ["v*"]          # SEUL un push de tag commençant par "v" déclenche (v* = v suivi de n'importe quoi)
+# ci.yml protège main à chaque commit ;
+# release.yml livre à chaque tag : deux fichiers, deux responsabilités</pre>
+<p>Séparer les deux fichiers respecte une bonne pratique : une responsabilité par workflow. <code>ci.yml</code> = vérifier (à chaque commit) ; <code>release.yml</code> = livrer (à chaque version).</p>
+
+<h3>2. La version depuis le tag Git</h3>
+<pre class="pseudo">jobs:
+  publier:                                        # un job nommé "publier"
+    runs-on: ubuntu-latest                        # machine Ubuntu neuve
+    steps:
+      - uses: actions/checkout@v4                 # récupérer le code du commit tagué
+      - name: Version depuis le tag
+        run: echo "VERSION=${'$'}{GITHUB_REF_NAME#v}" >> "${'$'}GITHUB_ENV"
+        # GITHUB_REF_NAME = variable fournie par GitHub = le nom de la référence qui a déclenché, ici "v1.1.0"
+        # ${'$'}{GITHUB_REF_NAME#v} = expansion shell qui RETIRE le préfixe "v" → "1.1.0"
+        # >> "${'$'}GITHUB_ENV" = écrit VARIABLE=valeur dans un fichier spécial → la variable VERSION devient dispo dans les steps SUIVANTS
+        # → le tag Git et le tag de l'image sont ainsi alignés, mécaniquement</pre>
+<p><code>GITHUB_ENV</code> est un fichier spécial : y écrire <code>NOM=valeur</code> rend la variable disponible pour les étapes suivantes du job. La syntaxe <code>${'$'}{VAR#v}</code> (vue au cours Linux/Docker) retire un préfixe.</p>
+
+<h3>3. Connexion et push</h3>
+<pre class="pseudo">      - name: Connexion au registre
+        run: echo "${'$'}{{ secrets.REGISTRY_TOKEN }}" | \\   # on récupère le secret (leçon 13) et on l'envoie…
+             docker login ghcr.io -u toi --password-stdin      # …à docker login sur ghcr.io ; --password-stdin garde le jeton hors de la ligne de commande
+
+      - name: Build et push
+        run: |                                                 # | = plusieurs commandes shell
+          docker build -t ghcr.io/toi/ludotheque:${'$'}VERSION .   # construire l'image, taguée avec la VERSION extraite (ex. 1.1.0)
+          docker push ghcr.io/toi/ludotheque:${'$'}VERSION         # push = envoyer l'image au registre ghcr.io</pre>
+<p>Le secret de la leçon 13 sert enfin ; <code>--password-stdin</code> garde le jeton hors de la ligne de commande. L'image part au registre <strong>ghcr.io</strong> (GitHub Container Registry, l'entrepôt d'images de GitHub, ici privé).</p>
+
+<h3>4. Pourquoi ce commit est déjà sûr</h3>
+<p>Le tag est posé sur un commit de <strong>main</strong> — donc un commit qui a déjà passé tests, qualité et build (protection de branche, leçon 14). La release ne <strong>reteste pas</strong> : elle <strong>emballe et publie</strong> un commit déjà certifié. Refaire les tests serait du gaspillage.</p>
+
+<h3>5. La traçabilité de bout en bout</h3>
+<pre class="pseudo">commit a1b2c3d ──tag──> v1.1.0 ──workflow──> ghcr.io/toi/ludotheque:1.1.0
+# de n'importe quelle image en prod, on remonte au commit exact —
+# et au run de pipeline qui l'a produite (logs conservés)</pre>
+<p>La <strong>traçabilité</strong> est la capacité de remonter, depuis un élément final (l'image en production), jusqu'à sa source exacte (le commit, la version, l'exécution du pipeline). Ici elle est native : un seul numéro relie tout.</p>
+<div class="warn">Ne déclenche pas la release sur <code>push: branches</code> : chaque commit publierait une image (le piège de la leçon 12). Le filtre <code>tags: ["v*"]</code> est la frontière entre <em>vérifier</em> (CI) et <em>livrer</em> (CD).</div>
+<div class="tip">La politique de versions écrite au cours Docker (leçon 17) est désormais <strong>exécutée par une machine</strong> : impossible d'oublier un tag, de désaligner code et image, ou de pousser une version non testée.</div>`,
+  exercises: [
+    { type: "qcm", q: "release.yml se déclenche sur…", opts: ["Chaque push", "Les tags v* uniquement", "Les PR", "Un cron"], a: 1, exp: "on: push: tags." },
+    { type: "qcm", q: "ci.yml et release.yml se répartissent…", opts: ["Rien", "Vérifier (chaque commit) / livrer (chaque tag)", "Le même travail", "Les branches"], a: 1, exp: "Deux responsabilités." },
+    { type: "qcm", q: "GITHUB_REF_NAME lors d'un push de tag vaut…", opts: ["main", "Le nom du tag (v1.1.0)", "Le sha", "L'auteur"], a: 1, exp: "La référence qui a déclenché." },
+    { type: "qcm", q: "#v dans GITHUB_REF_NAME#v…", opts: ["Ajoute un v", "Retire le préfixe v (v1.1.0 → 1.1.0)", "Commente", "Échoue"], a: 1, exp: "Expansion shell du cours Linux." },
+    { type: "qcm", q: "L'alignement tag Git ↔ tag image est…", opts: ["Manuel", "Mécanique : la version est extraite du tag", "Impossible", "Optionnel"], a: 1, exp: "Une seule source de vérité." },
+    { type: "qcm", q: "GITHUB_ENV sert à…", opts: ["Un secret", "Passer une variable aux steps suivants", "Un log", "Un cache"], a: 1, exp: "echo VAR=... >> $GITHUB_ENV." },
+    { type: "qcm", q: "La connexion au registre utilise…", opts: ["Un mot de passe en clair dans le YAML", "secrets.REGISTRY_TOKEN via --password-stdin", "Pas d'authentification", "SSH"], a: 1, exp: "La leçon 13 en action." },
+    { type: "qcm", q: "Le commit tagué a déjà été vérifié car…", opts: ["On a de la chance", "Il vient de main, protégée par la CI (leçon 14)", "La release reteste tout", "Les tags testent"], a: 1, exp: "La release emballe un commit certifié." },
+    { type: "vf", q: "Le workflow de release relance les 50 tests.", a: false, exp: "Déjà passés sur main : on publie, on ne reteste pas." },
+    { type: "qcm", q: "De l'image 1.1.0 en prod, on remonte…", opts: ["À rien", "Au tag v1.1.0, au commit exact, au run de pipeline", "Au serveur", "Au CSS"], a: 1, exp: "Traçabilité de bout en bout." },
+    { type: "qcm", q: "Déclencher la release sur push: branches causerait…", opts: ["Rien", "Une image publiée par commit (le piège de la leçon 12)", "Plus de sécurité", "Un gain"], a: 1, exp: "tags: [v*] est la frontière." },
+    { type: "qcm", q: "ghcr.io est…", opts: ["Un serveur SSH", "Le registre de conteneurs GitHub", "Une base de données", "Un linter"], a: 1, exp: "Privé, à côté du dépôt." },
+    { type: "qcm", q: "Ce que la machine rend impossible :", opts: ["Les bugs", "Oublier le tag, désaligner code/image, publier du non-testé", "Les conflits", "Les revues"], a: 1, exp: "La politique Docker l.17, exécutée." },
+    { type: "qcm", q: "Le déclenchement complet d'une livraison :", opts: ["git push origin v1.1.0", "un clic en prod", "un email", "docker push local"], a: 0, exp: "Une commande, tout s'enchaîne." },
+    { type: "vf", q: "Après cette leçon, docker push ne part plus jamais d'un poste de développeur.", a: true, exp: "Le pipeline est la seule voie de publication." }
+  ],
+  final: {
+    title: "Exercice final — Le tag qui publie",
+    intro: `<p>git push origin v1.1.0 — et l'image arrive au registre toute seule.</p>`,
+    questions: [
+      { type: "qcm", q: "Le déclencheur :", opts: ["on: push: tags: [\"v*\"]", "on: push: branches: [main]", "on: schedule", "manuel"], a: 0, exp: "Les versions seulement." },
+      { type: "qcm", q: "La version d'image vient de :", opts: ["GITHUB_REF_NAME#v (le tag sans le v)", "la date", "un compteur", "un secret"], a: 0, exp: "v1.1.0 → 1.1.0." },
+      { type: "qcm", q: "L'authentification :", opts: ["secrets.REGISTRY_TOKEN + --password-stdin", "en clair", "aucune", "par email"], a: 0, exp: "Leçon 13." },
+      { type: "qcm", q: "Les deux dernières commandes :", opts: ["docker build puis docker push vers ghcr.io", "compose up", "ssh", "git merge"], a: 0, exp: "L'artefact part." },
+      { type: "vf", q: "Le registre contient désormais ghcr.io/toi/ludotheque:1.1.0, traçable au commit.", a: true, exp: "La livraison est à mi-chemin — le serveur demain." }
+    ],
+    solution: `<pre class="pseudo">name: Release                                     # workflow de livraison
+on:
+  push:
+    tags: ["v*"]                                  # déclenché seulement par un tag de version
+jobs:
+  publier:                                        # le job de publication
+    runs-on: ubuntu-latest                        # machine neuve
+    steps:
+      - uses: actions/checkout@v4                 # récupérer le code du commit tagué
+      - run: echo "VERSION=${'$'}{GITHUB_REF_NAME#v}" >> "${'$'}GITHUB_ENV"   # extraire "1.1.0" du tag "v1.1.0" et la mémoriser
+      - run: echo "${'$'}{{ secrets.REGISTRY_TOKEN }}" | \\   # récupérer le secret et l'envoyer…
+             docker login ghcr.io -u toi --password-stdin      # …à docker login (sans exposer le jeton)
+      - run: |                                    # bloc de commandes shell
+          docker build -t ghcr.io/toi/ludotheque:${'$'}VERSION .   # construire l'image taguée avec la version
+          docker push ghcr.io/toi/ludotheque:${'$'}VERSION         # publier l'image au registre</pre>
+<p>L'image se publie toute seule. Demain : le serveur se met à jour tout seul aussi.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow de release…",
+  items: [
+  { id: "cicd-l16", title: "Le release.yml annoté", level: 3,
+    statement: "Écris le release.yml complet et commenté : déclencheur tags v*, extraction de la version, login registre (secret), build + push de l'image versionnée ET du tag latest, puis la création automatique de la release GitHub (softprops/action-gh-release ou gh release create) avec le changelog en corps. Chaque bloc : un commentaire « pourquoi ».",
+    hints: [
+      "Deux tags d'image : ${'$'}VERSION (immuable) et latest (commodité) — les deux poussés.",
+      "gh release create \"$GITHUB_REF_NAME\" --notes-file CHANGELOG.md (GH_TOKEN fourni par Actions).",
+      "permissions: contents: write pour créer la release."
+    ],
+    solution: "# .github/workflows/release.yml\nname: Release\n\n# Seul un tag de version déclenche : la frontière vérifier/livrer\non:\n  push:\n    tags: [\"v*\"]\n\npermissions:\n  contents: write        # nécessaire pour créer la release GitHub\n\njobs:\n  publier:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n\n      # v1.1.0 -> 1.1.0 : le tag Git est LA source de la version d'image\n      - name: Version depuis le tag\n        run: echo \"VERSION=${GITHUB_REF_NAME#v}\" >> \"$GITHUB_ENV\"\n\n      # Le jeton (leçon 13) reste hors ligne de commande\n      - name: Connexion au registre\n        run: echo \"${{ secrets.REGISTRY_TOKEN }}\" | \\\n             docker login ghcr.io -u toi --password-stdin\n\n      # Version immuable + latest de commodité (jamais utilisé en prod)\n      - name: Build et push\n        run: |\n          docker build \\\n            -t ghcr.io/toi/ludotheque:$VERSION \\\n            -t ghcr.io/toi/ludotheque:latest .\n          docker push ghcr.io/toi/ludotheque:$VERSION\n          docker push ghcr.io/toi/ludotheque:latest\n\n      # La vitrine : release GitHub avec le changelog (leçon 15)\n      - name: Release GitHub\n        env:\n          GH_TOKEN: ${{ github.token }}    # fourni par Actions\n        run: gh release create \"$GITHUB_REF_NAME\" \\\n             --title \"$GITHUB_REF_NAME\" --notes-file CHANGELOG.md",
+    note: "Le workflow réunit trois leçons : la version depuis le tag (15), le secret discipliné (13) et l'immuabilité des images (Docker 17). github.token est un jeton ÉPHÉMÈRE généré par Actions pour ce run, limité au dépôt — l'exemple parfait du moindre privilège : pas besoin de créer un secret pour parler à son propre dépôt." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

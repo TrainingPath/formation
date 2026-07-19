@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "La relation N-1 : belongsTo (une location a un jeu et un membre)",
+  subtitle: "Ta clé étrangère jeu_id devient un objet Jeu complet, en une ligne.",
+  theory: `
+<h3>1. Le côté « enfant » d'une relation</h3>
+<p>Semaine 2 : les relations. Une <strong>relation</strong> est un chemin balisé qu'Eloquent trace entre deux modèles, pour passer de l'un à l'autre sans réécrire de JOIN (analogie : un couloir déjà construit entre deux pièces — tu le traverses au lieu de percer un mur à chaque fois). Au Niveau 4, tu as conçu le schéma de la Ludothèque : la table <strong>locations</strong> porte deux clés étrangères, <em>jeu_id</em> et <em>membre_id</em>. En SQL, pour afficher le titre du jeu loué, tu écrivais un JOIN. Avec Eloquent, tu déclares la relation <strong>une fois</strong> dans le modèle, et tu ne réécris plus jamais ce JOIN.</p>
+<pre class="pseudo">Table locations (côté ENFANT : elle PORTE les clés étrangères)
+id | jeu_id | membre_id | date_debut  | date_retour
+1  |   3    |    12     | 2026-07-01  | NULL
+
+Une location APPARTIENT À un jeu   → belongsTo
+Une location APPARTIENT À un membre → belongsTo</pre>
+<p>Règle d'or : <strong>belongsTo (« appartient à ») se déclare dans le modèle qui contient la clé étrangère</strong>. C'est toujours l'enfant qui « appartient à » son parent (analogie : l'enfant porte le nom de famille du parent, pas l'inverse).</p>
+
+<h3>2. Déclarer belongsTo dans Location</h3>
+<p>Une relation Eloquent est une simple <strong>méthode du modèle</strong> qui retourne un objet relation :</p>
+<pre class="pseudo">// app/Models/Location.php
+namespace App\\Models;                        // adresse de la classe (évite les conflits de noms)
+
+use Illuminate\\Database\\Eloquent\\Model;    // classe de base Model
+
+class Location extends Model
+{
+    public function jeu()                     // méthode-relation : "la location appartient à un jeu"
+    {
+        return $this-&gt;belongsTo(Jeu::class);  // belongsTo → utilise la colonne jeu_id (par convention)
+    }
+
+    public function membre()                  // méthode-relation : "la location appartient à un membre"
+    {
+        return $this-&gt;belongsTo(Membre::class);   // belongsTo → utilise la colonne membre_id
+    }
+}</pre>
+<p>C'est tout. Pas de configuration XML, pas de mapping séparé : la relation vit dans le code du modèle. En Hibernate/JPA, tu écrirais un champ annoté <em>@ManyToOne</em> ; en Django, un <em>ForeignKey</em> dans la classe ; en EF Core, une navigation property <em>public Jeu Jeu</em>.</p>
+
+<h3>3. La convention : le nom de la méthode devine la clé</h3>
+<p>Comment Eloquent sait-il quelle colonne utiliser ? Par <strong>convention</strong> : méthode <em>jeu()</em> → clé étrangère <em>jeu_id</em> → colonne <em>id</em> de la table du modèle <em>Jeu</em>. Le nom de la méthode pilote tout.</p>
+<pre class="pseudo">public function jeu()        → cherche locations.jeu_id
+public function membre()     → cherche locations.membre_id</pre>
+<p>Ensuite, tu accèdes à la relation <strong>comme une propriété</strong>, sans parenthèses :</p>
+<pre class="pseudo">$location = Location::find(1);   // charge la location n°1
+
+$location-&gt;jeu;            // déclenche SELECT * FROM jeux WHERE id = 3 → l'objet Jeu complet
+$location-&gt;jeu-&gt;titre;     // "Catan" : on lit une propriété de l'objet Jeu lié
+$location-&gt;membre-&gt;email;  // "lea@exemple.be" : idem via la relation membre
+
+// SQL exécuté en coulisses au premier accès :
+// SELECT * FROM jeux WHERE id = 3 LIMIT 1</pre>
+<p>C'est le <strong>lazy loading</strong> (« chargement paresseux ») : la requête part au premier accès à la propriété, puis le résultat est gardé en mémoire (analogie : le plat n'est cuisiné qu'au moment où tu le commandes, jamais avant). Attention : si <em>jeu_id</em> est NULL, <em>$location-&gt;jeu</em> vaut <em>null</em> — d'où l'opérateur <em>$location-&gt;jeu?-&gt;titre</em> (le « nullsafe » : lis titre seulement si jeu n'est pas null) pour éviter l'erreur.</p>
+
+<h3>4. Quand la convention ne suffit pas : paramètres personnalisés</h3>
+<p>Base héritée, colonne nommée autrement ? Tu passes la clé étrangère (et au besoin la clé référencée) en paramètres :</p>
+<pre class="pseudo">public function jeu()
+{
+    // belongsTo(Modèle, clé étrangère locale, clé référencée)
+    return $this-&gt;belongsTo(Jeu::class, 'id_du_jeu', 'id');   // FK = id_du_jeu, pointe vers jeux.id
+}
+
+// Deux relations vers le MÊME modèle : nomme les méthodes librement
+public function parrain()
+{
+    return $this-&gt;belongsTo(Membre::class, 'parrain_id');   // FK = parrain_id vers membres.id
+}</pre>
+<p>Retiens la logique : <strong>convention d'abord, paramètres seulement en cas d'écart</strong>. Un schéma propre comme celui de ton Niveau 4 n'a presque jamais besoin des paramètres.</p>
+
+<h3>5. associate() et dissociate() : modifier le lien</h3>
+<p>Pour changer le parent d'un enfant, tu pourrais écrire <em>$location-&gt;jeu_id = 7</em>. Plus expressif : passer par la relation.</p>
+<pre class="pseudo">$location = Location::find(1);     // charge la location n°1
+$autreJeu = Jeu::find(7);          // charge le jeu n°7
+
+$location-&gt;jeu()-&gt;associate($autreJeu); // pose jeu_id = 7 EN MÉMOIRE (relation avec parenthèses)
+$location-&gt;save();                      // enregistre : rien n'est en base avant ce save() !
+
+$location-&gt;jeu()-&gt;dissociate();         // pose jeu_id = NULL en mémoire (rompt le lien)
+$location-&gt;save();                      // enregistre la rupture du lien</pre>
+<p>Note la différence de syntaxe : <em>jeu()</em> <strong>avec parenthèses</strong> pour agir sur la relation, <em>jeu</em> <strong>sans parenthèses</strong> pour lire le modèle lié. Cette distinction revient partout ; la leçon 9 la creuse.</p>
+<div class="warn">Accéder à <em>$location-&gt;jeu</em> dans une boucle sur 50 locations déclenche 50 requêtes : c'est le problème N+1. Tu apprendras à le tuer avec <em>with()</em> à la leçon 12 — en attendant, sache qu'il existe.</div>
+<div class="tip">Teste tout dans Tinker (leçon 2) : <em>Location::find(1)-&gt;jeu-&gt;titre</em> et regarde la magie. Équivalents ailleurs : <em>@ManyToOne</em> en JPA, <em>ForeignKey</em> en Django, navigation property en EF Core — le concept est identique, seule la syntaxe change.</div>`,
+  exercises: [
+    { type: "qcm", q: "belongsTo se déclare dans le modèle qui…", opts: ["Contient la clé étrangère", "Est référencé par la clé étrangère", "N'a pas de table", "Utilise SoftDeletes"], a: 0, exp: "L'enfant porte la FK, donc l'enfant « appartient à »." },
+    { type: "qcm", q: "Dans la Ludothèque, Location belongsTo…", opts: ["Categorie et Editeur", "Jeu et Membre", "Avis", "Personne : c'est un parent"], a: 1, exp: "locations porte jeu_id et membre_id." },
+    { type: "input", q: "Quelle méthode Eloquent déclare la relation « une location appartient à un jeu » ?", a: ["belongsTo", "belongsto", "$this->belongsTo(Jeu::class)"], ph: "nom de la méthode…", exp: "return $this->belongsTo(Jeu::class); dans Location." },
+    { type: "qcm", q: "La méthode public function jeu() fait chercher par convention la colonne…", opts: ["jeux_id", "id_jeu", "jeu_id", "fk_jeu"], a: 2, exp: "Nom de la méthode + _id : jeu → jeu_id." },
+    { type: "qcm", q: "Pour lire le titre du jeu d'une location :", opts: ["$location->jeu()->titre", "$location->jeu->titre", "$location->getJeu().titre", "$location[jeu][titre]"], a: 1, exp: "Sans parenthèses : on lit le modèle lié comme une propriété." },
+    { type: "vf", q: "La requête SQL vers la table jeux part dès que Location::find(1) est exécuté.", a: false, exp: "Lazy loading : elle part au premier accès à $location->jeu." },
+    { type: "qcm", q: "Si jeu_id vaut NULL, $location->jeu retourne…", opts: ["Une exception", "Un Jeu vide", "null", "false"], a: 2, exp: "D'où l'intérêt de $location->jeu?->titre." },
+    { type: "qcm", q: "Pour une FK nommée id_du_jeu au lieu de jeu_id :", opts: ["Impossible, il faut renommer la colonne", "belongsTo(Jeu::class, 'id_du_jeu')", "belongsTo('id_du_jeu')", "hasOne(Jeu::class)"], a: 1, exp: "Le 2e paramètre remplace la convention." },
+    { type: "input", q: "Quelle méthode pose la clé étrangère à partir d'un modèle déjà chargé ($location->jeu()->…($autreJeu)) ?", a: ["associate", "associate()"], ph: "nom de la méthode…", exp: "associate() écrit jeu_id ; save() persiste." },
+    { type: "qcm", q: "Après $location->jeu()->associate($jeu), la base est modifiée…", opts: ["Immédiatement", "Seulement après $location->save()", "Jamais", "Après refresh()"], a: 1, exp: "associate() ne touche que l'objet en mémoire." },
+    { type: "qcm", q: "dissociate() sert à…", opts: ["Supprimer le jeu", "Mettre la clé étrangère à NULL", "Détacher une catégorie du pivot", "Vider la table"], a: 1, exp: "Le lien est rompu, les deux lignes survivent." },
+    { type: "vf", q: "$location->jeu (sans parenthèses) et $location->jeu() (avec parenthèses) retournent la même chose.", a: false, exp: "Propriété = modèle lié ; méthode = objet relation pour agir dessus (associate, requêtes…)." },
+    { type: "qcm", q: "L'équivalent de belongsTo en Hibernate/JPA :", opts: ["@OneToMany", "@ManyToOne", "@JoinTable", "@Entity"], a: 1, exp: "Plusieurs locations vers un jeu : Many (locations) To One (jeu)." },
+    { type: "vf", q: "En Django, l'équivalent est un champ ForeignKey déclaré dans le modèle enfant.", a: true, exp: "jeu = models.ForeignKey(Jeu, ...) dans Location : même côté, même logique." },
+    { type: "qcm", q: "Boucler sur 50 locations en lisant $location->jeu->titre déclenche…", opts: ["1 seule requête", "2 requêtes", "50 requêtes en plus de la première", "0 requête"], a: 2, exp: "Le problème N+1 — réglé par with() à la leçon 12." }
+  ],
+  final: {
+    title: "Exercice final — Le côté enfant maîtrisé",
+    intro: `<p>Location porte jeu_id et membre_id : vérifie que tu sais déclarer, lire et modifier ces liens.</p>`,
+    questions: [
+      { type: "qcm", q: "Le modèle qui déclare belongsTo(Jeu::class) est…", opts: ["Jeu", "Categorie", "Location", "Editeur"], a: 2, exp: "Celui qui porte jeu_id : Location, l'enfant." },
+      { type: "input", q: "Par convention, la méthode membre() du modèle Location cherche quelle colonne ?", a: ["membre_id"], ph: "nom_de_colonne", exp: "Nom de méthode + _id." },
+      { type: "vf", q: "belongsTo exécute sa requête SQL au premier accès à la propriété, pas avant.", a: true, exp: "Lazy loading, résultat ensuite gardé en mémoire." },
+      { type: "qcm", q: "Changer le jeu d'une location proprement :", opts: ["$location->jeu = $autre", "$location->jeu()->associate($autre) puis save()", "$location->attach($autre)", "Jeu::swap($location)"], a: 1, exp: "associate() pose la FK, save() persiste ; attach() c'est pour le N-N (leçon 10)." },
+      { type: "qcm", q: "L'équivalent Django de belongsTo :", opts: ["ManyToManyField", "prefetch_related", "ForeignKey", "OneToManyField"], a: 2, exp: "ForeignKey côté enfant — @ManyToOne en JPA, navigation property en EF Core." }
+    ],
+    solution: `<pre class="pseudo">belongsTo = le côté ENFANT (celui qui porte la clé étrangère)
+
+Déclarer  : public function jeu() { return $this-&gt;belongsTo(Jeu::class); }
+Convention: méthode jeu() → colonne jeu_id → jeux.id
+Lire      : $location-&gt;jeu-&gt;titre        (propriété, lazy loading)
+Agir      : $location-&gt;jeu()-&gt;associate($jeu); $location-&gt;save();
+Rompre    : $location-&gt;jeu()-&gt;dissociate(); (FK → NULL)
+
+Ailleurs  : @ManyToOne (JPA) · ForeignKey (Django) · navigation (EF Core)</pre>
+<p>Tu sais lire le lien depuis l'enfant. Leçon 9 : le sens inverse — un jeu et TOUTES ses locations avec hasMany.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l8", title: "Du JOIN au belongsTo", level: 2,
+    statement: "Au Niveau 4, tu affichais « chaque location avec le titre du jeu et le nom du membre » via un SELECT à deux JOIN. Rédige une comparaison structurée entre cette approche SQL et l'approche Eloquent avec belongsTo : écris les deux versions (le SQL de mémoire, le PHP avec les relations), puis analyse ce que chacune t'oblige à connaître, où vit la connaissance du schéma dans chaque cas, et ce qui se passe dans les deux mondes si la colonne jeu_id est renommée.",
+    hints: [
+      "Version SQL : SELECT ... FROM locations JOIN jeux ON ... JOIN membres ON ... — combien de fois réécris-tu ces ON dans un vrai projet ?",
+      "Version Eloquent : deux méthodes belongsTo déclarées UNE fois, puis $location->jeu->titre partout.",
+      "Renommage de colonne : compte les endroits à corriger dans chaque approche."
+    ],
+    solution: "Critère                  | SQL brut (Niveau 4)              | Eloquent belongsTo\n-------------------------+----------------------------------+--------------------------------\nÉcriture                 | SELECT l.*, j.titre, m.nom       | $location->jeu->titre\n                         | FROM locations l                 | $location->membre->nom\n                         | JOIN jeux j ON j.id = l.jeu_id   |\n                         | JOIN membres m ON m.id = ...     |\nOù vit le lien ?         | répété dans CHAQUE requête       | déclaré 1 fois dans Location.php\nCe qu'il faut connaître  | noms de tables, de colonnes, ON  | le nom de la méthode (jeu, membre)\nRenommer jeu_id          | corriger tous les JOIN du projet | 1 paramètre : belongsTo(Jeu::class, 'nouveau_nom')\nRésultat obtenu          | lignes plates (colonnes mixées)  | objets typés : Location, Jeu, Membre\nRevers de la médaille    | 1 requête, tout est explicite    | lazy loading → risque N+1 (leçon 12)\n\nConclusion : Eloquent centralise la connaissance du schéma dans les modèles.\nLe JOIN n'a pas disparu : il est généré, et je dois savoir qu'il se cache derrière.",
+    note: "Cette centralisation est exactement ce que promettent tous les ORM : @ManyToOne en Hibernate, ForeignKey en Django et les navigation properties d'EF Core résolvent le même problème de duplication des JOIN. Garde ton réflexe SQL du Niveau 4 : savoir quel SQL l'ORM génère fait la différence entre un utilisateur d'Eloquent et un développeur qui le maîtrise — surtout au moment d'optimiser ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

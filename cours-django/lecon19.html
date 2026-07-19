@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "L'admin, la pagination et les bonnes pratiques",
+  subtitle: "Le back-office gratuit de Django, et des listes qui restent rapides.",
+  theory: `
+<h3>1. L'interface d'administration : un back-office gratuit</h3>
+<p>Un <strong>back-office</strong> (« arrière-boutique ») est la partie privée d'un site, réservée au personnel, pour gérer le contenu (le <em>front-office</em> étant ce que voient les visiteurs). Django génère automatiquement cette interface web pour créer, lire, modifier et supprimer tes données — sans écrire une seule ligne de HTML. Idéal pour gérer le contenu sans coder un formulaire à chaque fois.</p>
+<pre class="pseudo"># urls.py — l'admin est déjà branché par défaut à la création du projet
+from django.contrib import admin                     # importe le module d'administration
+urlpatterns = [ path("admin/", admin.site.urls) ]    # l'adresse /admin/ mène à l'interface
+# On y accède sur /admin/ avec un compte créé par createsuperuser (leçon 16)</pre>
+
+<h3>2. Enregistrer un modèle dans l'admin</h3>
+<pre class="pseudo"># taches/admin.py (le fichier de configuration de l'admin de l'app)
+from django.contrib import admin                     # importe l'admin
+from .models import Tache                            # importe le modèle à gérer
+
+admin.site.register(Tache)      # register : Tache apparaît désormais dans l'interface d'admin</pre>
+<div class="tip">Tant qu'un modèle n'est pas <code>register</code>é (enregistré), il n'apparaît pas dans l'admin. Une seule ligne suffit à le rendre gérable via l'interface. C'est souvent la première chose qu'on fait après avoir créé un modèle.</div>
+
+<h3>3. Personnaliser l'affichage : ModelAdmin</h3>
+<p>Un <strong>ModelAdmin</strong> est une classe qui règle la façon dont un modèle s'affiche dans l'admin (colonnes, filtres, recherche). Le décorateur <code>@admin.register(Tache)</code> enregistre le modèle et lui associe cette configuration.</p>
+<pre class="pseudo">@admin.register(Tache)                                   # enregistre Tache avec la config ci-dessous
+class TacheAdmin(admin.ModelAdmin):                      # une classe de configuration de l'admin
+    list_display = ("texte", "faite", "date_creation")   # list_display : les COLONNES affichées dans la liste
+    list_filter = ("faite",)                             # list_filter : des filtres latéraux (la virgule fait un tuple)
+    search_fields = ("texte",)                           # search_fields : les champs sur lesquels chercher</pre>
+<p>Un <code>ModelAdmin</code> configure l'affichage : quelles colonnes montrer (<code>list_display</code>), quels filtres proposer (<code>list_filter</code>), sur quels champs chercher (<code>search_fields</code>). L'admin devient un vrai outil de gestion.</p>
+
+<h3>4. Pourquoi paginer ?</h3>
+<p>Afficher 10 000 tâches sur une seule page est lent et illisible. La <strong>pagination</strong> découpe une longue liste en pages successives (« page 1, 2, 3… ») — comme un livre plutôt qu'un rouleau interminable. On ne charge que ce qu'on montre.</p>
+
+<h3>5. Paginer dans une vue</h3>
+<pre class="pseudo">from django.core.paginator import Paginator          # Paginator : l'outil de découpage en pages
+
+def liste(request):
+    taches = Tache.objects.all()                     # toutes les tâches
+    paginator = Paginator(taches, 10)                # découpe en pages de 10 tâches
+    numero = request.GET.get("page")                 # lit le numéro de page dans l'URL (?page=2)
+    page = paginator.get_page(numero)                # get_page : renvoie l'objet Page demandé (robuste)
+    return render(request, "taches/liste.html", {"page": page})  # on passe la page au template</pre>
+<pre class="pseudo">{# dans le template : on boucle sur page, pas sur taches #}
+{% for tache in page %}                              &lt;!-- parcourt les tâches DE CETTE page --&gt;
+    {{ tache.texte }}                                &lt;!-- affiche le texte de chaque tâche --&gt;
+{% endfor %}                                         &lt;!-- fin de la boucle --&gt;
+
+{% if page.has_previous %}&lt;a href="?page={{ page.previous_page_number }}"&gt;Précédent&lt;/a&gt;{% endif %}  &lt;!-- lien vers la page précédente si elle existe --&gt;
+Page {{ page.number }} / {{ page.paginator.num_pages }}   &lt;!-- "page courante / nombre total de pages" --&gt;
+{% if page.has_next %}&lt;a href="?page={{ page.next_page_number }}"&gt;Suivant&lt;/a&gt;{% endif %}  &lt;!-- lien vers la page suivante si elle existe --&gt;</pre>
+<div class="tip"><code>get_page(numero)</code> est robuste : si le numéro est absent ou invalide, il renvoie une page valide plutôt qu'une erreur. L'objet <code>page</code> connaît son numéro, s'il a un précédent/suivant, et le nombre total de pages.</div>
+
+<h3>6. Quelques bonnes pratiques</h3>
+<pre class="pseudo"># Éviter le problème « N+1 » : précharger les relations
+Tache.objects.select_related("categorie")     # select_related : joint la catégorie en UNE seule requête
+# Ne demander que les colonnes qu'on affiche
+Tache.objects.only("id", "texte")             # only : ne charge que ces champs (allège la requête)
+# Compter sans tout charger en mémoire
+Tache.objects.filter(faite=True).count()      # count : laisse la base compter, sans rapatrier les objets</pre>
+<div class="warn">Le piège classique « N+1 » : boucler sur des tâches puis lire <code>tache.categorie</code> déclenche UNE requête par tâche (1 requête + N requêtes). <code>select_related</code> (ou <code>prefetch_related</code>) précharge la relation en une seule requête. Sur de grandes listes, la différence est énorme.</div>
+
+<h3>7. En résumé des bons réflexes</h3>
+<p>Enregistre tes modèles dans l'admin pour les gérer sans effort ; pagine les longues listes ; précharge les relations ; ne demande à la base que ce dont tu as besoin. Un code lisible et des requêtes efficaces : voilà ce qui distingue une petite app d'une application prête pour de vrais utilisateurs.</p>`,
+  exercises: [
+    { type: "qcm", q: "L'interface d'administration de Django…", opts: ["Doit être codée à la main", "Est générée AUTOMATIQUEMENT (back-office gratuit, réservé au personnel)", "Coûte un abonnement", "N'existe pas"], a: 1, exp: "CRUD des données sans écrire de HTML." },
+    { type: "qcm", q: "On accède à l'admin sur…", opts: ["/back/", "/admin/ (avec un compte superuser)", "/gestion/", "/root/"], a: 1, exp: "URL branchée par défaut, compte via createsuperuser." },
+    { type: "qcm", q: "Pour qu'un modèle apparaisse dans l'admin, il faut…", opts: ["Rien", "L'enregistrer : admin.site.register(Modele)", "Le migrer deux fois", "Le styliser"], a: 1, exp: "Sans register, le modèle n'apparaît pas." },
+    { type: "qcm", q: "<code>list_display</code> dans un ModelAdmin définit…", opts: ["Les filtres", "Les COLONNES affichées dans la liste", "La recherche", "Le thème"], a: 1, exp: "Quelles infos montrer par ligne." },
+    { type: "qcm", q: "<code>list_filter</code> ajoute…", opts: ["Des colonnes", "Des filtres latéraux (ex. par « faite »)", "Une API", "Un test"], a: 1, exp: "Filtrer rapidement la liste." },
+    { type: "qcm", q: "<code>search_fields</code> ajoute…", opts: ["Un graphique", "Une barre de recherche sur ces champs", "Une migration", "Un thème"], a: 1, exp: "Chercher dans les valeurs de champs." },
+    { type: "qcm", q: "La pagination sert à…", opts: ["Sécuriser", "Découper une longue liste en pages (rapidité, lisibilité)", "Migrer", "Router"], a: 1, exp: "On ne charge que ce qu'on montre." },
+    { type: "qcm", q: "<code>Paginator(taches, 10)</code> signifie…", opts: ["10 pages en tout", "10 éléments PAR page", "10 secondes", "10 colonnes"], a: 1, exp: "Le second argument est la taille de page." },
+    { type: "qcm", q: "<code>request.GET.get(\"page\")</code> récupère…", opts: ["Le POST", "Le numéro de page depuis l'URL (?page=2)", "Le user", "Le cookie"], a: 1, exp: "Le paramètre GET de pagination." },
+    { type: "qcm", q: "<code>paginator.get_page(numero)</code> est robuste car…", opts: ["Il plante si invalide", "Il renvoie une page valide même si le numéro est absent/invalide", "Il ignore la base", "Il supprime"], a: 1, exp: "Pas d'erreur sur un mauvais numéro." },
+    { type: "qcm", q: "Dans le template, on boucle sur…", opts: ["taches", "page (l'objet Page), pas la liste complète", "paginator", "request"], a: 1, exp: "page contient les éléments de la page courante." },
+    { type: "qcm", q: "Le problème « N+1 » désigne…", opts: ["Un bug de calcul", "Une requête par élément déclenchée en boucle (très lent)", "Une erreur 404", "Un souci de CSS"], a: 1, exp: "Boucler + lire une relation = N requêtes." },
+    { type: "qcm", q: "<code>select_related(\"categorie\")</code> …", opts: ["Supprime la relation", "Précharge la relation en UNE requête (évite le N+1)", "Crée une catégorie", "Style la page"], a: 1, exp: "Jointure préchargée, bien plus rapide." },
+    { type: "vf", q: "Compter avec .count() est plus efficace que charger tous les objets pour faire len().", a: true, exp: "count() délègue le comptage à la base, sans tout charger." },
+    { type: "qcm", q: "<code>page.has_next</code> sert à…", opts: ["Supprimer", "Savoir s'il existe une page suivante (afficher « Suivant »)", "Migrer", "Filtrer"], a: 1, exp: "L'objet Page connaît ses voisins." }
+  ],
+  final: {
+    title: "Exercice final — Paginer la todo-liste",
+    intro: `<p>On pagine et on prépare l'admin :</p>
+<pre class="pseudo"># admin.py
+@admin.register(Tache)                                   # enregistre Tache dans l'admin
+class TacheAdmin(admin.ModelAdmin):
+    list_display = ("texte", "faite", "date_creation")   # colonnes affichées
+    list_filter = ("faite",)                             # filtre latéral sur faite
+    search_fields = ("texte",)                           # recherche sur le texte
+
+# views.py
+from django.core.paginator import Paginator              # outil de pagination
+
+def liste(request):
+    taches = Tache.objects.all().order_by("-date_creation")  # les plus récentes d'abord
+    page = Paginator(taches, 10).get_page(request.GET.get("page"))  # page de 10, robuste
+    return render(request, "taches/liste.html", {"page": page})     # passer la page au template</pre>`,
+    questions: [
+      { type: "qcm", q: "Que fait <code>list_display</code> ?", opts: ["Filtre", "Définit les colonnes affichées dans l'admin", "Pagine", "Migre"], a: 1, exp: "texte, faite et date_creation par ligne." },
+      { type: "qcm", q: "<code>Paginator(taches, 10)</code> découpe la liste en pages de…", opts: ["10 pages", "10 tâches chacune", "1 tâche", "100 tâches"], a: 1, exp: "10 éléments par page." },
+      { type: "qcm", q: "<code>get_page(request.GET.get(\"page\"))</code> gère un numéro invalide en…", opts: ["Plantant", "Renvoyant une page valide malgré tout", "Supprimant", "Ignorant la base"], a: 1, exp: "get_page est tolérant aux erreurs." },
+      { type: "qcm", q: "<code>order_by(\"-date_creation\")</code> trie…", opts: ["Par texte", "Du plus RÉCENT au plus ancien (le - = décroissant)", "Aléatoirement", "Par id"], a: 1, exp: "Le préfixe - inverse l'ordre." },
+      { type: "vf", q: "Dans le template, on boucle sur page et on utilise page.has_previous / page.has_next pour les liens.", a: true, exp: "L'objet Page fournit tout le nécessaire à la navigation." }
+    ],
+    solution: `<pre class="pseudo"># Admin : list_display + list_filter + search_fields → un back-office utilisable
+# Pagination :
+taches = Tache.objects.all().order_by("-date_creation")   # les plus récentes d'abord
+page = Paginator(taches, 10).get_page(request.GET.get("page"))  # page de 10, tolérante
+# Template : {% for t in page %}...{% endfor %} + liens Précédent/Suivant
+# Admin gratuit + listes paginées + requêtes efficaces (select_related) :
+# ton app tient la charge et se gère facilement.</pre>
+<p>Tout est en place. Demain : assembler la todo-liste complète, de A à Z.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code Django ici…",
+  items: [
+  { id: "dj-l19", title: "Admin personnalisé + liste paginée", level: 3,
+    statement: "Écris deux choses : (1) dans admin.py, une classe <code>TacheAdmin</code> qui affiche les colonnes texte et faite, propose un filtre sur faite et une recherche sur texte ; (2) dans views.py, une vue <code>liste</code> qui affiche les tâches par pages de 5, triées de la plus récente à la plus ancienne.",
+    hints: [
+      "Admin : @admin.register(Tache) ; list_display, list_filter, search_fields.",
+      "Vue : from django.core.paginator import Paginator.",
+      "page = Paginator(qs, 5).get_page(request.GET.get('page')) ; tri : order_by('-date_creation')."
+    ],
+    solution: "# admin.py\nfrom django.contrib import admin\nfrom .models import Tache\n\n@admin.register(Tache)\nclass TacheAdmin(admin.ModelAdmin):\n    list_display = (\"texte\", \"faite\")   # colonnes\n    list_filter = (\"faite\",)             # filtre latéral\n    search_fields = (\"texte\",)           # recherche\n\n# views.py\nfrom django.core.paginator import Paginator\nfrom django.shortcuts import render\nfrom .models import Tache\n\ndef liste(request):\n    taches = Tache.objects.all().order_by(\"-date_creation\")  # plus récentes d'abord\n    page = Paginator(taches, 5).get_page(request.GET.get(\"page\"))  # 5 par page\n    return render(request, \"taches/liste.html\", {\"page\": page})",
+    note: "Le ModelAdmin rend l'admin utilisable (colonnes, filtre, recherche). Le Paginator borne la liste à 5 par page et get_page tolère un numéro invalide. Dans le template, on boucle sur page." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

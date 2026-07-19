@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : paiement simulé, stock de vente",
+  subtitle: "Le deuxième stock du modèle Merise prend tout son sens.",
+  theory: `
+<h3>1. Deux stocks, deux opérations</h3>
+<p>Depuis la conception Merise, chaque jeu a <strong>deux stocks distincts et étanches</strong> : <code>StockLocation</code> (les exemplaires qui tournent, prêtés puis rendus) et <code>StockVente</code> (ceux qui partent définitivement). Louer touche le premier ; <strong>acheter</strong> touche le second — et enregistre en plus un <strong>montant</strong> (la somme payée). Un achat ne peut pas puiser dans le stock de location : les deux réserves sont séparées.</p>
+
+<h3>2. AchatService : même structure, autre stock</h3>
+<p>La méthode d'achat reprend l'ossature de la location (transaction, contrôle du stock, exception métier), en agissant sur l'autre stock :</p>
+<pre class="pseudo">public async Task&lt;Achat&gt; AcheterAsync(string idClient, int idJeu) {  // vend le jeu idJeu au client idClient
+    using var tx = await _db.Database.BeginTransactionAsync();       // ouvre la transaction (tout ou rien)
+    var jeu = await _db.Jeux.FindAsync(idJeu)                        // récupère le jeu par sa clé primaire
+        ?? throw new KeyNotFoundException("Jeu introuvable");        // absent → 404
+    if (jeu.StockVente &lt;= 0)                                         // plus aucun exemplaire à vendre ?
+        throw new StockInsuffisantException("Plus de stock de vente");  // → refus (409)
+    var achat = new Achat {                                          // prépare la fiche d'achat
+        ClientId = idClient, JeuId = idJeu,                          // qui achète, et quel jeu
+        DateAchat = DateTime.UtcNow,                                 // date de l'achat (temps universel)
+        Montant = jeu.PrixAchat        // paiement simulé
+    };
+    _db.Achats.Add(achat);                                          // 1re écriture : enregistre l'achat
+    jeu.StockVente--;                                               // 2e écriture : un exemplaire de moins à la vente
+    await _db.SaveChangesAsync();                                   // envoie les deux écritures à la base
+    await tx.CommitAsync();                                         // valide la transaction
+    return achat;                                                   // renvoie l'achat créé au contrôleur
+}</pre>
+
+<h3>3. Le paiement simulé</h3>
+<p>On enregistre le montant (<code>Montant = jeu.PrixAchat</code>) sans réellement encaisser d'argent : c'est un projet d'école, donc un <strong>paiement simulé</strong>. Un vrai paiement appellerait un <strong>service externe</strong> (un prestataire de paiement comme Stripe ou PayPal, joint par Internet) <strong>à cet endroit précis</strong>, avant le commit : si le paiement échouait, l'exception annulerait toute la transaction (ni achat, ni décrément de stock).</p>
+
+<h3>4. Figer le prix au moment de l'achat</h3>
+<div class="warn">On <strong>copie</strong> le prix dans <code>Achat.Montant</code> au lieu de le relire plus tard depuis <code>Jeu.PrixAchat</code> : si le vendeur change le prix demain, les achats d'hier doivent conserver leur montant <strong>historique</strong> (la valeur au moment de la transaction). Une facture ne se modifie pas rétroactivement — le montant payé est gravé.</div>
+
+<h3>5. Le contrôleur</h3>
+<pre class="pseudo">[Authorize]                                          // l'utilisateur doit être connecté
+[HttpPost("/api/achats/{idJeu}")]                    // répond à POST /api/achats/{idJeu}
+public async Task&lt;ActionResult&lt;AchatDto&gt;&gt; Acheter(int idJeu) {
+    var email = User.FindFirstValue(ClaimTypes.Name);        // identité de l'acheteur, lue dans le jeton
+    var achat = await _service.AcheterAsync(email, idJeu);   // délègue l'achat au service métier
+    return Created($"/api/mes-achats", AchatDto.DepuisEntite(achat));  // 201 Created + le DTO de l'achat
+}</pre>
+<div class="tip">Location et achat partagent la même ossature (transaction, contrôle de stock, exception métier) : quand une structure se répète ainsi, c'est le signe d'une architecture bien comprise — pas d'un copier-coller à cacher.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Acheter décrémente…", opts: ["StockLocation", "StockVente", "Les deux", "Aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Les deux stocks distincts viennent…", opts: ["D'une mode", "Du modèle Merise conçu en début de formation", "D'EF Core", "Du frontend"], a: 1, exp: "Conception → code." },
+    { type: "qcm", q: "En plus du stock, l'achat enregistre…", opts: ["Un montant (PrixAchat)", "Une durée", "Un rôle", "Un index"], a: 0, exp: "Trace financière." },
+    { type: "qcm", q: "Le paiement de la Ludothèque est…", opts: ["Réel via Stripe", "Simulé : on enregistre le montant", "En liquide", "Absent"], a: 1, exp: "Projet d'école." },
+    { type: "qcm", q: "Un vrai paiement externe s'appellerait…", opts: ["Après le commit", "Dans la transaction, avant le commit", "Dans la vue", "Jamais"], a: 1, exp: "Échec → rollback de tout." },
+    { type: "qcm", q: "Pourquoi copier le prix dans Achat.Montant ?", opts: ["Performance", "Garder le montant historique même si le prix change", "Éviter un join", "Obligation EF"], a: 1, exp: "Une facture ne change pas." },
+    { type: "vf", q: "Si le vendeur change PrixAchat, les achats passés changent de montant.", a: false, exp: "Le montant est figé à l'achat." },
+    { type: "qcm", q: "StockVente nul → le service…", opts: ["Vend quand même", "Lève StockInsuffisantException", "Renvoie null", "Passe sur StockLocation"], a: 1, exp: "Refus métier." },
+    { type: "vf", q: "Un achat peut puiser dans le stock de location si la vente est épuisée.", a: false, exp: "Deux stocks étanches, par conception." },
+    { type: "qcm", q: "La structure d'AcheterAsync ressemble à LouerAsync parce que…", opts: ["C'est un copier-coller honteux", "Les deux opérations partagent les mêmes garanties (transaction, stock, exception)", "Le hasard", "EF l'impose"], a: 1, exp: "Architecture cohérente." },
+    { type: "qcm", q: "L'acheteur est identifié par…", opts: ["Le claim du jeton", "?client= dans l'URL", "Un champ du JSON", "Son IP"], a: 0, exp: "Toujours le jeton." },
+    { type: "qcm", q: "Après l'achat, l'API renvoie…", opts: ["201 Created avec le DTO de l'achat", "404", "500", "302"], a: 0, exp: "Ressource créée." },
+    { type: "qcm", q: "L'ordre transactionnel :", opts: ["Begin → contrôles → écritures → SaveChanges → Commit", "Commit → Begin", "SaveChanges seul", "Begin → Commit → écritures"], a: 0, exp: "Toujours le même." },
+    { type: "vf", q: "AcheterAsync renvoie l'Achat créé pour que le contrôleur construise le DTO.", a: true, exp: "Le service renvoie l'entité, le contrôleur traduit." },
+    { type: "qcm", q: "Le montant enregistré vaut…", opts: ["jeu.PrixLocation", "jeu.PrixAchat", "0", "un paramètre du client"], a: 1, exp: "Jamais un montant envoyé par le client !" }
+  ],
+  final: {
+    title: "Exercice final — L'achat complet",
+    intro: `<p>On déroule l'achat d'un jeu par un client connecté.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock contrôlé est :", opts: ["StockVente", "StockLocation", "les deux", "aucun"], a: 0, exp: "Achat = vente." },
+      { type: "qcm", q: "Le montant vient de :", opts: ["jeu.PrixAchat (copié dans l'achat)", "du JSON envoyé par le client", "de la config", "du rôle"], a: 0, exp: "Figé, côté serveur." },
+      { type: "qcm", q: "Les écritures de l'achat :", opts: ["Add(achat) et jeu.StockVente--", "un UPDATE seul", "un DELETE", "deux SELECT"], a: 0, exp: "Dans la transaction." },
+      { type: "qcm", q: "Si le paiement (réel) échouait avant le commit :", opts: ["Tout est annulé", "L'achat reste", "Le stock baisse quand même", "500 sans rollback"], a: 0, exp: "C'est le but de la transaction." },
+      { type: "vf", q: "Louer et acheter suivent la même ossature transactionnelle.", a: true, exp: "Mêmes garanties, stocks différents." }
+    ],
+    solution: `<pre class="pseudo">public async Task&lt;Achat&gt; AcheterAsync(string idClient, int idJeu) {   // vend le jeu au client
+    using var tx = await _db.Database.BeginTransactionAsync();   // transaction (tout ou rien)
+    var jeu = await _db.Jeux.FindAsync(idJeu) ?? throw new KeyNotFoundException();  // jeu par sa clé, ou 404
+    if (jeu.StockVente &lt;= 0)                                 // plus de stock de vente ?
+        throw new StockInsuffisantException("Plus de stock de vente");  // → refus (409)
+    var achat = new Achat {                                  // prépare la fiche d'achat
+        ClientId = idClient, JeuId = idJeu,                  // qui achète, quel jeu
+        DateAchat = DateTime.UtcNow, Montant = jeu.PrixAchat // date (UTC) + montant figé
+    };
+    _db.Achats.Add(achat);                                  // 1re écriture : l'achat
+    jeu.StockVente--;                                       // 2e écriture : un exemplaire de moins
+    await _db.SaveChangesAsync();                           // envoie les écritures
+    await tx.CommitAsync();                                 // valide la transaction
+    return achat;                                           // renvoie l'achat créé
+}</pre>
+<p>Louer et acheter fonctionnent. Demain : donner un visage à tout ça avec Razor Pages.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service d'achat…",
+  items: [
+  { id: "projcsharp-l13", title: "Le reçu d'achat", level: 2,
+    statement: "Écris le record AchatDto (Id, TitreJeu, Montant, DateAchat) avec sa méthode statique DepuisEntite(Achat a), puis l'action POST /api/achats/{idJeu} : identifier le client par le jeton, appeler AcheterAsync et renvoyer 201 avec le DTO.",
+    hints: [
+      "public record AchatDto(int Id, string TitreJeu, decimal Montant, DateTime DateAchat)",
+      "public static AchatDto DepuisEntite(Achat a) => new(a.Id, a.Jeu.Titre, a.Montant, a.DateAchat);",
+      "return Created(\"/api/mes-achats\", AchatDto.DepuisEntite(achat));"
+    ],
+    solution: "public record AchatDto(int Id, string TitreJeu, decimal Montant, DateTime DateAchat) {   // DTO : le recu d'achat\n    public static AchatDto DepuisEntite(Achat a) =>     // fabrique un DTO a partir d'une entite Achat\n        new(a.Id, a.Jeu.Titre, a.Montant, a.DateAchat);   // ne garde que les infos utiles au client\n}\n\n[Authorize]                                        // l'utilisateur doit etre connecte\n[HttpPost(\"/api/achats/{idJeu}\")]                  // POST /api/achats/{idJeu}\npublic async Task<ActionResult<AchatDto>> Acheter(int idJeu) {\n    var email = User.FindFirstValue(ClaimTypes.Name);   // identite de l'acheteur (jeton)\n    var achat = await _service.AcheterAsync(email, idJeu);   // delegue l'achat au service\n    return Created(\"/api/mes-achats\", AchatDto.DepuisEntite(achat));   // 201 + le DTO de l'achat\n}",
+    note: "Le DTO expose exactement ce que le client doit voir (titre, montant, date) et rien de plus — pas l'entité EF avec ses navigations. Le montant renvoyé est celui figé par le service : le client ne choisit ni le prix ni son identité, les deux viennent du serveur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

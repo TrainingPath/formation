@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Du MCD Merise aux migrations Django",
+  subtitle: "Traduire le modèle conçu en Merise en un schéma MySQL versionné.",
+  theory: `
+<h3>1. Relire le MCD</h3>
+<pre class="pseudo">MCD (cours Merise) :
+JEU (titre, prix_achat, prix_location, stock_vente, stock_location)
+CATEGORIE (nom)          JEU —(appartient à)— CATEGORIE : CIF (1,1)-(0,n)</pre>
+<p>Reprenons le vocabulaire. Un <strong>MCD</strong> (Modèle Conceptuel de Données) est le plan des informations à stocker, dessiné au cours Merise avant d'écrire la moindre ligne — comme le plan d'une maison avant les fondations. Une <strong>entité</strong> est une catégorie de choses à mémoriser (ici JEU, CATEGORIE), un peu comme une fiche cartonnée par type d'objet. Un <strong>modèle</strong> Django est la version « code » d'une entité : une classe Python qui décrit une <strong>table</strong> (un tableau de la base, avec une ligne par objet et une colonne par attribut). Une <strong>CIF</strong> (Contrainte d'Intégrité Fonctionnelle) est un lien « chaque X appartient à un seul Y » ; on la traduit par une <code>ForeignKey</code> (« clé étrangère » : une colonne qui pointe vers la fiche d'une autre table, comme un renvoi « voir page 12 »). Une relation <strong>(n,n)</strong> (plusieurs des deux côtés) se traduit par un modèle de liaison ou un <code>ManyToManyField</code>. Règle courte : une entité → un modèle ; une CIF (1,1)-(0,n) → une <code>ForeignKey</code> ; une relation (n,n) → un modèle de liaison.</p>
+
+<h3>2. Les modèles</h3>
+<pre class="pseudo">class Categorie(models.Model):                                  # un modèle « Categorie » = une table CATEGORIE
+    nom = models.CharField(max_length=100, unique=True)         # colonne texte « nom » (100 max), sans doublon
+
+class Jeu(models.Model):                                        # un modèle « Jeu » = une table JEU
+    titre = models.CharField(max_length=200)                    # colonne texte « titre » (200 caractères max)
+    prix_achat = models.DecimalField(max_digits=6, decimal_places=2)     # prix de vente : décimal exact, 2 décimales
+    prix_location = models.DecimalField(max_digits=6, decimal_places=2)  # prix de location : même type décimal
+    stock_vente = models.PositiveIntegerField(default=0)        # stock à vendre : entier >= 0, vaut 0 au départ
+    stock_location = models.PositiveIntegerField(default=0)     # stock à louer : entier >= 0, vaut 0 au départ
+    categorie = models.ForeignKey(Categorie, on_delete=models.PROTECT)   # lien (clé étrangère) vers une Categorie</pre>
+<p>Précisons les <strong>types</strong> de colonnes (le type d'une colonne dit quelle sorte de valeur elle accepte). <code>CharField</code> stocke du <strong>texte</strong> court (<em>char</em> = <em>character</em>, caractère) avec une longueur maximale. <code>DecimalField</code> stocke un nombre <strong>décimal exact</strong> : on l'utilise pour l'argent, jamais <code>FloatField</code>. Un <strong>flottant</strong> (<em>float</em>) est un nombre à virgule que la machine stocke de façon approchée et arrondit parfois faux (0,10 € + 0,20 € pourrait donner 0,30000000004) — inacceptable pour une caisse. <code>PositiveIntegerField</code> est un <strong>entier</strong> (nombre sans virgule) forcément positif ou nul : un stock négatif est ainsi refusé <em>par le type lui-même</em>, sans qu'on ait à y penser. <code>unique=True</code> interdit deux catégories du même nom ; <code>default=0</code> fixe la valeur de départ.</p>
+
+<h3>3. on_delete : une décision de conception</h3>
+<pre class="pseudo">PROTECT   refuse de supprimer une catégorie encore utilisée
+CASCADE   supprimerait les jeux avec elle (dangereux ici)
+SET_NULL  mettrait la FK à NULL (il faut null=True)</pre>
+
+<h3>4. Générer et appliquer la migration</h3>
+<pre class="pseudo">python manage.py makemigrations catalogue    # compare modèles et base, ÉCRIT un fichier de migration
+#  catalogue/migrations/0001_initial.py  ← ce fichier est versionné dans Git (l'historique du schéma)
+python manage.py sqlmigrate catalogue 0001   # AFFICHE le SQL généré (sans l'exécuter), pour le relire
+python manage.py migrate                     # EXÉCUTE le SQL : crée réellement les tables dans MySQL</pre>
+<p>Une <strong>migration</strong> est un fichier qui décrit une modification de la structure de la base (créer une table, ajouter une colonne…) ; l'ensemble forme un journal de bord des changements. <code>makemigrations</code> écrit ce fichier ; <code>migrate</code> l'applique pour de vrai. <code>sqlmigrate</code> montre le <code>CREATE TABLE</code> exact — l'ordre <strong>SQL</strong> (le langage des bases de données) qui crée une table — celui que tu aurais écrit à la main au cours MySQL, avec sa contrainte <code>FOREIGN KEY</code> (la clé étrangère, côté base). <strong>MySQL</strong> est le logiciel qui stocke et gère les données sur le serveur.</p>
+
+<h3>5. Pourquoi des migrations ?</h3>
+<p>Le <strong>schéma</strong> (la structure des tables et de leurs colonnes) devient <strong>versionné</strong> : chaque évolution est un fichier conservé dans <strong>Git</strong> (l'outil qui garde l'historique de toutes les versions du code, comme un « annuler » infini partagé par l'équipe). Il devient aussi <strong>rejouable</strong> : la même commande recrée exactement la même base en <em>dev</em> (l'ordinateur du développeur), en <em>test</em>, puis en <em>production</em> (le serveur réel utilisé par les vrais clients).</p>
+<div class="warn">On ne modifie <strong>jamais</strong> une migration déjà appliquée et partagée : on en crée une nouvelle. L'histoire du schéma, comme l'histoire Git, ne se réécrit pas.</div>
+<div class="tip">Compare 0001_initial.py au MCD du cours Merise : chaque entité, chaque attribut, chaque CIF s'y retrouve. La conception n'était pas un exercice théorique — c'était le plan de cette leçon.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une entité Merise devient…", opts: ["Un template", "Un modèle Django", "Une URL", "Un test"], a: 1, exp: "JEU → class Jeu." },
+    { type: "qcm", q: "Une CIF (1,1)-(0,n) devient…", opts: ["Un ManyToManyField", "Une ForeignKey", "Un CharField", "Un index"], a: 1, exp: "La clé étrangère." },
+    { type: "qcm", q: "Une relation (n,n) devient…", opts: ["Une ForeignKey simple", "Un modèle de liaison ou ManyToManyField", "Un CharField", "Rien"], a: 1, exp: "Table de jonction." },
+    { type: "qcm", q: "Pour l'argent, on utilise…", opts: ["FloatField", "DecimalField", "IntegerField", "CharField"], a: 1, exp: "Les flottants arrondissent faux." },
+    { type: "qcm", q: "PositiveIntegerField pour les stocks garantit…", opts: ["La vitesse", "Qu'un stock négatif est refusé par le type", "L'unicité", "Le tri"], a: 1, exp: "Contrainte structurelle." },
+    { type: "qcm", q: "on_delete=models.PROTECT :", opts: ["Supprime les jeux avec la catégorie", "Refuse de supprimer une catégorie encore utilisée", "Met NULL", "Ignore"], a: 1, exp: "Intégrité protégée." },
+    { type: "qcm", q: "CASCADE sur Jeu.categorie serait…", opts: ["Parfait", "Dangereux : supprimer une catégorie effacerait ses jeux", "Obligatoire", "Sans effet"], a: 1, exp: "Une décision de conception." },
+    { type: "qcm", q: "Générer la migration :", opts: ["python manage.py makemigrations", "migrate direct", "CREATE TABLE à la main", "git commit"], a: 0, exp: "Puis migrate pour appliquer." },
+    { type: "qcm", q: "Voir le SQL d'une migration :", opts: ["sqlmigrate catalogue 0001", "showsql", "dumpdata", "check"], a: 0, exp: "Le CREATE TABLE exact." },
+    { type: "qcm", q: "migrate exécute…", opts: ["Les tests", "Le SQL des migrations non appliquées dans MySQL", "Le serveur", "Le CSS"], a: 1, exp: "CREATE/ALTER TABLE." },
+    { type: "vf", q: "Le fichier 0001_initial.py est versionné dans Git.", a: true, exp: "L'histoire du schéma." },
+    { type: "vf", q: "On peut éditer une migration déjà appliquée et partagée.", a: false, exp: "On en crée une nouvelle." },
+    { type: "qcm", q: "L'avantage clé des migrations :", opts: ["Moins de fichiers", "Le même schéma rejoué en dev, test et prod", "Plus de RAM", "Pas de SQL du tout"], a: 1, exp: "Reproductibilité." },
+    { type: "qcm", q: "unique=True sur Categorie.nom devient en SQL…", opts: ["Un commentaire", "Une contrainte UNIQUE", "Un JOIN", "Un trigger"], a: 1, exp: "Comme au cours MySQL." },
+    { type: "vf", q: "Le CREATE TABLE généré correspond à celui écrit à la main au cours MySQL.", a: true, exp: "Mêmes contraintes, même FK." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma versionné",
+    intro: `<p>On traduit le cœur du MCD et on applique.</p>`,
+    questions: [
+      { type: "qcm", q: "JEU —(1,1)-(0,n)— CATEGORIE se traduit par :", opts: ["ForeignKey(Categorie) sur Jeu", "ForeignKey(Jeu) sur Categorie", "ManyToMany", "rien"], a: 0, exp: "La FK porte sur le côté (1,1)." },
+      { type: "qcm", q: "prix_location est un :", opts: ["DecimalField(max_digits=6, decimal_places=2)", "FloatField", "IntegerField", "TextField"], a: 0, exp: "Argent = Decimal." },
+      { type: "qcm", q: "L'ordre des commandes :", opts: ["makemigrations puis migrate", "migrate puis makemigrations", "sqlmigrate seul", "check seul"], a: 0, exp: "Générer puis appliquer." },
+      { type: "qcm", q: "La suppression d'une catégorie utilisée :", opts: ["Échoue (PROTECT)", "Supprime les jeux", "Met NULL", "Réussit silencieusement"], a: 0, exp: "ProtectedError." },
+      { type: "vf", q: "Chaque évolution future du schéma sera une nouvelle migration.", a: true, exp: "Jamais de retouche." }
+    ],
+    solution: `<pre class="pseudo">class Categorie(models.Model):                                  # modèle Categorie (table CATEGORIE)
+    nom = models.CharField(max_length=100, unique=True)         # nom unique, 100 caractères max
+
+class Jeu(models.Model):                                        # modèle Jeu (table JEU)
+    titre = models.CharField(max_length=200)                    # titre du jeu (texte, 200 max)
+    prix_achat = models.DecimalField(max_digits=6, decimal_places=2)     # prix de vente (décimal exact)
+    prix_location = models.DecimalField(max_digits=6, decimal_places=2)  # prix de location (décimal exact)
+    stock_vente = models.PositiveIntegerField(default=0)        # stock vente : entier >= 0
+    stock_location = models.PositiveIntegerField(default=0)     # stock location : entier >= 0
+    categorie = models.ForeignKey(Categorie, on_delete=models.PROTECT)   # clé étrangère vers Categorie (PROTECT)
+
+# make migrations → migrate → les tables existent dans MySQL</pre>
+<p>Le MCD est devenu des tables réelles. Demain : compléter le catalogue (fournisseurs, propriétés).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes modèles et tes commandes…",
+  items: [
+  { id: "projpython-l3", title: "Les modèles Location et Achat", level: 2,
+    statement: "Le MCD dit : CLIENT —(0,n)—(1,1)— LOCATION —(1,1)—(0,n)— JEU, idem pour ACHAT. Écris les modèles Location (client FK vers User, jeu FK vers Jeu, date_debut, nb_jours, date_retour nullable) et Achat (client, jeu, date_achat, montant Decimal), avec les on_delete justifiés, puis les deux commandes pour appliquer.",
+    hints: [
+      "from django.contrib.auth.models import User — client = models.ForeignKey(User, on_delete=models.PROTECT).",
+      "date_retour = models.DateTimeField(null=True, blank=True) : NULL = pas encore rendu.",
+      "montant = models.DecimalField(max_digits=6, decimal_places=2) — figé à l'achat (leçon 13)."
+    ],
+    solution: "from django.conf import settings   # pour AUTH_USER_MODEL (le modèle utilisateur du projet)\n\nclass Location(models.Model):   # une location = une ligne de la table LOCATION\n    client = models.ForeignKey(settings.AUTH_USER_MODEL,   # qui loue : clé étrangère vers l'utilisateur\n                               on_delete=models.PROTECT)   # PROTECT : on ne supprime pas un client ayant un historique\n    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)   # quel jeu est loué (clé étrangère, protégée)\n    date_debut = models.DateTimeField()   # date et heure de début de la location\n    nb_jours = models.PositiveIntegerField(default=7)   # durée en jours (entier >= 0, 7 par défaut)\n    date_retour = models.DateTimeField(null=True, blank=True)   # date de retour ; NULL = pas encore rendu\n\nclass Achat(models.Model):   # un achat = une ligne de la table ACHAT\n    client = models.ForeignKey(settings.AUTH_USER_MODEL,   # qui achète : clé étrangère vers l'utilisateur\n                               on_delete=models.PROTECT)   # PROTECT : archive, jamais supprimée avec le client\n    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)   # quel jeu est acheté (clé étrangère, protégée)\n    date_achat = models.DateTimeField()   # date et heure de l'achat\n    montant = models.DecimalField(max_digits=6, decimal_places=2)   # prix payé, figé (décimal exact)\n\n# python manage.py makemigrations catalogue   # génère la migration pour ces deux modèles\n# python manage.py migrate   # crée les tables LOCATION et ACHAT dans MySQL",
+    note: "PROTECT partout : on ne supprime ni un client ni un jeu qui a un historique — les locations et achats sont des archives. date_retour nullable encode « en cours » sans colonne booléenne supplémentaire. Le montant est stocké dans Achat, pas relu depuis Jeu : la leçon 13 en fera une règle testée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

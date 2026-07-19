@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Le problème N+1 et JOIN FETCH",
+  subtitle: "1 requête devient 51 sans prévenir — le piège de performance n°1 de tous les ORM.",
+  theory: `
+<h3>1. Le scénario du crime : la page des locations</h3>
+<p>Nouvelle page de la Ludothèque : afficher les 50 dernières locations avec le titre du jeu loué. Le code paraît irréprochable :</p>
+<pre class="pseudo">List&lt;Location&gt; locations = em.createQuery(              // requête typée renvoyant des Location
+    "SELECT l FROM Location l ORDER BY l.dateDebut DESC", Location.class)  // les locations, plus récentes d'abord
+    .setMaxResults(50)                                  // n'en garder que 50 (→ LIMIT 50)
+    .getResultList();                                   // exécuter → la liste des 50 locations
+
+for (Location l : locations) {                          // pour chaque location de la liste...
+  System.out.println(l.getJeu().getTitre());   // ← la ligne innocente : déclenche 1 SELECT par jeu (relation LAZY !)
+}                                                       // fin de la boucle</pre>
+<p>Souviens-toi de la leçon 12 : <strong>@ManyToOne est chargé LAZY</strong> (parce qu'on l'a configuré ainsi) — chaque location porte un <em>proxy</em> de Jeu, pas le jeu réel. Le premier appel à getTitre() sur chaque proxy déclenche donc un SELECT séparé. Bilan : <strong>1 requête pour les locations + 50 requêtes pour les jeux = 51 requêtes</strong>. C'est le problème <strong>N+1</strong> : 1 requête principale, puis N requêtes filles, une par ligne.</p>
+
+<h3>2. Le diagnostic : show_sql ne ment jamais</h3>
+<p>Le drame du N+1, c'est qu'il est <strong>invisible dans le code</strong> et fonctionnellement correct : la page s'affiche, les tests passent. Seul le SQL le trahit. Active show_sql (leçon 2) et regarde la console :</p>
+<pre class="pseudo">Hibernate: select ... from location l order by l.date_debut desc limit 50  -- 1 requête : les 50 locations
+Hibernate: select ... from jeu where id = 12                               -- +1 : le jeu de la 1re location
+Hibernate: select ... from jeu where id = 7                                -- +1 : le jeu de la 2e location
+Hibernate: select ... from jeu where id = 12   -- déjà vu ? non : cache 1er niveau, leçon 19
+Hibernate: select ... from jeu where id = 33                               -- +1 : encore un jeu...
+... (encore ~46 lignes)                                                    -- total : 1 + 50 = 51 requêtes</pre>
+<p>Sur 50 lignes en local, personne ne sent rien. Sur 5 000 lignes en production, avec 4 ms de latence réseau par requête, la page met 20 secondes. Réflexe professionnel : <strong>toute boucle qui touche une relation LAZY est suspecte</strong> — compte les requêtes dans les logs avant de livrer.</p>
+
+<h3>3. La solution : JOIN FETCH</h3>
+<p>Tu connais déjà la réponse depuis le Niveau 4 : une <strong>jointure</strong>. En JPQL, on demande à Hibernate de rapporter les jeux DANS la requête principale avec <strong>JOIN FETCH</strong> :</p>
+<pre class="pseudo">List&lt;Location&gt; locations = em.createQuery(              // requête typée renvoyant des Location
+    "SELECT l FROM Location l JOIN FETCH l.jeu ORDER BY l.dateDebut DESC",  // JOIN FETCH : rapporter AUSSI les jeux
+    Location.class)                                     // la classe attendue
+    .setMaxResults(50)                                  // 50 au plus
+    .getResultList();                                   // exécuter → 50 locations AVEC leurs jeux déjà chargés
+
+// SQL généré : UNE seule requête
+// select l.*, j.* from location l
+//   inner join jeu j on j.id = l.jeu_id
+//   order by l.date_debut desc limit 50</pre>
+<p>Différence avec un JOIN simple : <em>JOIN l.jeu</em> ne fait que joindre pour filtrer (le jeu resterait un proxy), tandis que <em>JOIN FETCH l.jeu</em> <strong>hydrate</strong> (remplit réellement les objets Jeu avec leurs données) dans le même aller-retour. 51 requêtes → 1. Et bonus : plus de LazyInitializationException possible sur l.getJeu() après fermeture de l'EntityManager (leçon 12).</p>
+
+<h3>4. Le cas des collections : DISTINCT obligatoire</h3>
+<p>JOIN FETCH sur un @ManyToOne est sans piège. Sur une <strong>collection</strong> (@OneToMany), la jointure SQL duplique les lignes parentes : un jeu avec 4 avis apparaît 4 fois dans le résultat brut. On dédoublonne avec DISTINCT :</p>
+<pre class="pseudo">SELECT DISTINCT j FROM Jeu j JOIN FETCH j.avis WHERE j.categorie.nom = 'Stratégie'  -- DISTINCT : éviter les jeux en double
+// Sans DISTINCT : le jeu Catan (4 avis) apparaîtrait 4 fois dans la List&lt;Jeu&gt;
+// Depuis Hibernate 6, la déduplication des entités est automatique,
+// mais écrire DISTINCT reste la convention lisible et portable.</pre>
+<p>Autre limite à connaître : combiner JOIN FETCH d'une collection avec <em>setMaxResults</em> (pagination, leçon 16) force Hibernate à paginer <strong>en mémoire</strong> (warning « firstResult/maxResults specified with collection fetch »). Dans ce cas, on pagine d'abord les ids, puis on fetch — ou on repense la requête.</p>
+
+<h3>5. Le même piège dans toutes les piles</h3>
+<p>Le N+1 est LE piège de performance n°1 des ORM, toutes technologies confondues : EF Core le résout avec <em>Include()</em>, Eloquent avec <em>with('jeu')</em> (eager loading), Django avec <em>select_related / prefetch_related</em>. Côté Spring Data JPA (Niveau 6), tu déclareras la même intention avec l'annotation <strong>@EntityGraph</strong> sur la méthode du repository, ou un @Query contenant ton JOIN FETCH — c'est exactement la compétence d'aujourd'hui, en costume Spring.</p>
+<div class="warn">Le mauvais réflexe face au N+1 est de passer la relation en EAGER « pour régler le problème » : tu déplaces la charge sur TOUTES les requêtes de l'application, même celles qui n'ont pas besoin du jeu (leçon 12). La règle reste : LAZY partout dans le mapping, JOIN FETCH localement, requête par requête, là où le besoin existe.</div>
+<div class="tip">Prends l'habitude de la « revue SQL » : pour chaque écran de la Ludothèque, lance la page une fois avec show_sql et compte les requêtes. Plus de requêtes que d'écrans logiques de données ? Cherche le N+1. Ce réflexe de 30 secondes vaut tous les outils de profiling.</div>`,
+  exercises: [
+    { type: "qcm", q: "Afficher 50 locations avec le titre du jeu (relation LAZY) sans précaution génère…", opts: ["1 requête", "2 requêtes", "51 requêtes (1 + 50)", "0 requête grâce au cache"], a: 2, exp: "1 SELECT pour les locations + 1 SELECT par proxy Jeu déréférencé : c'est le N+1." },
+    { type: "qcm", q: "Le problème N+1 vient directement…", opts: ["D'un bug de MySQL", "Du chargement LAZY déclenché ligne par ligne dans une boucle", "Du mot-clé DISTINCT", "Des transactions"], a: 1, exp: "Chaque accès à un proxy non initialisé déclenche son propre SELECT." },
+    { type: "input", q: "Quel mot-clé JPQL charge la relation dans la même requête et supprime le N+1 ?", a: ["JOIN FETCH", "join fetch", "fetch join", "FETCH JOIN"], ph: "deux mots…", exp: "SELECT l FROM Location l JOIN FETCH l.jeu : une seule requête avec jointure." },
+    { type: "qcm", q: "La requête corrigée pour les locations avec leur jeu :", opts: ["SELECT l FROM Location l JOIN FETCH l.jeu", "SELECT l FROM Location l WHERE l.jeu IS EAGER", "SELECT l, FETCH j FROM Location l", "SELECT * FROM location NATURAL JOIN jeu"], a: 0, exp: "JOIN FETCH hydrate les Jeu dans le même aller-retour SQL." },
+    { type: "vf", q: "Le N+1 provoque une exception, ce qui le rend facile à repérer.", a: false, exp: "C'est tout le drame : le code fonctionne, seuls les logs SQL (show_sql) le révèlent." },
+    { type: "qcm", q: "Différence entre JOIN l.jeu et JOIN FETCH l.jeu :", opts: ["Aucune", "JOIN sert au filtrage, JOIN FETCH hydrate en plus les objets joints", "JOIN FETCH est du SQL natif", "JOIN est plus rapide dans tous les cas"], a: 1, exp: "Sans FETCH, le jeu reste un proxy LAZY : le N+1 persiste malgré la jointure." },
+    { type: "qcm", q: "L'outil de diagnostic principal du N+1 :", opts: ["Le débogueur Java", "Les logs SQL (show_sql) où l'on compte les requêtes", "Le compilateur", "Un test unitaire vert"], a: 1, exp: "On lance l'écran une fois et on compte : plus de requêtes que prévu = suspect." },
+    { type: "qcm", q: "JOIN FETCH sur une collection (@OneToMany) sans précaution peut produire…", opts: ["Des lignes parentes dupliquées dans le résultat", "Une table supprimée", "Un DROP INDEX", "Un blocage de MySQL"], a: 0, exp: "La jointure SQL répète le parent par élément enfant : d'où SELECT DISTINCT j …" },
+    { type: "input", q: "Quel mot-clé JPQL ajoute-t-on pour dédoublonner les parents lors d'un fetch de collection ?", a: ["DISTINCT", "distinct", "select distinct"], ph: "un mot-clé…", exp: "SELECT DISTINCT j FROM Jeu j JOIN FETCH j.avis (automatique depuis Hibernate 6, mais on l'écrit)." },
+    { type: "qcm", q: "Passer la relation en EAGER pour « corriger » un N+1 est une mauvaise idée car…", opts: ["EAGER n'existe pas en JPA", "Cela charge la relation dans TOUTES les requêtes, même celles qui n'en ont pas besoin", "EAGER supprime les données", "EAGER interdit les transactions"], a: 1, exp: "Règle de la leçon 12 : LAZY au mapping, fetch explicite au cas par cas." },
+    { type: "qcm", q: "Combiner JOIN FETCH d'une collection et setMaxResults provoque…", opts: ["Une pagination en mémoire (warning Hibernate)", "Une erreur de compilation", "Un DELETE accidentel", "Rien de particulier"], a: 0, exp: "Hibernate ne peut pas poser LIMIT sur des lignes dupliquées : il pagine en RAM, dangereux sur gros volumes." },
+    { type: "vf", q: "JOIN FETCH élimine aussi le risque de LazyInitializationException sur la relation fetchée.", a: true, exp: "Les objets sont hydratés avant la fermeture de l'EntityManager : plus de proxy vide (leçon 12)." },
+    { type: "qcm", q: "Côté Spring Data JPA, on exprime le même besoin avec…", opts: ["@Autowired", "@EntityGraph ou un @Query contenant JOIN FETCH", "@RestController", "server.port"], a: 1, exp: "@EntityGraph(attributePaths = \"jeu\") sur la méthode du repository : même mécanique, costume Spring." },
+    { type: "qcm", q: "Les équivalents du remède anti-N+1 ailleurs : Include(), with(), select_related appartiennent à…", opts: ["EF Core, Eloquent, Django ORM", "Git, Maven, Docker", "HTML, CSS, JS", "JUnit, Mockito, AssertJ"], a: 0, exp: "Le N+1 est universel : chaque ORM a son eager loading explicite." },
+    { type: "vf", q: "Sur 50 lignes en local, un N+1 est en général imperceptible, ce qui explique qu'il parte souvent en production.", a: true, exp: "La latence réseau multipliée par N ne se sent qu'en conditions réelles : d'où la revue SQL systématique." }
+  ],
+  final: {
+    title: "Exercice final — La chasse au N+1",
+    intro: `<p>Audit de performance : la page « historique des locations d'un membre » de la Ludothèque rame. Le code liste les locations du membre puis affiche, pour chacune, le titre du jeu et le nom de sa catégorie (Location → Jeu → Categorie, tout en LAZY). À toi de diagnostiquer et corriger.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour 30 locations affichées (30 jeux distincts, 30 catégories distinctes), combien de requêtes au pire sans correction ?", opts: ["1", "31", "61 (1 + 30 + 30)", "2"], a: 2, exp: "Un N+1 en cascade : les locations, puis chaque jeu, puis chaque catégorie." },
+      { type: "qcm", q: "La requête JPQL qui règle tout en un seul SELECT :", opts: ["SELECT l FROM Location l JOIN FETCH l.jeu j JOIN FETCH j.categorie WHERE l.membre.id = :id", "SELECT l FROM Location l WHERE l.membre.id = :id", "SELECT l FROM Location l JOIN l.jeu JOIN l.jeu.categorie", "SELECT * FROM location, jeu, categorie"], a: 0, exp: "On peut chaîner les JOIN FETCH : Location + Jeu + Categorie hydratés d'un coup." },
+      { type: "vf", q: "Un JOIN simple (sans FETCH) sur l.jeu aurait suffi à éviter les SELECT supplémentaires.", a: false, exp: "JOIN filtre mais n'hydrate pas : les proxys resteraient vides et le N+1 intact." },
+      { type: "input", q: "Quelle propriété de configuration affiches-tu pour compter les requêtes pendant l'audit ?", a: ["show_sql", "hibernate.show_sql", "show sql", "showsql"], ph: "propriété…", exp: "hibernate.show_sql=true (leçon 2) : le compteur de requêtes du pauvre, et il suffit presque toujours." },
+      { type: "qcm", q: "Au Niveau 6, la version Spring Data de cette correction ressemblera à…", opts: ["Une méthode annotée @EntityGraph(attributePaths = {\"jeu\", \"jeu.categorie\"})", "Un fichier CSS", "Une propriété server.port", "Un @Controller supplémentaire"], a: 0, exp: "Même intention déclarée sur le repository : Spring Data génère le fetch pour toi." }
+    ],
+    solution: `<pre class="pseudo">DIAGNOSTIC (show_sql) :
+  select ... from location where membre_id = ?          -- 1 requête : les locations du membre
+  select ... from jeu where id = ?                      -- x 30 : un SELECT par jeu (proxy LAZY)
+  select ... from categorie where id = ?                -- x 30 : un SELECT par catégorie (2e niveau LAZY)
+  → 61 requêtes : N+1 en cascade sur deux niveaux LAZY
+
+CORRECTION (une requête) :
+  SELECT l FROM Location l                              -- la requête corrigée...
+    JOIN FETCH l.jeu j                                  -- ...hydrate le jeu de chaque location...
+    JOIN FETCH j.categorie                              -- ...et la catégorie de chaque jeu...
+  WHERE l.membre.id = :membreId                         -- ...pour le membre demandé...
+  ORDER BY l.dateDebut DESC                             -- ...triées, plus récentes d'abord
+
+  -- SQL généré : select l.*, j.*, c.* from location l
+  --   join jeu j on j.id = l.jeu_id
+  --   join categorie c on c.id = j.categorie_id
+  --   where l.membre_id = ?
+
+RÈGLES RETENUES :
+  - LAZY partout au mapping, JOIN FETCH localement selon le besoin
+  - collection fetchée → DISTINCT (et prudence avec la pagination)
+  - jamais de passage en EAGER pour « réparer »
+  - Spring Data : @EntityGraph / @Query = la même chose en déclaratif</pre>
+<p>Tu sais maintenant transformer 61 requêtes en une seule. Mais au fait : pourquoi Hibernate n'a-t-il PAS refait de SELECT quand deux locations pointaient le même jeu ? Réponse demain : le cache de premier niveau, ce complice discret qui travaille pour toi depuis la leçon 5.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l18", title: "Le rapport d'audit de performance", level: 3,
+    statement: "Rédige le rapport d'audit que tu remettrais à l'équipe de la Ludothèque après avoir découvert un N+1 sur la page « catalogue avec note moyenne et catégorie » (600 jeux en production, page en 12 secondes). Ton rapport doit contenir : les symptômes observés, la méthode de diagnostic (que cherches-tu dans les logs ?), l'explication causale du N+1 pour un lecteur qui ne connaît pas Hibernate, la correction proposée avec la requête JPQL, les corrections REJETÉES (EAGER global, cache) avec justification, et une mesure de prévention pour que ça ne se reproduise plus.",
+    hints: [
+      "Structure d'audit : symptôme → mesure → cause → correctif → alternatives écartées → prévention. Chiffre chaque étape (nombre de requêtes avant/après).",
+      "Pour le lecteur non-Hibernate : explique le proxy LAZY avec une image simple (un bon de commande à la place du colis, livré seulement quand on l'ouvre).",
+      "La prévention est organisationnelle autant que technique : revue SQL systématique par écran, show_sql en développement, seuil d'alerte sur le nombre de requêtes."
+    ],
+    solution: "RAPPORT D'AUDIT — page catalogue de la Ludothèque\n\n1. SYMPTÔMES\n   Page catalogue : 12 s en production, < 1 s en local (60 jeux de test).\n   Le temps croît linéairement avec le nombre de jeux : signature d'un N+1.\n\n2. MESURE\n   show_sql activé en préproduction : 1 201 requêtes pour un affichage.\n   1 SELECT jeu + 600 SELECT categorie + 600 SELECT avis (note moyenne\n   calculée en Java en itérant la collection LAZY).\n\n3. CAUSE (pour non-initiés)\n   L'ORM charge les relations « paresseusement » : chaque jeu porte un bon\n   de commande vers sa catégorie et ses avis, pas les données elles-mêmes.\n   La boucle d'affichage ouvre 1 200 bons de commande → 1 200 allers-retours\n   base, chacun coûtant quelques millisecondes de réseau.\n\n4. CORRECTIF\n   a) Catégorie : SELECT j FROM Jeu j JOIN FETCH j.categorie → 1 requête.\n   b) Note moyenne : NE PAS fetcher 600 collections d'avis ; une projection\n      agrégée fait le calcul côté MySQL (leçon 14) :\n      SELECT j.id, j.titre, c.nom, AVG(a.note)\n      FROM Jeu j JOIN j.categorie c LEFT JOIN j.avis a\n      GROUP BY j.id, j.titre, c.nom\n   Résultat mesuré : 1 requête, page en 180 ms.\n\n5. ALTERNATIVES ÉCARTÉES\n   - EAGER sur categorie/avis : pénalise TOUTES les autres requêtes de\n     l'application ; le coût est déplacé, pas supprimé.\n   - Cache : masque le problème au 2e affichage, pas au premier ; et un\n     cache se périme, pas une bonne requête.\n\n6. PRÉVENTION\n   - Revue SQL obligatoire par écran avant livraison (show_sql, comptage).\n   - Règle d'équipe : toute boucle sur une relation LAZY = justification\n     écrite ou JOIN FETCH.\n   - Au Niveau 6 : @EntityGraph sur les méthodes de repository concernées.",
+    note: "Savoir rédiger ce rapport, c'est exactement ce qu'on attend d'un développeur confirmé face à un ORM — EF Core (Include), Eloquent (with) et Django (select_related) produisent le même audit avec d'autres mots-clés. Au Niveau 6, tu poseras @EntityGraph sur tes repositories Spring Data en connaissant précisément le SQL que tu commandes." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

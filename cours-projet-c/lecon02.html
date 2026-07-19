@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Mise en place : projet C, Makefile et connexion MySQL",
+  subtitle: "Créer le squelette, compiler avec make, et ouvrir la première connexion à la base.",
+  theory: `
+<h3>1. Le connecteur C de MySQL</h3>
+<p>Une <strong>bibliothèque</strong> (en anglais <em>library</em>) est un ensemble de fonctions déjà écrites par d'autres, que l'on <em>réutilise</em> sans les réécrire — comme une caisse à outils prête à l'emploi. Pour parler à MySQL depuis le langage C, on se sert d'une bibliothèque appelée le <strong>connecteur</strong> : c'est le « traducteur » entre notre programme C et le serveur de base de données.</p>
+<p>Pour l'utiliser, on ajoute en haut du fichier la ligne <code>#include &lt;mysql/mysql.h&gt;</code>. Le mot <code>#include</code> veut dire « inclure ici le contenu de ce fichier d'en-tête » : c'est ce qui rend les fonctions de MySQL visibles dans notre code. On <strong>installe</strong> cette bibliothèque avec le paquet <code>libmysqlclient-dev</code> (ou <code>libmariadb-dev</code>). L'outil <code>mysql_config</code> nous donne automatiquement les bons <strong>chemins de compilation</strong> (où trouver les en-têtes et la bibliothèque) :</p>
+<pre class="pseudo">gcc app.c $(mysql_config --cflags --libs) -o app   # compile app.c en un programme "app", en ajoutant les chemins et bibliothèques MySQL</pre>
+<p>Ici <code>gcc</code> est le <strong>compilateur</strong> (l'outil qui traduit le C en programme exécutable), <code>app.c</code> est notre fichier source, et <code>-o app</code> signifie « <em>output</em> : nomme le résultat <code>app</code> ». Le morceau <code>$(mysql_config …)</code> est remplacé par les options que MySQL réclame.</p>
+
+<h3>2. Ouvrir une connexion</h3>
+<p>Avant de définir le code, deux mots clés. Un <strong>pointeur</strong> est une variable qui contient non pas une valeur, mais l'<em>adresse</em> (l'emplacement en mémoire) d'autre chose — comme un post-it qui note « la vraie donnée est rangée à la case n°… ». On le reconnaît à l'étoile : <code>MYSQL *c</code> se lit « <code>c</code> est un pointeur vers un objet MYSQL ». <strong>NULL</strong> est la valeur spéciale « pointeur vers rien » (une adresse vide) : elle sert à dire « pas de connexion / échec ».</p>
+<pre class="pseudo">#include &lt;mysql/mysql.h&gt;                     // importe les fonctions du connecteur C de MySQL
+
+MYSQL *c = mysql_init(NULL);                 // prépare une « poignée » de connexion (encore vide)
+if (!mysql_real_connect(c, "localhost", "ludo", "secret",   // tente d'OUVRIR la connexion au serveur…
+                        "ludotheque", 0, NULL, 0)) {        // …base "ludotheque" ; si l'ouverture ÉCHOUE (le ! signifie « non ») :
+    fprintf(stderr, "Connexion : %s\\n", mysql_error(c));    // afficher le message d'erreur renvoyé par MySQL
+    return 1;                                                // quitter le programme avec un code d'échec (1 = erreur)
+}
+/* ... utiliser c ... */                     // ici, entre les deux, on se sert de la connexion c
+mysql_close(c);                              // fermer la connexion à la fin (libère ses ressources)</pre>
+<p><code>mysql_init(NULL)</code> crée une <strong>poignée</strong> de connexion (une structure vide, prête à être branchée). <code>mysql_real_connect</code> établit réellement le lien avec le serveur : on lui donne l'adresse (<code>"localhost"</code> = la machine locale), l'utilisateur, le mot de passe et le nom de la base. <code>fprintf(stderr, …)</code> écrit sur la <strong>sortie d'erreur</strong> (le canal réservé aux messages d'alerte), <code>%s</code> étant un « trou » remplacé par le texte qui suit — ici le message de <code>mysql_error(c)</code>.</p>
+<div class="warn">Chaque appel MySQL peut échouer : on vérifie systématiquement le retour et on affiche <code>mysql_error(c)</code>. Le pointeur <code>MYSQL *</code> représente la connexion ; on le passe à toutes les fonctions du DAO.</div>
+
+<h3>3. Une première requête</h3>
+<p>Une <strong>requête</strong> est une phrase écrite en <strong>SQL</strong> (le langage des bases de données) qui demande quelque chose à MySQL. <code>SELECT COUNT(*) FROM jeu</code> signifie « compte (<em>count</em>) toutes les lignes de la table <code>jeu</code> ». Le résultat revient sous forme de <strong>lignes</strong> et de <strong>colonnes</strong>, comme un mini-tableau.</p>
+<pre class="pseudo">if (mysql_query(c, "SELECT COUNT(*) FROM jeu")) {   // exécute la requête ; renvoie 0 si OK, non-nul si erreur
+    fprintf(stderr, "%s\\n", mysql_error(c));         // en cas d'erreur : afficher le message MySQL
+}
+MYSQL_RES *res = mysql_store_result(c);   // récupère le tableau de résultats renvoyé par le SELECT
+MYSQL_ROW row = mysql_fetch_row(res);     // lit UNE ligne : un tableau de chaînes (une case par colonne)
+printf("%s jeux\\n", row[0]);              // affiche la 1re colonne (row[0] = le nombre de jeux)
+mysql_free_result(res);                    // LIBÉRER la mémoire du résultat (sinon « fuite mémoire »)</pre>
+<p><code>MYSQL_RES</code> est le résultat entier (le tableau) ; <code>MYSQL_ROW</code> est <em>une</em> ligne de ce tableau, sous forme de tableau de chaînes de caractères : <code>row[0]</code> est la première colonne, <code>row[1]</code> la deuxième, etc. Une <strong>fuite mémoire</strong> (<em>memory leak</em>) survient quand on oublie de rendre la mémoire qu'on a réservée : elle reste occupée pour rien, et à la longue le programme gonfle. D'où <code>mysql_free_result</code> qui la restitue.</p>
+
+<h3>4. Le Makefile minimal</h3>
+<p>Un <strong>Makefile</strong> est un fichier-recette lu par l'outil <code>make</code> : il décrit comment fabriquer le programme, pour ne pas retaper les longues commandes de compilation à la main. Il définit des <strong>variables</strong> (des raccourcis) et des <strong>cibles</strong> (les choses à fabriquer).</p>
+<pre class="pseudo">CC     = gcc                                          # variable : le compilateur à utiliser (gcc)
+CFLAGS = -Wall -Wextra $(shell mysql_config --cflags) # options de compilation + chemins des en-têtes MySQL
+LDLIBS = $(shell mysql_config --libs)                 # bibliothèques à lier (le client MySQL)
+
+app: main.c db.c                                       # cible "app" : pour la fabriquer, il faut main.c et db.c
+	$(CC) $(CFLAGS) main.c db.c -o app $(LDLIBS)        # la recette : compile puis lie (« édition de liens »)
+
+clean:                                                 # cible "clean" : lancée par la commande « make clean »
+	rm -f app                                          # supprime le programme compilé (rm = remove)</pre>
+<p><strong>Compiler</strong>, c'est traduire chaque <code>.c</code> en code machine ; l'<strong>édition de liens</strong> (<em>linking</em>) assemble ensuite ces morceaux et les bibliothèques en un seul programme exécutable. Les options <code>-Wall -Wextra</code> demandent au compilateur d'afficher tous les <strong>avertissements</strong> (<em>warnings</em>) — des remarques signalant un code douteux — pour attraper les erreurs le plus tôt possible.</p>
+<div class="tip">On isole la connexion dans un module <code>db.c</code> / <code>db.h</code> : toutes les autres couches l'utilisent sans se soucier des détails. Une seule fonction <code>db_connect()</code>, un seul <code>mysql_close()</code>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quel en-tête pour le connecteur C de MySQL ?", opts: ["<mysql.h>", "<mysql/mysql.h>", "<sql.h>", "<db.h>"], a: 1, exp: "#include <mysql/mysql.h>." },
+    { type: "qcm", q: "Quel paquet installe la bibliothèque de dev du client ?", opts: ["mysql-only", "libmysqlclient-dev (ou libmariadb-dev)", "gcc-mysql", "mysqlc"], a: 1, exp: "Fournit en-têtes et lib à lier." },
+    { type: "qcm", q: "À quoi sert mysql_config ?", opts: ["Lancer MySQL", "Donner les chemins de compilation (--cflags --libs)", "Créer une base", "Sauvegarder"], a: 1, exp: "On l'insère dans la ligne gcc." },
+    { type: "qcm", q: "Que prépare mysql_init(NULL) ?", opts: ["Une table", "Une poignée de connexion (MYSQL *)", "Un résultat", "Un thread"], a: 1, exp: "L'objet connexion, à connecter ensuite." },
+    { type: "qcm", q: "Que fait mysql_real_connect ?", opts: ["Ferme la connexion", "Ouvre la connexion au serveur", "Exécute une requête", "Libère la mémoire"], a: 1, exp: "Établit le lien avec la base." },
+    { type: "qcm", q: "Comment détecter une erreur de connexion ?", opts: ["Rien à faire", "Tester le retour de mysql_real_connect et lire mysql_error(c)", "Attendre", "Relancer"], a: 1, exp: "On vérifie et on affiche le message." },
+    { type: "qcm", q: "mysql_query renvoie…", opts: ["le résultat", "0 si succès, non-nul si erreur", "toujours 1", "une chaîne"], a: 1, exp: "0 = OK ; on récupère ensuite le résultat séparément." },
+    { type: "qcm", q: "Après un SELECT, comment obtenir le résultat ?", opts: ["mysql_store_result(c)", "mysql_get(c)", "mysql_read(c)", "mysql_select(c)"], a: 0, exp: "Puis mysql_fetch_row pour parcourir." },
+    { type: "qcm", q: "Une ligne MYSQL_ROW est…", opts: ["une struct", "un tableau de chaînes (les colonnes)", "un int", "un pointeur NULL"], a: 1, exp: "row[0], row[1]… sont des char*." },
+    { type: "qcm", q: "Que faut-il faire après avoir utilisé un MYSQL_RES ?", opts: ["Rien", "mysql_free_result(res)", "free(res)", "mysql_close(res)"], a: 1, exp: "Libérer le résultat pour éviter une fuite." },
+    { type: "vf", q: "On peut ignorer le retour de mysql_query sans risque.", a: false, exp: "Faux : on teste toujours (0 = OK), sinon on rate les erreurs." },
+    { type: "qcm", q: "Où placer la connexion pour que tout le projet en profite ?", opts: ["Dans chaque fichier", "Dans un module db.c/db.h partagé", "Dans le Makefile", "Dans l'UI"], a: 1, exp: "Une db_connect() réutilisée partout." },
+    { type: "qcm", q: "Dans le Makefile, LDLIBS contient…", opts: ["les avertissements", "les bibliothèques à lier (mysql_config --libs)", "les sources", "rien"], a: 1, exp: "Les libs vont à l'édition de liens." },
+    { type: "qcm", q: "Que fait mysql_close(c) ?", opts: ["Exécute une requête", "Ferme la connexion et libère ses ressources", "Ouvre la base", "Crée une table"], a: 1, exp: "À appeler à la fin du programme." },
+    { type: "qcm", q: "Pourquoi -Wall -Wextra dès le début ?", opts: ["Pour ralentir", "Pour attraper tôt les erreurs (types, retours ignorés)", "C'est obligatoire", "Pour MySQL"], a: 1, exp: "La qualité se câble dès la première ligne." }
+  ],
+  final: {
+    title: "Exercice final — La fonction db_connect",
+    intro: `<p>On veut isoler la connexion. Corrige ce db_connect :</p>
+<pre class="pseudo">MYSQL *db_connect(void) {                    // fonction qui ouvre et renvoie une connexion
+    MYSQL *c = mysql_init(NULL);             // prépare la poignée de connexion
+    mysql_real_connect(c, "localhost", "ludo", "secret", "ludotheque", 0, NULL, 0);  // tente de se connecter (retour IGNORÉ : c'est le bug !)
+    return c;                                // renvoie c… même si la connexion a échoué
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Que manque-t-il de crucial ?", opts: ["Rien", "Vérifier le retour de mysql_real_connect (échec possible)", "Un printf", "Un free"], a: 1, exp: "Sans test, on renvoie une connexion peut-être invalide." },
+      { type: "qcm", q: "En cas d'échec, que faire ?", opts: ["Continuer", "Afficher mysql_error(c), fermer et renvoyer NULL", "Ignorer", "Relancer en boucle"], a: 1, exp: "Signaler clairement et renvoyer NULL." },
+      { type: "qcm", q: "Que doit vérifier l'appelant de db_connect ?", opts: ["Rien", "Que le retour n'est pas NULL", "La vitesse", "Le Makefile"], a: 1, exp: "if (c == NULL) return 1;." },
+      { type: "qcm", q: "Où sont idéalement les identifiants (user, mot de passe) ?", opts: ["En dur, c'est bien", "Plutôt dans des variables d'environnement (leçon 19)", "Dans l'UI", "Dans le Makefile"], a: 1, exp: "On sortira les secrets du code plus tard." },
+      { type: "qcm", q: "Quelle fonction ferme la connexion en fin de programme ?", opts: ["free(c)", "mysql_close(c)", "mysql_end(c)", "close(c)"], a: 1, exp: "mysql_close libère la connexion." }
+    ],
+    solution: `<pre class="pseudo">#include &lt;mysql/mysql.h&gt;                  // le connecteur C de MySQL
+#include &lt;stdio.h&gt;                        // pour fprintf (afficher les erreurs)
+
+MYSQL *db_connect(void) {                    // ouvre la connexion et renvoie la poignée (ou NULL si échec)
+    MYSQL *c = mysql_init(NULL);             // prépare la poignée de connexion
+    if (c == NULL) return NULL;              // si l'initialisation a échoué : abandonner tout de suite
+    if (!mysql_real_connect(c, "localhost", "ludo", "secret",   // tente d'ouvrir la connexion…
+                            "ludotheque", 0, NULL, 0)) {        // …si ÉCHEC (le ! signifie « non ») :
+        fprintf(stderr, "Connexion : %s\\n", mysql_error(c));    // afficher le message d'erreur MySQL
+        mysql_close(c);                                          // libérer la poignée avant de partir
+        return NULL;                                             // signaler l'échec en renvoyant NULL
+    }
+    return c;                                // succès : renvoyer la connexion prête à l'emploi
+}
+/* gcc main.c db.c $(mysql_config --cflags --libs) -o app */   // rappel de la ligne de compilation du projet</pre>
+<p>Connexion vérifiée, erreurs signalées, module isolé. Le socle est posé. Demain : traduire le MCD Merise en tables SQL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C / Makefile ici…",
+  items: [
+  { id: "projc-l02", title: "Compter les jeux", level: 2,
+    statement: "En supposant une connexion MYSQL *c déjà ouverte, écris une fonction int nb_jeux(MYSQL *c) qui exécute « SELECT COUNT(*) FROM jeu », lit la valeur, libère le résultat et la renvoie (ou -1 en cas d'erreur).",
+    hints: [
+      "Teste mysql_query(c, ...) != 0 → renvoie -1.",
+      "mysql_store_result puis mysql_fetch_row ; row[0] est une chaîne (atoi).",
+      "N'oublie pas mysql_free_result avant de renvoyer."
+    ],
+    solution: "#include <mysql/mysql.h>\n#include <stdlib.h>\n\nint nb_jeux(MYSQL *c) {\n    if (mysql_query(c, \"SELECT COUNT(*) FROM jeu\"))\n        return -1;\n    MYSQL_RES *res = mysql_store_result(c);\n    if (!res) return -1;\n    MYSQL_ROW row = mysql_fetch_row(res);\n    int n = row ? atoi(row[0]) : 0;\n    mysql_free_result(res);\n    return n;\n}",
+    note: "Chaque étape est vérifiée, le résultat est libéré, et une valeur sentinelle (-1) signale l'erreur. C'est le patron de toute lecture simple via le connecteur C." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

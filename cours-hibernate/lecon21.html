@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 21</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Récapitulatif : l'ORM maîtrisé (examen)",
+  subtitle: "21 leçons, une base MySQL, zéro magie restante — prouve-le.",
+  theory: `
+<h3>1. Révision — Les fondations (leçons 1 à 4)</h3>
+<p>Tout part du <strong>décalage objet-relationnel</strong> : objets Java d'un côté, tables MySQL du Niveau 4 de l'autre. <strong>JPA</strong> est la norme (annotations, EntityManager), <strong>Hibernate</strong> l'implémentation qui génère le SQL, Spring Data JPA la surcouche vue au Niveau 3. La configuration branche Hibernate sur la base et <strong>show_sql</strong> te montre chaque requête — ton outil de vérité pour tout le cours. Le mapping repose sur trois annotations : <strong>@Entity</strong>, <strong>@Id</strong> (+ @GeneratedValue IDENTITY pour l'AUTO_INCREMENT), <strong>@Column</strong> pour dévier des conventions camelCase → snake_case. Et <strong>ddl-auto=validate</strong> verrouille le contrat : le schéma du Niveau 4 reste la référence, Hibernate vérifie sans jamais modifier.</p>
+<pre class="pseudo">Code → JPA (norme) → Hibernate (moteur) → JDBC → MySQL ludotheque             -- la pile complète, de ton code à la base
+@Entity + @Id + @Column : classe ↔ table, objet ↔ ligne, attribut ↔ colonne   -- les 3 correspondances de base
+ddl-auto : validate en production ; create/update = outils d'expérimentation  -- validate = vérifier sans jamais modifier</pre>
+
+<h3>2. Révision — L'EntityManager et le cycle de vie (leçons 5 à 7)</h3>
+<p>L'<strong>EntityManager</strong> orchestre tout : <strong>persist</strong> (INSERT planifié), <strong>find</strong> (SELECT par PK, null si absent), <strong>remove</strong> (DELETE d'une entité gérée) — écritures toujours entre begin() et commit(). Le <strong>dirty checking</strong> rend l'update implicite : modifier une entité <em>gérée</em> suffit, l'UPDATE part au commit. D'où le cycle de vie : <strong>transient</strong> (new, inconnu de la base) → <strong>managed</strong> (surveillé dans le contexte) → <strong>detached</strong> (contexte fermé : plus surveillé) → <strong>removed</strong>. Pour réconcilier un détaché : <strong>merge</strong>, qui retourne une copie gérée.</p>
+<pre class="pseudo">new Jeu()      → transient   (aucun SQL ne partira jamais tout seul)
+em.persist(j)  → managed     (INSERT au commit, id rempli après)
+em.close()     → detached    (modifs ignorées ! merge pour recoller)
+em.remove(j)   → removed     (DELETE au commit)</pre>
+
+<h3>3. Révision — Les relations et le chargement (leçons 8 à 12)</h3>
+<p>Les clés étrangères du Niveau 4 deviennent des références objet : <strong>@ManyToOne</strong> côté porteur de la FK (Location → Jeu), <strong>@OneToMany(mappedBy = ...)</strong> côté inverse — mappedBy dit « la FK est en face », sinon table de jointure parasite. <strong>@ManyToMany</strong> + @JoinTable pour les favoris, <strong>@Embeddable/@Embedded</strong> pour l'Adresse sans identité propre. Chargement : <strong>LAZY</strong> (proxy, chargé au premier accès) partout par choix, <strong>EAGER</strong> jamais par confort. Le proxy touché après close() lève la fameuse <strong>LazyInitializationException</strong> — le symptôme se soigne par le fetch dans la requête, pas par EAGER.</p>
+<pre class="pseudo">@ManyToOne(fetch = LAZY) @JoinColumn(name = "jeu_id")  → côté FK, propriétaire
+@OneToMany(mappedBy = "jeu")                            → miroir, pas de FK
+@ManyToMany @JoinTable(...)                             → table d'association
+@Embeddable Adresse                                     → colonnes dans membre</pre>
+
+<h3>4. Révision — Les requêtes et les transactions (leçons 13 à 17)</h3>
+<p><strong>JPQL</strong> interroge les entités, pas les tables : SELECT l FROM Location l WHERE l.membre.pseudo = :pseudo — paramètres nommés, navigation par les relations. Avancé : projections (SELECT j.titre), agrégats (AVG, COUNT, GROUP BY), constructeurs de DTO. Quand JPQL ne suffit pas : <strong>Criteria</strong> pour les filtres dynamiques, <strong>requêtes natives</strong> (createNativeQuery) pour le SQL spécifique MySQL. Les listes se paginent avec <strong>setFirstResult/setMaxResults</strong> (LIMIT/OFFSET générés) + ORDER BY stable. Et les <strong>transactions</strong> garantissent l'atomicité des opérations métier : begin → travail → commit, <strong>rollback</strong> dans le catch — louerJeu réussit entièrement ou n'a jamais existé.</p>
+<pre class="pseudo">em.createQuery("SELECT j FROM Jeu j WHERE j.categorie.nom = :cat", Jeu.class)  // requête JPQL typée, paramètre :cat
+  .setParameter("cat", "Stratégie")                      // remplir le paramètre nommé
+  .setFirstResult(page * taille).setMaxResults(taille)   // pagination (OFFSET / LIMIT)
+  .getResultList();                                      // exécuter → la page de jeux
+// écriture : begin → ... → commit | catch → rollback | finally → close</pre>
+
+<h3>5. Révision — La performance et l'architecture (leçons 18 à 20)</h3>
+<p>Le <strong>N+1</strong> : 1 requête + N SELECT de proxys dans une boucle — invisible dans le code, flagrant dans show_sql. Remède : <strong>JOIN FETCH</strong> dans la requête (DISTINCT si collection), jamais EAGER ; @EntityGraph côté Spring Data. Le <strong>cache de premier niveau</strong> : le contexte est une identity map — deux find du même id = un SELECT et la même instance ; portée = l'EntityManager, d'où les <strong>sessions courtes</strong> (un contexte qui vieillit ment), flush/clear par paquets en masse, cache de 2e niveau hors programme. Le tout s'assemble en architecture : entités fidèles au schéma, DAO au JPQL centralisé, services transactionnels — exactement ce que Spring Data JPA générera au Niveau 6, et ce que EF Core, Eloquent et l'ORM Django organisent dans les autres piles. Maintenant, l'examen.</p>
+<div class="warn">Dans l'examen, chaque distracteur est une erreur réellement commise en entreprise : lis chaque option en te demandant « quel SQL cela produirait-il ? ». C'est le réflexe qui t'a été enseigné depuis la leçon 2 — show_sql mental.</div>
+<div class="tip">Si une question te fait hésiter, note son numéro de leçon (indiqué dans l'explication) et relis la section correspondante après l'examen : un trou identifié aujourd'hui est un bug évité au Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "[L1] JPA et Hibernate sont respectivement…", opts: ["Une implémentation et une norme", "Une norme (spécification) et son implémentation la plus utilisée", "Deux bases de données", "Deux frameworks web"], a: 1, exp: "Leçon 1 : tu codes contre JPA, Hibernate exécute — comme JDBC et le driver MySQL." },
+    { type: "input", q: "[L2] Quelle propriété affiche dans la console chaque requête SQL générée par Hibernate ?", a: ["show_sql", "hibernate.show_sql", "show sql", "showsql"], ph: "propriété…", exp: "hibernate.show_sql=true : l'outil de vérité de tout le cours (leçon 2)." },
+    { type: "qcm", q: "[L3] Le trio d'annotations minimal d'une entité :", opts: ["@Entity, @Id, @Column", "@Service, @Autowired, @Bean", "@Table, @Index, @View", "@Get, @Post, @Put"], a: 0, exp: "Leçon 3 : @Entity déclare, @Id identifie, @Column affine (avec le constructeur sans argument obligatoire)." },
+    { type: "qcm", q: "[L4] En production sur la base du Niveau 4, ddl-auto vaut…", opts: ["create (repartir propre)", "create-drop", "validate : vérifier sans jamais modifier", "none, peu importe le schéma"], a: 2, exp: "Leçon 4 : la base reste la référence ; Hibernate refuse de démarrer si le mapping diverge." },
+    { type: "qcm", q: "[L5] em.find(Jeu.class, 999L) alors qu'aucun jeu 999 n'existe :", opts: ["Exception immédiate", "Retourne null", "Crée le jeu", "Retourne un proxy vide"], a: 1, exp: "Leçon 5 : find rend null, pas d'exception — à toi de tester." },
+    { type: "qcm", q: "[L6] Pour modifier le prix d'un jeu CHARGÉ dans une transaction, il faut…", opts: ["em.update(jeu)", "Seulement jeu.setPrixLocation(...) : le dirty checking génère l'UPDATE au commit", "Un DELETE puis un INSERT", "em.persist(jeu) à nouveau"], a: 1, exp: "Leçon 6 : l'entité gérée est surveillée ; il n'existe d'ailleurs pas de méthode update dans JPA." },
+    { type: "qcm", q: "[L7] Une entité modifiée APRÈS em.close() :", opts: ["Est mise à jour en base au prochain démarrage", "Est détachée : ses modifications sont ignorées tant qu'on ne fait pas merge", "Lève toujours une exception", "Est supprimée"], a: 1, exp: "Leçon 7 : detached = plus surveillée ; merge retourne une copie gérée à re-suivre." },
+    { type: "qcm", q: "[L8-9] Location→Jeu (FK jeu_id côté location) et la collection Jeu→avis se mappent :", opts: ["@ManyToOne côté Location ; @OneToMany(mappedBy = \"jeu\") côté Jeu", "@OneToMany des deux côtés", "@ManyToMany partout", "Deux @JoinTable"], a: 0, exp: "Leçons 8-9 : le porteur de FK est propriétaire ; mappedBy fait de l'autre côté un simple miroir." },
+    { type: "vf", q: "[L9] Oublier mappedBy sur le @OneToMany inverse fait générer à Hibernate une table de jointure inutile.", a: true, exp: "Leçon 9 : sans mappedBy, Hibernate croit à une seconde relation indépendante — divergence détectée par validate." },
+    { type: "qcm", q: "[L10-11] Les favoris (Membre↔Jeu) et l'adresse du membre se mappent respectivement…", opts: ["@ManyToMany + @JoinTable ; @Embeddable/@Embedded (pas d'@Id pour Adresse)", "@OneToOne ; @Entity Adresse", "Deux @ManyToOne", "Deux tables TEXT"], a: 0, exp: "Leçons 10-11 : table d'association pour le N-N ; composant embarqué dans les colonnes de membre pour l'adresse." },
+    { type: "qcm", q: "[L12] Une LazyInitializationException surgit quand…", opts: ["On touche un proxy LAZY après la fermeture de l'EntityManager", "On oublie @Entity", "MySQL est éteint", "On utilise DISTINCT"], a: 0, exp: "Leçon 12 : le proxy n'a plus de contexte pour charger — remède : fetch dans la requête, pas EAGER." },
+    { type: "input", q: "[L13-18] Complète la requête qui charge les locations AVEC leurs jeux en une seule requête : SELECT l FROM Location l ____ l.jeu", a: ["JOIN FETCH", "join fetch", "Join Fetch"], ph: "deux mots…", exp: "Leçons 13 et 18 : JOIN FETCH hydrate la relation et tue le N+1 ; un JOIN simple ne suffirait pas." },
+    { type: "qcm", q: "[L14-15] Note moyenne d'un jeu et requête avec un hint 100% MySQL : les bons outils sont…", opts: ["SELECT AVG(a.note) en JPQL ; createNativeQuery pour le SQL spécifique", "Une boucle Java sur getAvis() ; toujours JPQL", "Deux requêtes natives obligatoirement", "Le cache de 2e niveau"], a: 0, exp: "Leçons 14-15 : agrégats côté base en JPQL ; le natif reste l'issue de secours assumée pour le SQL propriétaire." },
+    { type: "qcm", q: "[L16] La page 3 du catalogue (20 jeux par page) s'obtient avec…", opts: ["setFirstResult(40).setMaxResults(20) et un ORDER BY stable", "setFirstResult(3)", "LIMIT 3 dans le JPQL", "Charger tout et couper en Java"], a: 0, exp: "Leçon 16 : firstResult = page x taille = 2 x 20 = 40 (pages numérotées de 0) ; Hibernate génère LIMIT/OFFSET." },
+    { type: "vf", q: "[L17-19] Si le commit de louerJeu échoue, le rollback annule les écritures planifiées ; et deux find du même id dans ce même EntityManager n'auront fait qu'un seul SELECT.", a: true, exp: "Leçon 17 : atomicité par rollback ; leçon 19 : cache de premier niveau et identity map — les deux piliers de la fin du cours." }
+  ],
+  final: {
+    title: "Exercice final — L'examen de sortie",
+    intro: `<p>Cinq situations professionnelles, cinq décisions à prendre. Tout le cours est convoqué : réponds comme le développeur de la Ludothèque que tu es devenu.</p>`,
+    questions: [
+      { type: "qcm", q: "Un nouveau membre s'inscrit, tu veux son id juste après l'enregistrement. La séquence correcte :", opts: ["tx.begin(); em.persist(membre); tx.commit(); puis membre.getId()", "membre.getId() avant persist", "em.merge(membre) sans transaction", "em.find avant persist"], a: 0, exp: "Leçons 5 et 17 : persist dans une transaction ; l'id AUTO_INCREMENT est reporté dans l'objet après le commit." },
+      { type: "qcm", q: "La page « membres et leurs jeux favoris » fait 1 + 200 requêtes. Le bon correctif :", opts: ["Passer favoris en EAGER", "SELECT DISTINCT m FROM Membre m JOIN FETCH m.favoris (ou @EntityGraph au Niveau 6)", "Ajouter un Thread.sleep", "Augmenter la RAM de MySQL"], a: 1, exp: "Leçon 18 : N+1 sur une collection → JOIN FETCH + DISTINCT, localement ; jamais EAGER globalement." },
+      { type: "vf", q: "Un EntityManager gardé ouvert toute la journée servira d'excellent cache applicatif pour les prix des jeux.", a: false, exp: "Leçon 19 : le cache de premier niveau ne se périme jamais seul — il servirait de vieux prix sans erreur. Sessions courtes." },
+      { type: "input", q: "Une entité chargée hier (contexte fermé) revient modifiée du formulaire web. Quelle méthode la réconcilie avec un contexte neuf ?", a: ["merge", "em.merge", "merge()", "em.merge()"], ph: "nom de la méthode…", exp: "Leçons 6-7 : entité détachée → merge retourne la copie gérée ; persist échouerait, l'entité existe déjà." },
+      { type: "qcm", q: "rendreJeu : tu charges la location, tu fais setDateRetourReelle(LocalDate.now()), tu commit. L'UPDATE part-il, et pourquoi ?", opts: ["Non, il manque em.update()", "Oui : l'entité est gérée, le dirty checking compare et génère l'UPDATE au commit", "Non, il faut une requête native", "Oui, mais seulement si EAGER est activé"], a: 1, exp: "Leçon 6 : la modification d'une entité gérée dans une transaction suffit — c'est la signature même de l'ORM maîtrisé." }
+    ],
+    solution: `<pre class="pseudo">LE COURS EN UNE PAGE — 21 leçons, l'ORM maîtrisé
+
+FONDATIONS (1-4)
+  1  ORM = traducteur objets ↔ tables ; JPA norme, Hibernate moteur
+  2  configuration + show_sql : toujours lire le SQL généré
+  3  @Entity @Id @GeneratedValue @Column + constructeur sans argument
+  4  ddl-auto : validate en prod — le schéma du Niveau 4 commande
+
+ENTITYMANAGER (5-7)
+  5  persist / find / remove ; écriture différée ; transaction obligatoire
+  6  dirty checking : modifier une entité gérée = UPDATE au commit ; merge
+  7  cycle de vie : transient → managed → detached → removed
+
+RELATIONS (8-12)
+  8  @ManyToOne + @JoinColumn : la FK devient une référence
+  9  @OneToMany(mappedBy) : côté miroir, une seule FK
+  10 @ManyToMany + @JoinTable : la table d'association
+  11 @OneToOne ; @Embeddable/@Embedded : composant sans identité
+  12 LAZY (proxy) partout, EAGER jamais par confort ; LazyInitException
+
+REQUÊTES (13-16)
+  13 JPQL : entités et attributs, paramètres nommés, navigation
+  14 projections, DTO, agrégats (AVG, COUNT, GROUP BY)
+  15 Criteria (dynamique) ; natives (SQL spécifique assumé)
+  16 setFirstResult/setMaxResults + ORDER BY stable = pagination
+
+FIABILITÉ ET PERFORMANCE (17-19)
+  17 transactions : begin/commit/rollback — atomicité de louerJeu
+  18 N+1 : diagnostiqué par show_sql, corrigé par JOIN FETCH (+DISTINCT)
+  19 cache 1er niveau = identity map ; sessions courtes ; flush/clear
+
+ARCHITECTURE (20)
+  entités fidèles + DAO (JPQL centralisé) + services transactionnels
+  = exactement ce que Spring Data JPA génère (JpaRepository, @Transactional)
+  = les mêmes concepts que EF Core, Eloquent, ORM Django</pre>
+<p>Félicitations : tu es entré dans ce cours en utilisateur de magie, tu en sors en mécanicien de l'ORM. Le SQL généré n'a plus de secret, le N+1 ne te surprendra plus, et chaque annotation de tes entités est un choix défendu. Au Niveau 6, tu construiras le projet full-stack de la Ludothèque avec Spring Boot et Spring Data JPA sur cette base exacte — et pour la première fois, les repositories « magiques » seront pour toi des outils transparents. À très vite de l'autre côté du capot.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l21", title: "Ce qu'un ORM fait — et ne fait pas", level: 3,
+    statement: "Exercice de sortie : un collègue rejoint l'équipe Ludothèque en venant du PHP (il connaît Eloquent de loin) et te demande « explique-moi ce que Hibernate va faire pour moi, et surtout ce qu'il ne fera PAS ». Rédige ta réponse structurée : (1) ce que l'ORM prend en charge, avec le concept du cours qui le permet ; (2) ce qui reste ta responsabilité de développeur, avec le risque encouru si tu l'oublies ; (3) les trois pièges qui l'attendent dans ses premières semaines et le réflexe qui protège de chacun ; (4) une conclusion honnête en trois phrases sur la place du SQL dans sa nouvelle vie.",
+    hints: [
+      "Colonne « pris en charge » : traduction SQL, mapping, identité des objets, écriture différée, updates implicites — associe chaque item à sa leçon-concept.",
+      "Colonne « ta responsabilité » : conception du schéma, choix LAZY/fetch, transactions métier, lecture du SQL généré, pagination — et le coût concret de chaque oubli.",
+      "Les trois pièges du débutant croisés dans le cours : LazyInitializationException, N+1, contexte périmé — chaque réflexe tient en une ligne."
+    ],
+    solution: "CE QUE HIBERNATE FAIT POUR TOI\n  - Traduit les objets en SQL et inversement : le mapping @Entity/@Column\n    remplace tout le rituel JDBC (leçons 1-3).\n  - Garantit une seule instance par ligne dans une session : identity map\n    et cache de premier niveau (leçon 19).\n  - Détecte tes modifications tout seul : dirty checking — pas de update()\n    à appeler sur une entité gérée (leçon 6).\n  - Navigue les relations : location.getJeu() au lieu d'une jointure\n    manuelle, grâce à @ManyToOne et consorts (leçons 8-11).\n  - Reporte les écritures au meilleur moment : flush au commit (leçon 5).\n\nCE QUI RESTE TA RESPONSABILITÉ\n  - Concevoir le schéma (Niveau 4) : l'ORM mappe, il ne modélise pas.\n    Oubli = un mauvais schéma mappé proprement reste un mauvais schéma.\n  - Décider du chargement : LAZY au mapping, JOIN FETCH par requête.\n    Oubli = N+1 ou LazyInitializationException en production.\n  - Délimiter les transactions métier : louerJeu atomique ou rien.\n    Oubli = données incohérentes silencieuses, le pire des bugs.\n  - LIRE le SQL généré (show_sql) : l'ORM traduit, il n'optimise pas\n    tes intentions floues.\n  - Paginer : findAll sur 50 000 lignes reste 50 000 lignes.\n\nLES TROIS PIÈGES DE TES PREMIÈRES SEMAINES\n  1. LazyInitializationException : tu toucheras un proxy hors session.\n     Réflexe : le fetch se décide dans la requête, jamais en EAGER global.\n  2. N+1 : ta première boucle sur une relation. Réflexe : compter les\n     requêtes dans les logs avant chaque livraison.\n  3. Contexte périmé : garder une session ouverte « pour le cache ».\n     Réflexe : un EntityManager court par opération, toujours.\n\nCONCLUSION HONNÊTE\n  Le SQL n'a pas disparu : il est généré, et c'est toi qui le relis.\n  L'ORM absorbe la plomberie, pas les décisions — chaque annotation\n  est un choix que tu dois savoir défendre. Eloquent, EF Core, Django :\n  change les mots, garde exactement les mêmes réflexes.",
+    note: "Si tu sais rédiger cette réponse sans relire le cours, l'examen est une formalité : expliquer à un pair est le test ultime de la maîtrise. Rendez-vous au Niveau 6 pour le projet full-stack Spring Boot + Spring Data JPA de la Ludothèque — tes DAO deviendront des interfaces, tes réflexes resteront." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

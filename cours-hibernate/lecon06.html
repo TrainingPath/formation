@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Modifier : le dirty checking et merge",
+  subtitle: "Le verbe UPDATE existe en SQL… mais pas dans l'EntityManager. Et c'est voulu.",
+  theory: `
+<h3>1. Le verbe manquant</h3>
+<p>Hier, tu as créé (persist), lu (find) et supprimé (remove). Il manque le quatrième verbe du <strong>CRUD</strong> (Create, Read, Update, Delete — les quatre opérations de base sur des données) : <strong>modifier</strong>. Réflexe naturel : chercher une méthode update…</p>
+<pre class="pseudo">em.update(jeu);     // N'EXISTE PAS. Cherche dans l'autocomplétion : il n'y a rien de tel.
+em.save(jeu);       // N'EXISTE PAS non plus (ça, c'est Spring Data, pas JPA).</pre>
+<p>Ce n'est pas un oubli : JPA n'a <strong>pas besoin</strong> de méthode update. L'EntityManager surveille les entités de son contexte de persistance (la « salle d'attente » de la leçon 5) — et il voit tout.</p>
+
+<h3>2. Le dirty checking : modifier sans rien demander</h3>
+<pre class="pseudo">tx.begin();                                     // on ouvre la transaction
+Jeu jeu = em.find(Jeu.class, 42L);              // entité GÉRÉE : sous surveillance (+ instantané mémorisé)
+jeu.setPrixLocation(new BigDecimal("4.00"));    // un simple setter, rien d'autre (aucun appel à Hibernate)
+tx.commit();                                    // au commit, Hibernate compare l'objet à l'instantané...
+// → UPDATE jeu SET prix_location = 4.00, ... WHERE id = 42   (émis automatiquement !)</pre>
+<p>C'est le <strong>dirty checking</strong> (détection des entités « sales », c'est-à-dire modifiées) : au chargement, Hibernate garde un <strong>instantané</strong> (snapshot) des valeurs. Au moment du flush/commit, il compare l'objet actuel à l'instantané ; toute différence déclenche un UPDATE. Tu ne déclares pas la modification, tu la fais — comme sur n'importe quel objet Java.</p>
+
+<h3>3. Quand part l'UPDATE ?</h3>
+<p>Comme l'INSERT de persist, l'UPDATE est <strong>différé</strong> : il part au <strong>flush</strong>, déclenché au plus tard par le <strong>commit</strong> (ou avant une requête qui en a besoin — leçon 19). Corollaires importants :</p>
+<pre class="pseudo">Jeu jeu = em.find(Jeu.class, 42L);   // charger le jeu (entité gérée + instantané)
+jeu.setStock(5);                     // on met le stock à 5
+jeu.setStock(5);                     // remettre la même valeur… donc rien ne change vraiment :
+tx.commit();                         // → si rien n'a réellement changé : AUCUN UPDATE n'est émis
+// Dix setters sur la même entité = UN SEUL UPDATE au commit, pas dix.</pre>
+<p>Vérifie-le avec show_sql (leçon 2) : charger sans modifier ne produit qu'un SELECT ; modifier trois attributs ne produit qu'un UPDATE.</p>
+
+<h3>4. Et si l'entité n'est plus surveillée ? merge</h3>
+<p>Le dirty checking ne fonctionne que pour les entités <strong>gérées</strong>. Or une entité peut sortir de surveillance : l'EntityManager qui l'a chargée est fermé, ou l'objet arrive d'un formulaire web avec son id. On dit qu'elle est <strong>détachée</strong> (detached — la leçon 7 formalise ces états). Pour la raccrocher : <strong>merge</strong>.</p>
+<pre class="pseudo">// jeu détaché : id = 42, titre modifié par l'utilisateur dans un formulaire
+tx.begin();                 // on ouvre la transaction
+Jeu gere = em.merge(jeu);   // Hibernate recharge/retrouve la ligne 42,
+                            // y COPIE l'état de « jeu », et retourne la COPIE gérée
+gere.setStock(3);           // ceci SERA vu par le dirty checking (gere est géré)
+jeu.setStock(99);           // ceci est IGNORÉ : « jeu » reste détaché !
+tx.commit();                // → UPDATE jeu SET titre = ?, stock = 3 ... WHERE id = 42</pre>
+<p>Retiens la règle d'or : <strong>merge ne rattache pas ton objet, il en retourne une copie gérée</strong>. Après un merge, on continue avec la valeur retournée, jamais avec l'argument. Bonus : appliqué à un objet tout neuf (sans id), merge crée une copie gérée et l'insère — il sait faire INSERT ou UPDATE selon le cas.</p>
+
+<h3>5. Le secret de save() enfin révélé</h3>
+<p>Dans le cours Spring, tu appelais repository.save(jeu) pour créer <em>et</em> pour modifier. Voici son implémentation réelle (simplifiée) dans Spring Data JPA :</p>
+<pre class="pseudo">public Jeu save(Jeu entity) {              // le save() de Spring Data (version simplifiée)
+  if (estNouvelle(entity))                 // l'entité est-elle nouvelle ? (en pratique : id null ?)
+    { em.persist(entity); return entity; } // OUI → persist (INSERT), on renvoie l'objet lui-même
+  else                                     // NON (elle existe déjà en base)...
+    { return em.merge(entity); }           // ...→ merge, et on RENVOIE la copie gérée (d'où l'importance du retour !)
+}                                          // fin de la méthode save()</pre>
+<p>C'est aussi pourquoi la documentation Spring insiste : « toujours utiliser l'instance retournée par save() ». EF Core fait le même travail avec son change tracker et SaveChanges, Eloquent avec save()/isDirty, Django avec model.save() : la détection des modifications est un pilier de tout ORM.</p>
+<div class="warn">Le piège n°1 de merge : Jeu gere = em.merge(jeu); puis continuer à modifier <strong>jeu</strong>. Aucune erreur, aucun SQL, aucun effet — le bug le plus silencieux du cours. Réflexe : réaffecte toujours (jeu = em.merge(jeu);), exactement comme jeu = repository.save(jeu) en Spring.</div>
+<div class="tip">Dans une transaction, le meilleur update est celui que tu n'écris pas : find, setter, commit. N'appelle merge que pour une entité réellement détachée — merger une entité déjà gérée est inutile.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle méthode de l'EntityManager faut-il appeler pour enregistrer la modification d'une entité gérée ?", opts: ["Aucune : le dirty checking détecte la modification tout seul", "em.update(jeu)", "em.save(jeu)", "em.flush() obligatoirement à chaque setter"], a: 0, exp: "Il n'existe pas de update() : un setter sur une entité gérée suffit, l'UPDATE part au flush/commit." },
+    { type: "qcm", q: "Le dirty checking désigne…", opts: ["Le nettoyage du cache de MySQL", "La comparaison entité actuelle / instantané du chargement pour générer les UPDATE", "La vérification de la syntaxe SQL", "Un antivirus de la JVM"], a: 1, exp: "Hibernate garde un snapshot au chargement et compare au flush : toute différence devient un UPDATE." },
+    { type: "vf", q: "Pour que le dirty checking fonctionne, l'entité doit être gérée (dans le contexte de persistance) et la transaction commitée.", a: true, exp: "Une entité détachée modifiée ne produit aucun SQL ; il faut merge pour la raccrocher." },
+    { type: "qcm", q: "À quel moment l'UPDATE du dirty checking est-il envoyé à MySQL ?", opts: ["À la ligne exacte du setter", "Au flush, au plus tard lors du commit", "Une heure plus tard", "Au démarrage suivant de l'application"], a: 1, exp: "Écriture différée, comme l'INSERT de persist : le SQL part au flush/commit." },
+    { type: "input", q: "Quelle méthode de l'EntityManager rattache l'état d'une entité détachée au contexte de persistance ?", a: ["merge", "em.merge", "merge()"], ph: "nom de la méthode…", exp: "em.merge(detachee) copie l'état dans une entité gérée et retourne cette copie." },
+    { type: "qcm", q: "Jeu resultat = em.merge(jeuDetache); — que représente resultat ?", opts: ["Le même objet que jeuDetache, devenu géré", "Une COPIE gérée : jeuDetache reste détaché", "null systématiquement", "Un objet en lecture seule"], a: 1, exp: "merge retourne une copie gérée ; l'argument n'est jamais rattaché." },
+    { type: "vf", q: "Après Jeu gere = em.merge(jeu);, il faut continuer à travailler sur la variable jeu.", a: false, exp: "C'est LE piège de merge : seule la copie retournée (gere) est surveillée par le dirty checking." },
+    { type: "qcm", q: "Une entité devient détachée notamment quand…", opts: ["On appelle son constructeur", "L'EntityManager qui l'a chargée est fermé (ou detach/clear)", "On lit un de ses attributs", "On la met dans une List"], a: 1, exp: "Fermer le contexte coupe la surveillance : l'objet garde ses données et son id, mais plus personne ne l'observe." },
+    { type: "qcm", q: "Tu charges un jeu avec find, tu ne modifies rien, tu commites. Que voit-on dans show_sql ?", opts: ["Un SELECT puis un UPDATE", "Un SELECT seulement : aucun UPDATE", "Un UPDATE seulement", "Un DELETE"], a: 1, exp: "Pas de différence avec l'instantané = pas d'UPDATE : Hibernate n'écrit que le nécessaire." },
+    { type: "qcm", q: "Tu modifies trois attributs d'un même jeu géré avant le commit. Combien d'UPDATE partent ?", opts: ["Trois", "Zéro", "Un seul", "Un par colonne de la table"], a: 2, exp: "Le flush consolide : une entité modifiée = un UPDATE, quelles que soient les étapes intermédiaires." },
+    { type: "input", q: "Quel est le nom (anglais) du mécanisme de détection automatique des modifications ?", a: ["dirty checking", "le dirty checking", "dirty-checking", "dirtychecking"], ph: "deux mots…", exp: "Dirty checking : les entités modifiées sont dites « sales » par rapport à leur snapshot." },
+    { type: "qcm", q: "Sous le save() de Spring Data JPA se cache…", opts: ["persist si l'entité est nouvelle, merge sinon", "toujours une requête SQL écrite à la main", "em.update()", "un DELETE suivi d'un INSERT"], a: 0, exp: "D'où la consigne Spring : utiliser l'instance retournée par save(), car merge retourne une copie." },
+    { type: "qcm", q: "Le mécanisme comparable au dirty checking chez EF Core s'appelle…", opts: ["Le change tracker (avec SaveChanges)", "Le garbage collector", "Le JIT compiler", "Le task scheduler"], a: 0, exp: "EF Core piste les modifications et écrit les UPDATE à SaveChanges ; Eloquent a isDirty, Django compare à save()." },
+    { type: "vf", q: "Appelé sur un objet tout neuf (sans id), merge peut aboutir à un INSERT.", a: true, exp: "merge copie l'état vers une entité gérée ; si elle n'existe pas en base, ce sera une insertion." },
+    { type: "qcm", q: "Tu modifies un jeu APRÈS em.close(). Résultat en base :", opts: ["Rien : l'entité est détachée, aucun SQL ne part", "UPDATE immédiat", "Exception à la ligne du setter", "MySQL rouvre la connexion tout seul"], a: 0, exp: "Le setter réussit (c'est un objet Java normal) mais plus personne ne surveille : bug silencieux classique." }
+  ],
+  final: {
+    title: "Exercice final — Le prix de Catan augmente",
+    intro: `<p>Deux scénarios pour la même modification : passer le prix de location de Catan (id 42) de 3.50 à 4.00. Scénario A : dans une transaction, entité fraîchement chargée. Scénario B : l'objet Jeu arrive d'un formulaire web, détaché.</p>`,
+    questions: [
+      { type: "qcm", q: "Scénario A — le code minimal correct :", opts: ["tx.begin(); Jeu j = em.find(Jeu.class, 42L); j.setPrixLocation(new BigDecimal(\"4.00\")); tx.commit();", "tx.begin(); em.update(em.find(Jeu.class, 42L)); tx.commit();", "em.find(Jeu.class, 42L).setPrixLocation(...); // sans transaction", "em.merge(em.find(Jeu.class, 42L));"], a: 0, exp: "find + setter + commit : le dirty checking fait le reste, aucun appel de plus." },
+      { type: "qcm", q: "Scénario A — quel SQL apparaît dans show_sql au commit ?", opts: ["UPDATE jeu SET ... WHERE id = ?", "INSERT INTO jeu ...", "DELETE FROM jeu ...", "Aucun SQL"], a: 0, exp: "L'entité gérée diffère de son snapshot : un UPDATE ciblé sur l'id 42." },
+      { type: "input", q: "Scénario B — quelle méthode raccroche l'objet détaché venu du formulaire ?", a: ["merge", "em.merge", "merge()"], ph: "la méthode…", exp: "merge : il retrouve la ligne 42, copie l'état du formulaire et retourne la copie gérée." },
+      { type: "vf", q: "Scénario B — après Jeu gere = em.merge(jeuFormulaire);, modifier jeuFormulaire changera encore la base.", a: false, exp: "jeuFormulaire reste détaché : seule la copie gere est surveillée." },
+      { type: "qcm", q: "Pourquoi repository.save(jeu) du cours Spring exigeait-il de récupérer sa valeur de retour ?", opts: ["Parce que save délègue à merge, qui retourne une copie gérée", "Pour économiser la mémoire", "Parce que save retourne toujours null", "Par pure convention de style"], a: 0, exp: "jeu = repository.save(jeu) : même règle d'or que jeu = em.merge(jeu)." }
+    ],
+    solution: `<pre class="pseudo">// Scénario A : entité gérée → dirty checking, zéro appel explicite
+tx.begin();                                   // ouvrir la transaction
+Jeu jeu = em.find(Jeu.class, 42L);            // SELECT ... WHERE id = 42 (+ instantané mémorisé)
+jeu.setPrixLocation(new BigDecimal("4.00"));  // simple setter sur une entité gérée
+tx.commit();                                  // → UPDATE jeu SET ... WHERE id = 42
+
+// Scénario B : entité détachée (formulaire web) → merge, et on garde le RETOUR
+tx.begin();                                   // ouvrir la transaction
+Jeu gere = em.merge(jeuFormulaire);           // copie gérée retournée (c'est ELLE qu'on réutilise)
+tx.commit();                                  // → UPDATE d'après l'état copié
+// jeuFormulaire, lui, reste détaché : on ne le touche plus.</pre>
+<p>Géré, détaché… ces mots reviennent sans cesse depuis deux leçons. Demain, on pose la carte complète : les quatre états du cycle de vie d'une entité et toutes les transitions entre eux.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l6", title: "L'update fantôme", level: 2,
+    statement: "Un collègue te montre ce code qui « ne marche pas » : il charge un jeu dans un premier EntityManager qu'il ferme, modifie le titre, puis dans un second EntityManager il fait em2.merge(jeu); jeu.setStock(10); tx.commit(); — le titre est bien mis à jour en base, mais pas le stock. Rédige le diagnostic complet : pourquoi le titre passe, pourquoi le stock ne passe pas, la ou les corrections possibles, et le parallèle avec la règle « toujours réaffecter le retour de save() » de Spring Data.",
+    hints: [
+      "Trace l'état de l'objet jeu à chaque étape : géré dans em1, puis ? Et que devient-il après le merge dans em2 ?",
+      "merge copie l'état AU MOMENT de l'appel : le titre modifié avant merge est copié ; que vaut le stock modifié APRÈS merge, et sur quel objet ?",
+      "Deux corrections possibles : réaffecter le retour de merge, ou déplacer le setter — laquelle est la plus robuste ?"
+    ],
+    solution: "Diagnostic :\n1. em1.find(...) → jeu est GÉRÉ par em1.\n2. em1.close() → jeu devient DÉTACHÉ (données conservées, surveillance coupée).\n3. jeu.setTitre(\"...\") → modification en mémoire d'un objet détaché : aucun SQL,\n   mais l'état de l'objet contient bien le nouveau titre.\n4. em2.merge(jeu) → Hibernate retrouve la ligne, y COPIE l'état actuel de jeu\n   (donc le nouveau titre) dans une COPIE gérée… qui n'est pas récupérée !\n5. jeu.setStock(10) → appliqué à l'objet DÉTACHÉ, pas à la copie gérée :\n   invisible pour le dirty checking.\n6. commit → UPDATE avec le titre copié à l'étape 4 ; le stock reste inchangé.\n\nCorrections :\nA. Jeu gere = em2.merge(jeu); gere.setStock(10);   // la bonne habitude\nB. jeu.setStock(10); AVANT le merge (l'état copié contiendra le stock).\nLa correction A est la plus robuste : après un merge, on ne touche plus\nJAMAIS l'objet d'origine.\n\nParallèle Spring Data : save() délègue à merge pour une entité existante,\ndonc repository.save(jeu) sans réaffectation expose au même bug fantôme.\nRègle unique : jeu = em.merge(jeu) / jeu = repository.save(jeu).",
+    note: "Ce bug « fantôme » est un classique des applications web : l'entité fait l'aller-retour navigateur → serveur et revient toujours détachée. La leçon 7 te donnera le vocabulaire précis de ces états, et la leçon 17 montrera comment @Transactional réduit la fenêtre où ils se produisent — un réflexe qui vaut aussi pour EF Core (Attach) et Eloquent (fresh/refresh)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

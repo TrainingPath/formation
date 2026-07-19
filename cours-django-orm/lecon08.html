@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "La relation N-1 : ForeignKey (une location a un jeu et un membre)",
+  subtitle: "Deux clés étrangères, un on_delete choisi en conscience : la table location du Niveau 4 devient enfin un modèle Python.",
+  theory: `
+<h3>1. De l'association Merise au modèle Location</h3>
+<p>Jusqu'ici, <strong>Jeu</strong> et <strong>Membre</strong> vivaient chacun de leur côté. Or le cœur du métier de la Ludothèque, c'est le lien entre les deux : <em>zelda42 loue Catan du 3 au 10 juillet pour 3,50 €</em>. Une <strong>relation</strong> est un lien entre deux tables ; une <strong>relation N-1</strong> (« plusieurs-à-un ») signifie que plusieurs lignes d'un côté renvoient à une seule ligne de l'autre (plusieurs locations pour un même jeu). Au Niveau 4, en <strong>Merise</strong> (la méthode de conception de bases de données), tu avais identifié <strong>Location</strong> comme une association N-N entre Jeu et Membre, <strong>porteuse de données</strong> (dates, prix) — et une association porteuse de données devient une table à part entière, avec deux clés étrangères. Une <strong>clé étrangère</strong> est une colonne qui contient l'identifiant d'une ligne d'une autre table (le « renvoi »). Côté Django, même raisonnement : un modèle à part entière, et la clé étrangère s'appelle <strong>ForeignKey</strong>. On en profite pour créer aussi <strong>Avis</strong>, construit sur le même motif :</p>
+<pre class="pseudo">class Location(models.Model):                # modele Location = le lien jeu <-> membre, avec ses donnees propres
+    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)      # renvoie vers UN Jeu ; PROTECT = interdit d'effacer le jeu s'il est loue
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE)  # renvoie vers UN Membre ; CASCADE = si le membre part, la location part
+    date_debut = models.DateField(auto_now_add=True)           # date posee automatiquement a la creation
+    date_retour = models.DateField(null=True, blank=True)      # date facultative (vide tant que non rendu)
+    prix_location = models.DecimalField(max_digits=5, decimal_places=2)  # prix de la location (decimal exact)
+
+class Avis(models.Model):                    # modele Avis = un membre note un jeu
+    jeu = models.ForeignKey(Jeu, on_delete=models.CASCADE)      # renvoie vers le Jeu note ; CASCADE = avis efface si le jeu l'est
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE)  # renvoie vers l'auteur ; CASCADE = avis efface si l'auteur l'est
+    note = models.PositiveSmallIntegerField()                  # petite note entiere positive (ex : 1 a 5)
+    commentaire = models.TextField(blank=True)                 # texte libre facultatif</pre>
+<p>Une ForeignKey se déclare toujours <strong>du côté N</strong> (le côté « plusieurs ») : c'est la location qui pointe vers son jeu et son membre, jamais l'inverse — exactement comme au Niveau 4, où la clé étrangère vivait dans la table <em>location</em>.</p>
+
+<h3>2. Côté MySQL : jeu_id, membre_id et deux contraintes</h3>
+<p>Le circuit de la leçon 4 s'applique tel quel : <em>makemigrations</em> génère le plan, <em>migrate</em> l'exécute. Regarde ce que MySQL a réellement fabriqué :</p>
+<pre class="pseudo">(venv) python manage.py makemigrations ludotheque   # genere le plan de migration pour les nouveaux modeles
+  ludotheque/migrations/0003_avis_location.py       # fichier de migration cree (numero 0003)
+    - Create model Avis                             # operation : creer la table Avis
+    - Create model Location                         # operation : creer la table Location
+(venv) python manage.py migrate                     # applique la migration sur MySQL
+Applying ludotheque.0003_avis_location... OK        # succes
+
+mysql&gt; DESCRIBE ludotheque_location;                -- DESCRIBE = montre la structure de la table
+id | date_debut | date_retour | prix_location | jeu_id | membre_id   -- noter jeu_id et membre_id (suffixe _id)
+
+-- plus deux contraintes et leurs index :
+-- FOREIGN KEY (jeu_id)    REFERENCES ludotheque_jeu (id)      -- jeu_id doit exister dans ludotheque_jeu.id
+-- FOREIGN KEY (membre_id) REFERENCES ludotheque_membre (id)   -- membre_id doit exister dans ludotheque_membre.id</pre>
+<p>Retiens la convention : le champ Python s'appelle <strong>jeu</strong>, la colonne MySQL s'appelle <strong>jeu_id</strong>. Django ajoute le suffixe <em>_id</em> tout seul, pose la contrainte <strong>FOREIGN KEY</strong> (ton intégrité référentielle du Niveau 4 : la garantie qu'un renvoi pointe toujours vers une ligne existante) et crée un <strong>index</strong> (un accélérateur de recherche) sur la colonne — car on filtrera et on joindra sans arrêt dessus.</p>
+
+<h3>3. on_delete : la question à ne jamais esquiver</h3>
+<p>Toute ForeignKey exige l'argument <strong>on_delete</strong> (« en cas de suppression ») : que deviennent les locations si on supprime le jeu ou le membre pointé ? L'oublier ne pardonne pas — <em>TypeError</em> (une erreur de type Python) dès le chargement du modèle. Les trois réponses à connaître :</p>
+<pre class="pseudo">CASCADE  : la suppression se propage.                              # l'effacement "coule" vers les lignes liees
+           Supprimer un membre → ses locations disparaissent avec lui.   # exemple concret
+PROTECT  : la suppression est refusée tant que des lignes pointent dessus.   # bouclier : on ne peut pas effacer
+           Supprimer un jeu encore loué → ProtectedError.          # Django leve une erreur ProtectedError
+SET_NULL : la clé étrangère passe à NULL (exige null=True sur le champ).   # le lien est coupe, la ligne reste
+           La ligne survit, mais ne pointe plus vers rien.          # la location existe encore, sans jeu</pre>
+<p>Nos choix pour Location sont un vrai arbitrage métier : <strong>membre en CASCADE</strong> — si un membre exerce son droit à l'effacement (RGPD, la loi sur la protection des données), ses locations personnelles partent avec lui ; <strong>jeu en PROTECT</strong> — un jeu référencé par des locations porte un historique et des montants facturés, la base refuse qu'on l'efface par accident.</p>
+
+<h3>4. Créer une location et naviguer vers ses objets</h3>
+<p>Pour créer une location, on affecte des <strong>objets</strong>, pas des identifiants. Et en lecture, la ForeignKey se traverse comme un simple attribut :</p>
+<pre class="pseudo">&gt;&gt;&gt; catan = Jeu.objects.get(titre="Catan")     # on recupere l'objet Jeu
+&gt;&gt;&gt; zelda = Membre.objects.get(pseudo="zelda42")   # on recupere l'objet Membre
+&gt;&gt;&gt; loc = Location.objects.create(jeu=catan, membre=zelda, prix_location=3.50)   # on passe les OBJETS, pas des id
+
+&gt;&gt;&gt; loc.jeu                 # un objet Jeu COMPLET, pas un id   # traverser la FK renvoie un vrai objet Jeu
+&lt;Jeu: Catan&gt;                # affichage de l'objet (grace a __str__)
+&gt;&gt;&gt; loc.jeu.titre, loc.jeu.prix   # on lit les attributs de l'objet lie
+('Catan', Decimal('34.90'))       # un tuple (titre, prix)
+
+&gt;&gt;&gt; loc.jeu_id              # le simple entier, lu SANS requête   # la colonne jeu_id est deja en memoire
+1                           # l'identifiant du jeu lie</pre>
+<p>Attention à la mécanique cachée : si le jeu n'est pas déjà chargé, accéder à <em>loc.jeu</em> déclenche <strong>une requête SQL supplémentaire</strong> pour aller le chercher. Multiplié par une boucle de cent locations, cela devient le fameux problème N+1 — rendez-vous à la leçon 18. En attendant, quand seul l'identifiant t'intéresse, <em>loc.jeu_id</em> est gratuit.</p>
+
+<h3>5. Filtrer à travers la relation : le double underscore</h3>
+<p>Le vrai pouvoir de la ForeignKey se révèle dans les filtres : le <strong>double underscore</strong> (les deux tirets bas <code>__</code>) traverse la relation pour atteindre les champs du modèle lié. Django traduit en <strong>INNER JOIN</strong> (une <em>jointure</em> : combiner deux tables sur une colonne commune) — dégaine ton réflexe de la leçon 2 :</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Location.objects.filter(jeu__titre="Catan")   # jeu__titre = "le titre DU jeu lie" ; traverse la relation
+&gt;&gt;&gt; print(qs.query)                                    # on affiche le SQL prevu
+SELECT ... FROM ludotheque_location                    -- on lit dans la table location
+INNER JOIN ludotheque_jeu ON (ludotheque_location.jeu_id = ludotheque_jeu.id)   -- jointure sur jeu_id = id
+WHERE ludotheque_jeu.titre = Catan                     -- condition sur le titre du jeu lie
+
+&gt;&gt;&gt; Avis.objects.filter(membre__pseudo="zelda42")   # même mécanique   # traverse Avis -> Membre
+&lt;QuerySet [&lt;Avis: Avis de zelda42 sur Catan&gt;]&gt;      # resultat : les avis de zelda42</pre>
+<p>La jointure que tu écrivais mot à mot au Niveau 4, l'ORM l'écrit pour toi — mais c'est toujours la même. Même idée ailleurs : <strong>@ManyToOne</strong> chez Hibernate/JPA, la propriété de navigation + clé étrangère chez EF Core, <strong>belongsTo</strong> chez Eloquent.</p>
+<div class="warn">Oublier on_delete = <strong>TypeError</strong> immédiat. Et choisir CASCADE « par défaut, sans réfléchir » peut effacer en chaîne des données de facturation lors d'une simple suppression : quand une ligne liée a une valeur métier (historique, argent), <strong>PROTECT</strong> est souvent le choix le plus sage.</div>
+<div class="tip">Au moindre doute sur une jointure, <em>print(qs.query)</em>. Et pour créer ou modifier une relation, affecte l'<strong>objet</strong> (jeu=catan), pas l'id — sauf optimisation consciente avec jeu_id=… quand tu as déjà l'identifiant sous la main et aucun besoin de l'objet.</div>`,
+  exercises: [
+    { type: "qcm", q: "Au Niveau 4, en Merise, Location était…", opts: ["Une entité isolée sans aucun lien", "Une association N-N entre Jeu et Membre, porteuse de données (dates, prix)", "Une simple colonne de la table jeu", "Une vue MySQL"], a: 1, exp: "Association porteuse de données → table à part entière avec deux clés étrangères → modèle Django à part entière." },
+    { type: "qcm", q: "Le champ Python s'appelle jeu ; dans ludotheque_location, la colonne MySQL s'appelle…", opts: ["jeu", "id_jeu", "jeu_id", "fk_jeu"], a: 2, exp: "Django ajoute le suffixe _id tout seul : champ jeu → colonne jeu_id, avec FOREIGN KEY et index." },
+    { type: "input", q: "L'argument obligatoire de toute ForeignKey, qui décide du sort des lignes liées à la suppression :", a: ["on_delete", "on delete", "ondelete"], ph: "un argument…", exp: "on_delete=models.CASCADE, PROTECT, SET_NULL… L'omettre lève un TypeError." },
+    { type: "qcm", q: "on_delete=models.CASCADE sur le champ membre de Location signifie…", opts: ["Supprimer une location supprime le membre", "Supprimer le membre supprime toutes ses locations", "La suppression du membre est interdite", "membre_id passe à NULL"], a: 1, exp: "La suppression se propage du côté pointé vers les lignes qui pointent — jamais l'inverse." },
+    { type: "qcm", q: "Avec on_delete=models.PROTECT sur jeu, tenter de supprimer un jeu encore loué…", opts: ["Supprime aussi les locations", "Met jeu_id à NULL", "Réussit silencieusement", "Échoue avec ProtectedError"], a: 3, exp: "PROTECT refuse la suppression tant que des lignes pointent vers le jeu : l'historique est sanctuarisé." },
+    { type: "qcm", q: "on_delete=models.SET_NULL exige que le champ soit déclaré avec…", opts: ["blank=True", "unique=True", "null=True", "default=0"], a: 2, exp: "Pour mettre la colonne à NULL, encore faut-il qu'elle accepte NULL." },
+    { type: "vf", q: "Si on omet on_delete, Django choisit CASCADE par défaut.", a: false, exp: "on_delete est obligatoire depuis Django 2 : l'omettre lève un TypeError dès le chargement du modèle." },
+    { type: "qcm", q: "Dans Location.objects.create(jeu=catan, membre=zelda, prix_location=3.50), que passe-t-on à jeu ?", opts: ["L'objet Jeu complet", "Le titre du jeu", "Une chaîne SQL", "Un dictionnaire de colonnes"], a: 0, exp: "On affecte l'objet ; Django range son id dans la colonne jeu_id tout seul." },
+    { type: "qcm", q: "Après loc = Location.objects.get(pk=1), l'expression loc.jeu renvoie…", opts: ["L'entier jeu_id", "Un objet Jeu complet (loc.jeu.titre, loc.jeu.prix…)", "Un QuerySet de jeux", "Le SQL de la jointure"], a: 1, exp: "La ForeignKey se traverse comme un attribut : on retombe sur un vrai objet Jeu." },
+    { type: "vf", q: "Si le jeu n'est pas déjà chargé, accéder à loc.jeu déclenche une requête SQL supplémentaire.", a: true, exp: "Django va chercher le jeu à la demande. En boucle, c'est le problème N+1 — remède à la leçon 18 (select_related)." },
+    { type: "qcm", q: "Pour lire l'identifiant du jeu d'une location SANS requête supplémentaire :", opts: ["loc.jeu.id", "loc.jeu_id", "loc.get_jeu()", "loc.jeu.pk()"], a: 1, exp: "jeu_id est une colonne de la location elle-même, déjà en mémoire ; loc.jeu.id peut coûter une requête." },
+    { type: "qcm", q: "Location.objects.filter(jeu__titre='Catan') génère en SQL…", opts: ["Deux requêtes séparées", "Une sous-requête corrélée", "Un INNER JOIN entre ludotheque_location et ludotheque_jeu", "Un produit cartésien"], a: 2, exp: "Le double underscore traverse la relation ; vérifie avec print(qs.query)." },
+    { type: "input", q: "L'exception levée quand on tente de supprimer un jeu retenu par un on_delete=PROTECT :", a: ["ProtectedError", "protectederror", "models.ProtectedError"], ph: "…Error", exp: "django.db.models.ProtectedError : la base et l'ORM refusent la suppression." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA de la ForeignKey Django :", opts: ["@OneToMany", "@JoinTable", "@Entity", "@ManyToOne"], a: 3, exp: "Le côté N annoté @ManyToOne ; chez EF Core une propriété de navigation + FK, chez Eloquent belongsTo." },
+    { type: "vf", q: "Avis.objects.filter(membre__pseudo='zelda42') envoie deux requêtes : une pour le membre, une pour les avis.", a: false, exp: "Un seul SELECT avec INNER JOIN : le filtre traverse la relation dans la même requête." }
+  ],
+  final: {
+    title: "Exercice final — Deux clés, deux politiques",
+    intro: `<p>Location et Avis relient désormais jeux et membres. Avant d'explorer le sens inverse (leçon 9), on vérifie que on_delete et la traversée de relation sont solides.</p>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi PROTECT sur le champ jeu de Location ?", opts: ["Un jeu référencé par des locations porte un historique et des montants facturés : la base refuse l'effacement", "Pour accélérer les requêtes", "Parce que CASCADE est interdit sur deux FK du même modèle", "Pour rendre le champ facultatif"], a: 0, exp: "Le choix de on_delete est un arbitrage métier, pas une formalité technique." },
+      { type: "input", q: "Le on_delete qui propage la suppression en chaîne aux lignes liées :", a: ["CASCADE", "models.CASCADE", "cascade"], ph: "models.…", exp: "CASCADE : supprimer le membre emporte ses locations — pertinent pour le droit à l'effacement." },
+      { type: "vf", q: "Dans models.py on écrit jeu ; dans ludotheque_location, MySQL crée une colonne jeu_id avec contrainte FOREIGN KEY et index.", a: true, exp: "Champ Python sans _id, colonne MySQL avec _id : la convention à retenir." },
+      { type: "qcm", q: "Un membre invoque son droit à l'effacement (RGPD). Grâce au CASCADE sur membre, ses locations…", opts: ["Restent orphelines dans la table", "Sont supprimées avec lui", "Passent à NULL", "Bloquent la suppression du compte"], a: 1, exp: "La suppression se propage : aucune donnée personnelle résiduelle." },
+      { type: "qcm", q: "Le double underscore de jeu__titre sert à…", opts: ["Nommer une colonne privée", "Traverser la relation pour filtrer sur un champ du modèle lié", "Échapper une chaîne SQL", "Créer un index composé"], a: 1, exp: "Location → Jeu en un filtre, traduit en INNER JOIN par l'ORM." }
+    ],
+    solution: `<pre class="pseudo">ForeignKey : se déclare du côté N (Location pointe vers Jeu et Membre)   # la FK vit du cote "plusieurs"
+Côté MySQL : champ jeu → colonne jeu_id + FOREIGN KEY + index          # suffixe _id + contrainte + accelerateur
+on_delete  : OBLIGATOIRE (TypeError sinon)                             # a choisir explicitement
+   CASCADE  → propage la suppression (membre : RGPD)                   # l'effacement coule vers les lignes liees
+   PROTECT  → refuse tant que des lignes pointent (jeu : ProtectedError)   # bouclier sur les donnees a valeur
+   SET_NULL → met NULL (exige null=True)                              # coupe le lien, garde la ligne
+Créer      : Location.objects.create(jeu=catan, membre=zelda, prix_location=3.50)   # on passe des OBJETS
+Naviguer   : loc.jeu (objet complet, requête possible) | loc.jeu_id (gratuit)   # objet = requete, _id = gratuit
+Filtrer    : Location.objects.filter(jeu__titre='Catan') → INNER JOIN   # __ traverse la relation
+Ailleurs   : @ManyToOne (JPA) · navigation + FK (EF Core) · belongsTo (Eloquent)   # equivalents</pre>
+<p>Tu sais aller de la location vers son jeu. Et dans l'autre sens — toutes les locations de Catan ? C'est la leçon 9 : « La relation 1-N : related_name et les managers inverses ».</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l8", title: "Le sort des lignes liées", level: 2,
+    statement: "La Ludothèque met en production les modèles Location et Avis. Rédige une analyse en trois temps. 1) Pour chacune des quatre ForeignKey (Location.jeu, Location.membre, Avis.jeu, Avis.membre), choisis et justifie un on_delete en te plaçant dans deux scénarios concrets : un membre invoque son droit à l'effacement (RGPD) et demande la suppression de son compte ; un jeu abîmé doit être retiré du catalogue alors que des locations le référencent encore. 2) Écris la séance de manage.py shell qui crée deux locations (Catan pour zelda42 à 3,50 €, Azul pour mario_b à 2,50 €) et un avis (note 5 de zelda42 sur Catan). 3) Prédis le SQL généré par Location.objects.filter(jeu__titre='Catan') AVANT de le vérifier avec print(qs.query) : quelles tables, quel JOIN, quel WHERE ?",
+    hints: [
+      "Scénario RGPD : que doivent devenir les locations et les avis d'un membre supprimé ? Peut-on légalement les garder sans propriétaire, ou doivent-ils partir avec lui ?",
+      "Scénario du jeu retiré : les locations portent un historique et des montants facturés — que détruirait un CASCADE ici ? Pense à ProtectedError et à ce qu'il force à faire d'abord.",
+      "Le SQL doit relier ludotheque_location et ludotheque_jeu sur jeu_id = id, avec un WHERE sur le titre — deux tables, un seul INNER JOIN."
+    ],
+    solution: "1) Choix des on_delete\n- Location.membre → CASCADE : à l'effacement RGPD du compte, ses locations (données personnelles : qui a loué quoi) doivent disparaître avec lui.\n- Location.jeu → PROTECT : une location porte des dates et un prix facturé ; supprimer le jeu en CASCADE effacerait de l'historique comptable. ProtectedError force à traiter (ou archiver) les locations d'abord — pour un simple retrait du catalogue, disponible=False suffit d'ailleurs.\n- Avis.membre → CASCADE : un avis est une contribution personnelle, il part avec son auteur.\n- Avis.jeu → CASCADE : un avis sans jeu n'a aucune valeur ; nulle donnée de facturation ici, la propagation est saine.\n\n2) Séance de shell\ncatan = Jeu.objects.get(titre='Catan')\nazul  = Jeu.objects.get(titre='Azul')\nzelda = Membre.objects.get(pseudo='zelda42')\nmario = Membre.objects.get(pseudo='mario_b')\nLocation.objects.create(jeu=catan, membre=zelda, prix_location=3.50)\nLocation.objects.create(jeu=azul, membre=mario, prix_location=2.50)\nAvis.objects.create(jeu=catan, membre=zelda, note=5, commentaire='Un classique indémodable.')\n\n3) SQL prédit\nSELECT location.* FROM ludotheque_location\nINNER JOIN ludotheque_jeu ON (ludotheque_location.jeu_id = ludotheque_jeu.id)\nWHERE ludotheque_jeu.titre = 'Catan'\nDeux tables, un INNER JOIN sur jeu_id, un WHERE sur le titre — print(qs.query) doit confirmer.",
+    note: "Ces deux clés étrangères existaient déjà dans ton schéma Workbench du Niveau 4 : l'ORM ne fait que les déclarer en Python, et makemigrations régénère tes FOREIGN KEY à l'identique. L'arbitrage CASCADE/PROTECT, lui, est une décision métier que ni Django ni Hibernate ne prendront à ta place. Au Niveau 6, chaque modèle de ton projet full-stack posera la même question — et un mauvais on_delete s'y paiera en données perdues, pas en points d'examen." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

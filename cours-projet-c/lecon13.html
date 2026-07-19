@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : stock de vente, paiement simulé",
+  subtitle: "Même schéma transactionnel que la location, mais sur le stock de vente et avec un prix figé.",
+  theory: `
+<h3>1. Acheter, l'autre opération</h3>
+<p>Acheter suit exactement la même logique que louer, mais elle agit sur la colonne <code>stock_vente</code> (le stock réservé à la vente, distinct de celui de la location) et sans notion de durée. On insère une <strong>vente</strong> et on décrémente le stock, le tout dans une <strong>transaction</strong> — ce bloc « tout ou rien » vu en leçon 12, qui garantit que les deux écritures réussissent ensemble ou pas du tout.</p>
+
+<h3>2. Le prix figé</h3>
+<p>Au moment de l'achat, on enregistre le prix <strong>tel qu'il est ce jour-là</strong>. On dit qu'on « fige » le prix : on le copie dans la ligne de vente pour qu'il ne bouge plus jamais. La notation <code>j.prix_achat</code> se lit « le champ <code>prix_achat</code> de la fiche <code>j</code> » — le point <code>.</code> désigne un champ d'une struct.</p>
+<pre class="pseudo">// on enregistre le prix payé AU MOMENT de l'achat
+dao_inserer_vente(c, uid, jeu_id, j.prix_achat);   // on transmet le prix_achat du jeu, qui sera copié dans la ligne de vente</pre>
+<div class="warn">On copie le <code>prix_achat</code> du jeu dans la ligne de vente. Si demain le tarif change, l'historique reste exact : la vente garde le prix réellement payé. Recalculer un ancien montant à partir du prix actuel serait une faute comptable.</div>
+
+<h3>3. La fonction service_acheter</h3>
+<pre class="pseudo">Code service_acheter(MYSQL *c, int uid, int jeu_id) {   // acheter le jeu jeu_id pour l'utilisateur uid
+    mysql_query(c, "START TRANSACTION");                // ouvre la transaction (tout ou rien)
+    Jeu j;                                              // une fiche Jeu vide, qui recevra les infos du jeu
+    if (dao_jeu_par_id(c, jeu_id, &amp;j) != 0) { mysql_query(c,"ROLLBACK"); return ERR_DB; }    // lit le jeu ; si échec, annuler et sortir
+    if (j.stock_vente &lt;= 0)                 { mysql_query(c,"ROLLBACK"); return ERR_STOCK; }  // stock de vente épuisé : annuler et sortir
+
+    if (dao_inserer_vente(c, uid, jeu_id, j.prix_achat) != 0 ||  // insère la vente au prix FIGÉ ; si cette écriture échoue OU…
+        dao_decrementer_stock_vente(c, jeu_id) != 0) {          // …si la baisse du stock de vente échoue…
+        mysql_query(c, "ROLLBACK");                     // …une erreur : tout annuler
+        return ERR_DB;                                  // et signaler l'erreur de base
+    }
+    mysql_query(c, "COMMIT");                           // les deux écritures ont réussi → valider définitivement
+    return OK;                                          // succès de l'achat
+}</pre>
+<p>Le symbole <code>&lt;=</code> veut dire « inférieur ou égal à » : <code>j.stock_vente &lt;= 0</code> teste « le stock de vente est-il tombé à zéro (ou moins) ? ». C'est le contrôle de disponibilité, fait à l'intérieur de la transaction, avant de décrémenter.</p>
+
+<h3>4. Le paiement « simulé »</h3>
+<p>Un vrai paiement passerait par un <strong>prestataire externe</strong> (une passerelle bancaire, un service de carte). Ici, on le <strong>simule</strong> (on fait « comme si ») : on considère l'achat validé et on enregistre la vente. L'important pédagogiquement est la <strong>cohérence</strong> (stock + vente atomiques), pas la passerelle bancaire.</p>
+<div class="tip">Deux stocks, deux opérations, un même schéma transactionnel. Le code d'achat est le jumeau du code de location : même rigueur, colonnes différentes. Réutiliser ce <strong>patron</strong> (ce modèle de code) partout évite les incohérences.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter agit sur…", opts: ["stock_location", "stock_vente", "les deux", "aucun"], a: 1, exp: "Le stock de vente." },
+    { type: "qcm", q: "Acheter suit un schéma…", opts: ["sans transaction", "transactionnel, comme louer", "sans contrôle", "d'affichage"], a: 1, exp: "Même rigueur que la location." },
+    { type: "qcm", q: "Le prix enregistré dans la vente est…", opts: ["recalculé plus tard", "figé au moment de l'achat", "toujours zéro", "le prix de location"], a: 1, exp: "L'historique reste exact." },
+    { type: "qcm", q: "Pourquoi figer le prix ?", opts: ["par hasard", "pour que l'historique reste juste si le tarif change", "pour la vitesse", "sans raison"], a: 1, exp: "Fidélité comptable." },
+    { type: "qcm", q: "Si stock_vente <= 0, le service renvoie…", opts: ["OK", "ERR_STOCK", "ERR_DROIT", "le jeu"], a: 1, exp: "Refus pour rupture." },
+    { type: "qcm", q: "Le paiement ici est…", opts: ["réel via une banque", "simulé (l'accent est sur la cohérence)", "impossible", "gratuit toujours"], a: 1, exp: "On se concentre sur l'atomicité." },
+    { type: "qcm", q: "Acheter insère une ligne dans…", opts: ["location", "vente", "categorie", "utilisateur"], a: 1, exp: "Une vente." },
+    { type: "qcm", q: "Le code d'achat par rapport à celui de location est…", opts: ["totalement différent", "quasi jumeau (mêmes étapes, colonnes différentes)", "sans transaction", "plus simple sans contrôle"], a: 1, exp: "Même patron transactionnel." },
+    { type: "qcm", q: "Recalculer un ancien montant depuis le prix actuel serait…", opts: ["une bonne idée", "une faute comptable", "plus rapide", "obligatoire"], a: 1, exp: "L'historique doit rester fidèle." },
+    { type: "qcm", q: "Le COMMIT n'a lieu que si…", opts: ["au hasard", "insertion vente ET décrément stock réussissent", "le jeu est cher", "jamais"], a: 1, exp: "Sinon ROLLBACK." },
+    { type: "vf", q: "On peut décrémenter le stock de vente hors transaction sans risque.", a: false, exp: "Faux : incohérence possible en cas d'échec partiel." },
+    { type: "qcm", q: "Un vrai paiement passerait par…", opts: ["le DAO", "un prestataire externe (ici simulé)", "le Makefile", "l'UI"], a: 1, exp: "Passerelle bancaire, hors périmètre ici." },
+    { type: "qcm", q: "La vente enregistre notamment…", opts: ["le prix de location", "l'utilisateur, le jeu et le prix payé figé", "le stock total", "rien"], a: 1, exp: "Trace complète de l'opération." },
+    { type: "qcm", q: "Réutiliser le patron transactionnel évite…", opts: ["les tests", "les incohérences entre opérations", "la compilation", "les rôles"], a: 1, exp: "Cohérence garantie." },
+    { type: "qcm", q: "L'achat contrôle le stock…", opts: ["après le COMMIT", "dans la transaction, avant de décrémenter", "dans l'UI", "jamais"], a: 1, exp: "Comme pour la location." }
+  ],
+  final: {
+    title: "Exercice final — Figer le prix",
+    intro: `<p>Une version d'achat. Analyse le point du prix :</p>
+<pre class="pseudo">Code service_acheter(MYSQL *c, int uid, int jeu_id) {   // acheter le jeu jeu_id pour uid
+    mysql_query(c, "START TRANSACTION");            // ouvre la transaction
+    dao_inserer_vente(c, uid, jeu_id);             // insère la vente… mais SANS le prix payé (historique incomplet)
+    dao_decrementer_stock_vente(c, jeu_id);        // baisse le stock… sans vérifier qu'il en reste
+    mysql_query(c, "COMMIT");                       // valide sans tester les retours des dao_* (masque les échecs)
+    return OK;                                      // renvoie OK quoi qu'il arrive
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Que manque-t-il à l'insertion de la vente ?", opts: ["rien", "le prix payé figé (j.prix_achat)", "un printf", "un sleep"], a: 1, exp: "Sans prix, pas d'historique fiable." },
+      { type: "qcm", q: "Que manque-t-il avant de décrémenter ?", opts: ["rien", "vérifier stock_vente > 0", "un COMMIT", "un ROLLBACK"], a: 1, exp: "Contrôle de disponibilité." },
+      { type: "qcm", q: "Que manque-t-il sur les retours des dao_* ?", opts: ["rien", "les tester et ROLLBACK en cas d'échec", "les afficher", "les ignorer"], a: 1, exp: "Sinon COMMIT malgré un échec." },
+      { type: "qcm", q: "D'où vient le prix figé ?", opts: ["d'une saisie", "du jeu chargé (j.prix_achat) au moment de l'achat", "d'un fichier", "de l'UI"], a: 1, exp: "Le prix courant, copié dans la vente." },
+      { type: "qcm", q: "Le contrôle du stock protège contre…", opts: ["rien", "vendre un jeu en rupture", "les injections", "les fuites mémoire"], a: 1, exp: "Pas de vente sans stock." }
+    ],
+    solution: `<pre class="pseudo">Code service_acheter(MYSQL *c, int uid, int jeu_id) {   // acheter le jeu jeu_id pour l'utilisateur uid
+    mysql_query(c, "START TRANSACTION");                // ouvre la transaction (tout ou rien)
+    Jeu j;                                              // fiche vide pour recevoir le jeu
+    if (dao_jeu_par_id(c, jeu_id, &amp;j) != 0) { mysql_query(c,"ROLLBACK"); return ERR_DB; }    // lecture du jeu ; échec → annuler
+    if (j.stock_vente &lt;= 0)                 { mysql_query(c,"ROLLBACK"); return ERR_STOCK; }  // stock de vente épuisé → annuler
+
+    if (dao_inserer_vente(c, uid, jeu_id, j.prix_achat) != 0 ||   // insère la vente au prix figé ; si échec OU…
+        dao_decrementer_stock_vente(c, jeu_id) != 0) {           // …si la baisse du stock échoue…
+        mysql_query(c, "ROLLBACK");                     // …tout annuler
+        return ERR_DB;                                  // signaler l'erreur
+    }
+    mysql_query(c, "COMMIT");                           // les deux écritures ont réussi → valider
+    return OK;                                          // succès
+}</pre>
+<p>Prix figé, stock contrôlé, transaction atomique : l'achat est fiable. Le métier est complet. Demain : l'interface console qui appelle tout ça.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l13", title: "Enregistrer une vente", level: 3,
+    statement: "Écris (en pseudocode C commenté) la fonction dao_inserer_vente(c, uid, jeu_id, prix) : elle insère une ligne dans la table vente avec une requête préparée liant uid, jeu_id (int) et prix (double). Explique pourquoi le prix est passé en paramètre (figé) plutôt que relu.",
+    hints: [
+      "INSERT INTO vente(utilisateur_id, jeu_id, prix_paye, date_vente) VALUES(?,?,?,NOW()).",
+      "Trois paramètres liés : deux int et un double.",
+      "Le prix vient de l'appelant (figé au moment de l'achat)."
+    ],
+    solution: "// dao_inserer_vente(c, uid, jeu_id, prix) :\n// REQUETE PREPAREE :\n//   INSERT INTO vente(utilisateur_id, jeu_id, prix_paye, date_vente)\n//   VALUES (?, ?, ?, NOW())\n//   bind: b[0]=uid (LONG), b[1]=jeu_id (LONG), b[2]=prix (DOUBLE)\n//   execute ; renvoyer 0 si succes, -1 sinon ; close le statement\n//\n// Le prix est PASSE EN PARAMETRE (fige au moment de l'achat) :\n// si le tarif du jeu change plus tard, la vente conserve le prix reellement paye.\n// Relire prix_achat depuis la table jeu fausserait l'historique.",
+    note: "Le prix figé est un choix comptable : l'historique doit refléter ce qui a été payé, pas le tarif du jour. La requête préparée protège l'insertion, même si uid/jeu_id venaient d'une saisie." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

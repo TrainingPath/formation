@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Spring Security : protéger l'API",
+  subtitle: "Pour l'instant, n'importe qui peut supprimer tous les livres. Corrigeons ça.",
+  theory: `
+<h3>1. Authentification et autorisation : deux questions différentes</h3>
+<p>Deux mots proches mais distincts : <strong>authentification</strong> = prouver son identité (comme montrer sa carte d'identité) ; <strong>autorisation</strong> = avoir le droit de faire quelque chose (comme un badge qui ouvre certaines portes).</p>
+<pre class="pseudo">AUTHENTIFICATION : « Qui es-tu ? »        (login, mot de passe, jeton…)
+AUTORISATION     : « As-tu le droit ? »   (rôles, permissions)</pre>
+<p>Spring Security répond aux deux. Dès qu'on ajoute la dépendance <code>spring-boot-starter-security</code>… TOUT est verrouillé : chaque requête exige une authentification. Sécurisé par défaut — à toi d'OUVRIR ce qui doit l'être.</p>
+<h3>2. La chaîne de filtres</h3>
+<p>Chaque requête traverse une <strong>chaîne de filtres</strong> (une série de contrôles) AVANT d'atteindre tes contrôleurs : vérification d'identité, contrôle des droits… Configuration :</p>
+<pre class="pseudo">@Configuration                                   // classe de configuration Spring
+public class SecuriteConfig {                     // configuration de la sécurité
+
+    @Bean                                        // fabrique un bean
+    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {  // définit les règles de sécurité
+        http
+          .authorizeHttpRequests(auth -> auth    // début des règles d'autorisation
+              .requestMatchers(HttpMethod.GET, "/api/livres/**").permitAll()  // GET du catalogue : ouvert à tous
+              .requestMatchers("/api/admin/**").hasRole("ADMIN")   // zone admin : rôle ADMIN requis
+              .anyRequest().authenticated()       // tout le reste : authentification obligatoire
+          )                                       // fin des règles
+          .httpBasic(Customizer.withDefaults())     // auth basique (login/mot de passe) pour commencer
+          .csrf(csrf -> csrf.disable());            // API sans session : on désactive le CSRF (voir n°5)
+        return http.build();                      // construit la chaîne de filtres
+    }                                             // fin de la méthode
+}                                                 // fin de la classe</pre>
+<ul>
+<li><strong>Lecture publique</strong> : les GET du catalogue sont ouverts à tous.</li>
+<li><strong>Zone admin</strong> : réservée au <strong>rôle</strong> ADMIN (un rôle = une étiquette de droits attachée à un utilisateur).</li>
+<li><strong>Tout le reste</strong> : connecté obligatoire. L'ordre des règles compte — premier match gagnant !</li>
+</ul>
+<h3>3. Les mots de passe : JAMAIS en clair</h3>
+<p>Un <strong>hachage</strong> (« hash ») transforme un texte en une empreinte impossible à inverser. On stocke l'empreinte, jamais le mot de passe.</p>
+<pre class="pseudo">@Bean                                            // fabrique un bean
+PasswordEncoder passwordEncoder() {              // l'outil de hachage des mots de passe
+    return new BCryptPasswordEncoder();          // BCrypt : le standard éprouvé
+}                                                // fin de la méthode
+
+encoder.encode("monMotDePasse")                  // transforme le mot de passe…
+→ "$2a$10$Xp8..."   // …en HASH irréversible (c'est lui, et lui seul, qui est stocké en base)
+
+encoder.matches("monMotDePasse", hash)  → true   // compare une saisie au hash stocké (sans le déchiffrer)</pre>
+<p><strong>BCrypt</strong> est un hachage à sens unique : impossible de retrouver le mot de passe depuis le hash. À la connexion, on compare le hash du mot de passe saisi au hash stocké. Même TOI tu ne peux pas lire les mots de passe de tes membres — c'est voulu !</p>
+<h3>4. D'où viennent les utilisateurs ?</h3>
+<pre class="pseudo">// Nos membres en base deviennent des utilisateurs de connexion :
+@Service                                         // service géré par Spring
+public class NosUtilisateurs implements UserDetailsService {  // implémente le contrat de Spring Security
+    private final MembreRepository repo;         // accès à la table membres
+    // ...                                        // constructeur d'injection
+    public UserDetails loadUserByUsername(String email) {  // appelé par Spring à chaque connexion
+        Membre m = repo.findByEmail(email)       // on cherche le membre par email
+            .orElseThrow(() -> new UsernameNotFoundException(email));  // absent → échec de connexion
+        return User.withUsername(m.getEmail())   // on construit l'utilisateur pour Spring Security
+                   .password(m.getMotDePasseHash())  // avec le hash stocké
+                   .roles(m.getRole())            // "MEMBRE" ou "ADMIN"
+                   .build();                      // objet UserDetails prêt
+    }                                             // fin de la méthode
+}                                                 // fin de la classe</pre>
+<p>Spring Security appelle CE service à chaque connexion : identité vérifiée contre TA table membres.</p>
+<h3>5. Les réponses de la sécurité</h3>
+<pre class="pseudo">401 Unauthorized  → pas authentifié (ou identifiants faux)
+403 Forbidden     → authentifié, mais pas le droit (mauvais rôle)</pre>
+<div class="warn">Le CSRF est une protection essentielle pour les applications à SESSIONS et formulaires (leçon 18 !). Pour une API stateless (sans session), on le désactive — mais comprends POURQUOI avant de copier la ligne : désactiver une protection « parce que ça bloque » est le péché capital du débutant.</div>
+<div class="tip">Teste la sécurité avec curl : curl -u admin:motdepasse http://localhost:8080/api/admin/stats — l'option -u envoie l'authentification basique. Sans elle : 401. Avec un compte non-admin : 403. Vérifie les trois cas !</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la différence entre authentification et autorisation ?", opts: ["Aucune", "Authentification = qui es-tu ; autorisation = as-tu le droit", "L'autorisation vient en premier", "Deux mots pour le login"], a: 1, exp: "D'abord établir l'identité, ensuite vérifier les droits." },
+    { type: "qcm", q: "Que se passe-t-il juste après l'ajout de spring-boot-starter-security ?", opts: ["Rien", "Tout est verrouillé : chaque requête exige une authentification", "Tout reste ouvert", "Le port change"], a: 1, exp: "Sécurisé PAR DÉFAUT : la bonne philosophie — on ouvre ensuite explicitement." },
+    { type: "qcm", q: "Que fait .requestMatchers(HttpMethod.GET, \"/api/livres/**\").permitAll() ?", opts: ["Bloque les GET", "Ouvre au public la lecture du catalogue", "Exige le rôle ADMIN", "Supprime les livres"], a: 1, exp: "Consulter le catalogue sans compte : choix métier explicite." },
+    { type: "qcm", q: "Que signifie le ** dans /api/livres/** ?", opts: ["Une faute", "Ce chemin et tout ce qui se trouve en dessous", "Exactement deux caractères", "Un commentaire"], a: 1, exp: "/api/livres, /api/livres/3, /api/livres/recherche… tout est couvert." },
+    { type: "qcm", q: "Pourquoi l'ordre des règles authorizeHttpRequests est-il important ?", opts: ["Il ne l'est pas", "Première règle correspondante appliquée : anyRequest() en premier avalerait tout", "Ordre alphabétique requis", "Pour la lisibilité seulement"], a: 1, exp: "Du plus spécifique au plus général — anyRequest() toujours en dernier." },
+    { type: "qcm", q: "Statut pour une requête SANS authentification sur une route protégée ?", opts: ["403", "401 Unauthorized", "404", "500"], a: 1, exp: "401 = « présente-toi d'abord »." },
+    { type: "qcm", q: "Statut pour un utilisateur CONNECTÉ mais sans le bon rôle ?", opts: ["401", "403 Forbidden", "404", "409"], a: 1, exp: "403 = « je sais qui tu es, et justement : non »." },
+    { type: "qcm", q: "Pourquoi ne JAMAIS stocker un mot de passe en clair ?", opts: ["Ça prend de la place", "Une fuite de la base exposerait tous les comptes (souvent réutilisés ailleurs !)", "C'est illisible", "Les bases refusent"], a: 1, exp: "Le hash limite les dégâts d'une fuite : irréversible." },
+    { type: "qcm", q: "Que renvoie BCrypt encode(\"secret\") ?", opts: ["\"secret\"", "Un hash irréversible ($2a$10$...)", "Le mot chiffré, déchiffrable", "Un nombre"], a: 1, exp: "Hachage à sens unique, avec sel intégré : deux encode() du même mot donnent des hashs différents !" },
+    { type: "qcm", q: "Comment vérifier un mot de passe à la connexion, alors ?", opts: ["On déchiffre le hash", "encoder.matches(saisi, hashStocké) compare sans jamais déchiffrer", "On compare en clair", "On demande à l'utilisateur son hash"], a: 1, exp: "matches() refait le calcul côté saisie et compare les résultats." },
+    { type: "qcm", q: "Quel est le rôle d'un UserDetailsService personnalisé ?", opts: ["Créer des vues", "Dire à Spring Security où et comment charger TES utilisateurs (notre table membres)", "Chiffrer la base", "Gérer les sessions"], a: 1, exp: "Le pont entre Spring Security et ta table membres." },
+    { type: "qcm", q: "Un attaquant vole la base : il lit motDePasseHash = \"$2a$10$Xp...\". Que peut-il en faire directement ?", opts: ["Se connecter avec", "Presque rien : le hash n'est pas le mot de passe et ne peut pas être « rejoué » comme tel", "Le déchiffrer en une seconde", "Changer le mot de passe"], a: 1, exp: "C'est tout l'intérêt : le hash ne suffit pas pour se connecter." },
+    { type: "vf", q: "Désactiver le CSRF est un choix raisonné pour une API stateless, pas un réflexe à copier partout.", a: true, exp: "Avec des sessions et des formulaires (leçon 18), le CSRF doit rester actif." },
+    { type: "qcm", q: "Avec curl, comment envoyer une authentification basique ?", opts: ["-p user pass", "-u utilisateur:motdepasse", "--login", "-auth"], a: 1, exp: "curl -u admin:secret http://... — pratique pour tester les trois cas (200/401/403)." },
+    { type: "qcm", q: "Notre API : qui peut faire DELETE /api/livres/3 selon la config de la leçon ?", opts: ["Tout le monde", "Un utilisateur authentifié (la règle anyRequest().authenticated() s'applique)", "Personne", "Les GET seulement"], a: 1, exp: "DELETE n'est pas dans permitAll → il tombe dans anyRequest().authenticated(). On affinera avec les rôles demain." }
+  ],
+  final: {
+    title: "Exercice final — Le verrouillage de la bibliothèque",
+    intro: `<p>La configuration de sécurité du projet est en place :</p>
+<pre class="pseudo">http.authorizeHttpRequests(auth -> auth                              // début des règles d'autorisation
+    .requestMatchers(HttpMethod.GET, "/api/livres/**").permitAll()   // lecture du catalogue : publique
+    .requestMatchers(HttpMethod.POST, "/api/membres").permitAll()   // inscription : publique
+    .requestMatchers("/api/admin/**").hasRole("ADMIN")               // zone admin : rôle ADMIN
+    .anyRequest().authenticated()                                    // tout le reste : connecté
+)                                                                    // fin des règles
+.httpBasic(Customizer.withDefaults())                                // auth basique
+.csrf(csrf -> csrf.disable());                                       // pas de CSRF (API stateless)</pre>
+<p>Prédis la réponse pour chaque requête :</p>`,
+    questions: [
+      { type: "qcm", q: "GET /api/livres (aucune authentification) :", opts: ["401", "200 : la lecture du catalogue est publique", "403", "404"], a: 1, exp: "permitAll sur les GET livres : tout visiteur peut consulter." },
+      { type: "qcm", q: "POST /api/emprunts (aucune authentification) :", opts: ["201", "401 : la route tombe dans anyRequest().authenticated()", "403", "200"], a: 1, exp: "Emprunter exige d'être connecté — pas dans les permitAll." },
+      { type: "qcm", q: "GET /api/admin/stats avec un compte MEMBRE valide :", opts: ["200", "403 : authentifié mais pas ADMIN", "401", "404"], a: 1, exp: "Identité OK, rôle insuffisant : Forbidden." },
+      { type: "qcm", q: "POST /api/membres (inscription, aucune authentification) :", opts: ["401", "La validation puis le service s'exécutent : l'inscription est volontairement publique", "403", "Impossible"], a: 1, exp: "Sans permitAll ici, personne ne pourrait JAMAIS créer de compte — le paradoxe de la porte d'entrée." },
+      { type: "qcm", q: "Pourquoi l'inscription stocke-t-elle passwordEncoder.encode(dto.getMotDePasse()) et non le mot de passe reçu ?", opts: ["Pour faire court", "Seul le hash BCrypt entre en base : le mot de passe en clair ne doit exister nulle part", "Pour le JSON", "Question de performance"], a: 1, exp: "Le mot de passe en clair ne fait que transiter en mémoire, jamais plus." }
+    ],
+    solution: `<pre class="pseudo">// L'inscription complète, avec hash :
+@Service                                         // service métier
+public class MembreService {
+    private final MembreRepository repo;         // accès aux membres
+    private final PasswordEncoder encoder;      // le bean BCrypt injecté
+    // ... constructeur ...
+
+    public Membre inscrire(InscriptionDto dto) {
+        if (repo.existsByEmail(dto.getEmail()))  // l'email est-il déjà pris ?
+            throw new EmailDejaUtiliseException(dto.getEmail());   // oui → exception (409)
+        Membre m = new Membre(dto.getNom(), dto.getEmail());      // on crée le membre
+        m.setMotDePasseHash(encoder.encode(dto.getMotDePasse()));  // ← LE geste : on stocke le HASH
+        m.setRole("MEMBRE");                     // rôle par défaut
+        return repo.save(m);                     // enregistrement en base
+    }
+}
+
+// Les tests curl du verrouillage :
+// curl http://localhost:8080/api/livres                    → 200 (public)
+// curl -X POST http://localhost:8080/api/emprunts ...      → 401 (anonyme)
+// curl -u a.diallo@ex.be:motdepasse -X POST .../emprunts   → 201 (connecté)
+// curl -u a.diallo@ex.be:motdepasse .../api/admin/stats    → 403 (pas admin)</pre>
+<p>L'API est verrouillée. Demain : savoir QUI est connecté dans le code, et affiner les droits — un membre ne doit rendre QUE ses propres livres !</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-security-config", title: "La configuration de sécurité du gestionnaire", level: 3,
+    statement: "Écris la classe <code>SecuriteConfig</code> complète pour une API de bibliothèque : bean <code>PasswordEncoder</code> (BCrypt) et bean <code>SecurityFilterChain</code> avec ces règles : GET <code>/api/livres/**</code> public, POST <code>/api/membres</code> public (inscription), <code>/api/admin/**</code> réservé au rôle ADMIN, tout le reste authentifié ; authentification basique, CSRF désactivé (API stateless).",
+    hints: [
+      "Deux méthodes @Bean dans une classe @Configuration.",
+      "L'ordre des requestMatchers : du plus spécifique vers anyRequest() en dernier.",
+      "N'oublie pas http.build() à la fin, et le throws Exception sur la méthode."
+    ],
+    solution: "@Configuration\npublic class SecuriteConfig {\n\n    @Bean\n    PasswordEncoder passwordEncoder() {\n        return new BCryptPasswordEncoder();      // le standard du hachage\n    }\n\n    @Bean\n    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n        http\n          .authorizeHttpRequests(auth -> auth\n              // lecture du catalogue : publique\n              .requestMatchers(HttpMethod.GET, \"/api/livres/**\").permitAll()\n              // inscription : publique (sinon personne ne peut créer de compte)\n              .requestMatchers(HttpMethod.POST, \"/api/membres\").permitAll()\n              // zone d'administration : rôle ADMIN exigé\n              .requestMatchers(\"/api/admin/**\").hasRole(\"ADMIN\")\n              // tout le reste : connecté obligatoire — TOUJOURS en dernier\n              .anyRequest().authenticated()\n          )\n          .httpBasic(Customizer.withDefaults())   // auth basique (simple pour débuter)\n          .csrf(csrf -> csrf.disable());          // API sans session : choix raisonné\n        return http.build();\n    }\n}",
+    note: "Relis ta config en te posant LA question du métier : « qui a le droit de faire quoi ? ». Si une ligne ne répond pas clairement, elle est suspecte." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'API REST (ASP.NET) et le job de tests au vert",
+  subtitle: "On ouvre le catalogue en API — et l'usine de tests devient complète.",
+  theory: `
+<h3>1. Un DTO record, pas l'entité</h3>
+<p>Une <strong>API REST</strong> est une porte d'entrée standardisée qui permet à d'autres programmes de dialoguer avec le nôtre par le web (demander la liste des jeux, en ajouter un…). Un <strong>DTO</strong> (Data Transfer Object, « objet de transport de données ») est un petit objet dédié à ce qui sort ou entre par cette porte. On l'écrit avec un <strong>record</strong> : un type C# court et figé (non modifiable), idéal pour transporter quelques valeurs.</p>
+<pre class="pseudo">public record JeuDto(long Id, string Titre, decimal PrixLocation, bool Louable);   // objet de transport figé : ce que l'API expose d'un jeu</pre>
+<p>On n'expose <strong>jamais</strong> l'entité EF directement : le DTO choisit ce qui sort (pas de propriété de navigation, pas de champ interne) et découple le <strong>contrat d'API</strong> (ce que promet la porte) du schéma de la base.</p>
+
+<h3>2. Le contrôleur API</h3>
+<p>Un <strong>contrôleur</strong> est la classe qui reçoit les requêtes web et y répond. <code>[HttpGet]</code> indique qu'une méthode répond aux requêtes de type <strong>GET</strong> (lecture). Le mot <code>async</code> et l'objet <code>Task</code> signalent une opération asynchrone (qui attend la base sans bloquer).</p>
+<pre class="pseudo">[ApiController, Route("api/jeux")]                            // c'est une API ; son URL de base est /api/jeux
+public class JeuxApiController : ControllerBase {             // le contrôleur d'API (hérite de ControllerBase)
+    private readonly LudothequeContext _db;                   // accès à la base de données, injecté
+    public JeuxApiController(LudothequeContext db) => _db = db;   // constructeur : reçoit le DbContext (DI)
+
+    [HttpGet]                                                 // répond aux requêtes GET (lecture) sur /api/jeux
+    public async Task&lt;IEnumerable&lt;JeuDto&gt;&gt; Lister() =>         // renvoie, de façon asynchrone, une liste de JeuDto
+        await _db.Jeux.Include(j => j.Categorie).OrderBy(j => j.Titre)   // charge la catégorie liée en 1 jointure et trie par titre (anti-N+1)
+            .Select(j => new JeuDto(j.Id, j.Titre, j.PrixLocation, j.StockLocation > 0))   // transforme chaque Jeu en JeuDto (projection)
+            .ToListAsync();                                   // exécute la requête et rapatrie le résultat sous forme de liste
+}</pre>
+<p><code>IEnumerable&lt;JeuDto&gt;</code> désigne « une suite de JeuDto que l'on peut parcourir ». <code>Include</code> et <code>Select</code> sont expliqués juste en dessous.</p>
+
+<h3>3. Éviter le N+1 dès l'API</h3>
+<p>Le <strong>problème N+1</strong> est un piège de performance : pour afficher N jeux, un code naïf fait 1 requête pour la liste, puis 1 requête par jeu pour aller chercher sa catégorie — soit N+1 allers-retours vers la base. Une <strong>jointure</strong> (<code>Include</code>) rassemble tout en une seule requête.</p>
+<pre class="pseudo">// Include(j => j.Categorie) charge la catégorie en une jointure (pas 1 requête par jeu)
+// La projection Select(...) ne rapatrie que les colonnes utiles au DTO</pre>
+
+<h3>4. Le test d'intégration (WebApplicationFactory)</h3>
+<p><strong>WebApplicationFactory</strong> démarre l'application entière en mémoire, le temps du test, pour l'interroger comme un vrai navigateur mais sans réseau. On lui demande une page et on vérifie la réponse.</p>
+<pre class="pseudo">public class JeuApiTests : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt; {   // démarre l'app en mémoire pour la tester via HTTP
+    [Fact] public async Task Liste_les_jeux() {              // un test d'intégration de l'API
+        var client = _factory.CreateClient();               // crée un client HTTP branché sur l'app de test
+        var r = await client.GetAsync("/api/jeux");          // envoie une requête GET sur /api/jeux
+        r.EnsureSuccessStatusCode();      // 2xx             // vérifie que la réponse est un succès (code HTTP 2xx)
+    }
+}</pre>
+
+<h3>5. Le job de tests complet, avec MySQL</h3>
+<p>Dans la CI, un <strong>service</strong> est un conteneur auxiliaire démarré à côté du job (ici une base MySQL jetable), pour que les tests d'intégration parlent à un vrai moteur.</p>
+<pre class="pseudo"># ci.yml
+  tests:                                                     # un second job nommé "tests"
+    services:                                                # conteneurs auxiliaires démarrés pour ce job
+      mysql:                                                 # une base MySQL jetable pour les tests d'intégration
+        image: mysql:8.4                                     # image officielle MySQL 8.4
+        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }   # crée la base + mot de passe root (jetable)
+        ports: ["3306:3306"]                                 # rend MySQL joignable depuis le job
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-retries=10   # attendre que MySQL soit vraiment prêt
+    steps:                                                   # étapes du job, dans l'ordre
+      - uses: actions/checkout@v4                            # récupère le code
+      - uses: actions/setup-dotnet@v4                        # installe le SDK .NET
+        with: { dotnet-version: "10.0.x" }                   #   version 10.x
+      - run: dotnet test                                     # lance tous les tests (unitaires + intégration)
+        env: { ConnectionStrings__Default: "Server=127.0.0.1;Database=ludotheque;..." }   # indique aux tests où joindre le MySQL du job</pre>
+<div class="warn">Le service MySQL de la CI (cours CI/CD leçon 10) rejoue les migrations sur une base neuve à chaque commit : les tests d'intégration s'exécutent contre le vrai moteur, pas une base InMemory qui divergerait. La base est jetable, recréée à chaque exécution.</div>
+<div class="tip"><strong>Fin de semaine 1.</strong> L'usine est complète AVANT que l'application ne soit finie : entités, service et API existent, chacun sous tests, et le pipeline (format + tests avec MySQL) tourne au vert à chaque commit. On peut désormais empiler le métier en confiance — chaque ajout naîtra testé et surveillé.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'API renvoie…", opts: ["L'entité EF directement", "Un DTO (record) choisi", "Le schéma SQL", "Rien"], a: 1, exp: "Découplage contrat/schéma." },
+    { type: "qcm", q: "Include(j => j.Categorie) évite…", opts: ["La compilation", "Le problème N+1", "Le CSS", "Le test"], a: 1, exp: "Une jointure au lieu de N+1." },
+    { type: "qcm", q: "Exposer l'entité directement risque…", opts: ["Rien", "De fuiter des champs internes / propriétés de navigation", "D'accélérer", "De chiffrer"], a: 1, exp: "Le DTO protège." },
+    { type: "qcm", q: "Le test d'API utilise…", opts: ["curl à la main", "WebApplicationFactory (test d'intégration HTTP)", "La prod", "Un mock total"], a: 1, exp: "Client de test." },
+    { type: "qcm", q: "EnsureSuccessStatusCode() vérifie…", opts: ["Le CSS", "Que la réponse est 2xx", "La base", "Le port"], a: 1, exp: "Contrat d'API." },
+    { type: "qcm", q: "Le job tests CI a un service…", opts: ["Redis", "mysql:8.4", "Nginx", "Aucun"], a: 1, exp: "Vrai moteur pour l'intégration." },
+    { type: "qcm", q: "La base de la CI est…", opts: ["La prod", "Jetable, recréée à chaque exécution", "Permanente", "Manuelle"], a: 1, exp: "Migrations rejouées de zéro." },
+    { type: "qcm", q: "Le record JeuDto est…", opts: ["Une entité", "Un type immuable de transport", "Un service", "Un test"], a: 1, exp: "Contrat de sortie." },
+    { type: "qcm", q: "Tester contre MySQL plutôt qu'InMemory…", opts: ["Est plus lent sans intérêt", "Évite le 'vert en CI, rouge en prod'", "Est interdit", "Chiffre"], a: 1, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "En fin de semaine 1, l'usine est…", opts: ["Inexistante", "Complète avant que l'app soit finie", "En prod", "Optionnelle"], a: 1, exp: "Outillage d'abord." },
+    { type: "vf", q: "Include charge la relation en une jointure au lieu de N requêtes.", a: true, exp: "Anti-N+1." },
+    { type: "qcm", q: "[HttpGet] sur /api/jeux répond à…", opts: ["POST", "GET (lecture)", "DELETE", "Rien"], a: 1, exp: "Lister le catalogue." },
+    { type: "qcm", q: "La projection Select(...) …", opts: ["Charge tout", "Ne rapatrie que les colonnes utiles au DTO", "Chiffre", "Déploie"], a: 1, exp: "Requête ciblée." },
+    { type: "qcm", q: "ConnectionStrings__Default en CI pointe vers…", opts: ["La prod", "Le service mysql du job (127.0.0.1)", "Rien", "InMemory"], a: 1, exp: "Base jetable du runner." },
+    { type: "vf", q: "Chaque nouvel ajout métier naîtra désormais testé et surveillé.", a: true, exp: "L'usine est prête." }
+  ],
+  final: {
+    title: "Exercice final — L'API et l'usine au vert",
+    intro: `<p>API + DTO + test + job MySQL.</p>`,
+    questions: [
+      { type: "qcm", q: "L'API expose :", opts: ["un DTO (record)", "l'entité EF", "le SQL", "rien"], a: 0, exp: "Contrat découplé." },
+      { type: "qcm", q: "Le N+1 est évité par :", opts: ["Include / projection", "plus de RAM", "un cache manuel", "la chance"], a: 0, exp: "Une jointure." },
+      { type: "qcm", q: "Le test d'API utilise :", opts: ["WebApplicationFactory", "un navigateur", "la prod", "un mock total"], a: 0, exp: "Intégration HTTP." },
+      { type: "qcm", q: "Le job de tests CI a :", opts: ["un service mysql:8.4 jetable", "la base de prod", "aucune base", "InMemory uniquement"], a: 0, exp: "Vrai moteur." },
+      { type: "vf", q: "Fin de semaine 1 : l'usine tourne avant que l'app soit finie.", a: true, exp: "Outillage d'abord." }
+    ],
+    solution: `<pre class="pseudo">record JeuDto(long Id, string Titre, decimal PrixLocation, bool Louable);   // DTO de sortie (figé)
+[ApiController, Route("api/jeux")] class JeuxApiController : ControllerBase {   // API sur /api/jeux
+  [HttpGet] Task<IEnumerable<JeuDto>> Lister() =>            // GET : renvoie la liste des jeux
+    _db.Jeux.Include(j => j.Categorie).OrderBy(j => j.Titre)   // 1 jointure (anti-N+1) + tri par titre
+       .Select(j => new JeuDto(j.Id, j.Titre, j.PrixLocation, j.StockLocation > 0))   // projection Jeu -> DTO
+       .ToListAsync();                                       // exécute la requête (asynchrone)
+}
+# ci.yml job tests : service mysql:8.4 + dotnet test (ConnectionStrings__Default)   // tests d'intégration sur vrai MySQL</pre>
+<p>Semaine 1 bouclée : usine complète, au vert. Demain : valider les entrées et refuser proprement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton API et son job de tests…",
+  items: [
+  { id: "proj6cs-l7", title: "L'API REST + le job de tests MySQL", level: 2,
+    statement: "Écris le record JeuDto, le contrôleur API GET /api/jeux (Include + projection anti-N+1), un test WebApplicationFactory, et le job 'tests' de ci.yml avec un service mysql:8.4. Explique en 2-3 lignes pourquoi on n'expose pas l'entité et pourquoi la CI utilise un vrai MySQL plutôt qu'InMemory.",
+    hints: [
+      "record JeuDto(long Id, string Titre, decimal PrixLocation, bool Louable).",
+      "Include(j => j.Categorie) + Select(...) pour éviter le N+1 et ne sortir que l'utile.",
+      "ci.yml : services.mysql avec health-cmd ; ConnectionStrings__Default vers 127.0.0.1."
+    ],
+    solution: "public record JeuDto(long Id, string Titre, decimal PrixLocation, bool Louable);\n\n[ApiController, Route(\"api/jeux\")]\npublic class JeuxApiController : ControllerBase {\n    private readonly LudothequeContext _db;\n    public JeuxApiController(LudothequeContext db) => _db = db;\n\n    [HttpGet]\n    public async Task<IEnumerable<JeuDto>> Lister() =>\n        await _db.Jeux.Include(j => j.Categorie).OrderBy(j => j.Titre)\n            .Select(j => new JeuDto(j.Id, j.Titre, j.PrixLocation, j.StockLocation > 0))\n            .ToListAsync();\n}\n\npublic class JeuApiTests : IClassFixture<WebApplicationFactory<Program>> {\n    private readonly WebApplicationFactory<Program> _factory;\n    public JeuApiTests(WebApplicationFactory<Program> f) => _factory = f;\n    [Fact] public async Task Liste_les_jeux() {\n        var r = await _factory.CreateClient().GetAsync(\"/api/jeux\");\n        r.EnsureSuccessStatusCode();\n    }\n}\n\n# ci.yml\n  tests:\n    services:\n      mysql:\n        image: mysql:8.4\n        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }\n        ports: [\"3306:3306\"]\n        options: --health-cmd=\"mysqladmin ping\" --health-interval=5s --health-retries=10\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-dotnet@v4\n        with: { dotnet-version: \"10.0.x\" }\n      - run: dotnet test\n        env: { ConnectionStrings__Default: \"Server=127.0.0.1;Database=ludotheque;User=root;Password=ci\" }\n\n// POURQUOI PAS L'ENTITE, POURQUOI UN VRAI MYSQL\n// On n'expose pas l'entite EF : elle porte des proprietes de navigation (Categorie)\n// qui, serialisees, provoquent des cycles ou fuitent des champs internes. Le DTO\n// record fige un contrat d'API stable, independant du schema. Et la CI utilise un\n// vrai MySQL (pas InMemory) car le provider InMemory ignore les contraintes, les\n// types et le SQL reel : tester contre le moteur reel evite le 'vert en CI, rouge en prod'.",
+    note: "Cette leçon boucle la semaine 1 : l'infrastructure de qualité (Compose, migrations, CI, tests unitaires ET d'intégration avec MySQL) est complète avant que le métier ne le soit. Le DTO record et l'Include sont deux réflexes — découplage et performance — posés dès la première API, pas rétrofités. WebApplicationFactory démarre l'app en mémoire pour des tests HTTP réalistes. À partir de la semaine 2, chaque brique métier viendra se couler dans cette usine déjà verte." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

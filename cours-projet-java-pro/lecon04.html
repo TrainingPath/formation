@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Du MCD Merise aux migrations Flyway (dans le conteneur)",
+  subtitle: "Le schéma devient du code versionné, rejoué à l'identique partout.",
+  theory: `
+<h3>1. Merise d'abord, SQL ensuite</h3>
+<p>Comme au Niveau 6, le schéma vient du <strong>MCD</strong> : Categorie (1,n)—(1,1) Jeu. Deux stocks distincts (vente / location), l'argent en <code>DECIMAL</code>, jamais en flottant. Ce qui change : on ne laisse plus Hibernate créer les tables « en douce » — c'est <strong>Flyway</strong> qui fait foi.</p>
+<p>Traduisons ce jargon de base de données. Une <strong>base de données</strong> est un classeur électronique ; un <strong>schéma</strong> en est le plan (quelles tables, quelles colonnes). Une <strong>table</strong> est un tableau, comme une feuille de tableur : chaque ligne est une fiche, chaque colonne une information. Le <strong>MCD</strong> (Modèle Conceptuel de Données, issu de la méthode <strong>Merise</strong>) est le brouillon qui dessine ces tables et leurs liens avant d'écrire le moindre <strong>SQL</strong> (le langage pour parler aux bases de données). <code>DECIMAL</code> stocke un nombre <em>exact</em> à la virgule près — indispensable pour de l'argent, là où un <em>flottant</em> (nombre approché) accumulerait des erreurs de centimes. <strong>Hibernate</strong> est l'outil qui recopie automatiquement les objets Java dans les tables et inversement ; <strong>Flyway</strong> est le carnet de migrations qui construit et fait évoluer le schéma pas à pas. Ici on interdit à Hibernate de bricoler les tables : Flyway seul fait foi.</p>
+
+<h3>2. La première migration Flyway</h3>
+<pre class="pseudo">-- src/main/resources/db/migration/V1__init.sql   -- 1re migration ; le prefixe V1__ fixe l'ordre d'application
+CREATE TABLE categorie (                  -- cree la table "categorie" (un tableau de fiches)
+  id   BIGINT PRIMARY KEY AUTO_INCREMENT, -- identifiant unique, numerote automatiquement (1, 2, 3...)
+  nom  VARCHAR(100) NOT NULL UNIQUE       -- texte jusqu'a 100 caracteres, obligatoire (NOT NULL) et sans doublon (UNIQUE)
+);
+CREATE TABLE jeu (                        -- cree la table "jeu"
+  id             BIGINT PRIMARY KEY AUTO_INCREMENT,   -- identifiant unique auto-numerote
+  titre          VARCHAR(200) NOT NULL,   -- titre du jeu, obligatoire
+  prix_achat     DECIMAL(6,2) NOT NULL,   -- prix de vente : nombre exact a 2 decimales (jamais un flottant pour l'argent)
+  prix_location  DECIMAL(6,2) NOT NULL,   -- prix de location, meme format exact
+  stock_vente    INT NOT NULL DEFAULT 0,  -- exemplaires disponibles a la vente (0 par defaut)
+  stock_location INT NOT NULL DEFAULT 0,  -- exemplaires disponibles a la location (0 par defaut)
+  categorie_id   BIGINT NOT NULL,         -- lien vers la categorie du jeu (obligatoire)
+  CONSTRAINT fk_jeu_cat FOREIGN KEY (categorie_id) REFERENCES categorie(id),  -- cle etrangere : categorie_id DOIT exister dans categorie
+  INDEX idx_jeu_titre (titre)             -- index : accelere la recherche par titre (on paginera - lecon 15)
+);</pre>
+<p>Décryptons ce SQL. <code>CREATE TABLE</code> crée un nouveau tableau. La <strong>clé primaire</strong> (<code>PRIMARY KEY</code>) est le numéro d'identité unique de chaque fiche, comme un numéro de dossier ; <code>AUTO_INCREMENT</code> le distribue tout seul, de 1 en 1. Une <strong>clé étrangère</strong> (<code>FOREIGN KEY</code>) est un lien obligatoire vers une fiche d'une autre table : ici chaque jeu <em>doit</em> pointer vers une catégorie qui existe réellement — impossible d'avoir un jeu « orphelin ». Un <strong>index</strong>, enfin, est une table des matières interne : sans lui, retrouver un titre force à lire toutes les fiches une à une ; avec lui, la recherche est quasi instantanée.</p>
+
+<h3>3. Hibernate valide, ne crée pas</h3>
+<pre class="pseudo"># application.yml                # configuration de l'application
+spring:
+  jpa:                           # reglages du pont objets Java <-> tables (JPA/Hibernate)
+    hibernate:
+      ddl-auto: validate        # Hibernate VÉRIFIE que les entités collent au schéma (il ne le modifie jamais)
+  flyway:                        # reglages de l'outil de migration
+    enabled: true               # Flyway applique V1, V2… au démarrage de l'app</pre>
+<p><code>validate</code> interdit à Hibernate de modifier le schéma : si une entité ne correspond pas à la table, l'app <strong>refuse de démarrer</strong>. Flyway est la seule source de vérité.</p>
+
+<h3>4. Migrer dans le conteneur</h3>
+<pre class="pseudo">$ docker compose up -d          # Flyway applique V1 au démarrage de l'app
+$ docker compose exec bdd mysql -uludo_app -p ludotheque -e "SHOW TABLES;"   # ouvre MySQL dans le conteneur 'bdd' et liste les tables
+# flyway_schema_history + categorie + jeu                                    # resultat attendu : les 3 tables sont bien la</pre>
+
+<h3>5. Rejouable de zéro — la clé</h3>
+<div class="warn">Le job de tests de la CI (leçon 6) partira d'une base <strong>vierge</strong> : Flyway doit rejouer toutes les migrations de zéro à chaque fois. Fini le « ça a migré par chance sur mon poste » — une migration cassée est rouge en CI, pas découverte en prod. Chaque migration est <strong>immuable</strong> une fois poussée : on corrige avec une V2, on ne réécrit jamais une V1 déjà appliquée.</div>
+<div class="tip">L'index sur <code>titre</code> est posé DÈS le départ : on sait qu'on cherchera et paginera par titre (leçon 15). Anticiper l'usage évite le scan lent et le futur « ALTER TABLE en catastrophe ». Le savoir performance/sécurité est intégré au schéma, pas ajouté après.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le schéma vient d'abord de…", opts: ["L'inspiration", "Merise (le MCD)", "Hibernate", "La prod"], a: 1, exp: "Modélisation avant SQL." },
+    { type: "qcm", q: "L'argent est stocké en…", opts: ["FLOAT", "DECIMAL", "INT", "VARCHAR"], a: 1, exp: "Jamais de flottant pour de l'argent." },
+    { type: "qcm", q: "Les migrations sont gérées par…", opts: ["Hibernate ddl-auto: update", "Flyway (V1__…sql)", "Un script manuel", "La chance"], a: 1, exp: "Versionnées, rejouables." },
+    { type: "qcm", q: "ddl-auto: validate signifie…", opts: ["Hibernate crée les tables", "Hibernate vérifie que les entités collent au schéma", "Rien", "Il supprime tout"], a: 1, exp: "Flyway fait foi." },
+    { type: "qcm", q: "Si une entité ne correspond pas à la table…", opts: ["Hibernate corrige", "L'app refuse de démarrer", "C'est ignoré", "La prod plante silencieusement"], a: 1, exp: "Sécurité : incohérence détectée au boot." },
+    { type: "qcm", q: "L'index idx_jeu_titre est posé…", opts: ["Un jour, en prod", "Dès V1 (usage anticipé)", "Jamais", "À la main"], a: 1, exp: "On paginera par titre." },
+    { type: "qcm", q: "flyway_schema_history sert à…", opts: ["Stocker les jeux", "Tracer quelles migrations sont appliquées", "Les logs", "Rien"], a: 1, exp: "Flyway sait où il en est." },
+    { type: "qcm", q: "Une migration V1 déjà poussée…", opts: ["Se réécrit", "Est immuable (on corrige par une V2)", "Se supprime", "Change en prod"], a: 1, exp: "Historique fiable." },
+    { type: "qcm", q: "La CI rejoue les migrations…", opts: ["Sur la prod", "De zéro, sur une base vierge", "Jamais", "Une fois par mois"], a: 1, exp: "Plus de 'migré par chance'." },
+    { type: "qcm", q: "La clé étrangère jeu -> categorie…", opts: ["Est optionnelle", "Garantit l'intégrité référentielle", "Ralentit tout", "Est décorative"], a: 1, exp: "Un jeu a toujours une catégorie valide." },
+    { type: "vf", q: "Une migration cassée est découverte en CI, pas en prod.", a: true, exp: "Base vierge rejouée." },
+    { type: "qcm", q: "On applique les migrations…", opts: ["Sur le poste hôte", "Dans le conteneur (au démarrage de l'app)", "Manuellement en prod", "Jamais"], a: 1, exp: "docker compose up." },
+    { type: "qcm", q: "Deux stocks distincts (vente/location) car…", opts: ["C'est joli", "Un jeu peut être loué ET vendu séparément", "Obligé par MySQL", "Par hasard"], a: 1, exp: "Règle métier du N4." },
+    { type: "qcm", q: "Laisser Hibernate créer le schéma (update) en prod est…", opts: ["Recommandé", "Risqué (modifications non contrôlées)", "Obligatoire", "Plus rapide"], a: 1, exp: "D'où validate + Flyway." },
+    { type: "vf", q: "L'index de recherche est intégré au schéma dès le départ, pas ajouté après.", a: true, exp: "Performance anticipée." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma versionné et migré",
+    intro: `<p>Flyway V1, validate, rejouable de zéro.</p>`,
+    questions: [
+      { type: "qcm", q: "La source de vérité du schéma :", opts: ["Flyway (migrations versionnées)", "Hibernate ddl-auto: update", "un script à la main", "la prod"], a: 0, exp: "V1__init.sql." },
+      { type: "qcm", q: "ddl-auto en prod :", opts: ["validate (Hibernate ne modifie rien)", "update", "create-drop", "peu importe"], a: 0, exp: "Flyway fait foi." },
+      { type: "qcm", q: "L'argent :", opts: ["DECIMAL(6,2)", "FLOAT", "DOUBLE", "VARCHAR"], a: 0, exp: "Précision exacte." },
+      { type: "qcm", q: "L'index sur titre :", opts: ["posé dès V1 (usage anticipé)", "jamais", "en prod à la main", "inutile"], a: 0, exp: "Pagination à venir." },
+      { type: "vf", q: "La CI rejoue les migrations sur une base vierge à chaque commit.", a: true, exp: "Migration fiable." }
+    ],
+    solution: `<pre class="pseudo">-- V1__init.sql : categorie + jeu (2 stocks, DECIMAL, FK, INDEX titre)
+# application.yml :
+#   spring.jpa.hibernate.ddl-auto: validate
+#   spring.flyway.enabled: true
+
+$ docker compose up -d         # Flyway applique V1 au boot
+$ ... SHOW TABLES;             # categorie, jeu, flyway_schema_history</pre>
+<p>Le schéma est versionné et migré. Demain : les entités JPA, testées dès l'écriture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta migration et ta config…",
+  items: [
+  { id: "proj6java-l4", title: "La migration V1 + la config Flyway/Hibernate", level: 2,
+    statement: "Écris V1__init.sql (categorie, jeu avec deux stocks, DECIMAL, FK, index titre) et l'extrait application.yml (ddl-auto: validate, flyway enabled). Explique en 3-4 lignes pourquoi 'validate' plutôt que 'update', et pourquoi une migration poussée est immuable.",
+    hints: [
+      "DECIMAL(6,2) pour les prix, INT pour les stocks, FK ON DELETE RESTRICT implicite.",
+      "INDEX idx_jeu_titre (titre) : on cherchera par titre (leçon 15).",
+      "validate = Hibernate vérifie mais ne modifie jamais ; Flyway est la seule source."
+    ],
+    solution: "-- src/main/resources/db/migration/V1__init.sql\nCREATE TABLE categorie (\n  id   BIGINT PRIMARY KEY AUTO_INCREMENT,\n  nom  VARCHAR(100) NOT NULL UNIQUE\n);\nCREATE TABLE jeu (\n  id             BIGINT PRIMARY KEY AUTO_INCREMENT,\n  titre          VARCHAR(200) NOT NULL,\n  prix_achat     DECIMAL(6,2) NOT NULL,\n  prix_location  DECIMAL(6,2) NOT NULL,\n  stock_vente    INT NOT NULL DEFAULT 0,\n  stock_location INT NOT NULL DEFAULT 0,\n  categorie_id   BIGINT NOT NULL,\n  CONSTRAINT fk_jeu_cat FOREIGN KEY (categorie_id) REFERENCES categorie(id),\n  INDEX idx_jeu_titre (titre)          -- recherche/pagination anticipee\n);\n\n# application.yml\nspring:\n  jpa:\n    hibernate:\n      ddl-auto: validate     # Hibernate VERIFIE, ne modifie jamais le schema\n  flyway:\n    enabled: true            # applique V1, V2... au demarrage\n\n# POURQUOI validate PLUTOT QUE update\n# 'update' laisse Hibernate deviner et modifier le schema en douce : en prod,\n# c'est ingerable (colonnes creees sans qu'on les controle, pas de trace).\n# 'validate' echoue au boot si entite et table divergent -> l'incoherence est\n# detectee immediatement, jamais silencieuse. Flyway seul modifie le schema.\n#\n# POURQUOI UNE MIGRATION EST IMMUABLE\n# Une fois V1 appliquee sur une base (dev, CI, prod), son checksum est enregistre\n# dans flyway_schema_history. La reecrire ferait echouer Flyway (checksum different)\n# et surtout : les bases deja migrees ne rejoueraient pas le changement. On corrige\n# TOUJOURS par une nouvelle migration (V2), jamais en editant l'ancienne.",
+    note: "Flyway transforme le schéma en code : versionné, revu en PR, rejoué à l'identique du poste du développeur jusqu'à la production. La règle d'immuabilité est le pendant de l'immuabilité des images Docker (leçon 17) : un artefact déjà livré ne se modifie pas, on en produit un nouveau. C'est la condition d'un historique fiable et d'un rollback sûr (leçon 20)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

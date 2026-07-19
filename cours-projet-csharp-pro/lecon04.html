@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Du MCD Merise aux migrations EF Core (dans le conteneur)",
+  subtitle: "Le schéma devient du code versionné, rejoué à l'identique partout.",
+  theory: `
+<h3>1. Merise d'abord, migration ensuite</h3>
+<p>Définissons le vocabulaire de la modélisation. <strong>Merise</strong> est une méthode française pour concevoir une base de données ; son <strong>MCD</strong> (Modèle Conceptuel de Données) est un schéma qui montre les objets à stocker et leurs liens, comme un plan de maison avant la construction. Ici : une Categorie contient plusieurs Jeu, chaque Jeu appartient à une seule Categorie. Une <strong>entité</strong> est un de ces objets (Jeu, Categorie) que l'on représente par une classe C#. Le <strong>DbContext</strong> est l'objet central d'EF Core : le « pont » entre les classes C# et les tables de la base. Une <strong>migration EF Core</strong> est un fichier généré qui décrit une modification du schéma (créer une table, ajouter une colonne…) et que l'on versionne comme le reste du code.</p>
+<p>Comme au Niveau 6, le schéma vient du MCD : Categorie (1,n)—(1,1) Jeu. On garde deux stocks distincts (vente / location) et l'argent en <code>decimal</code> (exact en C#, jamais <code>double</code>). Ce qui change au Niveau 8 : le schéma est décrit par des entités + un <code>DbContext</code>, puis versionné en migrations.</p>
+
+<h3>2. Les entités et le DbContext</h3>
+<p>Une <strong>classe</strong> est un moule qui décrit à quoi ressemble un objet : ses <strong>propriétés</strong> (ses caractéristiques). <code>{ get; set; }</code> signifie que la propriété peut être lue (<em>get</em>) et modifiée (<em>set</em>). Une <strong>clé primaire</strong> (<code>Id</code>) identifie chaque ligne de façon unique ; une <strong>clé étrangère</strong> (<code>CategorieId</code>) mémorise à quelle autre ligne on est relié.</p>
+<pre class="pseudo">public class Jeu {                                  // une classe = un moule décrivant un objet "Jeu"
+    public long Id { get; set; }                    // identifiant unique (clé primaire) ; long = grand entier
+    public string Titre { get; set; } = "";         // le titre du jeu (texte), vide par défaut
+    public decimal PrixAchat { get; set; }          // prix de vente, en decimal (nombre décimal exact)
+    public decimal PrixLocation { get; set; }       // prix de location, aussi en decimal
+    public int StockVente { get; set; }             // quantité disponible à la vente (entier)
+    public int StockLocation { get; set; }          // quantité disponible à la location (entier)
+    public long CategorieId { get; set; }           // clé étrangère : l'Id de la catégorie liée
+    public Categorie Categorie { get; set; } = null!;  // propriété de navigation : l'objet Categorie complet
+}
+protected override void OnModelCreating(ModelBuilder b) {   // méthode où l'on affine la traduction entités -> tables
+    b.Entity&lt;Jeu&gt;(e => {                            // on configure la table correspondant à l'entité Jeu
+        e.Property(j => j.PrixAchat).HasPrecision(6, 2);    // colonne DECIMAL(6,2) : 6 chiffres dont 2 après la virgule
+        e.Property(j => j.PrixLocation).HasPrecision(6, 2); // idem pour le prix de location
+        e.HasIndex(j => j.Titre);                       // recherche anticipée : crée un index sur la colonne Titre
+        e.HasOne(j => j.Categorie).WithMany().OnDelete(DeleteBehavior.Restrict);   // un Jeu a UNE Categorie ; interdit de supprimer une catégorie encore utilisée
+    });
+}</pre>
+<p>Un <strong>index</strong> est un répertoire trié que la base tient à jour pour retrouver vite les lignes selon une colonne — comme l'index alphabétique à la fin d'un livre, qui évite de feuilleter toutes les pages. <code>DeleteBehavior.Restrict</code> empêche de supprimer une Categorie tant que des Jeux y sont rattachés : c'est l'<strong>intégrité référentielle</strong> (on ne laisse jamais un jeu pointer vers une catégorie disparue).</p>
+
+<h3>3. Générer et appliquer la migration</h3>
+<pre class="pseudo">$ dotnet ef migrations add Initial      # génère un fichier de migration décrivant le schéma (nommé "Initial")
+$ docker compose exec app dotnet ef database update    # exécute la migration DANS le conteneur "app" -> crée les tables
+# table __EFMigrationsHistory : EF y note quelles migrations sont déjà appliquées</pre>
+<p>La commande <code>docker compose exec app …</code> lance une commande à l'intérieur du conteneur <code>app</code> déjà démarré. La table <code>__EFMigrationsHistory</code> est le carnet de bord d'EF : il sait ainsi ne jamais rejouer deux fois la même migration.</p>
+
+<h3>4. HasPrecision, pas de double</h3>
+<pre class="pseudo">// decimal en C# = arithmétique décimale EXACTE (pas de flottant binaire)
+// HasPrecision(6, 2) -> colonne DECIMAL(6,2) : 4 chiffres + 2 décimales
+// jamais de double pour l'argent : 0.1 + 0.2 != 0.3 en binaire</pre>
+<p>Un <strong>double</strong> est un nombre à virgule stocké en base 2 (binaire) : certains nombres décimaux simples n'y ont pas de représentation exacte, d'où de minuscules erreurs qui s'accumulent. Le <strong>decimal</strong>, lui, calcule en base 10 comme nous : parfait pour de l'argent.</p>
+
+<h3>5. Rejouable de zéro — la clé</h3>
+<div class="warn">Le job de tests de la CI (leçon 6) part d'une base <strong>vierge</strong> : EF rejoue toutes les migrations de zéro à chaque fois. Fini le « ça a migré par chance sur mon poste » — une migration cassée est rouge en CI, pas découverte en prod. Chaque migration est un fichier généré <strong>immuable</strong> une fois poussé : on corrige avec une nouvelle migration, jamais en réécrivant une ancienne déjà appliquée.</div>
+<div class="tip">L'index sur <code>Titre</code> est posé DÈS le départ : on sait qu'on cherchera et paginera par titre (leçon 15). Anticiper l'usage évite le scan lent et le futur « ALTER en catastrophe ». Le savoir performance/sécurité est intégré au schéma, pas ajouté après.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le schéma vient d'abord de…", opts: ["L'inspiration", "Merise (le MCD)", "EF Core", "La prod"], a: 1, exp: "Modélisation avant SQL." },
+    { type: "qcm", q: "L'argent est stocké en…", opts: ["double", "decimal (HasPrecision)", "int", "string"], a: 1, exp: "Décimal exact, pas de flottant." },
+    { type: "qcm", q: "Le schéma est versionné en…", opts: ["SQL à la main sur le serveur", "Migrations EF Core", "Un tableur", "La chance"], a: 1, exp: "dotnet ef migrations add." },
+    { type: "qcm", q: "__EFMigrationsHistory sert à…", opts: ["Stocker les jeux", "Tracer quelles migrations sont appliquées", "Les logs", "Rien"], a: 1, exp: "EF sait où il en est." },
+    { type: "qcm", q: "OnDelete(DeleteBehavior.Restrict) garantit…", opts: ["Rien", "L'intégrité référentielle (pas de suppression cassante)", "La vitesse", "Le CSS"], a: 1, exp: "Un jeu a toujours une catégorie valide." },
+    { type: "qcm", q: "HasIndex(j => j.Titre) est posé…", opts: ["Un jour, en prod", "Dès la migration (usage anticipé)", "Jamais", "À la main"], a: 1, exp: "On paginera par titre." },
+    { type: "qcm", q: "HasPrecision(6, 2) crée…", opts: ["Un float", "Une colonne DECIMAL(6,2)", "Un int", "Un texte"], a: 1, exp: "Précision monétaire." },
+    { type: "qcm", q: "Une migration déjà poussée…", opts: ["Se réécrit", "Est immuable (on corrige par une nouvelle)", "Se supprime", "Change en prod"], a: 1, exp: "Historique fiable." },
+    { type: "qcm", q: "La CI rejoue les migrations…", opts: ["Sur la prod", "De zéro, sur une base vierge", "Jamais", "Une fois par mois"], a: 1, exp: "Plus de 'migré par chance'." },
+    { type: "qcm", q: "double pour l'argent :", opts: ["Recommandé", "À proscrire (0.1+0.2 != 0.3 en binaire)", "Obligatoire", "Idéal"], a: 1, exp: "decimal est exact." },
+    { type: "vf", q: "Une migration cassée est découverte en CI, pas en prod.", a: true, exp: "Base vierge rejouée." },
+    { type: "qcm", q: "On applique les migrations…", opts: ["Sur le poste hôte", "Dans le conteneur (dotnet ef database update)", "Manuellement en prod", "Jamais"], a: 1, exp: "docker compose exec." },
+    { type: "qcm", q: "Deux stocks distincts (vente/location) car…", opts: ["C'est joli", "Un jeu peut être loué ET vendu séparément", "Obligé par MySQL", "Par hasard"], a: 1, exp: "Règle métier du N4." },
+    { type: "qcm", q: "La propriété de navigation Categorie sert à…", opts: ["Le CSS", "Naviguer vers la catégorie liée (relation)", "Un cache", "Rien"], a: 1, exp: "Relation EF." },
+    { type: "vf", q: "L'index de recherche est intégré au schéma dès le départ, pas ajouté après.", a: true, exp: "Performance anticipée." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma versionné et migré",
+    intro: `<p>Migrations EF Core, rejouables de zéro.</p>`,
+    questions: [
+      { type: "qcm", q: "La source de vérité du schéma :", opts: ["les migrations EF Core versionnées", "un SQL à la main", "la prod", "le hasard"], a: 0, exp: "Fichiers générés, versionnés." },
+      { type: "qcm", q: "L'argent :", opts: ["decimal + HasPrecision(6,2)", "double", "float", "string"], a: 0, exp: "Précision exacte." },
+      { type: "qcm", q: "L'index sur Titre :", opts: ["posé dès la migration (usage anticipé)", "jamais", "en prod à la main", "inutile"], a: 0, exp: "Pagination à venir." },
+      { type: "qcm", q: "La CI rejoue les migrations :", opts: ["de zéro sur une base vierge", "sur la prod", "jamais", "une fois par mois"], a: 0, exp: "Migration fiable." },
+      { type: "vf", q: "Une migration poussée est immuable ; on corrige par une nouvelle.", a: true, exp: "Historique fiable." }
+    ],
+    solution: `<pre class="pseudo">// entités : Jeu (decimal x2, 2 stocks, CategorieId + navigation)
+// OnModelCreating : HasPrecision(6,2), HasIndex(Titre), DeleteBehavior.Restrict
+
+$ dotnet ef migrations add Initial                      # crée le fichier de migration "Initial"
+$ docker compose exec app dotnet ef database update     # applique la migration dans le conteneur -> tables créées</pre>
+<p>Le schéma est versionné et migré. Demain : les entités EF, testées dès l'écriture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes entités et ta config de schéma…",
+  items: [
+  { id: "proj6cs-l4", title: "Les entités + la config EF Core du schéma", level: 2,
+    statement: "Écris l'entité Jeu (decimal, deux stocks, relation vers Categorie) et le OnModelCreating (HasPrecision, HasIndex sur Titre, DeleteBehavior.Restrict). Explique en 3-4 lignes pourquoi decimal plutôt que double pour l'argent, et pourquoi une migration poussée est immuable.",
+    hints: [
+      "HasPrecision(6, 2) pour les prix ; HasIndex(j => j.Titre) ; OnDelete(DeleteBehavior.Restrict).",
+      "decimal = arithmétique décimale exacte ; double = flottant binaire (erreurs d'arrondi).",
+      "Immuable : __EFMigrationsHistory trace ce qui est appliqué ; réécrire casserait les bases migrées."
+    ],
+    solution: "public class Jeu {\n    public long Id { get; set; }\n    public string Titre { get; set; } = \"\";\n    public decimal PrixAchat { get; set; }\n    public decimal PrixLocation { get; set; }\n    public int StockVente { get; set; }\n    public int StockLocation { get; set; }\n    public long CategorieId { get; set; }\n    public Categorie Categorie { get; set; } = null!;\n}\n\nprotected override void OnModelCreating(ModelBuilder b) {\n    b.Entity<Categorie>().HasIndex(c => c.Nom).IsUnique();\n    b.Entity<Jeu>(e => {\n        e.Property(j => j.PrixAchat).HasPrecision(6, 2);\n        e.Property(j => j.PrixLocation).HasPrecision(6, 2);\n        e.HasIndex(j => j.Titre);                       // recherche/pagination anticipee\n        e.HasOne(j => j.Categorie).WithMany().OnDelete(DeleteBehavior.Restrict);\n    });\n}\n// $ dotnet ef migrations add Initial ; dotnet ef database update (dans le conteneur)\n\n// POURQUOI decimal PLUTOT QUE double, POURQUOI IMMUABLE\n// decimal represente les nombres en base 10, exactement : 0.1 + 0.2 == 0.3.\n// double est un flottant binaire : 0.1 + 0.2 != 0.3, ce qui, cumule sur des\n// milliers de transactions, fausse une comptabilite. Pour l'argent, TOUJOURS decimal.\n//\n// IMMUABLE : EF enregistre chaque migration appliquee dans __EFMigrationsHistory.\n// Reecrire une migration deja jouee ne rejouerait PAS le changement sur les bases\n// existantes (dev, prod) et casserait la coherence. On corrige TOUJOURS par une\n// nouvelle migration (dotnet ef migrations add ...), jamais en editant l'ancienne.",
+    note: "Les migrations EF Core transforment le schéma en code : versionné, revu en PR, rejoué à l'identique du poste du développeur jusqu'à la production. Le choix decimal vs double est un réflexe monétaire fondamental en C# : double introduit des erreurs d'arrondi invisibles mais cumulatives. La règle d'immuabilité est le pendant de l'immuabilité des images Docker (leçon 17) : un artefact déjà livré ne se modifie pas, on en produit un nouveau." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

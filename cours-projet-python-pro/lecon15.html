@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Recherche, pagination et qualité (lint, couverture)",
+  subtitle: "Soigner l'expérience — et rendre la performance et le style vérifiables.",
+  theory: `
+<h3>1. Recherche et pagination, sans N+1</h3>
+<pre class="pseudo">def catalogue(request):   # la vue du catalogue (recherche + pagination)
+    qs = Jeu.objects.louables().select_related("categorie")   # jeux louables, categorie jointe (anti-N+1)
+    q = request.GET.get("q", "")   # texte recherche, lu dans l'URL (?q=...) ; vide par defaut
+    if q: qs = qs.filter(titre__icontains=q)                  # recherche
+    page = Paginator(qs.order_by("titre"), 10).get_page(request.GET.get("page"))   # 10 jeux/page, tries par titre ; page demandee dans l'URL
+    return render(request, "catalogue.html", {"page": page, "q": q})   # afficher la page avec les resultats et la recherche</pre>
+<p>La <strong>recherche</strong> filtre les jeux dont le titre contient le texte saisi ; la <strong>pagination</strong> découpe les résultats en pages de taille fixe. Tout l'état vit dans l'<strong>URL</strong> (<code>?q=catan&page=2</code>) : l'adresse est partageable et rejouable, car <code>request.GET</code> lit les paramètres écrits après le <code>?</code>. <code>select_related</code> était là depuis la leçon 7 — la performance a été anticipée. Le <strong>Paginator</strong> est l'outil Django qui gère ce découpage ; on trie toujours (<code>order_by</code>) <em>avant</em> de paginer, sinon l'ordre des pages devient instable.</p>
+
+<h3>2. La performance devient TESTABLE</h3>
+<pre class="pseudo">def test_catalogue_2_requetes(self):   # verifie que la page ne fait que 2 requetes SQL
+    with self.assertNumQueries(2):        # COUNT du paginator + la page, pas plus
+        self.client.get("/catalogue/")   # charger le catalogue (le bloc compte les requetes)</pre>
+<p><code>assertNumQueries</code> transforme « pas de N+1 » en <strong>garantie</strong> : le jour où quelqu'un retire le <code>select_related</code>, ce test devient rouge en CI.</p>
+
+<h3>3. Le lint et le format, durcis</h3>
+<pre class="pseudo"># ci.yml — job qualite
+- run: ruff check .           # erreurs évidentes, imports morts
+- run: ruff format --check .  # style tranché (la machine décide, pas la revue)</pre>
+
+<h3>4. Le pipeline à ce stade</h3>
+<pre class="pseudo">push / PR
+   ├─ tests (MySQL) + couverture     ┐
+   ├─ qualite (ruff check + format)  ┤ en parallèle
+   └─ securite (gitleaks)            ┘
+→ tous verrouillés dans la protection de branche. main reste correct, sûr,
+  rapide ET propre — sans effort humain répété.</pre>
+
+<h3>5. La qualité, une propriété du pipeline</h3>
+<div class="warn">La couverture ne prouve pas la qualité des tests, mais <code>assertNumQueries</code>, lui, prouve une performance : c'est un test de <strong>comportement</strong> (le nombre de requêtes), pas un pourcentage. Les deux se complètent — mesurer les filets (couverture) et verrouiller les caractéristiques clés (nombre de requêtes, temps de réponse critiques).</div>
+<div class="tip">À ce stade, le pipeline garde le code correct, sûr, rapide et propre à chaque commit — c'est ce qui distingue un projet pro : la qualité n'est pas un effort de fin de sprint, c'est une contrainte permanente et automatique.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'état de la recherche/pagination vit…", opts: ["En session", "Dans l'URL (?q=...&page=...)", "Dans un cookie", "En base"], a: 1, exp: "Partageable, rejouable." },
+    { type: "qcm", q: "select_related dans le catalogue évite…", opts: ["Le tri", "Le N+1 (JOIN unique)", "Le CSRF", "Le cache"], a: 1, exp: "Perf anticipée (l.7)." },
+    { type: "qcm", q: "assertNumQueries transforme…", opts: ["Le style", "« Pas de N+1 » en garantie testée", "Le hachage", "Le CSS"], a: 1, exp: "Test de comportement." },
+    { type: "qcm", q: "Si quelqu'un retire le select_related…", opts: ["Rien", "assertNumQueries devient rouge en CI", "La prod plante", "Le CSS casse"], a: 1, exp: "Régression attrapée." },
+    { type: "qcm", q: "ruff format --check…", opts: ["Formate", "Vérifie le format sans modifier (échoue si non formaté)", "Migre", "Chiffre"], a: 1, exp: "La CI vérifie." },
+    { type: "qcm", q: "Le format tranche…", opts: ["Le métier", "Les débats de style (la machine décide)", "La sécurité", "Le déploiement"], a: 1, exp: "La revue pense, le linter formate." },
+    { type: "qcm", q: "tests, qualite, securite tournent…", opts: ["En série", "En parallèle (pipeline rapide)", "Sur la prod", "Jamais"], a: 1, exp: "Verdict plus vite." },
+    { type: "qcm", q: "Paginer sans order_by…", opts: ["Est correct", "Donne des pages instables", "Accélère", "Chiffre"], a: 1, exp: "Toujours trier avant." },
+    { type: "qcm", q: "Le COUNT du paginator + la page =", opts: ["1 requête", "2 requêtes (d'où assertNumQueries(2))", "N requêtes", "0"], a: 1, exp: "Compté et vérifié." },
+    { type: "qcm", q: "titre__icontains=q devient…", opts: ["= q", "LIKE '%q%' insensible à la casse", "> q", "IS NULL"], a: 1, exp: "Recherche partielle." },
+    { type: "vf", q: "assertNumQueries teste un comportement (nombre de requêtes), pas un pourcentage.", a: true, exp: "Complète la couverture." },
+    { type: "qcm", q: "À ce stade, le pipeline garde le code…", opts: ["Juste testé", "Correct, sûr, rapide ET propre", "Juste linté", "Non vérifié"], a: 1, exp: "Contrainte permanente." },
+    { type: "qcm", q: "La qualité, dans un projet pro, est…", opts: ["Un effort de fin de sprint", "Une contrainte automatique et permanente", "Optionnelle", "Manuelle"], a: 1, exp: "Le pipeline la garantit." },
+    { type: "qcm", q: "Un index sur titre (leçon 4) aide…", opts: ["L'INSERT", "La recherche par titre", "Le layout", "Le hachage"], a: 1, exp: "Anticipé dès le schéma." },
+    { type: "vf", q: "L'URL /catalogue/?q=catan&page=2 est partageable et rejouable.", a: true, exp: "Tout l'état dedans." }
+  ],
+  final: {
+    title: "Exercice final — Navigable et vérifié",
+    intro: `<p>On ajoute recherche/pagination et on verrouille la perf.</p>`,
+    questions: [
+      { type: "qcm", q: "La recherche s'ajoute :", opts: ["if q: qs = qs.filter(titre__icontains=q)", "toujours", "en JS", "en session"], a: 0, exp: "Conditionnel." },
+      { type: "qcm", q: "La pagination :", opts: ["Paginator(qs.order_by('titre'), 10)", "qs[:10] partout", "un slice JS", "rien"], a: 0, exp: "Trié puis paginé." },
+      { type: "qcm", q: "La perf se verrouille par :", opts: ["assertNumQueries(2)", "un chrono", "un print", "rien"], a: 0, exp: "Anti-N+1 testé." },
+      { type: "qcm", q: "La qualité en CI :", opts: ["ruff check + format --check", "à la main", "en prod", "jamais"], a: 0, exp: "Tranché, vérifié." },
+      { type: "vf", q: "Le pipeline garde le code correct, sûr, rapide et propre.", a: true, exp: "Projet pro." }
+    ],
+    solution: `<pre class="pseudo">def catalogue(request):   # vue du catalogue
+    qs = Jeu.objects.louables().select_related("categorie")   # jeux louables + categorie jointe (anti-N+1)
+    q = request.GET.get("q", "")   # texte recherche depuis l'URL
+    if q: qs = qs.filter(titre__icontains=q)   # filtrer par titre si une recherche est fournie
+    page = Paginator(qs.order_by("titre"), 10).get_page(request.GET.get("page"))   # trier puis paginer (10/page)
+    return render(request, "catalogue.html", {"page": page, "q": q})   # afficher la page
+
+def test_catalogue_2_requetes(self):   # la perf est un contrat : 2 requetes max
+    with self.assertNumQueries(2):   # compter les requetes SQL du bloc
+        self.client.get("/catalogue/")   # charger le catalogue
+
+# ci.yml : ruff check . && ruff format --check .   # lint + verification du format</pre>
+<p>Navigable et vérifié. Demain : les trois espaces, cloisonnés.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta recherche paginée et son test de perf…",
+  items: [
+  { id: "proj6py-l15", title: "Le test de non-régression de performance", level: 3,
+    statement: "Écris la vue catalogue (recherche + filtre catégorie + pagination, sans N+1) et le test assertNumQueries qui verrouille le nombre de requêtes. Ajoute un test qui PROUVE l'anti-N+1 : sans select_related, le nombre de requêtes exploserait avec le nombre de jeux. Explique pourquoi un test de performance vaut mieux qu'un commentaire « ne pas oublier select_related ».",
+    hints: [
+      "with self.assertNumQueries(2): pour la page (COUNT + SELECT).",
+      "Créer 20 jeux ; sans select_related, afficher leur catégorie = 1 + 20 requêtes.",
+      "Un commentaire s'ignore ; un test rouge se corrige."
+    ],
+    solution: "def catalogue(request):   # vue du catalogue (recherche + filtre + pagination)\n    qs = Jeu.objects.louables().select_related(\"categorie\")   # jeux louables, categorie jointe (anti-N+1)\n    q = request.GET.get(\"q\", \"\")   # texte recherche depuis l'URL\n    cat = request.GET.get(\"cat\", \"\")   # filtre categorie depuis l'URL\n    if q: qs = qs.filter(titre__icontains=q)   # filtrer par titre si recherche\n    if cat: qs = qs.filter(categorie_id=cat)   # filtrer par categorie si demandee\n    page = Paginator(qs.order_by(\"titre\"), 10).get_page(request.GET.get(\"page\"))   # trier puis paginer (10/page)\n    return render(request, \"catalogue.html\", {\"page\": page, \"q\": q, \"cat\": cat})   # afficher la page\n\n# tests.py — la performance est un CONTRAT\nclass CataloguePerfTests(TestCase):   # tests de performance du catalogue\n    def setUp(self):   # donnees communes avant chaque test\n        self.cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        for i in range(20):   # creer 20 jeux pour tester la montee en charge\n            Jeu.objects.create(titre=f\"Jeu {i}\", prix_achat=10, prix_location=2,   # un jeu numerote…\n                               stock_location=3, categorie=self.cat)   # …avec du stock\n\n    def test_nombre_de_requetes_borne(self):   # le nombre de requetes ne doit pas dependre du nombre de jeux\n        # 2 requêtes quel que soit le nombre de jeux (COUNT + page)\n        # -> le template affiche jeu.categorie.nom SANS requête par jeu\n        with self.assertNumQueries(2):   # compter les requetes SQL\n            self.client.get(\"/catalogue/\")   # charger le catalogue\n\n# Pourquoi un test plutôt qu'un commentaire :\n# « # ne pas oublier select_related » n'empêche personne de l'oublier lors\n# d'un refactoring — et le N+1 est INVISIBLE sur 3 jeux en dev, catastrophique\n# sur 10 000 en prod. Le test assertNumQueries le rend VISIBLE en CI dès le\n# commit fautif : la performance devient une propriété vérifiée, pas un vœu\n# écrit dans un commentaire que personne ne relit.",
+    note: "assertNumQueries est l'un des tests les plus sous-utilisés et les plus rentables : il attrape le N+1, la régression de performance la plus fréquente et la plus invisible en dev (elle n'explose qu'à l'échelle). Le transformer en test, c'est appliquer au Niveau 8 le principe de tout le cours : ce qui compte se vérifie automatiquement, sinon ça régresse en silence." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Sécurité : utilisateur non-root, images de confiance",
+  subtitle: "Durcir l'image et le conteneur : moindre privilège, partout.",
+  theory: `
+<h3>1. Le problème : root par défaut</h3>
+<p>Par défaut, le programme d'un conteneur tourne en <strong>root</strong> — l'utilisateur tout-puissant du système, celui qui a tous les droits. On peut le vérifier avec <code>whoami</code> (« qui suis-je »).</p>
+<pre class="pseudo">docker compose exec app whoami
+root            # le processus de l'app tourne en ROOT à l'intérieur du conteneur (droits maximaux)</pre>
+<p>L'isolation n'est pas parfaite (noyau partagé, leçon 1) : une faille applicative combinée à une <strong>évasion de conteneur</strong> (sortir de la boîte) donnerait un accès <strong>root</strong> sur l'hôte. Or gunicorn n'a aucune raison d'avoir ces privilèges. On applique donc le <strong>moindre privilège</strong> : ne donner que le strict nécessaire.</p>
+
+<h3>2. Un utilisateur applicatif dans l'image</h3>
+<p>On crée un utilisateur ordinaire dans l'image et on bascule dessus avec <code>USER</code>. <code>useradd --shell /bin/false</code> crée un compte sans possibilité de connexion interactive (plus sûr). <code>--chown</code> donne à ce compte la propriété de ses fichiers.</p>
+<pre class="pseudo">FROM python:3.14-slim
+WORKDIR /app
+RUN useradd --create-home --shell /bin/false ludo   # crée un utilisateur 'ludo' (--create-home : son dossier perso ; /bin/false : aucun shell de connexion)
+
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
+COPY --chown=ludo:ludo . .   # copie le code EN LE donnant à ludo (sinon les fichiers appartiendraient à root)
+
+USER ludo                    # BASCULE : tout ce qui suit (dont le CMD) tourne en 'ludo', SANS privilèges root
+EXPOSE 8000
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # gunicorn démarre donc en utilisateur non privilégié</pre>
+<p><code>USER ludo</code> bascule définitivement ; <code>--chown</code> donne au processus la propriété de ses fichiers. Le port 8000 (supérieur à 1024) s'écoute sans privilèges — car seuls les <strong>ports inférieurs à 1024</strong> exigent des droits root.</p>
+
+<h3>3. La chaîne d'approvisionnement</h3>
+<p>La <strong>chaîne d'approvisionnement</strong> (« supply chain ») est l'ensemble de ce dont dépend ton image : ses images de base, leurs propres dépendances. Utiliser une image inconnue, c'est exécuter le code d'un inconnu. On scanne aussi les <strong>CVE</strong> (les failles de sécurité connues, répertoriées publiquement).</p>
+<pre class="pseudo">✔ images OFFICIELLES ou d'éditeurs vérifiés (python, mysql, nginx)     # maintenues par des équipes de confiance
+✔ tags ÉPINGLÉS (leçon 4) : pas de latest surprise                     # version fixe = pas de changement à notre insu
+✔ docker scout cves ludotheque:1.0                                     # 'docker scout cves' scanne les vulnérabilités connues (CVE) de l'image
+✘ une image utilisateur/miracle-tool inconnue : c'est exécuter le code  # une image de provenance douteuse...
+  d'un inconnu sur TA machine                                          # ...revient à lui confier ta machine : à éviter</pre>
+
+<h3>4. Durcir au run (compose)</h3>
+<p>On ajoute des verrous au démarrage. Une <strong>capacité</strong> (« capability ») est une permission fine du noyau ; <code>cap_drop: [ALL]</code> les retire toutes. <code>read_only</code> empêche d'écrire dans le conteneur (sauf zones explicites comme <code>tmpfs</code>, un espace temporaire en mémoire vive).</p>
+<pre class="pseudo">app:
+    read_only: true              # rend le système de fichiers du conteneur NON MODIFIABLE (un malware ne peut plus s'y écrire)
+    tmpfs: [/tmp]                # exception : /tmp reste inscriptible, mais en MÉMOIRE (rien n'est persisté)
+    cap_drop: [ALL]              # retire TOUTES les capacités noyau (gunicorn n'en a besoin d'aucune)
+    security_opt:
+      - no-new-privileges:true   # interdit toute ESCALADE de privilèges (mécanismes setuid...) pendant l'exécution</pre>
+
+<h3>5. Les secrets, encore</h3>
+<p>Le durcissement ne dispense pas des règles sur les secrets vues aux leçons 6 et 10.</p>
+<p>Rappels des leçons 6 et 10 : rien dans l'image, rien dans le YAML commité, <code>chmod 600</code> sur les .env — le durcissement ne compense pas un mot de passe publié.</p>
+<div class="warn">Un conteneur lancé avec <code>--privileged</code> ou le socket Docker monté (<code>-v /var/run/docker.sock:...</code>) contrôle l'hôte entier. Ces options ont des usages légitimes rares — quiconque les demande doit pouvoir dire pourquoi.</div>
+<div class="tip">La défense en profondeur du cours : image officielle épinglée + multi-stage sans outillage + USER non-root + read_only/cap_drop + secrets dehors. Chaque couche coûte une ligne ; l'attaque doit toutes les traverser.</div>`,
+  exercises: [
+    { type: "qcm", q: "Par défaut, le processus du conteneur tourne en…", opts: ["nobody", "root", "ludo", "www-data"], a: 1, exp: "whoami → root." },
+    { type: "qcm", q: "Le risque de root dans le conteneur :", opts: ["Aucun, c'est isolé", "Une évasion de conteneur donnerait root", "La lenteur", "Les logs"], a: 1, exp: "Noyau partagé : isolation imparfaite." },
+    { type: "qcm", q: "Créer l'utilisateur applicatif dans l'image :", opts: ["RUN useradd --create-home --shell /bin/false ludo", "USER root", "adduser sur l'hôte", "un -e"], a: 0, exp: "/bin/false : pas de shell de connexion." },
+    { type: "qcm", q: "USER ludo fait que…", opts: ["Le build échoue", "Tout ce qui suit (dont CMD) tourne sans privilèges", "Le port 80 s'ouvre", "Rien"], a: 1, exp: "Bascule définitive." },
+    { type: "qcm", q: "COPY --chown=ludo:ludo . . sert à…", opts: ["Accélérer", "Donner au processus la propriété de ses fichiers", "Chiffrer", "Compresser"], a: 1, exp: "Sinon fichiers à root, processus à ludo." },
+    { type: "qcm", q: "Pourquoi 8000 fonctionne sans privilèges ?", opts: ["Docker triche", "Les ports > 1024 ne demandent pas de privilèges", "gunicorn est root", "C'est un bug"], a: 1, exp: "Ports < 1024 = privilégiés." },
+    { type: "qcm", q: "Vérifier le non-root :", opts: ["docker compose exec app whoami → ludo", "docker ps", "cat Dockerfile", "sudo -l"], a: 0, exp: "La preuve en une commande." },
+    { type: "qcm", q: "Une image inconnue utilisateur/miracle-tool, c'est…", opts: ["Un gain de temps", "Exécuter le code d'un inconnu sur ta machine", "Toujours sûr", "Officiel"], a: 1, exp: "Chaîne d'approvisionnement." },
+    { type: "qcm", q: "Scanner les vulnérabilités connues :", opts: ["docker scout cves <image>", "docker ps -a", "antivirus", "grep CVE"], a: 0, exp: "Ou trivy et équivalents." },
+    { type: "qcm", q: "read_only: true rend…", opts: ["L'image plus petite", "Le système de fichiers du conteneur non modifiable (sauf tmpfs)", "Les logs muets", "Le réseau privé"], a: 1, exp: "Un malware ne peut plus s'écrire." },
+    { type: "qcm", q: "cap_drop: [ALL]…", opts: ["Supprime les conteneurs", "Retire les capacités noyau non nécessaires", "Coupe le réseau", "Vide les volumes"], a: 1, exp: "gunicorn n'en a pas besoin." },
+    { type: "qcm", q: "no-new-privileges empêche…", opts: ["Les logs", "L'escalade de privilèges (setuid…)", "Les volumes", "Le DNS"], a: 1, exp: "Verrou d'escalade." },
+    { type: "vf", q: "--privileged et le montage du socket Docker sont anodins.", a: false, exp: "Contrôle de l'hôte entier." },
+    { type: "vf", q: "Le durcissement compense un mot de passe commité dans Git.", a: false, exp: "Rien ne compense un secret publié." },
+    { type: "qcm", q: "La défense en profondeur du cours :", opts: ["Un seul gros pare-feu", "Officiel épinglé + multi-stage + non-root + read_only/cap_drop + secrets dehors", "Un antivirus", "De la chance"], a: 1, exp: "Chaque couche coûte une ligne." }
+  ],
+  final: {
+    title: "Exercice final — Le conteneur durci",
+    intro: `<p>On applique le moindre privilège à la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "L'utilisateur applicatif naît par :", opts: ["RUN useradd ... ludo + USER ludo", "un -e USER", "docker user add", "rien"], a: 0, exp: "Dans le Dockerfile." },
+      { type: "qcm", q: "Les fichiers de l'app appartiennent à ludo grâce à :", opts: ["COPY --chown=ludo:ludo", "chmod 777", "root", "un volume"], a: 0, exp: "Propriété alignée." },
+      { type: "qcm", q: "whoami dans le conteneur doit répondre :", opts: ["ludo", "root", "admin", "gunicorn"], a: 0, exp: "La preuve." },
+      { type: "qcm", q: "Au run, on ajoute :", opts: ["read_only, tmpfs /tmp, cap_drop ALL, no-new-privileges", "--privileged", "le socket Docker", "rien"], a: 0, exp: "Durcissement compose." },
+      { type: "vf", q: "Les images restent officielles et épinglées, scannées par docker scout.", a: true, exp: "La chaîne d'approvisionnement." }
+    ],
+    solution: `<pre class="pseudo"># Dockerfile (extrait)
+RUN useradd --create-home --shell /bin/false ludo   # crée l'utilisateur non privilégié
+COPY --chown=ludo:ludo . .                          # le code lui appartient
+USER ludo                                           # bascule : le CMD tournera en ludo
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]
+
+# compose.yaml (extrait)
+  app:
+    read_only: true                # système de fichiers en lecture seule
+    tmpfs: [/tmp]                  # sauf /tmp, en mémoire
+    cap_drop: [ALL]                # aucune capacité noyau
+    security_opt: [no-new-privileges:true]   # pas d'escalade de privilèges
+
+$ docker compose exec app whoami   # on vérifie l'utilisateur effectif...
+ludo ✔                             # ce n'est plus root : durcissement réussi</pre>
+<p>Le conteneur est durci. Demain : publier l'image sur un registre.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton durcissement…",
+  items: [
+  { id: "docker-l16", title: "L'audit de sécurité", level: 3,
+    statement: "Rédige l'audit de sécurité (12-18 lignes) de l'image et du service app de la Ludothèque sous forme de checklist à 8 points vérifiables, chacun avec SA commande de vérification : base officielle épinglée, pas de secrets dans l'image, multi-stage sans outillage, non-root, read_only/cap_drop, pas de --privileged/socket, scan CVE, .env protégé.",
+    hints: [
+      "Chaque ligne : ✔/✘ + le point + la commande qui le prouve.",
+      "Ex. non-root → docker compose exec app whoami.",
+      "Secrets image → docker history + docker run --rm image env."
+    ],
+    solution: "AUDIT SÉCURITÉ — ludotheque:1.0 / service app\n\n1. ✔ Base officielle épinglée (python:3.14-slim)\n   → head -1 Dockerfile\n2. ✔ Aucun secret dans l'image\n   → docker history ludotheque:1.0 ; docker run --rm ludotheque:1.0 env\n3. ✔ Multi-stage : pas de compilateur/caches en prod\n   → docker run --rm ludotheque:1.0 which gcc   (rien)\n4. ✔ Processus non-root\n   → docker compose exec app whoami   (ludo)\n5. ✔ FS en lecture seule + capacités retirées\n   → docker inspect app --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}'\n6. ✔ Pas de --privileged, pas de docker.sock monté\n   → docker inspect app --format '{{.HostConfig.Privileged}} {{.Mounts}}'\n7. ✔ Vulnérabilités connues scannées\n   → docker scout cves ludotheque:1.0   (0 critique)\n8. ✔ .env.prod hors Git, permissions restreintes\n   → git check-ignore .env.prod ; stat -c '%a' .env.prod   (600)\n\nRègle : l'audit se rejoue avant CHAQUE mise en production —\nchaque point a une commande, donc il est automatisable (cours CI/CD).",
+    note: "Une checklist dont chaque point a une COMMANDE devient un script — et un script devient une étape de pipeline : c'est la passerelle directe vers le cours CI/CD. La sécurité déclarative (« on fait attention ») ne vaut rien ; la sécurité vérifiable se rejoue à chaque déploiement." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Recherche, pagination et qualité (Spotless, couverture)",
+  subtitle: "Soigner l'expérience — sans N+1, avec la performance prouvée.",
+  theory: `
+<h3>1. Recherche + pagination</h3>
+<p>La <strong>pagination</strong> consiste à découper une longue liste en pages (10 jeux à la fois) plutôt que de tout afficher d'un coup, comme les pages d'un livre. <code>Pageable</code>/<code>PageRequest</code> décrivent « quelle page, combien par page ». <code>@RequestParam</code> lit un paramètre passé dans l'adresse (<code>?q=catan</code>), et le <code>Model</code> est le sac de données que le contrôleur transmet au template pour l'affichage.</p>
+<pre class="pseudo">public interface JeuRepository extends JpaRepository<Jeu, Long> {   // depot des jeux (methodes de base fournies par JpaRepository)
+    @EntityGraph(attributePaths = "categorie")                 // charge la catégorie : pas de N+1
+    Page<Jeu> findByTitreContainingIgnoreCase(String q, Pageable p);   // recherche par titre (insensible a la casse), resultat pagine
+}
+
+@GetMapping("/catalogue")                                      // repond au GET sur /catalogue
+public String catalogue(@RequestParam(defaultValue = "") String q,   // q = texte recherche, lu dans l'URL (vide par defaut)
+                        @RequestParam(defaultValue = "0") int page, Model m) {   // page = numero de page (0 par defaut) ; m = sac de donnees pour la vue
+    m.addAttribute("page", repo.findByTitreContainingIgnoreCase(q, PageRequest.of(page, 10)));   // cherche et met la page de 10 resultats dans le sac
+    m.addAttribute("q", q);                                    // on renvoie aussi le texte recherche (pour le reafficher dans le champ)
+    return "catalogue";                                        // affiche le template "catalogue"
+}</pre>
+<p>L'état (recherche, numéro de page) vit dans l'<strong>URL</strong> : <code>/catalogue?q=catan&amp;page=2</code> est partageable, indexable, rechargeable.</p>
+
+<h3>2. Le problème N+1</h3>
+<pre class="pseudo">// SANS @EntityGraph : 1 requête pour les 10 jeux + 10 requêtes pour leurs catégories
+//   = 11 requêtes (N+1). Sur 100 lignes -> 101 requêtes : la page rame.
+// AVEC join fetch / @EntityGraph : 1 seule requête.</pre>
+
+<h3>3. La performance devient testable</h3>
+<p>Hibernate (la couche qui parle à la base) tient des <strong>statistiques</strong> : on peut lui demander combien de requêtes SQL il a réellement envoyées. Le test remet ce compteur à zéro, provoque l'affichage, puis exige qu'une seule requête ait eu lieu — la preuve mécanique de l'absence de N+1.</p>
+<pre class="pseudo">@Test void catalogueSansNPlusUn() {              // test : afficher le catalogue ne doit couter qu'UNE requete
+    Statistics stats = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();   // on recupere le compteur de requetes d'Hibernate
+    stats.setStatisticsEnabled(true); stats.clear();   // on l'active et on le remet a zero
+    repo.findByTitreContainingIgnoreCase("", PageRequest.of(0, 10))   // on charge la 1re page de 10 jeux
+        .getContent().forEach(Jeu::getCategorie);        // force l'accès à la catégorie
+    assertThat(stats.getPrepareStatementCount()).isEqualTo(1);   // 1 requête, pas 11
+}</pre>
+<p>C'est l'équivalent Java de <code>assertNumQueries</code> : « pas de N+1 » n'est plus un espoir, c'est une <strong>garantie vérifiée</strong> par la CI.</p>
+
+<h3>4. Spotless resserre le style</h3>
+<p><strong>Spotless</strong> est un <em>formateur</em> automatique : il impose une mise en forme identique (indentation, espaces, ordre) à tout le code, comme un correcteur typographique. On tranche le style une bonne fois ; ainsi les relectures entre humains portent sur la logique, pas sur les virgules.</p>
+<pre class="pseudo">mvn spotless:apply     # en local, avant de committer
+mvn spotless:check     # en CI : rouge si un fichier n'est pas au format
+# le format est tranché une fois pour toutes ; la revue porte sur la logique</pre>
+
+<h3>5. Un pipeline qui garde tout</h3>
+<div class="warn">Compter les requêtes SQL en test transforme la performance en propriété vérifiable, au même titre que la correction (tests) ou la sécurité (accès croisé). Le N+1 est le piège de performance le plus courant en JPA : il passe inaperçu sur 3 lignes de données de test et écroule la prod sur 10 000. Le test le fige à 1 requête pour de bon.</div>
+<div class="tip">À ce stade, le pipeline garde le code <strong>correct</strong> (tests), <strong>sûr</strong> (accès croisé, gitleaks), <strong>rapide</strong> (compte de requêtes) ET <strong>propre</strong> (Spotless) — sans effort humain répété. C'est le dividende de l'outillage posé dès la semaine 1.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'état de recherche/page vit dans…", opts: ["La session", "L'URL (partageable, rechargeable)", "Un cookie", "La RAM"], a: 1, exp: "?q=…&page=…" },
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Trop de RAM", "1 requête + N requêtes filles au lieu d'1", "Un chiffrement", "Un cache"], a: 1, exp: "Explose avec le volume." },
+    { type: "qcm", q: "@EntityGraph(attributePaths='categorie')…", opts: ["Ralentit", "Charge la catégorie en une requête (anti-N+1)", "Chiffre", "Pagine"], a: 1, exp: "Join fetch déclaratif." },
+    { type: "qcm", q: "Pageable / PageRequest.of(page, 10)…", opts: ["Charge tout", "Pagine (10 par page)", "Trie l'URL", "Chiffre"], a: 1, exp: "Pas de scan complet." },
+    { type: "qcm", q: "findByTitreContainingIgnoreCase fait…", opts: ["Un tri", "Une recherche insensible à la casse", "Un delete", "Un cache"], a: 1, exp: "Requête dérivée." },
+    { type: "qcm", q: "On PROUVE l'absence de N+1 en…", opts: ["Regardant l'écran", "Comptant les requêtes SQL en test", "Espérant", "Chiffrant"], a: 1, exp: "assertThat(count)==1." },
+    { type: "qcm", q: "Le N+1 passe inaperçu…", opts: ["Toujours", "Sur peu de données de test, puis écroule la prod", "Jamais", "En CI"], a: 1, exp: "D'où le test." },
+    { type: "qcm", q: "Statistics.getPrepareStatementCount() compte…", opts: ["Les lignes", "Les requêtes SQL exécutées", "Les octets", "Les rôles"], a: 1, exp: "Équivalent assertNumQueries." },
+    { type: "qcm", q: "Spotless en CI…", opts: ["Reformate en douce", "Échoue si le format n'est pas respecté", "Déploie", "Chiffre"], a: 1, exp: "spotless:apply en local." },
+    { type: "qcm", q: "Le pipeline garde le code…", opts: ["Juste correct", "Correct, sûr, rapide ET propre", "Rien", "En prod"], a: 1, exp: "Dividende de l'outillage." },
+    { type: "vf", q: "Compter les requêtes rend la performance vérifiable, comme la correction et la sécurité.", a: true, exp: "Propriété testée." },
+    { type: "qcm", q: "Une recherche dans l'URL est…", opts: ["Secrète", "Partageable et indexable", "Impossible", "Dangereuse"], a: 1, exp: "État côté URL." },
+    { type: "qcm", q: "Sans @EntityGraph, 100 jeux = …", opts: ["1 requête", "101 requêtes (N+1)", "0", "10"], a: 1, exp: "La page rame." },
+    { type: "qcm", q: "La revue humaine, grâce à Spotless, porte sur…", opts: ["Les espaces", "La logique", "Rien", "Le CSS"], a: 1, exp: "Format automatisé." },
+    { type: "vf", q: "Le N+1 est le piège de performance le plus courant en JPA.", a: true, exp: "Fréquent et sournois." }
+  ],
+  final: {
+    title: "Exercice final — Recherche paginée, sans N+1",
+    intro: `<p>Pagination + anti-N+1 prouvé + Spotless.</p>`,
+    questions: [
+      { type: "qcm", q: "La recherche paginée met l'état :", opts: ["dans l'URL (?q=&page=)", "en session", "dans un cookie", "en RAM"], a: 0, exp: "Partageable." },
+      { type: "qcm", q: "Le N+1 est évité par :", opts: ["@EntityGraph / join fetch", "plus de RAM", "un cache maison", "la chance"], a: 0, exp: "1 requête." },
+      { type: "qcm", q: "On le PROUVE par :", opts: ["un test qui compte les requêtes", "un screenshot", "un log", "rien"], a: 0, exp: "assertThat(count)==1." },
+      { type: "qcm", q: "Le format est garanti par :", opts: ["Spotless en CI", "la relecture manuelle", "personne", "un cron"], a: 0, exp: "Tranché." },
+      { type: "vf", q: "À ce stade le pipeline garde correct, sûr, rapide et propre.", a: true, exp: "Dividende." }
+    ],
+    solution: `<pre class="pseudo">@EntityGraph(attributePaths="categorie")                  // charge la categorie en meme temps que le jeu (anti-N+1)
+Page<Jeu> findByTitreContainingIgnoreCase(String q, Pageable p);   // recherche par titre, insensible a la casse, paginee
+
+@GetMapping("/catalogue") ... PageRequest.of(page, 10) ... return "catalogue";   // etat (q, page) dans l'URL ; 10 resultats par page
+
+@Test catalogueSansNPlusUn(): stats.clear(); ... forEach(Jeu::getCategorie);   // on remet le compteur a zero puis on force l'acces aux categories
+  assertThat(stats.getPrepareStatementCount()).isEqualTo(1);   // on EXIGE 1 seule requete (preuve : pas de N+1)
+// mvn spotless:check en CI                                    // le format est verifie automatiquement (job rouge sinon)</pre>
+<p>Recherche rapide et prouvée. Demain : les trois espaces client/vendeur/admin, cloisonnés.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta recherche paginée et son test de perf…",
+  items: [
+  { id: "proj6java-l15", title: "Recherche paginée sans N+1, prouvée", level: 3,
+    statement: "Écris la requête de repository (recherche insensible à la casse, paginée, @EntityGraph anti-N+1), le contrôleur qui met l'état dans l'URL, et le test qui compte les requêtes SQL (Hibernate Statistics) pour prouver l'absence de N+1. Explique en 3-4 lignes ce qu'est le N+1 et pourquoi il faut le TESTER, pas juste l'éviter.",
+    hints: [
+      "@EntityGraph(attributePaths='categorie') Page<Jeu> findByTitreContainingIgnoreCase(String, Pageable).",
+      "Contrôleur : @RequestParam q et page, PageRequest.of(page, 10).",
+      "Test : SessionFactory.getStatistics().getPrepareStatementCount() == 1."
+    ],
+    solution: "public interface JeuRepository extends JpaRepository<Jeu, Long> {\n    @EntityGraph(attributePaths = \"categorie\")\n    Page<Jeu> findByTitreContainingIgnoreCase(String q, Pageable p);\n}\n\n@GetMapping(\"/catalogue\")\npublic String catalogue(@RequestParam(defaultValue = \"\") String q,\n                        @RequestParam(defaultValue = \"0\") int page, Model m) {\n    m.addAttribute(\"page\", repo.findByTitreContainingIgnoreCase(q, PageRequest.of(page, 10)));\n    m.addAttribute(\"q\", q);\n    return \"catalogue\";       // etat dans l'URL : /catalogue?q=catan&page=2\n}\n\n@Test\nvoid catalogueSansNPlusUn() {\n    Statistics stats = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();\n    stats.setStatisticsEnabled(true);\n    stats.clear();\n    repo.findByTitreContainingIgnoreCase(\"\", PageRequest.of(0, 10))\n        .getContent()\n        .forEach(Jeu::getCategorie);          // force l'acces a la categorie\n    assertThat(stats.getPrepareStatementCount()).isEqualTo(1);   // 1, pas 11\n}\n\n// LE N+1, ET POURQUOI LE TESTER\n// N+1 : pour afficher 10 jeux et leur categorie, JPA fait 1 requete pour les\n// jeux, puis 1 requete par jeu pour charger sa categorie en lazy -> 11 requetes.\n// Sur 10 000 lignes, 10 001 requetes : la page s'effondre. @EntityGraph (ou join\n// fetch) ramene tout en 1 seule requete.\n// POURQUOI TESTER : le N+1 est INVISIBLE en dev (3 lignes de donnees = imperceptible)\n// et n'apparait qu'en prod sous volume. Un test qui COMPTE les requetes le fige a\n// 1 : toute regression future (quelqu'un retire l'@EntityGraph) redevient rouge.\n// La performance rejoint la correction et la securite : une propriete verifiee, pas esperee.",
+    note: "Le test de comptage de requêtes est l'un des plus sous-utilisés et des plus précieux : il attrape en CI une classe entière de régressions de performance qui, sinon, ne se manifestent qu'en production sous charge — au pire moment. En le posant dès l'ajout de la recherche, on inscrit la performance dans la même discipline que le reste : construite, mesurée, verrouillée. C'est exactement la philosophie du Niveau 8 étendue à la vitesse." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

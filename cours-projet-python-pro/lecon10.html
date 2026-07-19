@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Autorisation par rôle et par ressource (anti-IDOR)",
+  subtitle: "La faille n°1 du top OWASP, fermée dès la création de la fonctionnalité.",
+  theory: `
+<h3>1. Deux dimensions, complémentaires</h3>
+<pre class="pseudo">Par RÔLE      : ce type d'utilisateur peut-il faire cette action ?
+               (gérer le catalogue = vendeur/admin)
+Par RESSOURCE : mais uniquement sur SES objets ?
+               (ce client ne voit que SES locations)
+Le rôle SANS la ressource = IDOR (Insecure Direct Object Reference).</pre>
+<p>L'<strong>autorisation</strong> répond à « cet utilisateur a-t-il le droit ? », à ne pas confondre avec l'<strong>authentification</strong> (« qui es-tu ? », leçon 9). Elle se joue sur deux axes. Par <strong>rôle</strong> : selon le profil (client, vendeur, admin), telle action est permise ou non. Par <strong>ressource</strong> : même autorisé en général, on ne touche qu'à <em>ses</em> objets. Oublier ce second axe crée un <strong>IDOR</strong> (« référence directe non sécurisée à un objet ») : il suffit de deviner l'identifiant (<code>pk</code>) d'un objet d'autrui pour y accéder. C'est la faille n°1 de l'<strong>OWASP</strong> (l'organisme qui recense les risques web les plus fréquents).</p>
+
+<h3>2. Par rôle</h3>
+<pre class="pseudo">def est_vendeur(u):   # renvoie vrai si l'utilisateur u est vendeur ou admin
+    return u.groups.filter(name__in=["Vendeur","Administrateur"]).exists()   # appartient-il a l'un de ces groupes ?
+def est_admin(u):   # renvoie vrai si u est administrateur
+    return u.groups.filter(name="Administrateur").exists()   # appartient-il au groupe Administrateur ?
+
+@user_passes_test(est_vendeur)   # decorateur : n'autorise la vue que si est_vendeur(user) est vrai
+def creer_jeu(request): ...   # la vue protegee (reservee aux vendeurs/admins)</pre>
+
+<h3>3. Par ressource — l'anti-IDOR</h3>
+<pre class="pseudo"># ✘ VULNÉRABLE : l'id suffit, le propriétaire n'est pas vérifié
+loc = get_object_or_404(Location, pk=pk)              # locations de TOUS ! (n'importe qui avec l'id y accede)
+
+# ✔ CORRIGÉ : filtrer par le propriétaire, toujours
+loc = get_object_or_404(Location, pk=pk, client=request.user)   # ne trouve l'objet que s'il appartient a l'utilisateur connecte
+# un id étranger -> 404, comme s'il n'existait pas
+
+# DRF : def get_queryset(self): return Location.objects.filter(client=self.request.user)   # l'API ne liste QUE les objets du client</pre>
+
+<h3>4. Le test d'accès croisé (le plus rentable)</h3>
+<pre class="pseudo">def test_client_ne_voit_pas_les_locations_dautrui(self):   # test hostile : A tente d'atteindre l'objet de B
+    self.client.login(username="a@ludo.fr", password="Mdp8carac!")   # se connecter en tant que A
+    r = self.client.get(f"/locations/{self.loc_de_B.pk}/")   # demander la location de B (par son id)
+    self.assertEqual(r.status_code, 404)     # A ne peut pas atteindre l'objet de B</pre>
+<p>Écrit AVEC la fonctionnalité, ce test empêche l'IDOR de s'installer : la CI le relance à chaque commit.</p>
+
+<h3>5. Les pièges à ne jamais commettre</h3>
+<pre class="pseudo">✘ se fier à l'URL (« la page admin n'est pas dans le menu »)
+✘ se fier à un champ caché (client_id modifiable)
+✘ vérifier seulement à l'affichage, pas à l'action (POST)
+✔ refusé par défaut ; autorisation explicite ; sur CHAQUE accès, côté serveur</pre>
+<div class="warn">Beaucoup d'IDOR survivent parce que personne n'a jamais testé le cas HOSTILE — seulement le cas nominal où chacun accède à ses propres données. Le test d'accès croisé (A tente l'objet de B) est exactement le regard de l'attaquant, transformé en test automatique. C'est le réflexe du Niveau 8 : la sécurité s'écrit avec le code, pas après.</div>
+<div class="tip">Le contrôle d'accès cassé est la faille n°1 du classement OWASP. En posant les deux dimensions (rôle + ressource) et leur test dès la création de chaque vue qui manipule un objet, on la ferme structurellement — pas par un audit ultérieur.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les deux dimensions de l'autorisation :", opts: ["Rôle et ressource", "Client et serveur", "Lecture et écriture", "Dev et prod"], a: 0, exp: "Complémentaires." },
+    { type: "qcm", q: "Le rôle SANS la ressource donne…", opts: ["La sécurité parfaite", "Un IDOR", "Un XSS", "Un CSRF"], a: 1, exp: "Il faut les deux." },
+    { type: "qcm", q: "IDOR signifie…", opts: ["Un chiffrement", "Insecure Direct Object Reference : accès par id sans vérif du propriétaire", "Un cookie", "Un protocole"], a: 1, exp: "Deviner l'id suffit." },
+    { type: "qcm", q: "get_object_or_404(Location, pk=pk) sans client=…", opts: ["Sûr", "Vulnérable (renvoie l'objet à qui que ce soit)", "Chiffré", "Rapide donc bon"], a: 1, exp: "IDOR." },
+    { type: "qcm", q: "La parade par ressource :", opts: ["Cacher l'URL", "get_object_or_404(..., client=request.user)", "Un UUID seul", "HTTPS"], a: 1, exp: "Vérifier QUI accède." },
+    { type: "qcm", q: "Un id étranger, après correction, renvoie…", opts: ["L'objet", "404 (comme inexistant)", "500", "Un cookie"], a: 1, exp: "Ne pas révéler l'existence." },
+    { type: "qcm", q: "En DRF, on sécurise via…", opts: ["get_queryset filtré par request.user", "un template", "le menu", "un cookie"], a: 0, exp: "La liste se restreint." },
+    { type: "qcm", q: "Le test d'accès croisé vérifie…", opts: ["Le CSS", "Que A ne peut atteindre l'objet de B (404/403)", "La vitesse", "Le hachage"], a: 1, exp: "Le regard de l'attaquant automatisé." },
+    { type: "qcm", q: "Se fier au menu masqué pour cacher l'admin…", opts: ["Suffit", "Un piège : l'URL reste accessible", "Sécurisé", "Recommandé"], a: 1, exp: "Barrière serveur obligatoire." },
+    { type: "qcm", q: "Un champ caché client_id pour l'autorisation…", opts: ["Est fiable", "Est modifiable : jamais s'y fier", "Chiffre", "Protège"], a: 1, exp: "L'identité vient du serveur." },
+    { type: "vf", q: "Beaucoup d'IDOR survivent car seul le cas nominal est testé.", a: true, exp: "D'où le test hostile." },
+    { type: "qcm", q: "Le bon principe d'autorisation :", opts: ["Autorisé par défaut", "Refusé par défaut, autorisé explicitement", "Selon le menu", "Selon l'URL"], a: 1, exp: "Deny by default." },
+    { type: "qcm", q: "Vérifier seulement à l'affichage…", opts: ["Suffit", "Laisse l'action (POST) non protégée", "Est idéal", "Chiffre"], a: 1, exp: "Lecture ET écriture." },
+    { type: "qcm", q: "Le contrôle d'accès cassé, dans OWASP, est…", opts: ["Inexistant", "La faille n°1 (A01)", "Un détail", "Réservé aux API"], a: 1, exp: "La plus courante." },
+    { type: "vf", q: "Au Niveau 8, l'autorisation et son test s'écrivent avec la fonctionnalité.", a: true, exp: "Pas après un audit." }
+  ],
+  final: {
+    title: "Exercice final — Fermer l'IDOR structurellement",
+    intro: `<p>On protège une vue par rôle ET par ressource, avec son test.</p>`,
+    questions: [
+      { type: "qcm", q: "creer_jeu porte :", opts: ["@user_passes_test(est_vendeur)", "@login_required seul", "rien", "un champ caché"], a: 0, exp: "Rôle." },
+      { type: "qcm", q: "mes_locations filtre par :", opts: ["request.user", "?client= dans l'URL", "un champ caché", "l'IP"], a: 0, exp: "Ressource." },
+      { type: "qcm", q: "Un id étranger doit renvoyer :", opts: ["404", "l'objet", "500", "un cookie"], a: 0, exp: "Ni fuite ni indice." },
+      { type: "qcm", q: "Le test d'accès croisé :", opts: ["A tente l'objet de B → 404", "regarde le CSS", "un chrono", "rien"], a: 0, exp: "Verrouillé en CI." },
+      { type: "vf", q: "Rôle ET ressource sont nécessaires ensemble.", a: true, exp: "Sinon IDOR." }
+    ],
+    solution: `<pre class="pseudo">@login_required   # la vue exige d'etre connecte
+def mes_locations(request):   # liste des locations de l'utilisateur
+    locations = Location.objects.filter(client=request.user)   # ressource : uniquement SES locations
+    return render(request, "mes_locations.html", {"locations": locations})   # afficher la page avec ces locations
+
+@user_passes_test(est_vendeur)                                 # rôle : reserve aux vendeurs/admins
+def creer_jeu(request): ...   # la vue de creation de jeu
+
+def test_acces_croise(self):   # test hostile : A tente l'objet de B
+    self.client.login(username="a@ludo.fr", password="Mdp8carac!")   # se connecter en tant que A
+    r = self.client.get(f"/locations/{loc_de_B.pk}/")   # demander la location de B
+    self.assertEqual(r.status_code, 404)   # doit renvoyer 404 (objet inaccessible)</pre>
+<p>L'IDOR est fermé structurellement. Demain : louer, transaction + test d'intégration.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton autorisation et son test croisé…",
+  items: [
+  { id: "proj6py-l10", title: "L'accès à un achat, verrouillé", level: 3,
+    statement: "Écris la vue detail_achat(request, pk) sécurisée par ressource (le client ne voit que SES achats), l'équivalent DRF (get_queryset), et le test d'accès croisé (le client A ne peut pas ouvrir l'achat du client B). Explique pourquoi renvoyer 404 (et non 403) pour un objet d'autrui est parfois préférable.",
+    hints: [
+      "get_object_or_404(Achat, pk=pk, client=request.user).",
+      "DRF : return Achat.objects.filter(client=self.request.user).",
+      "404 ne révèle pas l'EXISTENCE de l'objet ; 403 confirme qu'il existe mais est interdit."
+    ],
+    solution: "# vue web — sécurisée par ressource\n@login_required   # exige un utilisateur connecte\ndef detail_achat(request, pk):   # affiche le detail d'un achat\n    achat = get_object_or_404(Achat, pk=pk, client=request.user)   # trouve l'achat SEULEMENT s'il appartient a l'utilisateur\n    return render(request, \"detail_achat.html\", {\"achat\": achat})   # afficher la page de detail\n\n# API DRF\nclass MesAchatsViewSet(viewsets.ReadOnlyModelViewSet):   # API en lecture seule sur les achats\n    serializer_class = AchatSerializer   # serializer qui formate la sortie\n    permission_classes = [permissions.IsAuthenticated]   # acces reserve aux utilisateurs connectes\n    def get_queryset(self):   # restreint la liste renvoyee par l'API\n        return Achat.objects.filter(client=self.request.user).select_related(\"jeu\")   # uniquement SES achats, avec le jeu joint (anti-N+1)\n\n# test d'accès croisé (verrouillé par la CI)\nclass AccesAchatTests(TestCase):   # tests de l'acces aux achats\n    def setUp(self):   # donnees communes avant chaque test\n        self.cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        self.jeu = Jeu.objects.create(titre=\"Dixit\", prix_achat=25, prix_location=4,   # un jeu…\n                                      stock_vente=5, categorie=self.cat)   # …en vente\n        self.a = User.objects.create_user(\"a@ludo.fr\", \"a@ludo.fr\", \"Mdp8carac!\")   # client A\n        self.b = User.objects.create_user(\"b@ludo.fr\", \"b@ludo.fr\", \"Mdp8carac!\")   # client B\n        self.achat_b = Achat.objects.create(client=self.b, jeu=self.jeu,   # un achat appartenant a B…\n                          date_achat=timezone.now(), montant=25)   # …de 25 €\n\n    def test_a_ne_voit_pas_lachat_de_b(self):   # A ne doit pas pouvoir ouvrir l'achat de B\n        self.client.login(username=\"a@ludo.fr\", password=\"Mdp8carac!\")   # se connecter en A\n        r = self.client.get(f\"/achats/{self.achat_b.pk}/\")   # tenter d'ouvrir l'achat de B\n        self.assertEqual(r.status_code, 404)   # doit renvoyer 404\n\n# 404 plutôt que 403 :\n# 403 (« interdit ») CONFIRME que l'objet existe -> l'attaquant apprend qu'un\n# achat pk=42 existe, même s'il ne le voit pas (fuite d'information, l.14 Sécu).\n# 404 (« introuvable ») ne révèle rien : pour A, l'achat de B n'existe tout\n# simplement pas. Le filtrage par client=request.user produit ce 404 naturellement.",
+    note: "Le choix 404 vs 403 est une micro-décision de sécurité qui compte : filtrer par le propriétaire produit un 404 « gratuit » qui ne divulgue pas l'existence des objets d'autrui, alors qu'un 403 confirmerait leur existence. Cumulé sur tout un site, ce réflexe prive l'attaquant de la cartographie qu'il cherche — la fuite d'information et l'IDOR se ferment du même geste." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

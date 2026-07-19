@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'API REST (Spring MVC) et le job de tests au vert",
+  subtitle: "On ouvre le catalogue en API — et l'usine de tests devient complète.",
+  theory: `
+<h3>1. Un DTO, pas l'entité</h3>
+<pre class="pseudo">public record JeuDto(Long id, String titre, BigDecimal prixLocation, boolean louable) {}   // record = petite fiche immuable de transport ; ne montre QUE ces 4 informations</pre>
+<p>Avant tout, deux mots. Une <strong>API REST</strong> est la porte d'entrée par laquelle d'autres programmes (un site, une appli mobile) demandent des données à notre serveur, le plus souvent au format <strong>JSON</strong> — un texte structuré fait de paires « nom : valeur ». Un <strong>DTO</strong> (<em>Data Transfer Object</em>, objet de transfert) est une fiche sur mesure décrivant exactement ce qu'on veut envoyer ; un <strong>record</strong> est la façon courte, en Java, d'écrire une telle fiche immuable. On n'expose <strong>jamais</strong> l'entité JPA directement : le DTO choisit ce qui sort (pas de champ interne, pas de relation lourde) et découple le contrat d'API du schéma de base.</p>
+
+<h3>2. Le contrôleur</h3>
+<pre class="pseudo">@RestController                                              // etiquette : cette classe repond aux requetes web en renvoyant du JSON
+@RequestMapping("/api/jeux")                                 // toutes ses URL commencent par /api/jeux
+public class JeuController {
+    private final JeuRepository repo;                        // dependance vers la base
+    public JeuController(JeuRepository repo) { this.repo = repo; }   // injection par constructeur
+
+    @GetMapping                                              // repond aux requetes GET (lecture) sur /api/jeux
+    public List<JeuDto> lister() {                           // renvoie la liste des jeux, transformes en DTO
+        return repo.findAllWithCategorie().stream()          // recupere jeux + categorie en 1 requete, puis ouvre un flux (stream)
+            .map(j -> new JeuDto(j.getId(), j.getTitre(), j.getPrixLocation(), j.estLouable()))   // transforme chaque entite en fiche DTO
+            .toList();                                       // rassemble le tout en une liste
+    }
+}</pre>
+<p>Décryptons le contrôleur. <code>@RestController</code> désigne la classe qui répond aux requêtes web en renvoyant directement des données. <code>@RequestMapping("/api/jeux")</code> fixe l'adresse commune, et <code>@GetMapping</code> précise qu'on répond aux demandes de <em>lecture</em> (le verbe HTTP GET). Le <code>stream()</code> ouvre un « tapis roulant » sur la liste, <code>map(...)</code> transforme chaque élément au vol (ici entité → DTO), et <code>toList()</code> récupère le résultat final.</p>
+
+<h3>3. Éviter le N+1 dès l'API</h3>
+<pre class="pseudo">@Query("select j from Jeu j join fetch j.categorie order by j.titre")   // requete ecrite a la main : charge le jeu ET sa categorie ensemble (join fetch)
+List<Jeu> findAllWithCategorie();                                       // methode qui execute cette requete</pre>
+<p>Petite définition : le <strong>N+1</strong> est un piège de performance où obtenir une liste de N éléments déclenche 1 requête pour la liste, puis 1 requête <em>par</em> élément — soit N+1 allers-retours vers la base, très lents. <code>@Query</code> permet d'écrire soi-même la requête (en JPQL, un langage proche du SQL mais orienté objets). Sans <code>join fetch</code>, chaque accès à <code>j.getCategorie()</code> déclencherait une requête (le fameux N+1). On charge donc tout en une seule — réflexe posé dès l'ouverture de l'API.</p>
+
+<h3>4. Le test d'intégration MockMvc</h3>
+<pre class="pseudo">@SpringBootTest                                             // demarre l'application complete pour le test
+@AutoConfigureMockMvc                                       // prepare un faux navigateur (MockMvc) pour taper l'API sans reseau reel
+class JeuApiTest {
+    @Autowired MockMvc mockMvc;                             // @Autowired = Spring fournit l'outil MockMvc tout pret
+    @Test void listeLesJeux() throws Exception {            // scenario : lister les jeux
+        mockMvc.perform(get("/api/jeux"))                  // envoie une requete GET sur /api/jeux
+            .andExpect(status().isOk())                    // on EXIGE le code 200 (succes)
+            .andExpect(jsonPath("$[0].titre").exists());   // on EXIGE que le 1er jeu du JSON possede bien un champ "titre"
+    }
+}</pre>
+<p><code>MockMvc</code> est un faux navigateur : il envoie des requêtes à l'API et vérifie les réponses sans passer par le vrai réseau. <code>@SpringBootTest</code> démarre l'application entière pour le test, et <code>jsonPath</code> pointe un endroit précis dans le JSON reçu (ici le titre du premier jeu) afin de l'inspecter.</p>
+
+<h3>5. Le job de tests complet, avec MySQL</h3>
+<pre class="pseudo"># ci.yml
+  tests:                                    # 2e travail du pipeline : les tests avec une vraie base
+    runs-on: ubuntu-latest                  # sur une machine Linux neuve
+    services:                               # conteneurs annexes lances a cote du job
+      mysql:                                # une base MySQL jetable, le temps des tests
+        image: mysql:8.4                    # image officielle MySQL 8.4
+        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }   # base a creer + mot de passe (jetable, non secret ici)
+        ports: ["3306:3306"]               # rend la base joignable sur le port 3306
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-retries=10   # attend qu'elle soit PRETE avant les tests
+    steps:
+      - uses: actions/checkout@v4           # recupere le code du depot
+      - uses: actions/setup-java@v4         # installe Java 21 (Temurin) + cache Maven
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - run: mvn -B verify                  # compile et lance TOUS les tests (unitaires + integration)
+        env: { SPRING_DATASOURCE_URL: "jdbc:mysql://127.0.0.1:3306/ludotheque" }   # dit a l'app d'utiliser la base jetable du job</pre>
+<div class="warn">Le service MySQL de la CI (cours CI/CD leçon 10) rejoue les migrations Flyway sur une base neuve à chaque commit : les tests d'intégration s'exécutent contre le vrai moteur, pas une base mémoire qui divergerait. La base est jetable, recréée à chaque exécution.</div>
+<div class="tip"><strong>Fin de semaine 1.</strong> L'usine est complète AVANT que l'application ne soit finie : entités, service et API existent, chacun sous tests, et le pipeline (compile + Spotless + tests avec MySQL) tourne au vert à chaque commit. On peut désormais empiler le métier en confiance — chaque ajout naîtra testé et surveillé.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'API renvoie…", opts: ["L'entité JPA directement", "Un DTO (record) choisi", "Le schéma SQL", "Rien"], a: 1, exp: "Découplage contrat/schéma." },
+    { type: "qcm", q: "Un contrôleur REST est annoté…", opts: ["@Entity", "@RestController", "@Service", "@Repository"], a: 1, exp: "Renvoie du JSON." },
+    { type: "qcm", q: "join fetch j.categorie évite…", opts: ["La compilation", "Le problème N+1", "Le CSS", "Le test"], a: 1, exp: "Une requête au lieu de N+1." },
+    { type: "qcm", q: "Exposer l'entité directement risque…", opts: ["Rien", "De fuiter des champs internes / relations lourdes", "D'accélérer", "De chiffrer"], a: 1, exp: "Le DTO protège." },
+    { type: "qcm", q: "Le test d'API utilise…", opts: ["curl à la main", "MockMvc (@SpringBootTest)", "La prod", "Un mock total"], a: 1, exp: "Test d'intégration HTTP." },
+    { type: "qcm", q: "jsonPath('$[0].titre') vérifie…", opts: ["Le CSS", "La structure du JSON renvoyé", "La base", "Le port"], a: 1, exp: "Contrat d'API testé." },
+    { type: "qcm", q: "Le job tests CI a un service…", opts: ["Redis", "mysql:8.4", "Nginx", "Aucun"], a: 1, exp: "Vrai moteur pour l'intégration." },
+    { type: "qcm", q: "La base de la CI est…", opts: ["La prod", "Jetable, recréée à chaque exécution", "Permanente", "Manuelle"], a: 1, exp: "Migrations rejouées de zéro." },
+    { type: "qcm", q: "Le record JeuDto est…", opts: ["Une entité", "Un type immuable de transport", "Un service", "Un test"], a: 1, exp: "Contrat de sortie." },
+    { type: "qcm", q: "En fin de semaine 1, l'usine est…", opts: ["Inexistante", "Complète avant que l'app soit finie", "En prod", "Optionnelle"], a: 1, exp: "Outillage d'abord." },
+    { type: "vf", q: "Un test d'intégration contre un vrai MySQL est plus fiable qu'avec H2.", a: true, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "@GetMapping sur /api/jeux répond à…", opts: ["POST", "GET (lecture)", "DELETE", "Rien"], a: 1, exp: "Lister le catalogue." },
+    { type: "qcm", q: "Le pipeline de fin de semaine 1 fait…", opts: ["Rien", "compile + Spotless + tests avec MySQL", "Déploie en prod", "Un email"], a: 1, exp: "Vert à chaque commit." },
+    { type: "qcm", q: "SPRING_DATASOURCE_URL en CI pointe vers…", opts: ["La prod", "Le service mysql du job (127.0.0.1:3306)", "Rien", "H2"], a: 1, exp: "Base jetable du runner." },
+    { type: "vf", q: "Chaque nouvel ajout métier naîtra désormais testé et surveillé.", a: true, exp: "L'usine est prête." }
+  ],
+  final: {
+    title: "Exercice final — L'API et l'usine au vert",
+    intro: `<p>API + DTO + test + job MySQL.</p>`,
+    questions: [
+      { type: "qcm", q: "L'API expose :", opts: ["un DTO (record)", "l'entité JPA", "le SQL", "rien"], a: 0, exp: "Contrat découplé." },
+      { type: "qcm", q: "Le N+1 est évité par :", opts: ["join fetch / @EntityGraph", "plus de RAM", "un cache manuel", "la chance"], a: 0, exp: "Une requête." },
+      { type: "qcm", q: "Le test d'API utilise :", opts: ["MockMvc", "un navigateur", "la prod", "un mock total"], a: 0, exp: "Intégration HTTP." },
+      { type: "qcm", q: "Le job de tests CI a :", opts: ["un service mysql:8.4 jetable", "la base de prod", "aucune base", "H2 uniquement"], a: 0, exp: "Vrai moteur." },
+      { type: "vf", q: "Fin de semaine 1 : l'usine tourne avant que l'app soit finie.", a: true, exp: "Outillage d'abord." }
+    ],
+    solution: `<pre class="pseudo">record JeuDto(Long id, String titre, BigDecimal prixLocation, boolean louable){}   // fiche de sortie immuable (DTO)
+@RestController @RequestMapping("/api/jeux") class JeuController {   // controleur : URL /api/jeux, renvoie du JSON
+  @GetMapping List<JeuDto> lister(){ repo.findAllWithCategorie()...map(...); }   // GET : liste les jeux, entite -> DTO
+}
+@Query("select j from Jeu j join fetch j.categorie order by j.titre")  // anti-N+1 : jeu + categorie en 1 seule requete
+
+# ci.yml job tests : service mysql:8.4 + mvn -B verify (SPRING_DATASOURCE_URL)   # tests d'integration sur une vraie base jetable</pre>
+<p>Semaine 1 bouclée : usine complète, au vert. Demain : valider les entrées et refuser proprement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton API et son job de tests…",
+  items: [
+  { id: "proj6java-l7", title: "L'API REST + le job de tests MySQL", level: 2,
+    statement: "Écris le record JeuDto, le contrôleur GET /api/jeux (mapping entité->DTO, requête join fetch anti-N+1), un test MockMvc, et le job 'tests' de ci.yml avec un service mysql:8.4. Explique en 2-3 lignes pourquoi on n'expose pas l'entité et pourquoi la CI utilise un vrai MySQL plutôt qu'une base mémoire.",
+    hints: [
+      "record JeuDto(...) : choisir ce qui sort, pas de champ interne.",
+      "@Query('select j from Jeu j join fetch j.categorie ...') pour éviter le N+1.",
+      "ci.yml : services.mysql avec health-cmd ; SPRING_DATASOURCE_URL vers 127.0.0.1:3306."
+    ],
+    solution: "public record JeuDto(Long id, String titre, BigDecimal prixLocation, boolean louable) {}   // fiche immuable de sortie : ne montre QUE ces 4 infos\n\n@RestController                                              // repond aux requetes web en JSON\n@RequestMapping(\"/api/jeux\")                                 // prefixe commun des URL\npublic class JeuController {\n    private final JeuRepository repo;                        // dependance vers la base\n    public JeuController(JeuRepository repo) { this.repo = repo; }   // injection par constructeur\n\n    @GetMapping                                              // GET /api/jeux (lecture)\n    public List<JeuDto> lister() {                           // liste les jeux en DTO\n        return repo.findAllWithCategorie().stream()          // jeux + categorie en 1 requete, puis flux (stream)\n            .map(j -> new JeuDto(j.getId(), j.getTitre(), j.getPrixLocation(), j.estLouable()))   // chaque entite -> une fiche DTO\n            .toList();                                       // rassemble en liste\n    }\n}\n\npublic interface JeuRepository extends JpaRepository<Jeu, Long> {   // contrat d'acces a la base\n    @Query(\"select j from Jeu j join fetch j.categorie order by j.titre\")   // charge jeu ET categorie ensemble (anti-N+1)\n    List<Jeu> findAllWithCategorie();                        // execute cette requete\n}\n\n@SpringBootTest @AutoConfigureMockMvc                        // demarre l'app + prepare le faux navigateur MockMvc\nclass JeuApiTest {\n    @Autowired MockMvc mockMvc;                             // Spring fournit l'outil de test HTTP\n    @Test void listeLesJeux() throws Exception {           // scenario : lister les jeux\n        mockMvc.perform(get(\"/api/jeux\"))                  // envoie GET /api/jeux\n            .andExpect(status().isOk())                    // on EXIGE 200 (succes)\n            .andExpect(jsonPath(\"$[0].titre\").exists());   // on EXIGE un champ titre sur le 1er jeu\n    }\n}\n\n# ci.yml\n  tests:                                                    # travail 'tests' du pipeline\n    runs-on: ubuntu-latest                                  # machine Linux neuve\n    services:                                               # conteneurs annexes\n      mysql:                                                # base MySQL jetable\n        image: mysql:8.4                                    # image officielle 8.4\n        env: { MYSQL_DATABASE: ludotheque, MYSQL_ROOT_PASSWORD: ci }   # base + mot de passe (jetable)\n        ports: [\"3306:3306\"]                               # port d'acces a la base\n        options: --health-cmd=\"mysqladmin ping\" --health-interval=5s --health-retries=10   # attend qu'elle soit PRETE\n    steps:\n      - uses: actions/checkout@v4                           # recupere le code\n      - uses: actions/setup-java@v4                         # installe Java 21 + cache Maven\n        with: { distribution: temurin, java-version: \"21\", cache: maven }\n      - run: mvn -B verify                                  # compile + tous les tests\n        env: { SPRING_DATASOURCE_URL: \"jdbc:mysql://127.0.0.1:3306/ludotheque\" }   # pointe l'app vers la base jetable\n\n# POURQUOI PAS L'ENTITE, POURQUOI UN VRAI MYSQL\n# On n'expose pas l'entite JPA : elle porte des champs internes et des relations\n# lazy qui fuiteraient (ou provoqueraient des erreurs de serialisation). Le DTO\n# fige un contrat d'API stable, independant du schema. Et la CI utilise un vrai\n# MySQL (pas H2) car H2 accepte du SQL que MySQL refuse (et inversement) : tester\n# contre le moteur reel evite le 'vert en CI, rouge en prod'.",
+    note: "Cette leçon boucle la semaine 1 : l'infrastructure de qualité (Compose, Flyway, CI, tests unitaires ET d'intégration avec MySQL) est complète avant que le métier ne le soit. Le DTO et le join fetch sont deux réflexes — découplage et performance — posés dès la première API, pas rétrofités. À partir de la semaine 2, chaque brique métier viendra se couler dans cette usine déjà verte." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

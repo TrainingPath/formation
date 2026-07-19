@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Rôles et autorisation",
+  subtitle: "Qui a le droit de faire quoi ? Rôles, politiques et vérification de propriété.",
+  theory: `
+<h3>1. Les rôles : des claims comme les autres</h3>
+<p>Un <strong>rôle</strong> est une étiquette qui regroupe des droits (« membre », « admin »). Hier, le JWT transportait des claims. Le claim <code>role</code> alimente directement l'<strong>autorisation</strong> (la vérification des droits) :</p>
+<pre class="pseudo">// À l'émission du jeton :
+new Claim(ClaimTypes.Role, user.Role)         // ajoute le claim "role" au jeton : "membre" ou "admin"
+
+// À la protection :
+[Authorize]                          // exige un jeton valide (connecté), peu importe le rôle
+[Authorize(Roles = "admin")]         // exige EN PLUS le rôle admin
+[AllowAnonymous]                     // ouvre l'accès à tous (exception locale à une protection globale)</pre>
+<p>Sans jeton → <strong>401</strong> (pas identifié). Jeton valide mais mauvais rôle → <strong>403</strong> (identifié mais pas le droit).</p>
+<h3>2. Protéger un contrôleur entier, ouvrir une porte</h3>
+<pre class="pseudo">[Authorize]                                    // TOUT le contrôleur exige l'identité (protection par défaut)
+[ApiController]
+[Route("api/[controller]")]
+public class TachesController : ControllerBase
+{
+    [AllowAnonymous]                           // …sauf cette méthode : liste publique ouverte à tous
+    [HttpGet("publiques")]                     // GET api/taches/publiques
+    public ... { }
+
+    [Authorize(Roles = "admin")]               // …et celle-ci exige le rôle admin
+    [HttpDelete("purge")]                      // DELETE api/taches/purge
+    public ... { }
+}</pre>
+<h3>3. Les politiques : des règles nommées</h3>
+<p>Une <strong>politique</strong> (policy) est une exigence nommée, réutilisable, qui va au-delà du simple rôle :</p>
+<pre class="pseudo">builder.Services.AddAuthorization(options =&gt;           // configure l'autorisation
+{
+    options.AddPolicy("MajeurUniquement", p =&gt;         // déclare une politique nommée "MajeurUniquement"
+        p.RequireClaim("age_verifie", "true"));         // sa règle : le claim age_verifie doit valoir "true"
+});
+
+[Authorize(Policy = "MajeurUniquement")]                // applique la politique à un endpoint</pre>
+<h3>4. La propriété : « MA tâche, pas la tienne »</h3>
+<p>Le contrôle le plus important d'une API multi-utilisateurs ne se règle NI par rôle NI par politique simple : « un membre ne modifie que SES tâches ». Ça se vérifie en comparant le claim d'identité à la donnée :</p>
+<pre class="pseudo">[Authorize]                                             // il faut être connecté
+[HttpPut("{id:int}")]                                   // PUT api/taches/{id}
+public async Task&lt;IActionResult&gt; Modifier(int id, TacheDto dto)
+{
+    var tache = await _context.Taches.FindAsync(id);    // charge la tâche visée
+    if (tache == null) return NotFound();               // absente → 404
+
+    int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // l'id de l'appelant, LU DANS LE JETON
+    bool estAdmin = User.IsInRole("admin");             // est-il admin ? (claim role)
+
+    if (tache.MembreId != userId &amp;&amp; !estAdmin)          // ni propriétaire ni admin ?
+        return Forbid();                                // 403 : pas TA tâche
+
+    tache.Titre = dto.Titre;                            // sinon, on applique la modification
+    await _context.SaveChangesAsync();                  // on sauvegarde
+    return NoContent();                                 // 204
+}</pre>
+<h3>5. La faille du débutant : faire confiance au client</h3>
+<p>Ne JAMAIS lire l'identité depuis le corps de la requête (<code>dto.MembreId</code>) : le client peut y mettre n'importe quoi. L'identité vient TOUJOURS du jeton vérifié (<code>User.FindFirstValue</code>). Et cacher un bouton côté interface n'est pas une protection : la règle vit sur le serveur.</p>
+<div class="warn">Tester l'autorisation, c'est tester les REFUS : « un membre ne peut pas modifier la tâche d'un autre » mérite un test automatisé au même titre que le succès (leçon 15).</div>
+<div class="tip">Forbid() renvoie 403, Unauthorized() renvoie 401 : utilise le bon — les clients et les monitorings s'y fient.</div>`,
+  exercises: [
+    { type: "qcm", q: "Où l'autorisation par rôle puise-t-elle le rôle de l'utilisateur ?", opts: ["Dans la query string", "Dans le claim role du JWT vérifié", "Dans un cookie", "Dans le corps"], a: 1, exp: "Le jeton signé est la source de vérité de l'identité ET du rôle." },
+    { type: "qcm", q: "Que fait [Authorize(Roles = \"admin\")] pour un membre connecté non-admin ?", opts: ["401", "403 Forbidden : identifié mais pas le droit", "404", "Accès accordé en lecture"], a: 1, exp: "401 = qui es-tu ? / 403 = pas pour toi." },
+    { type: "qcm", q: "Et pour une requête SANS jeton ?", opts: ["403", "401 Unauthorized : l'identité n'est pas établie", "500", "Accès"], a: 1, exp: "On ne peut pas vérifier le rôle de quelqu'un qu'on ne connaît pas." },
+    { type: "qcm", q: "À quoi sert [AllowAnonymous] ?", opts: ["À bloquer tout le monde", "À ouvrir un endpoint précis dans un contrôleur globalement protégé", "À anonymiser les données", "À désactiver les logs"], a: 1, exp: "L'exception locale à la règle globale." },
+    { type: "qcm", q: "Qu'est-ce qu'une politique d'autorisation ?", opts: ["Un document RH", "Une exigence nommée (claims, conditions) réutilisable via [Authorize(Policy = ...)]", "Un rôle par défaut", "Un middleware"], a: 1, exp: "Plus expressif que les seuls rôles." },
+    { type: "qcm", q: "La règle « un membre ne modifie que SES tâches » se vérifie :", opts: ["Par [Authorize(Roles)]", "En comparant le claim d'identité (NameIdentifier) au MembreId de la donnée chargée", "Par une politique magique", "Côté client"], a: 1, exp: "La vérification de propriété : rôle et politique ne suffisent pas, il faut l'OBJET." },
+    { type: "qcm", q: "Comment obtenir l'id de l'utilisateur courant dans un contrôleur ?", opts: ["dto.UserId", "User.FindFirstValue(ClaimTypes.NameIdentifier)", "Request.Query[\"id\"]", "Session[\"id\"]"], a: 1, exp: "User = l'identité issue du jeton vérifié." },
+    { type: "qcm", q: "Pourquoi ne JAMAIS lire l'identité depuis dto.MembreId ?", opts: ["C'est plus lent", "Le corps vient du client : il peut y mettre l'id de n'importe qui — l'identité vient du jeton", "Les DTO sont privés", "EF l'interdit"], a: 1, exp: "LA faille classique des API multi-utilisateurs." },
+    { type: "qcm", q: "Quelle méthode renvoie un 403 dans un contrôleur ?", opts: ["Unauthorized()", "Forbid()", "NotFound()", "Deny()"], a: 1, exp: "Forbid = interdit ; Unauthorized = non identifié." },
+    { type: "qcm", q: "Que vérifie User.IsInRole(\"admin\") ?", opts: ["La base de données", "La présence du claim role=admin dans le jeton", "Le fichier appsettings", "Le nom de la machine"], a: 1, exp: "Tout se joue dans les claims signés." },
+    { type: "qcm", q: "Cacher le bouton « Supprimer » dans l'interface suffit-il ?", opts: ["Oui", "Non : un attaquant forge la requête directement — la règle DOIT vivre côté serveur", "Oui, en HTTPS", "Oui, si le bouton est bien caché"], a: 1, exp: "L'interface est du confort ; le serveur est la sécurité." },
+    { type: "qcm", q: "Un admin doit-il pouvoir modifier la tâche d'un autre membre dans notre code d'exemple ?", opts: ["Non", "Oui : la condition tache.MembreId != userId && !estAdmin laisse passer l'admin", "Seulement le week-end", "Le code l'interdit"], a: 1, exp: "Propriétaire OU admin : la règle métier typique." },
+    { type: "qcm", q: "Quel test automatisé documente le mieux cette politique de sécurité ?", opts: ["Un test du succès seulement", "Un test où un membre tente de modifier la tâche d'un AUTRE et reçoit 403 (donnée inchangée)", "Un test de charge", "Aucun"], a: 1, exp: "Tester les refus = prouver la sécurité (leçon 15)." },
+    { type: "vf", q: "Un [Authorize] au niveau du contrôleur s'applique à toutes ses méthodes, sauf celles marquées [AllowAnonymous].", a: true, exp: "Protection par défaut, ouvertures explicites : la bonne posture." },
+    { type: "vf", q: "Le serveur doit relire la base pour connaître le rôle à chaque requête.", a: false, exp: "Le rôle est dans le jeton signé : aucune lecture nécessaire. (Revers : un changement de rôle attend l'expiration du jeton.)" }
+  ],
+  final: {
+    title: "Exercice final — La matrice des accès",
+    intro: `<p>Configuration du gestionnaire de tâches :</p>
+<pre class="pseudo">[Authorize]                                      // verrou global : tout le contrôleur exige un jeton
+public class TachesController : ControllerBase
+{
+    [AllowAnonymous] [HttpGet("publiques")]      // A : ouverte à tous (exception au verrou)
+    [HttpGet("mes-taches")]                       // B : connecté requis (hérite du [Authorize])
+    [Authorize(Roles = "admin")] [HttpDelete("purge")]  // C : admin uniquement
+    [HttpPut("{id}")]                             // D : connecté + vérification de propriété dans le code
+}</pre>
+<p>Trois personnages : <strong>Anonyme</strong> (pas de jeton), <strong>Marc</strong> (membre), <strong>Aurélia</strong> (admin).</p>`,
+    questions: [
+      { type: "qcm", q: "Anonyme appelle B (mes-taches) :", opts: ["200", "401 : le [Authorize] du contrôleur exige un jeton", "403", "404"], a: 1, exp: "Pas de jeton = pas d'identité = 401." },
+      { type: "qcm", q: "Anonyme appelle A (publiques) :", opts: ["401", "200 : [AllowAnonymous] ouvre cet endpoint précis", "403", "400"], a: 1, exp: "L'exception locale au verrou global." },
+      { type: "qcm", q: "Marc appelle C (purge) :", opts: ["401", "403 : identifié, mais le rôle admin manque", "200", "404"], a: 1, exp: "Le claim role=membre ne satisfait pas Roles=\"admin\"." },
+      { type: "qcm", q: "Marc appelle D sur une tâche d'Aurélia :", opts: ["204", "403 : la vérification de propriété (MembreId != userId, pas admin) renvoie Forbid()", "401", "201"], a: 1, exp: "Le contrôle par objet, au-delà des attributs." },
+      { type: "qcm", q: "Aurélia (admin) appelle D sur la même tâche :", opts: ["403", "204 : la condition laisse passer les admins", "401", "400"], a: 1, exp: "Propriétaire OU admin. La matrice est complète." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 17 :
+// 1. Rôles = claims du JWT ; [Authorize(Roles = "...")], IsInRole.
+// 2. 401 = pas identifié ; 403 = identifié mais refusé (Forbid()).
+// 3. [Authorize] global + [AllowAnonymous] ponctuel : protéger par défaut.
+// 4. Politiques : des exigences nommées réutilisables.
+// 5. Propriété (« MA tâche ») : comparer le claim d'identité à la donnée.
+// 6. L'identité vient du JETON, jamais du corps de la requête.</pre>
+<p>L'API est sécurisée. Demain, changement de décor : générer des pages HTML avec Razor Pages.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-autorisation-propriete", title: "Supprimer : propriétaire ou admin", level: 3,
+    statement: "Écris la méthode <code>[HttpDelete(\"{id:int}\")]</code> <code>Supprimer(int id)</code> du contrôleur des tâches (protégé par <code>[Authorize]</code>) : charge la tâche (404 si absente) ; récupère l'id utilisateur depuis les claims et le statut admin depuis le rôle ; refuse avec 403 si l'appelant n'est ni propriétaire ni admin ; sinon supprime et renvoie 204. L'identité ne doit venir QUE du jeton.",
+    hints: [
+      "int userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);",
+      "bool estAdmin = User.IsInRole(\"admin\");",
+      "L'ordre des contrôles : 404 d'abord (la ressource), puis 403 (le droit), puis l'action."
+    ],
+    solution: "[Authorize]\n[HttpDelete(\"{id:int}\")]\npublic async Task<IActionResult> Supprimer(int id)\n{\n    // 1. La ressource existe-t-elle ?\n    var tache = await _context.Taches.FindAsync(id);\n    if (tache == null)\n        return NotFound();                                   // 404\n\n    // 2. QUI appelle ? — depuis le JETON, jamais depuis la requête\n    int userId   = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // id de l'appelant\n    bool estAdmin = User.IsInRole(\"admin\");                  // rôle admin ?\n\n    // 3. Propriétaire OU admin, sinon interdit\n    if (tache.MembreId != userId && !estAdmin)\n        return Forbid();                                     // 403\n\n    // 4. L'action, enfin\n    _context.Taches.Remove(tache);                           // marqué « à supprimer »\n    await _context.SaveChangesAsync();                       // DELETE réel\n    return NoContent();                                      // 204\n}",
+    note: "Mémorise l'ordre 404 → 403 → action : vérifier l'existence, puis le droit, puis agir. Et ajoute le test « Marc ne supprime pas la tâche d'Aurélia » à ta suite de tests." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

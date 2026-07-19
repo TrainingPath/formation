@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Fluent API : quand les conventions ne suffisent plus",
+  subtitle: "Les annotations décorent, la Fluent API gouverne.",
+  theory: `
+<h3>1. Les limites des data annotations</h3>
+<p>Depuis la leçon 3, tu configures la Ludothèque avec des attributs : <strong>[Required]</strong>, <strong>[MaxLength(200)]</strong>, <strong>[Key]</strong>… C'est lisible, mais ça coince vite. Certaines choses sont <strong>impossibles à exprimer par annotation</strong> : un index unique composé, une valeur par défaut côté base, une précision décimale fine, ou le paramétrage d'une relation. Et surtout, les annotations <strong>polluent tes entités</strong> avec des préoccupations de base de données : ta classe <em>Jeu</em>, qui devrait rester un objet métier propre, se retrouve tatouée de détails SQL Server. La <strong>Fluent API</strong> (« API fluide », un style d'écriture où l'on enchaîne les réglages comme les wagons d'un train) va lever ces limites.</p>
+<pre class="pseudo">// Ce que les annotations savent faire...
+[Required]                             // étiquette : impose NOT NULL sur la colonne
+[MaxLength(200)]                        // étiquette : limite à 200 caractères → nvarchar(200)
+public string Titre { get; set; }       // la propriété Titre du jeu
+
+// ...et ce qu'elles NE savent PAS faire :
+// - index unique sur Email
+// - valeur par défaut (EstDisponible = true côté SQL)
+// - decimal(8,2) proprement, relations fines, conversions...</pre>
+
+<h3>2. OnModelCreating : la salle des machines</h3>
+<p>La <strong>Fluent API</strong> se vit dans une méthode que tu redéfinis dans ton <em>LudothequeContext</em> : <strong>OnModelCreating(ModelBuilder modelBuilder)</strong>. EF Core l'appelle <strong>une seule fois</strong>, au moment de construire le modèle en mémoire (avant toute requête, avant toute migration). Le <em>ModelBuilder</em> est un objet de configuration : tu enchaînes les appels de méthodes — d'où le nom « fluent », l'API se lit comme une phrase.</p>
+<pre class="pseudo">public class LudothequeContext : DbContext                              // notre contexte
+{
+    public DbSet&lt;Jeu&gt; Jeux { get; set; }                               // table Jeux
+    public DbSet&lt;Membre&gt; Membres { get; set; }                         // table Membres
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder) // EF appelle cette méthode une fois pour bâtir le modèle
+    {
+        modelBuilder.Entity&lt;Jeu&gt;()                                     // on ouvre la configuration de l'entité Jeu…
+            .ToTable("Jeux")                                          // …nom de table explicite
+            .HasKey(j =&gt; j.Id);                                       // …clé primaire explicite : la propriété Id
+    }
+}</pre>
+
+<h3>3. Configurer Jeu et Membre : le catalogue des méthodes</h3>
+<p>Tout ce que tu écrivais en annotations existe en Fluent, plus le reste. <strong>Property(j =&gt; j.Titre)</strong> cible une colonne, puis tu chaînes : <strong>IsRequired()</strong> (NOT NULL), <strong>HasMaxLength(200)</strong> (nvarchar(200)), <strong>HasColumnType(&quot;decimal(8,2)&quot;)</strong> pour le prix d'un jeu (fini le warning de troncature !), <strong>HasDefaultValue(true)</strong> pour que SQL Server remplisse <em>EstDisponible</em> tout seul. Et la star : <strong>HasIndex(m =&gt; m.Email).IsUnique()</strong> — deux membres ne peuvent pas partager le même email, contrainte que tu posais à la main en SQL au Niveau 4.</p>
+<pre class="pseudo">modelBuilder.Entity&lt;Jeu&gt;()                          // configuration de l'entité Jeu…
+    .Property(j =&gt; j.Titre)                         // …on cible la propriété Titre
+    .IsRequired()                                   // NOT NULL : le titre est obligatoire
+    .HasMaxLength(200);                             // nvarchar(200) : 200 caractères maximum
+
+modelBuilder.Entity&lt;Jeu&gt;()                          // à nouveau l'entité Jeu…
+    .Property(j =&gt; j.Prix)                          // …on cible la propriété Prix
+    .HasColumnType("decimal(8,2)");                 // type SQL exact : decimal(8,2)
+
+modelBuilder.Entity&lt;Jeu&gt;()                          // encore l'entité Jeu…
+    .Property(j =&gt; j.EstDisponible)                 // …on cible EstDisponible
+    .HasDefaultValue(true);                         // valeur par défaut posée côté SQL Server (true si non fourni)
+
+modelBuilder.Entity&lt;Membre&gt;()                       // configuration de l'entité Membre…
+    .HasIndex(m =&gt; m.Email)                         // …crée un index sur la colonne Email
+    .IsUnique();                                    // …et le rend UNIQUE : deux membres ne peuvent pas partager un email</pre>
+
+<h3>4. Qui gagne ? Fluent API &gt; annotations &gt; conventions</h3>
+<p>Trois sources de configuration cohabitent, et EF Core applique une hiérarchie stricte. Les <strong>conventions</strong> proposent (Id devient la clé, string devient nvarchar(max)…). Les <strong>annotations</strong> corrigent les conventions. La <strong>Fluent API</strong> a toujours le dernier mot : si ton attribut dit [MaxLength(100)] et que OnModelCreating dit HasMaxLength(200), la colonne fera <strong>200</strong>. Retiens la pyramide : convention = défaut, annotation = exception simple, Fluent = vérité absolue. En pratique, beaucoup d'équipes gardent les annotations de validation ([Required], [MaxLength] — aussi lues par ASP.NET Core pour valider les formulaires) et réservent la Fluent API au mapping pur.</p>
+
+<h3>5. Ranger la config : IEntityTypeConfiguration</h3>
+<p>Avec 4 entités, ton OnModelCreating tient encore. Avec 40, c'est un monstre. La solution : <strong>une classe de configuration par entité</strong>, qui implémente <strong>IEntityTypeConfiguration&lt;Jeu&gt;</strong>. Puis une seule ligne dans le contexte : <strong>ApplyConfigurationsFromAssembly</strong> scanne l'assembly (le résultat compilé de ton projet) et enregistre toutes les classes de configuration automatiquement. Une ligne d'équivalence pour ta culture : Hibernate a vécu la même histoire (fichiers hbm.xml puis annotations JPA), Eloquent configure ses conversions dans le tableau $casts du modèle, et l'ORM Django centralise ces réglages dans la classe interne Meta.</p>
+<pre class="pseudo">public class JeuConfiguration : IEntityTypeConfiguration&lt;Jeu&gt;   // classe dédiée : toute la config de l'entité Jeu au même endroit
+{
+    public void Configure(EntityTypeBuilder&lt;Jeu&gt; builder)       // méthode imposée par l'interface : on y décrit la config
+    {
+        builder.ToTable("Jeux");                                // nom de la table
+        builder.Property(j =&gt; j.Titre).IsRequired().HasMaxLength(200);   // Titre : NOT NULL et nvarchar(200)
+        builder.Property(j =&gt; j.Prix).HasColumnType("decimal(8,2)");     // Prix : type decimal(8,2)
+    }
+}
+
+// Dans LudothequeContext :
+protected override void OnModelCreating(ModelBuilder modelBuilder)   // point d'entrée de la configuration
+{
+    modelBuilder.ApplyConfigurationsFromAssembly(                    // scanne l'assembly et applique…
+        typeof(LudothequeContext).Assembly);                        // …toutes les classes IEntityTypeConfiguration trouvées
+}</pre>
+<div class="warn">Toute modification dans OnModelCreating ne touche que le <strong>modèle en mémoire</strong> : la base ne change pas tant que tu n'as pas généré et appliqué une <strong>migration</strong> (leçons 4-5). Un HasDefaultValue oublié en migration = une base qui ment à ton modèle.</div>
+<div class="tip">Réflexe pro : dès qu'une entité dépasse trois règles de configuration, sors-les dans une classe IEntityTypeConfiguration. Tes entités restent des POCO propres, et chaque config se lit comme la carte d'identité SQL de son entité.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle contrainte est IMPOSSIBLE à poser avec une data annotation ?", opts: ["Un champ obligatoire", "Une longueur maximale", "Un index unique sur Email", "Une clé primaire"], a: 2, exp: "HasIndex(...).IsUnique() n'existe qu'en Fluent API." },
+    { type: "input", q: "Quelle méthode du DbContext redéfinit-on pour utiliser la Fluent API ?", a: ["OnModelCreating"], ph: "Nom de la méthode…", exp: "protected override void OnModelCreating(ModelBuilder modelBuilder)." },
+    { type: "qcm", q: "Le paramètre reçu par OnModelCreating est de type…", opts: ["DbSet", "ModelBuilder", "EntityTypeBuilder", "DbContextOptions"], a: 1, exp: "Le ModelBuilder est le point d'entrée de toute la configuration." },
+    { type: "qcm", q: "OnModelCreating est appelée…", opts: ["À chaque requête LINQ", "À chaque SaveChanges", "Une seule fois, à la construction du modèle", "Une fois par entité"], a: 2, exp: "Le modèle est construit une fois puis mis en cache." },
+    { type: "qcm", q: "Pour rendre le Titre obligatoire et limité à 200 caractères en Fluent :", opts: ["Property(j =&gt; j.Titre).IsRequired().HasMaxLength(200)", "HasKey(j =&gt; j.Titre).Max(200)", "ToTable(&quot;Titre&quot;, 200)", "HasIndex(j =&gt; j.Titre).IsUnique()"], a: 0, exp: "On cible la propriété, puis on chaîne les règles." },
+    { type: "qcm", q: "Pour stocker le Prix d'un jeu en decimal(8,2), tu utilises…", opts: ["HasDefaultValue", "HasMaxLength(8)", "IsUnique", "HasColumnType(&quot;decimal(8,2)&quot;)"], a: 3, exp: "HasColumnType fixe le type SQL exact de la colonne." },
+    { type: "vf", q: "Si une annotation dit [MaxLength(100)] et la Fluent API dit HasMaxLength(200), la colonne fera 100 caractères.", a: false, exp: "La Fluent API l'emporte toujours : la colonne fera 200." },
+    { type: "qcm", q: "L'ordre de priorité correct, du plus faible au plus fort :", opts: ["Annotations, Fluent, conventions", "Conventions, annotations, Fluent API", "Fluent, conventions, annotations", "Ils ont tous le même poids"], a: 1, exp: "Convention = défaut, annotation = exception, Fluent = dernier mot." },
+    { type: "qcm", q: "HasDefaultValue(true) sur EstDisponible signifie que…", opts: ["EF Core lève une erreur si la valeur est false", "SQL Server remplit la colonne si aucune valeur n'est fournie", "La propriété devient en lecture seule", "L'index devient unique"], a: 1, exp: "C'est une valeur par défaut posée côté base, dans la migration." },
+    { type: "input", q: "Quelle méthode enchaînée après HasIndex garantit l'unicité de l'email d'un Membre ?", a: ["IsUnique", "IsUnique()"], ph: "Méthode…", exp: "HasIndex(m =&gt; m.Email).IsUnique() crée un index unique." },
+    { type: "qcm", q: "L'interface à implémenter pour isoler la configuration de Jeu dans sa propre classe :", opts: ["IEntityTypeConfiguration&lt;Jeu&gt;", "IJeuConfigurator", "DbConfiguration&lt;Jeu&gt;", "IModelBuilder&lt;Jeu&gt;"], a: 0, exp: "Elle impose une méthode Configure(EntityTypeBuilder&lt;Jeu&gt;)." },
+    { type: "qcm", q: "ApplyConfigurationsFromAssembly sert à…", opts: ["Compiler le projet", "Appliquer les migrations en attente", "Charger toutes les classes IEntityTypeConfiguration de l'assembly", "Générer les DbSet automatiquement"], a: 2, exp: "Une ligne dans OnModelCreating, et toutes les configs sont enregistrées." },
+    { type: "vf", q: "Modifier OnModelCreating suffit pour que la base SQL Server soit mise à jour.", a: false, exp: "Il faut encore générer une migration et l'appliquer : le ModelBuilder ne touche que le modèle en mémoire." },
+    { type: "vf", q: "Les annotations [Required] et [MaxLength] sont aussi utilisées par ASP.NET Core pour valider les formulaires.", a: true, exp: "C'est l'argument pour les garder en plus de la Fluent API : une règle, deux usages." },
+    { type: "qcm", q: "L'équivalent de cette configuration centralisée chez Django est…", opts: ["Le fichier hbm.xml", "La classe interne Meta du modèle", "Le tableau $casts", "L'attribut @Entity"], a: 1, exp: "hbm.xml = vieux Hibernate, $casts = Eloquent, Meta = Django." }
+  ],
+  final: {
+    title: "Exercice final — Le grand ménage de la Ludothèque",
+    intro: `<p>Tu reprends la configuration complète de la Ludothèque en Fluent API : vérifions que chaque méthode tombe au bon endroit.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour démarrer la configuration de l'entité Membre dans OnModelCreating :", opts: ["modelBuilder.Entity&lt;Membre&gt;()", "modelBuilder.Membre.Configure()", "DbSet&lt;Membre&gt;.Config()", "modelBuilder.ToTable(&quot;Membres&quot;)"], a: 0, exp: "Entity&lt;T&gt;() ouvre la configuration de l'entité T." },
+      { type: "input", q: "Quelle méthode Fluent fixe le nom de la table SQL d'une entité ?", a: ["ToTable", "ToTable()"], ph: "Méthode…", exp: "builder.ToTable(&quot;Jeux&quot;) — sinon la convention prend le nom du DbSet." },
+      { type: "qcm", q: "Le prix d'un jeu doit être stocké avec 2 décimales exactement :", opts: ["HasMaxLength(2)", "HasDefaultValue(2)", "HasColumnType(&quot;decimal(8,2)&quot;)", "IsRequired()"], a: 2, exp: "HasColumnType contrôle le type SQL au caractère près." },
+      { type: "vf", q: "Une classe JeuConfiguration : IEntityTypeConfiguration&lt;Jeu&gt; est détectée par ApplyConfigurationsFromAssembly sans enregistrement manuel.", a: true, exp: "C'est tout l'intérêt : le scan de l'assembly fait le travail." },
+      { type: "qcm", q: "Conventions, annotations et Fluent API se contredisent sur une même propriété. Qui gagne ?", opts: ["La convention", "L'annotation", "La Fluent API", "EF Core lève une exception"], a: 2, exp: "La Fluent API a toujours le dernier mot." }
+    ],
+    solution: `<pre class="pseudo">OnModelCreating(ModelBuilder)          → la salle des machines du mapping
+modelBuilder.Entity&lt;Jeu&gt;()             → ToTable, HasKey
+  .Property(j =&gt; j.Titre)              → IsRequired().HasMaxLength(200)
+  .Property(j =&gt; j.Prix)               → HasColumnType("decimal(8,2)")
+  .Property(j =&gt; j.EstDisponible)      → HasDefaultValue(true)
+modelBuilder.Entity&lt;Membre&gt;()
+  .HasIndex(m =&gt; m.Email).IsUnique()   → email unique
+
+Priorité : Fluent API &gt; annotations &gt; conventions
+Rangement : IEntityTypeConfiguration&lt;T&gt; + ApplyConfigurationsFromAssembly
+Ne pas oublier : migration, sinon la base ne bouge pas !</pre>
+<p>Tu sais maintenant tout configurer… sauf l'essentiel d'une base relationnelle : les relations. Leçon 8 : une Location a un Jeu et un Membre — la relation N-1.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l7", title: "Annotations ou Fluent API : l'arbitrage", level: 2,
+    statement: "Reprends le schéma complet de la Ludothèque (Jeu : Titre obligatoire 200 car., Prix decimal(8,2), EstDisponible défaut true ; Membre : Email unique, Pseudo obligatoire 50 car. ; Location et Avis avec leurs dates obligatoires). Pour CHAQUE contrainte, décide si tu la poses en data annotation, en Fluent API, ou les deux — et justifie chaque choix en une phrase (validation ASP.NET Core ? impossible en annotation ? lisibilité ?). Termine en proposant l'organisation des fichiers de configuration du projet.",
+    hints: [
+      "Commence par trier : quelles contraintes sont tout simplement impossibles en annotation ? Celles-là ne se discutent pas.",
+      "Pour [Required] et [MaxLength], demande-toi qui d'autre que EF Core lit ces attributs dans une appli ASP.NET Core.",
+      "Pour l'organisation : une classe IEntityTypeConfiguration par entité, et combien de lignes restent dans OnModelCreating ?"
+    ],
+    solution: "Contrainte                       | Choix          | Justification\n---------------------------------+----------------+------------------------------------------\nJeu.Titre requis + 200 car.      | Les deux       | annotation lue par la validation MVC,\n                                 |                | Fluent = vérité côté base\nJeu.Prix decimal(8,2)            | Fluent API     | HasColumnType n'a pas d'équivalent propre\nJeu.EstDisponible défaut true    | Fluent API     | HasDefaultValue impossible en annotation\nMembre.Email unique              | Fluent API     | HasIndex(...).IsUnique() : Fluent only\nMembre.Pseudo requis + 50 car.   | Les deux       | même logique que Titre (formulaires)\nLocation.DateDebut requise       | Fluent API     | pas de formulaire direct sur Location,\nAvis.DateAvis requise            |                | autant tout garder au même endroit\n\nOrganisation :\n  Configurations/JeuConfiguration.cs\n  Configurations/MembreConfiguration.cs\n  Configurations/LocationConfiguration.cs\n  Configurations/AvisConfiguration.cs\n  OnModelCreating = 1 ligne : ApplyConfigurationsFromAssembly\n\nRègle retenue : annotation quand elle sert AUSSI la validation web,\nFluent pour tout le mapping pur — et Fluent gagne en cas de conflit.",
+    note: "Cet arbitrage est exactement celui que tu feras en entreprise, et il rejoint ton cours SQL Server du Niveau 4 : chaque HasIndex ou HasColumnType est la traduction C# d'un CREATE INDEX ou d'un type de colonne que tu écrivais à la main. Côté Java, Hibernate a tranché autrement (tout en annotations JPA) — compare les deux philosophies quand tu reverras @Column(length = 200)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

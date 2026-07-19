@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "L'image de production : multi-stage, non-root, scan",
+  subtitle: "Fabriquer l'artefact qui partira en prod — léger, durci, scanné.",
+  theory: `
+<h3>1. Du Dockerfile de dev à celui de prod</h3>
+<p>Un <strong>Dockerfile</strong> est la recette de fabrication d'une <strong>image</strong> (le moule figé d'où naissent des conteneurs identiques). Celui de dev (leçon 2) suffisait pour <code>runserver</code>. Pour la production, on veut une image <strong>légère</strong> grâce au <strong>multi-stage</strong> (la recette se déroule en deux temps : un atelier encombré pour construire, puis une petite boîte finale propre pour livrer) et <strong>durcie</strong> grâce au <strong>non-root</strong> (le programme tourne sous un utilisateur sans privilèges, pour qu'une éventuelle intrusion reste limitée). L'<strong>artefact</strong> ainsi produit — le paquet livrable — réunit le cours Docker et le cours Sécurité.</p>
+
+<h3>2. Le Dockerfile multi-stage, non-root</h3>
+<pre class="pseudo">FROM python:3.14-slim AS builder   # 1er etage « builder » : base Python, sert a compiler
+WORKDIR /app   # dossier de travail dans l'image
+COPY requirements.txt .   # copier d'abord la liste des dependances (profite du cache Docker)
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels     # compile les deps
+
+FROM python:3.14-slim   # 2e etage : l'image FINALE, repart d'une base propre
+RUN useradd --create-home --shell /bin/false ludo               # utilisateur applicatif
+WORKDIR /app   # dossier de travail
+COPY --from=builder /wheels /wheels   # recuperer UNIQUEMENT les wheels compiles a l'etage builder
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels      # que les artefacts
+COPY --chown=ludo:ludo . .   # copier le code en le donnant a l'utilisateur ludo
+USER ludo                                                       # non-root
+EXPOSE 8000   # documenter le port d'ecoute
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # demarrage : servir l'app avec gunicorn</pre>
+<p>L'étage <em>builder</em> (compilateurs, caches) est jeté : l'image finale ne porte que les wheels installés — plus légère et moins de surface d'attaque.</p>
+
+<h3>3. Le scan d'image, dans le pipeline</h3>
+<pre class="pseudo"># ci.yml — job image
+- run: docker build -t ludotheque:${'$'}{{ github.sha }} .   # construire l'image, taguee par le hash du commit
+- run: trivy image --exit-code 1 --severity CRITICAL ludotheque:${'$'}{{ github.sha }}   # scanner les failles ; echouer sur une CRITIQUE
+- run: |                                    # smoke test : l'image DÉMARRE
+    docker run --rm -e DJANGO_SECRET_KEY=smoke -e DB_HOST=absent \\
+      ludotheque:${'$'}{{ github.sha }} python manage.py check   # lancer manage.py check dans un conteneur jetable</pre>
+
+<h3>4. collectstatic pour la prod</h3>
+<pre class="pseudo"># le runserver de dev sert les statiques ; gunicorn NON.
+RUN python manage.py collectstatic --noinput   # rassembler les fichiers statiques dans l'image (ou au deploiement)
+# servis ensuite par le reverse proxy (nginx) ou WhiteNoise</pre>
+
+<h3>5. Dev et prod : deux compose</h3>
+<pre class="pseudo">compose.yaml            base commune (services, réseau, volume)
+compose.override.yaml   dev : bind mount + runserver + DEBUG=1
+# prod : docker compose -f compose.yaml up -d (image figée, gunicorn, DEBUG=0)</pre>
+<div class="warn">L'image de prod n'utilise <strong>jamais</strong> de bind mount : elle exécute le code <em>figé</em>, testé et scanné. Le bind mount de dev (leçon 2) court-circuite l'image pour le confort ; en prod, ce serait exécuter « ce qui traîne » dans un dossier — l'exact contraire de la reproductibilité.</div>
+<div class="tip">L'image réunit d'un coup le cours Docker (multi-stage, non-root) et le cours Sécurité (moindre privilège, scan CVE). Elle est plus légère, plus sûre, et vérifiée par trivy à chaque build : une faille critique bloque la livraison. L'artefact qui part en prod est un objet de confiance.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le Dockerfile de prod vise…", opts: ["Le confort de dev", "Une image légère (multi-stage) et durcie (non-root)", "runserver", "Rien"], a: 1, exp: "Docker + Sécurité réunis." },
+    { type: "qcm", q: "Le multi-stage jette…", opts: ["Le code", "L'étage builder (compilateurs, caches)", "L'image", "Les tests"], a: 1, exp: "Image finale légère." },
+    { type: "qcm", q: "USER ludo fait que le processus…", opts: ["Est root", "Tourne sans privilèges", "Ouvre le port 80", "Chiffre"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "COPY --chown=ludo:ludo sert à…", opts: ["Accélérer", "Donner au processus la propriété de ses fichiers", "Chiffrer", "Compresser"], a: 1, exp: "Cohérent avec USER non-root." },
+    { type: "qcm", q: "Le scan d'image :", opts: ["trivy image --severity CRITICAL", "un ping", "un test unitaire", "ls"], a: 0, exp: "Failles appli + système." },
+    { type: "qcm", q: "Une faille critique au scan…", opts: ["Est ignorée", "Bloque la livraison (exit-code 1)", "Accélère", "Chiffre"], a: 1, exp: "Barrière." },
+    { type: "qcm", q: "Le smoke test vérifie…", opts: ["Tout le métier", "Que l'image DÉMARRE (manage.py check)", "La prod", "Le style"], a: 1, exp: "Bug d'emballage." },
+    { type: "qcm", q: "gunicorn et les fichiers statiques :", opts: ["Il les sert", "Il ne les sert pas (collectstatic + proxy/WhiteNoise)", "Ils n'existent pas", "En base"], a: 1, exp: "runserver seul les sert." },
+    { type: "qcm", q: "L'image de prod utilise un bind mount ?", opts: ["Oui, toujours", "Jamais : code figé, testé, scanné", "En dev seulement", "Au hasard"], a: 1, exp: "Reproductibilité." },
+    { type: "qcm", q: "Le bind mount de dev…", opts: ["Est en prod", "Court-circuite l'image pour le confort (dev)", "Chiffre", "Scanne"], a: 1, exp: "compose.override." },
+    { type: "vf", q: "L'étage builder peut contenir gcc et des caches sans alourdir l'image finale.", a: true, exp: "COPY --from ne prend que les wheels." },
+    { type: "qcm", q: "github.sha tague l'image avec…", opts: ["La date", "Le commit exact (traçabilité)", "latest", "un secret"], a: 1, exp: "Commit ↔ image." },
+    { type: "qcm", q: "L'image réunit quels cours ?", opts: ["Merise + SQL", "Docker (multi-stage, non-root) + Sécurité (scan)", "Le CSS", "Aucun"], a: 1, exp: "L'artefact de confiance." },
+    { type: "qcm", q: "compose.override.yaml sert…", opts: ["La prod", "Le dev (bind mount, runserver, DEBUG=1)", "Le registre", "Le scan"], a: 1, exp: "Séparation dev/prod." },
+    { type: "vf", q: "L'artefact qui part en prod est plus léger, plus sûr et vérifié.", a: true, exp: "Objet de confiance." }
+  ],
+  final: {
+    title: "Exercice final — L'image de prod",
+    intro: `<p>On fabrique l'image multi-stage, non-root, scannée.</p>`,
+    questions: [
+      { type: "qcm", q: "L'étage builder :", opts: ["FROM python:3.14-slim AS builder + pip wheel", "FROM alpine direct", "FROM mysql", "pas d'étage"], a: 0, exp: "Compile les deps." },
+      { type: "qcm", q: "L'étage final :", opts: ["useradd + USER ludo + COPY --chown + les wheels", "root pour simplifier", "--privileged", "le socket Docker"], a: 0, exp: "Durci." },
+      { type: "qcm", q: "Le scan :", opts: ["trivy --exit-code 1 --severity CRITICAL", "un chrono", "docker ps", "rien"], a: 0, exp: "Bloquant sur critique." },
+      { type: "qcm", q: "L'image de prod exécute :", opts: ["Le code figé (jamais un bind mount)", "un bind mount", "runserver", "le code local"], a: 0, exp: "Reproductible." },
+      { type: "vf", q: "L'image réunit multi-stage (léger) et non-root (sûr) + scan.", a: true, exp: "Docker + Sécurité." }
+    ],
+    solution: `<pre class="pseudo">FROM python:3.14-slim AS builder   # etage builder : compile les dependances
+WORKDIR /app   # dossier de travail
+COPY requirements.txt .   # copier la liste des deps (cache)
+RUN pip wheel --no-cache-dir -r requirements.txt -w /wheels   # pre-compiler les deps en wheels
+
+FROM python:3.14-slim   # etage final : image propre et legere
+RUN useradd --create-home --shell /bin/false ludo   # creer un utilisateur applicatif
+WORKDIR /app   # dossier de travail
+COPY --from=builder /wheels /wheels   # recuperer les wheels de l'etage builder
+RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels   # installer puis supprimer les wheels
+COPY --chown=ludo:ludo . .   # copier le code, proprietaire ludo
+USER ludo   # passer en non-root
+EXPOSE 8000   # port d'ecoute documente
+CMD ["gunicorn","ludotheque.wsgi:application","--bind","0.0.0.0:8000"]   # demarrage : gunicorn sur 8000
+
+# ci.yml : docker build + trivy --severity CRITICAL + smoke test   # construire, scanner, verifier le demarrage</pre>
+<p>L'artefact de prod est prêt. Demain : le pipeline complet.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile de prod et son scan…",
+  items: [
+  { id: "proj6py-l17", title: "Le Dockerfile de prod audité", level: 3,
+    statement: "Écris le Dockerfile multi-stage non-root de production (builder + runtime, USER ludo, collectstatic), le job « image » du pipeline (build + trivy critique + smoke test), et l'audit de l'image en 5 points vérifiables (base épinglée, non-root, pas de secret, multi-stage, scan). Explique pourquoi construire l'image EN CI plutôt que sur le poste du développeur.",
+    hints: [
+      "collectstatic --noinput dans l'étage final (ou au déploiement).",
+      "trivy image --exit-code 1 --severity CRITICAL bloque le pipeline.",
+      "Audit : docker run --rm image whoami -> ludo ; docker history sans secret."
+    ],
+    solution: "# Dockerfile (production)\nFROM python:3.14-slim AS builder   # etage builder : compile les dependances\nWORKDIR /app   # dossier de travail\nCOPY requirements.txt .   # copier la liste des deps (cache)\nRUN pip wheel --no-cache-dir -r requirements.txt -w /wheels   # pre-compiler les deps en wheels\n\nFROM python:3.14-slim              # base ÉPINGLÉE (l.4)\nRUN useradd --create-home --shell /bin/false ludo   # creer un utilisateur applicatif\nWORKDIR /app   # dossier de travail\nCOPY --from=builder /wheels /wheels   # recuperer les wheels de l'etage builder\nRUN pip install --no-cache-dir /wheels/* && rm -rf /wheels   # installer puis supprimer les wheels\nCOPY --chown=ludo:ludo . .   # copier le code, proprietaire ludo\nRUN python manage.py collectstatic --noinput   # statiques pour la prod\nUSER ludo                          # NON-ROOT\nEXPOSE 8000   # port d'ecoute documente\nCMD [\"gunicorn\",\"ludotheque.wsgi:application\",\"--bind\",\"0.0.0.0:8000\"]   # demarrage : gunicorn sur 8000\n\n# ci.yml — job image\n  image:   # un job « image » (build + scan)\n    runs-on: ubuntu-latest   # runner Linux neuf\n    needs: [tests, qualite, securite]     # inutile d'emballer du code cassé\n    steps:   # ses etapes\n      - uses: actions/checkout@v4   # recuperer le code\n      - run: docker build -t ludotheque:${{ github.sha }} .   # construire l'image, taguee par le commit\n      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:${{ github.sha }}   # scanner ; echouer sur une CRITIQUE\n      - run: docker run --rm -e DJANGO_SECRET_KEY=smoke -e DB_HOST=absent \\\n               ludotheque:${{ github.sha }} python manage.py check   # smoke test : l'image demarre-t-elle ?\n\n# Audit de l'image (5 points)\n# 1. Base épinglée   -> head -1 Dockerfile (python:3.14-slim)\n# 2. Non-root        -> docker run --rm ludotheque:x whoami  => ludo\n# 3. Pas de secret   -> docker run --rm ludotheque:x env ; docker history\n# 4. Multi-stage     -> docker run --rm ludotheque:x which gcc  => rien\n# 5. Scan CVE        -> trivy (0 critique)\n\n# Pourquoi construire l'image EN CI :\n# Construire sur le poste du dev, c'est risquer un artefact « ça build chez\n# moi » (dépendance locale, cache pollué). La CI construit sur une machine\n# NEUVE, à partir du seul dépôt — l'image est reproductible, tracée au commit\n# (github.sha) et scannée automatiquement. C'est cette image, et pas une\n# autre, qui sera publiée puis déployée : la chaîne est vérifiée de bout en bout.",
+    note: "Construire l'image en CI (pas sur le poste) garantit la reproductibilité et la traçabilité : l'artefact déployé est exactement celui qu'une machine neuve a produit à partir du commit, scanné pour les CVE. needs: [tests, qualite, securite] dessine l'ordre — on n'emballe jamais du code qui n'a pas passé les vérifications. C'est la convergence des trois cours d'outillage en un seul job." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

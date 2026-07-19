@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Le pipeline complet : build, test, scan, protection",
+  subtitle: "Chaîner les vérifications et transformer la CI en garde-fou de la branche principale.",
+  theory: `
+<h3>1. Un pipeline en étapes chaînées</h3>
+<p>Rappel : un <strong>pipeline</strong> est l'enchaînement automatique des vérifications, et un <strong>job</strong> est un travail exécuté par la CI. Ici, quatre jobs se suivent, reliés par <code>needs</code> (« a besoin de »).</p>
+<pre class="pseudo">jobs:                                                  # les 4 travaux du pipeline
+  build:   { steps: [ checkout, cmake build ] }        # 1) compiler le projet
+  test:    { needs: build, steps: [ ctest (unit + integration) ] } # 2) tests (attend build)
+  quality: { needs: build, steps: [ clang-tidy, sanitizers ] }     # 3) qualite du code (attend build)
+  scan:    { needs: test,  steps: [ trivy image ] }    # 4) scan securite de l'image (attend test)</pre>
+<p><code>needs:</code> chaîne les jobs : <em>scan</em> attend <em>test</em>, qui attend <em>build</em>. Un échec en amont arrête toute la suite. Le pipeline raconte ainsi le trajet complet du code vers la production.</p>
+
+<h3>2. Ce que vérifie chaque étape</h3>
+<div class="tip"><strong>build</strong> : ça compile. <strong>test</strong> : tests unitaires (règles pures) + tests d'intégration (vraie base). <strong>quality</strong> : linter (analyse statique) + sanitizers (analyse dynamique). <strong>scan</strong> : pas de CVE critique dans l'image. Chaque étage attrape une classe de problèmes différente.</div>
+
+<h3>3. La protection de branche</h3>
+<p>La <strong>protection de branche</strong> est un réglage du dépôt (pas du code) qui pose des conditions à respecter avant de fusionner sur <code>main</code>.</p>
+<pre class="pseudo"># Reglage du depot (pas du YAML) :                     # se configure sur GitHub, hors du code
+# - status checks requis : build, test, quality, scan doivent etre VERTS  # tous les jobs doivent reussir
+# - au moins 1 revue approuvee                          # un collegue doit avoir relu et valide
+# - interdiction de pousser directement sur main        # on passe obligatoirement par une pull request</pre>
+<div class="warn">Un <strong>status check</strong> est le résultat (vert = réussi, rouge = échoué) d'un job rendu obligatoire. Sans protection, la CI n'est qu'un <strong>indicateur</strong> qu'on peut ignorer. Avec la protection de branche, elle devient un <strong>garde-fou</strong> : impossible de fusionner sur <code>main</code> si un job échoue ou sans revue. La qualité passe de « souhaitée » à « exigée ».</div>
+
+<h3>4. Rapide en local, complet en CI</h3>
+<p>Les jobs longs (intégration, scan) tournent en CI. En local, on lance les tests unitaires rapides avant de pousser. Le développeur garde ainsi une <strong>boucle courte</strong> (un retour rapide) ; la CI fait le travail exhaustif. On ne pousse jamais sciemment du rouge.</p>
+
+<h3>5. Un artefact traçable</h3>
+<pre class="pseudo"># Le pipeline produit et etiquette l'image (par commit/tag)  # chaque image recoit une etiquette unique
+docker build -t registry/ludotheque:\${GIT_SHA} .            # construire l'image, taguee avec le SHA du commit</pre>
+<p>Un <strong>artefact</strong> est un produit fabriqué par le pipeline (ici l'image). Une image validée est <strong>étiquetée</strong> (« taguée ») par le <strong>SHA</strong> du commit (l'empreinte unique qui identifie une version précise du code) ou par un tag de version, puis poussée vers un <strong>registre</strong> (un entrepôt d'images). On sait alors exactement quel code a produit quelle image : c'est la <strong>traçabilité</strong> de bout en bout, indispensable au déploiement et au <strong>rollback</strong> (le retour à la version précédente, leçons 19-20).</p>
+`,
+  exercises: [
+    { type: "qcm", q: "needs: entre jobs sert à…", opts: ["les paralléliser sans ordre", "les chaîner (un job attend l'autre)", "les supprimer", "les logger"], a: 1, exp: "Dépendances." },
+    { type: "qcm", q: "L'étape build vérifie…", opts: ["les CVE", "que ça compile", "la base", "les secrets"], a: 1, exp: "Compilation." },
+    { type: "qcm", q: "L'étape test comprend…", opts: ["seulement l'UI", "unitaires + intégration", "le scan", "le déploiement"], a: 1, exp: "Deux niveaux." },
+    { type: "qcm", q: "L'étape quality couvre…", opts: ["le déploiement", "linter (statique) + sanitizers (dynamique)", "les secrets", "la base"], a: 1, exp: "Analyse du code." },
+    { type: "qcm", q: "L'étape scan vérifie…", opts: ["la vitesse", "l'absence de CVE critique dans l'image", "l'UI", "le SQL"], a: 1, exp: "Sécurité de l'image." },
+    { type: "qcm", q: "Sans protection de branche, la CI est…", opts: ["un garde-fou", "un simple indicateur qu'on peut ignorer", "obligatoire", "un déployeur"], a: 1, exp: "Non contraignante." },
+    { type: "qcm", q: "La protection de branche exige…", opts: ["rien", "status checks verts + revue avant merge", "un déploiement", "un secret"], a: 1, exp: "Garde-fou." },
+    { type: "qcm", q: "Pousser directement sur main est…", opts: ["recommandé", "interdit par la protection", "obligatoire", "sans effet"], a: 1, exp: "Via PR seulement." },
+    { type: "qcm", q: "En local, on lance surtout…", opts: ["le scan complet", "les tests unitaires rapides", "le déploiement", "rien"], a: 1, exp: "Boucle courte." },
+    { type: "qcm", q: "L'image validée est…", opts: ["anonyme", "étiquetée (SHA/tag) et poussée au registre", "supprimée", "en clair"], a: 1, exp: "Traçabilité." },
+    { type: "vf", q: "La protection de branche transforme la CI d'indicateur en exigence.", a: true, exp: "Qualité imposée." },
+    { type: "qcm", q: "Un échec de scan…", opts: ["est ignoré", "arrête la chaîne, pas de merge", "déploie", "compile"], a: 1, exp: "Bloquant." },
+    { type: "qcm", q: "Étiqueter l'image par SHA permet…", opts: ["de la cacher", "de savoir quel code l'a produite", "d'accélérer", "de la chiffrer"], a: 1, exp: "Lien code↔image." },
+    { type: "qcm", q: "Chaque étage du pipeline attrape…", opts: ["le même bug", "une classe de problèmes différente", "rien", "les secrets"], a: 1, exp: "Complémentarité." },
+    { type: "qcm", q: "La traçabilité sert ensuite à…", opts: ["rien", "au déploiement et au rollback", "aux logs seuls", "à l'UI"], a: 1, exp: "Leçons 19-20." }
+  ],
+  final: {
+    title: "Exercice final — Passer d'indicateur à garde-fou",
+    intro: `<p>Un dépôt a une CI verte, mais l'équipe pousse quand même du code cassé sur <code>main</code> quand elle est pressée.</p>`,
+    questions: [
+      { type: "qcm", q: "Le problème :", opts: ["la CI est trop lente", "rien n'empêche de fusionner malgré l'échec (pas de protection)", "trop de jobs", "trop de tests"], a: 1, exp: "CI non contraignante." },
+      { type: "qcm", q: "La solution :", opts: ["supprimer la CI", "activer la protection de branche (status checks requis)", "pousser plus vite", "moins tester"], a: 1, exp: "Garde-fou." },
+      { type: "qcm", q: "On exige aussi…", opts: ["rien", "au moins une revue approuvée", "root", "un secret"], a: 1, exp: "Revue par les pairs." },
+      { type: "qcm", q: "Les jobs requis incluent :", opts: ["build seul", "build, test, quality, scan", "aucun", "le déploiement"], a: 1, exp: "Tous verts." },
+      { type: "qcm", q: "Résultat :", opts: ["main peut casser", "main reste toujours déployable", "plus de PR", "moins de sécurité"], a: 1, exp: "Propriété garantie." }
+    ],
+    solution: `<pre class="pseudo"># Pipeline (YAML)
+jobs:                                                  # les travaux
+  build:   { steps: [ checkout, cmake build ] }        # 1) compiler
+  test:    { needs: build, steps: [ ctest unit + integration ] } # 2) tester (attend build)
+  quality: { needs: build, steps: [ clang-tidy, sanitizers ] }   # 3) qualite (attend build)
+  scan:    { needs: test,  steps: [ trivy image ] }    # 4) scanner l'image (attend test)
+
+# Protection de 'main' (reglage du depot) :             # conditions avant fusion
+#   - required status checks : build, test, quality, scan  # ces 4 jobs doivent etre verts
+#   - required reviews : 1                                 # au moins une revue approuvee
+#   - pas de push direct sur main                          # fusion uniquement par pull request</pre>
+<p>La CI chaînée + la protection de branche rendent <code>main</code> toujours déployable : on ne fusionne que du vert et du revu. Demain : déploiement automatisé — staging, production, santé.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pipeline ici…",
+  items: [
+  { id: "projcpppro-l18", title: "Chaîner les jobs du pipeline", level: 3,
+    statement: "Écris la structure d'un workflow avec quatre jobs chaînés par needs : build, puis test (needs build), quality (needs build), et scan (needs test). Indique en commentaire ce que vérifie chacun et la règle de protection de branche.",
+    hints: [
+      "needs: build sur test et quality ; needs: test sur scan.",
+      "Un commentaire par job (compile / tests / lint+asan / CVE).",
+      "Ajoute en commentaire : status checks requis sur main."
+    ],
+    solution: "jobs:\n  build:                      # verifie que ca compile\n    runs-on: ubuntu-latest\n    steps: [ {uses: actions/checkout@v4}, {run: cmake -S . -B build}, {run: cmake --build build} ]\n  test:                       # unitaires + integration (vraie base)\n    needs: build\n    runs-on: ubuntu-latest\n    steps: [ {uses: actions/checkout@v4}, {run: ctest --test-dir build} ]\n  quality:                    # linter (statique) + sanitizers (dynamique)\n    needs: build\n    runs-on: ubuntu-latest\n    steps: [ {uses: actions/checkout@v4}, {run: clang-tidy src/*.cpp} ]\n  scan:                       # pas de CVE critique dans l'image\n    needs: test\n    runs-on: ubuntu-latest\n    steps: [ {run: trivy image ludotheque:latest --exit-code 1 --severity HIGH,CRITICAL} ]\n# Protection de 'main' : required status checks = build,test,quality,scan + 1 review",
+    note: "needs chaîne les jobs pour que le pipeline reflète le trajet du code : compiler, tester, analyser, scanner. Chaque étage attrape une classe de problèmes différente. Mais la CI ne devient un garde-fou que couplée à la protection de branche : sans elle, on peut ignorer un échec ; avec elle, main ne reçoit que du vert et du revu." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

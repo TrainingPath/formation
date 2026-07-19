@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "L'authentification",
+  subtitle: "Inscription, connexion, déconnexion : savoir qui est là.",
+  theory: `
+<h3>1. Authentification vs autorisation</h3>
+<p>Deux mots proches, deux questions différentes : l'<strong>authentification</strong> répond à « QUI es-tu ? » (se connecter en prouvant son identité), l'<strong>autorisation</strong> à « as-tu le DROIT de faire ça ? » (demain). Aujourd'hui : la première.</p>
+<h3>2. Le modèle User et le hachage</h3>
+<p>Laravel fournit d'office le modèle <code>App\\Models\\User</code> (l'utilisateur) et sa migration (name, email, password). Règle absolue, déjà vue à la leçon 14 de PHP : on ne stocke JAMAIS un mot de passe en clair, seulement son <strong>hash</strong> (une empreinte irréversible : on peut la calculer mais pas revenir au mot de passe d'origine) :</p>
+<pre class="pseudo">use Illuminate\\Support\\Facades\\Hash;                    // importe la facade Hash (hachage de mots de passe)
+
+User::create([                                            // cree un utilisateur en base...
+    'name'     => $request->input('name'),                // ...son nom
+    'email'    => $request->input('email'),               // ...son email
+    'password' => Hash::make($request->input('password')),  // ...son mot de passe HACHE (algorithme bcrypt)
+]);</pre>
+<p><code>Hash::make()</code> utilise <strong>bcrypt</strong> : un algorithme volontairement <em>lent</em> (les pirates testent des milliards de mots de passe : la lenteur les freine) et <em>salé</em> — le « sel » est une valeur aléatoire ajoutée, si bien que deux utilisateurs ayant le même mot de passe obtiennent des hashes différents.</p>
+<h3>3. Connexion : Auth::attempt</h3>
+<pre class="pseudo">public function login(Request $request)                   // traite le formulaire de connexion
+{
+    $identifiants = $request->validate([                  // valide les identifiants saisis
+        'email' => 'required|email', 'password' => 'required',
+    ]);
+
+    if (Auth::attempt($identifiants)) {                   // attempt = compare au hash stocke ; true si correct
+        $request->session()->regenerate();                // regenere l'id de session (anti "fixation de session")
+        return redirect()->intended('/');                 // va vers la page voulue au depart, sinon l'accueil
+    }
+
+    return back()->withErrors(['email' => 'Identifiants incorrects.']);   // echec : retour au formulaire avec une erreur vague
+}</pre>
+<p><code>Auth::attempt</code> compare le mot de passe fourni au hash stocké (via <code>Hash::check</code>) et, si tout concorde, connecte l'utilisateur en session.</p>
+<h3>4. Déconnexion et helpers</h3>
+<pre class="pseudo">Auth::logout();                        // deconnecte l'utilisateur courant
+Auth::check();                         // renvoie true si quelqu'un est connecte
+Auth::user();                          // renvoie l'utilisateur connecte (ou null si personne)
+Auth::id();                            // renvoie l'id de l'utilisateur connecte</pre>
+<h3>5. Dans les vues Blade</h3>
+<pre class="pseudo">@auth                                                     {{-- bloc affiche UNIQUEMENT si connecte --}}
+    Bonjour {{ Auth::user()->name }} !                    {{-- affiche le nom de l'utilisateur connecte --}}
+    &lt;form method="POST" action="{{ route('logout') }}"&gt;@csrf   {{-- deconnexion en POST + jeton CSRF --}}
+        &lt;button&gt;Se déconnecter&lt;/button&gt;&lt;/form&gt;             {{-- bouton de deconnexion --}}
+@endauth                                                  {{-- fin du bloc connecte --}}
+
+@guest                                                    {{-- bloc affiche UNIQUEMENT si NON connecte --}}
+    &lt;a href="{{ route('login') }}"&gt;Se connecter&lt;/a&gt;       {{-- lien vers la page de connexion --}}
+@endguest                                                 {{-- fin du bloc invite --}}</pre>
+<div class="warn">Le message d'échec de connexion doit rester vague (« Identifiants incorrects ») : dire « cet email n'existe pas » aiderait un attaquant à énumérer les comptes existants.</div>
+<div class="tip">La déconnexion se fait en POST (avec @csrf), pas avec un simple lien GET : sinon n'importe quel site pourrait te déconnecter à distance (CSRF, leçon 6 !).</div>`,
+  exercises: [
+    { type: "qcm", q: "Authentification et autorisation : quelle différence ?", opts: ["Synonymes", "Authentification = qui es-tu ; autorisation = as-tu le droit", "L'autorisation vient en premier", "L'authentification concerne les fichiers"], a: 1, exp: "Deux questions distinctes, traitées par des mécanismes distincts." },
+    { type: "qcm", q: "Comment stocker le mot de passe d'un nouvel utilisateur ?", opts: ["En clair, chiffré par la base", "Hash::make($password) : on ne stocke que le hash bcrypt", "En base64", "Dans un cookie"], a: 1, exp: "Même une fuite de la base ne révèle pas les mots de passe." },
+    { type: "qcm", q: "Pourquoi bcrypt est-il volontairement LENT ?", opts: ["Mauvaise conception", "Pour rendre les attaques par force brute (milliards d'essais) impraticables", "Pour économiser le CPU", "À cause de PHP"], a: 1, exp: "0,1 s pour toi = des siècles pour qui teste des milliards de combinaisons." },
+    { type: "qcm", q: "Que fait Auth::attempt(['email' => ..., 'password' => ...]) ?", opts: ["Crée un compte", "Vérifie les identifiants contre la base et connecte l'utilisateur si OK (renvoie true/false)", "Envoie un email", "Hash le mot de passe seulement"], a: 1, exp: "La brique centrale de la connexion." },
+    { type: "qcm", q: "Deux utilisateurs choisissent le même mot de passe. Leurs hashes bcrypt sont :", opts: ["Identiques", "Différents, grâce au sel (salt) intégré", "Vides", "Interdits"], a: 1, exp: "Le sel aléatoire rend chaque hash unique." },
+    { type: "qcm", q: "Pourquoi régénérer la session après connexion ($request->session()->regenerate()) ?", opts: ["Pour vider le panier", "Contre la fixation de session : l'ancien identifiant de session ne doit plus être valable", "Pour la vitesse", "C'est décoratif"], a: 1, exp: "Un attaquant qui connaissait l'ancien id de session est éjecté." },
+    { type: "qcm", q: "Que renvoie Auth::user() si personne n'est connecté ?", opts: ["Un utilisateur anonyme", "null", "false", "Une exception"], a: 1, exp: "D'où l'intérêt de @auth/@guest et Auth::check()." },
+    { type: "qcm", q: "Quelle directive Blade n'affiche son bloc qu'aux visiteurs NON connectés ?", opts: ["@auth", "@guest", "@public", "@anonymous"], a: 1, exp: "@guest … @endguest — le complément de @auth." },
+    { type: "qcm", q: "Pourquoi le message d'échec doit-il être « Identifiants incorrects » plutôt que « Cet email n'existe pas » ?", opts: ["C'est plus poli", "Pour ne pas permettre à un attaquant d'énumérer les comptes existants", "C'est plus court", "Question de traduction"], a: 1, exp: "Ne jamais confirmer l'existence d'un compte à un inconnu." },
+    { type: "qcm", q: "Pourquoi la déconnexion se fait-elle en POST avec @csrf et non par un lien GET ?", opts: ["Habitude", "Un lien GET permettrait à un site tiers de te déconnecter (attaque CSRF)", "GET est trop lent", "Blade l'exige"], a: 1, exp: "Toute action qui change l'état = POST protégé. Même la déconnexion." },
+    { type: "qcm", q: "Que fait redirect()->intended('/') après connexion ?", opts: ["Va toujours à l'accueil", "Renvoie vers la page que l'utilisateur voulait initialement visiter, sinon l'accueil", "Recharge la page de login", "Vide la session"], a: 1, exp: "L'utilisateur bloqué par un login retrouve sa destination : confort pro." },
+    { type: "qcm", q: "Comment vérifier un mot de passe contre un hash, manuellement ?", opts: ["$password === $hash", "Hash::check($password, $hash)", "Hash::make deux fois et comparer", "decrypt($hash)"], a: 1, exp: "On ne « déhashe » jamais : on compare via check. (make deux fois donnerait deux hashes différents à cause du sel !)" },
+    { type: "qcm", q: "La colonne password de la table users contient « $2y$12$kJh3... ». C'est :", opts: ["Un bug", "Un hash bcrypt : normal et souhaitable", "Un mot de passe chiffré réversible", "Une erreur d'encodage"], a: 1, exp: "$2y$ est la signature bcrypt ; 12 est le « coût » (la lenteur volontaire)." },
+    { type: "vf", q: "Si la base de données fuite, les mots de passe hashés avec bcrypt sont immédiatement lisibles.", a: false, exp: "Non : le hash est à sens unique. C'est exactement pour ce scénario qu'on hashe." },
+    { type: "vf", q: "Auth::id() donne l'id de l'utilisateur connecté — pratique pour lier une signature à son auteur.", a: true, exp: "Exactement ce qu'on utilisera dans le projet final." }
+  ],
+  final: {
+    title: "Exercice final — Le circuit de connexion",
+    intro: `<p>Le livre d'or a maintenant ses comptes utilisateurs. Analyse chaque ligne :</p>
+<pre class="pseudo">public function register(Request $request)                // traite le formulaire d'inscription
+{
+    $valides = $request->validate([                       // valide les champs d'inscription
+        'name'     => 'required|max:100',                 // nom : obligatoire, <= 100
+        'email'    => 'required|email|unique:users,email', // email valide et pas deja pris
+        'password' => 'required|min:8|confirmed',         // mot de passe : >= 8 et confirme
+    ]);
+
+    $user = User::create([                                // cree l'utilisateur...
+        'name' => $valides['name'], 'email' => $valides['email'],
+        'password' => Hash::make($valides['password']),   // ...mot de passe hache (bcrypt)
+    ]);
+
+    Auth::login($user);                                   // connecte immediatement le nouvel inscrit
+    return redirect('/')->with('succes', 'Bienvenue !');  // redirige avec un message de bienvenue
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Que garantit la règle unique:users,email ?", opts: ["Un email par jour", "Impossible de créer deux comptes avec le même email", "L'email est vérifié par envoi", "L'email est chiffré"], a: 1, exp: "L'unicité en validation (et idéalement aussi en base avec ->unique())." },
+      { type: "qcm", q: "Que doit contenir le formulaire pour satisfaire la règle confirmed ?", opts: ["Une case à cocher", "Un second champ password_confirmation identique", "Un captcha", "L'email en double"], a: 1, exp: "confirmed cherche le champ xxx_confirmation." },
+      { type: "qcm", q: "Un pirate vole la base. Que voit-il dans la colonne password ?", opts: ["Les mots de passe en clair", "Des hashes bcrypt inutilisables directement", "Des mots de passe en base64 (décodables)", "Rien"], a: 1, exp: "Hash::make a fait son travail : sens unique + sel + lenteur." },
+      { type: "qcm", q: "Que fait Auth::login($user) juste après l'inscription ?", opts: ["Envoie un email", "Connecte immédiatement le nouvel inscrit (pas besoin de re-saisir ses identifiants)", "Vérifie le mot de passe", "Crée un cookie éternel"], a: 1, exp: "Confort standard : inscrit = connecté." },
+      { type: "qcm", q: "Le mot de passe « azerty » passe-t-il la validation ?", opts: ["Oui", "Non : min:8 exige au moins 8 caractères", "Oui si confirmé", "Non : les mots français sont interdits"], a: 1, exp: "6 caractères < 8. (Et en vrai projet, on ajoute des règles de robustesse.)" }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 16 :
+// 1. Authentification (qui ?) != autorisation (le droit ?).
+// 2. Mots de passe : Hash::make en ecriture, Auth::attempt/Hash::check
+//    en verification. JAMAIS de stockage en clair.
+// 3. bcrypt : lent expres + sale = anti force brute.
+// 4. session()->regenerate() apres login ; logout en POST + @csrf.
+// 5. @auth/@guest en Blade ; Auth::user()/id()/check() en PHP.
+// 6. Messages d'erreur vagues : ne pas aider l'attaquant.</pre>
+<p>On sait QUI est là. Demain : qui a le droit de faire QUOI — middleware, rôles et autorisation.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code PHP/Laravel ici…",
+  items: [
+  { id: "laravel-auth-login", title: "La méthode de connexion complète", level: 3,
+    statement: "Écris la méthode <code>login(Request $request)</code> : valide <code>email</code> (obligatoire, format email) et <code>password</code> (obligatoire) ; tente la connexion ; en cas de succès, régénère la session et redirige vers la destination initiale (par défaut <code>/livredor</code>) ; en cas d'échec, retourne au formulaire avec l'erreur générique « Identifiants incorrects. » attachée au champ email.",
+    hints: [
+      "Auth::attempt($identifiants) renvoie true/false : c'est ton if.",
+      "Succès : $request->session()->regenerate(); puis redirect()->intended('/livredor').",
+      "Échec : return back()->withErrors(['email' => '...']);"
+    ],
+    solution: "use Illuminate\\Support\\Facades\\Auth;\n\npublic function login(Request $request)\n{\n    // 1. Validation des entrées\n    $identifiants = $request->validate([\n        'email'    => 'required|email',\n        'password' => 'required',\n    ]);\n\n    // 2. Tentative : compare au hash stocké et connecte si OK\n    if (Auth::attempt($identifiants)) {\n        $request->session()->regenerate();      // anti fixation de session\n        return redirect()->intended('/livredor'); // destination voulue ou défaut\n    }\n\n    // 3. Échec : message VOLONTAIREMENT vague\n    return back()->withErrors([\n        'email' => 'Identifiants incorrects.',\n    ]);\n}",
+    note: "Trois temps à retenir par cœur : valider → attempt + regenerate → échec vague. Ce code est quasi identique dans tous les projets Laravel du monde." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

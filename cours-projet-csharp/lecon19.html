@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Qualité : logs, performance (N+1), secrets",
+  subtitle: "Les réflexes qui rendent l'application prête pour de vrais utilisateurs.",
+  theory: `
+<h3>1. Journaliser (ILogger)</h3>
+<p><strong>Journaliser</strong> (ou « logger »), c'est écrire au fil de l'eau ce que fait l'application dans un <strong>journal</strong> — comme le carnet de bord d'un navire. En production, on ne peut pas mettre le programme en pause pour l'observer : les <strong>logs</strong> sont la seule fenêtre sur ce qui se passe. ASP.NET Core fournit <code>ILogger</code>, injecté comme n'importe quel service.</p>
+<pre class="pseudo">public class LocationService {                       // service de location
+    private readonly ILogger&lt;LocationService&gt; _logger;   // le journal (logger), injecté
+    ...                                              // (autres champs et méthodes du service)
+    _logger.LogInformation("Location du jeu {IdJeu} par {Client}", idJeu, idClient);   // trace une location réussie
+    _logger.LogWarning("Stock épuisé pour le jeu {IdJeu}", idJeu);   // trace un avertissement (plus de stock)
+}</pre>
+<p>Les <strong>placeholders structurés</strong> (les <code>{IdJeu}</code>) valent mieux que la <strong>concaténation</strong> (coller bout à bout des morceaux de texte avec <code>+</code>) : chaque valeur est enregistrée séparément et nommée, donc les journaux deviennent <em>filtrables</em> (« montre-moi toutes les lignes du jeu 42 ») et <em>indexables</em>. <code>LogInformation</code> = événement normal, <code>LogWarning</code> = anormal mais pas grave, <code>LogError</code> = panne.</p>
+
+<h3>2. Le problème N+1</h3>
+<pre class="pseudo">// ⚠️ 1 requête pour les jeux + 1 par jeu pour sa catégorie = N+1
+var jeux = await _db.Jeux.ToListAsync();             // 1 requête : charge les jeux (sans leur catégorie)
+foreach (var j in jeux) Console.WriteLine(j.Categorie.Nom);   // lazy à chaque tour
+
+// ✅ 2 tables, 1 requête : Include = JOIN
+var jeux = await _db.Jeux.Include(j =&gt; j.Categorie).ToListAsync();   // 1 seule requête (JOIN) : jeux + catégories</pre>
+<p>Le <strong>problème N+1</strong> survient quand on fait 1 requête pour obtenir une liste (N éléments), puis 1 requête supplémentaire par élément pour aller chercher sa relation : total 1 + N requêtes. Ici, accéder à <code>j.Categorie</code> dans la boucle déclenche à chaque tour un aller-retour vers la base (chargement <em>lazy</em>, « paresseux » : la donnée n'est cherchée qu'au dernier moment). Invisible sur 10 jeux, catastrophique sur 1 000. <code>Include</code> corrige cela en générant un <strong>JOIN</strong> (la jointure vue en cours SQL, qui ramène les deux tables d'un coup).</p>
+
+<h3>3. Les index au bon endroit</h3>
+<pre class="pseudo">// dans OnModelCreating                                 // la méthode où l'on affine le schéma
+modelBuilder.Entity&lt;Jeu&gt;().HasIndex(j =&gt; j.Titre);      // recherche par titre
+modelBuilder.Entity&lt;Location&gt;().HasIndex(l =&gt; l.ClientId); // "mes locations"</pre>
+<p>Un <strong>index</strong> est comme l'index d'un livre : au lieu de lire toutes les pages, on va directement à la bonne. Il accélère énormément les recherches fréquentes — au prix d'<strong>écritures</strong> un peu plus lentes (l'index doit être tenu à jour à chaque ajout). On indexe donc ce que l'on <em>filtre souvent</em> (ici le titre, et le client pour « mes locations »), pas tout.</p>
+
+<h3>4. Les secrets hors du code</h3>
+<pre class="pseudo"># développement : dotnet user-secrets (hors du dépôt Git)
+dotnet user-secrets set "ConnectionStrings:Ludotheque" "Server=...;Password=..."   # range le secret dans un coffre local
+
+# production : variables d'environnement
+ConnectionStrings__Ludotheque=Server=prod;...        # la chaîne de connexion, fournie par le serveur au lancement
+Jwt__Cle=une-longue-cle-aleatoire                    # la clé secrète de signature des jetons JWT</pre>
+<div class="warn">Ni mot de passe de base, ni clé JWT dans <code>appsettings.json</code> commité. Un secret qui entre une fois dans Git y reste <strong>pour toujours</strong> : l'historique n'oublie rien, même si on l'efface au commit suivant (les versions passées le contiennent encore). D'où <code>user-secrets</code> en développement (un coffre-fort local, hors du projet partagé) et les <strong>variables d'environnement</strong> en production. Le double tiret bas <code>__</code> est la façon d'écrire <code>ConnectionStrings:Ludotheque</code> sous forme de variable d'environnement.</div>
+<div class="tip">Trois réflexes, un seul objectif : <strong>comprendre</strong> ce qui se passe (logs), <strong>tenir la charge</strong> (N+1, index), <strong>ne rien divulguer</strong> (secrets). C'est la différence entre un projet d'école et une vraie application de production.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "En production, on sait ce qui s'est passé grâce…", opts: ["Au debugger", "Aux logs", "À la mémoire", "Au hasard"], a: 1, exp: "Le debugger n'existe plus en prod." },
+    { type: "qcm", q: "L'outil de log intégré d'ASP.NET Core :", opts: ["Console.WriteLine", "ILogger<T>", "printf", "alert()"], a: 1, exp: "Injecté comme un service." },
+    { type: "qcm", q: "LogInformation(\"… {IdJeu} …\", idJeu) plutôt que la concaténation :", opts: ["C'est pareil", "Log structuré : filtrable et indexable", "C'est plus lent", "Obligatoire en C#"], a: 1, exp: "Placeholders nommés." },
+    { type: "qcm", q: "Un stock épuisé se journalise en…", opts: ["LogError", "LogWarning", "LogDebug", "rien"], a: 1, exp: "Anormal mais pas une panne." },
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Trop d'index", "1 requête + 1 par ligne pour les relations", "Un bug CSS", "Un test lent"], a: 1, exp: "Explosion de requêtes." },
+    { type: "qcm", q: "La parade au N+1 avec EF Core :", opts: ["Include(j => j.Categorie)", "ToList() partout", "un cache manuel", "plus de RAM"], a: 0, exp: "→ JOIN unique." },
+    { type: "vf", q: "Le N+1 se voit facilement sur une petite base de dev.", a: false, exp: "Il explose seulement à l'échelle." },
+    { type: "qcm", q: "Include génère en SQL…", opts: ["Un JOIN", "Un DELETE", "Un index", "Un cursor"], a: 0, exp: "Le JOIN du cours SQL." },
+    { type: "qcm", q: "On crée un index sur…", opts: ["Toutes les colonnes", "Les colonnes souvent filtrées (Titre, ClientId)", "Aucune", "Les mots de passe"], a: 1, exp: "Ciblé sur les usages." },
+    { type: "qcm", q: "Le prix d'un index :", opts: ["Lectures plus lentes", "Écritures un peu plus lentes", "Rien", "Des 404"], a: 1, exp: "L'index doit être maintenu." },
+    { type: "qcm", q: "La clé JWT et le mot de passe SQL vont…", opts: ["Dans appsettings.json commité", "Dans user-secrets (dev) et variables d'environnement (prod)", "Dans le HTML", "Dans Git"], a: 1, exp: "Hors du dépôt." },
+    { type: "vf", q: "Un secret commité puis supprimé au commit suivant est en sécurité.", a: false, exp: "L'historique Git le garde." },
+    { type: "qcm", q: "ConnectionStrings__Ludotheque (double underscore) est…", opts: ["Une faute", "La forme variable d'environnement de ConnectionStrings:Ludotheque", "Du SQL", "Un claim"], a: 1, exp: "Convention .NET." },
+    { type: "qcm", q: "HasIndex(j => j.Titre) se déclare…", opts: ["Dans OnModelCreating (et arrive par migration)", "Dans la vue", "Dans le contrôleur", "En prod à la main"], a: 0, exp: "Versionné comme le reste." },
+    { type: "vf", q: "Logs, N+1 et secrets relèvent de la même exigence : être prêt pour la production.", a: true, exp: "Le fil de la leçon." }
+  ],
+  final: {
+    title: "Exercice final — Le contrôle qualité",
+    intro: `<p>On passe la Ludothèque en revue avant la mise en ligne.</p>`,
+    questions: [
+      { type: "qcm", q: "Le catalogue affiche la catégorie de chaque jeu. Il faut :", opts: ["Include(j => j.Categorie)", "une boucle de requêtes", "un cache global", "rien"], a: 0, exp: "Sinon N+1." },
+      { type: "qcm", q: "La recherche par titre mérite :", opts: ["Un HasIndex sur Titre", "un index sur toutes les colonnes", "un DELETE", "un mock"], a: 0, exp: "Filtre fréquent." },
+      { type: "qcm", q: "Une location réussie se journalise en :", opts: ["LogInformation avec placeholders", "LogError", "Console.WriteLine", "pas du tout"], a: 0, exp: "Trace normale du métier." },
+      { type: "qcm", q: "La chaîne de connexion de prod vit dans :", opts: ["Une variable d'environnement", "appsettings.json commité", "le README", "le HTML"], a: 0, exp: "Secret hors dépôt." },
+      { type: "vf", q: "Ces réflexes réutilisent les cours SQL (JOIN, index) et Git (historique).", a: true, exp: "Tout converge." }
+    ],
+    solution: `<pre class="pseudo">// N+1 réglé
+var jeux = await _db.Jeux.Include(j =&gt; j.Categorie).ToListAsync();   // 1 requête (JOIN) au lieu de 1+N
+
+// index déclarés
+modelBuilder.Entity&lt;Jeu&gt;().HasIndex(j =&gt; j.Titre);   // accélère la recherche par titre
+
+// log structuré
+_logger.LogInformation("Location du jeu {IdJeu} par {Client}", idJeu, idClient);   // trace filtrable
+
+// secrets
+dotnet user-secrets set "ConnectionStrings:Ludotheque" "..."   # dev : coffre local
+ConnectionStrings__Ludotheque=...                              # prod : variable d'environnement</pre>
+<p>L'application est propre, rapide et discrète. Demain : la mise en ligne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes logs, ton Include et tes index…",
+  items: [
+  { id: "projcsharp-l19", title: "L'audit qualité du service de location", level: 3,
+    statement: "Améliore LocationService.LouerAsync : injecte ILogger<LocationService>, journalise la location réussie (LogInformation, placeholders {IdJeu} {Client}) et le stock épuisé (LogWarning) avant de lever l'exception. Ajoute ensuite dans OnModelCreating les deux index utiles : Jeu.Titre et Location.ClientId.",
+    hints: [
+      "private readonly ILogger<LocationService> _logger; (par le constructeur)",
+      "_logger.LogWarning(\"Stock épuisé pour le jeu {IdJeu}\", idJeu); puis throw.",
+      "modelBuilder.Entity<Location>().HasIndex(l => l.ClientId);"
+    ],
+    solution: "public class LocationService {\n    private readonly AppDbContext _db;                       // acces a la base\n    private readonly ILogger<LocationService> _logger;      // journal (logger)\n    public LocationService(AppDbContext db, ILogger<LocationService> logger) {   // constructeur : recoit les deux\n        _db = db; _logger = logger;\n    }\n\n    public async Task LouerAsync(string idClient, int idJeu) {   // loue un jeu a un client\n        using var tx = await _db.Database.BeginTransactionAsync();   // transaction (tout ou rien)\n        var jeu = await _db.Jeux.FindAsync(idJeu) ?? throw new KeyNotFoundException();   // jeu par sa cle, ou 404\n        if (jeu.StockLocation <= 0) {                        // plus de stock ?\n            _logger.LogWarning(\"Stock épuisé pour le jeu {IdJeu}\", idJeu);   // trace l'avertissement\n            throw new StockInsuffisantException(\"Plus de stock de location\");   // puis refuse (409)\n        }\n        _db.Locations.Add(new Location { ClientId = idClient, JeuId = idJeu,   // 1re ecriture : la location\n            DateDebut = DateTime.UtcNow, NbJours = 7 });\n        jeu.StockLocation--;                                 // 2e ecriture : un exemplaire de moins\n        await _db.SaveChangesAsync();                        // envoie les ecritures\n        await tx.CommitAsync();                              // valide la transaction\n        _logger.LogInformation(\"Location du jeu {IdJeu} par {Client}\", idJeu, idClient);   // trace le succes (apres commit)\n    }\n}\n\n// OnModelCreating\nmodelBuilder.Entity<Jeu>().HasIndex(j => j.Titre);          // index sur le titre (recherche)\nmodelBuilder.Entity<Location>().HasIndex(l => l.ClientId);  // index sur le client (mes locations)",
+    note: "Le log de succès se place APRÈS le commit : on ne journalise pas une location qui sera annulée. Le warning avant le throw garde la trace du refus. Les index arrivent par migration, versionnés comme tout le schéma — un DBA peut relire l'histoire complète de la base dans Git." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie",
+  subtitle: "Comptes, rôles, et un hachage de mot de passe robuste — au niveau attendu en production.",
+  theory: `
+<h3>1. Le hachage robuste</h3>
+<p>Un <strong>hachage</strong> (hash) transforme un texte en une empreinte illisible et irréversible : on peut recalculer l'empreinte d'un mot de passe pour la comparer, mais on ne peut pas remonter au mot de passe d'origine — comme un hachoir, qui hache un steak sans pouvoir reconstituer la vache. On stocke donc le mot de passe sous forme de <strong>hash lent et salé</strong> (argon2/bcrypt, via la bibliothèque <em>libsodium</em>), pas un simple <strong>SHA</strong> rapide. La <em>lenteur</em> rend chaque essai coûteux, ce qui décourage la <strong>force brute</strong> (essayer des millions de mots de passe à la suite). Le <strong>sel</strong> est un grain de hasard ajouté avant le hachage : il rend inutiles les <strong>tables précalculées</strong> (listes toutes prêtes de mots de passe et de leurs empreintes).</p>
+<pre class="pseudo">/* inscription */
+char hash[crypto_pwhash_STRBYTES];               // tampon qui recevra l'empreinte (taille fournie par la bibliothèque)
+crypto_pwhash_str(hash, mdp, strlen(mdp),        // calcule le hash du mot de passe "mdp" (le sel est ajouté automatiquement)
+    crypto_pwhash_OPSLIMIT_INTERACTIVE, crypto_pwhash_MEMLIMIT_INTERACTIVE);  // réglages de coût : temps de calcul et mémoire utilisés (plus c'est élevé, plus c'est dur à casser)
+/* stocker hash via requête préparée */          // on range ensuite ce hash en base, jamais le mot de passe
+
+/* connexion */
+if (crypto_pwhash_str_verify(hash_stocke, mdp, strlen(mdp)) != 0)  // vérifie si le mdp saisi correspond au hash stocké ; != 0 = ça ne correspond pas
+    return ERR_SAISIE;    // renvoie une erreur neutre (on ne dit pas si c'est le login ou le mdp qui est faux)</pre>
+
+<h3>2. Le sel, intégré au hash</h3>
+<p>Un bon algorithme intègre un <strong>sel aléatoire</strong> dans le hash produit : deux utilisateurs avec le même mot de passe ont des hash différents. On n'a rien à gérer manuellement, la bibliothèque s'en charge.</p>
+
+<h3>3. Messages neutres et pas de fuite</h3>
+<div class="warn">Même message pour « login inconnu » et « mot de passe faux ». Jamais de mot de passe ni de hash dans les logs. Et on ne révèle pas non plus le <em>temps</em> : un bon vérificateur est à temps quasi constant, ce qui limite les attaques par mesure de durée.</p></div>
+
+<h3>4. Politique de mot de passe</h3>
+<pre class="pseudo">Code valider_mdp(const char *mdp) {          // vérifie la politique de mot de passe, renvoie un Code
+    if (strlen(mdp) &lt; 12) return ERR_SAISIE;   // moins de 12 caractères → refusé (&lt; = plus petit que)
+    return OK;                               // sinon : accepté
+}</pre>
+<div class="tip">On impose une longueur minimale raisonnable (la longueur prime sur la complexité). Ce contrôle est une règle métier : testée, exécutée en CI. L'authentification durcie combine bon hachage, messages neutres et politique de saisie.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un mot de passe se stocke…", opts: ["en clair", "en hash lent et salé", "en SHA rapide", "dans les logs"], a: 1, exp: "argon2/bcrypt." },
+    { type: "qcm", q: "Pourquoi un hash LENT ?", opts: ["pour ralentir l'utilisateur", "pour rendre la force brute impraticable", "sans raison", "pour la place"], a: 1, exp: "Chaque essai coûte cher à l'attaquant." },
+    { type: "qcm", q: "Le sel sert à…", opts: ["accélérer", "rendre chaque hash unique et casser les tables précalculées", "afficher", "trier"], a: 1, exp: "Deux mêmes mdp → hash différents." },
+    { type: "qcm", q: "Le sel est…", opts: ["à gérer à la main", "intégré au hash par un bon algorithme", "un secret partagé", "inutile"], a: 1, exp: "La lib s'en charge." },
+    { type: "qcm", q: "Pour login inconnu / mdp faux, on affiche…", opts: ["deux messages précis", "le même message neutre", "le hash", "le mdp"], a: 1, exp: "Ne pas renseigner l'attaquant." },
+    { type: "qcm", q: "Journalise-t-on un hash de mot de passe ?", opts: ["oui", "jamais", "parfois", "toujours"], a: 1, exp: "Pas de secret dans les logs." },
+    { type: "qcm", q: "Un vérificateur à temps quasi constant limite…", opts: ["les fuites mémoire", "les attaques par mesure de durée", "les injections", "les rôles"], a: 1, exp: "Timing attacks." },
+    { type: "qcm", q: "valider_mdp impose surtout…", opts: ["des symboles obligatoires", "une longueur minimale raisonnable", "un chiffre en 3e position", "rien"], a: 1, exp: "La longueur prime." },
+    { type: "qcm", q: "La politique de mot de passe est…", opts: ["un secret", "une règle métier testée en CI", "un log", "un volume"], a: 1, exp: "Testable." },
+    { type: "qcm", q: "crypto_pwhash_str_verify renvoie 0 quand…", opts: ["le mdp est faux", "le mot de passe correspond au hash", "le login est inconnu", "jamais"], a: 1, exp: "0 = concordance." },
+    { type: "vf", q: "Un SHA-256 simple est un bon choix pour hacher un mot de passe.", a: false, exp: "Faux : trop rapide ; il faut un hash lent et salé (argon2/bcrypt)." },
+    { type: "qcm", q: "Deux utilisateurs avec le même mot de passe ont…", opts: ["le même hash", "des hash différents (grâce au sel)", "aucun hash", "le même login"], a: 1, exp: "Le sel les distingue." },
+    { type: "qcm", q: "L'authentification durcie combine…", opts: ["un seul contrôle", "bon hachage, messages neutres, politique de saisie", "aucun", "un secret public"], a: 1, exp: "Plusieurs mesures." },
+    { type: "qcm", q: "La longueur minimale conseillée est plutôt…", opts: ["4", "12 ou plus", "1", "aucune"], a: 1, exp: "La longueur renforce le mdp." },
+    { type: "qcm", q: "Le hash est stocké via…", opts: ["un printf", "une requête préparée", "un log", "un fichier public"], a: 1, exp: "Écriture sûre en base." }
+  ],
+  final: {
+    title: "Exercice final — Durcir l'inscription",
+    intro: `<p>Une inscription faible. Analyse :</p>
+<pre class="pseudo">void inscrire(MYSQL *c, const char *login, const char *mdp) {  // crée un compte à partir d'un login et d'un mot de passe
+    char sql[256];                                             // tampon pour la requête SQL
+    sprintf(sql, "INSERT INTO utilisateur(login,mot_de_passe_hash) VALUES('%s','%s')", login, mdp);  // colle login ET mdp directement (concaténation + mot de passe EN CLAIR : à interroger…)
+    mysql_query(c, sql);                                       // envoie la requête telle quelle
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Faille n°1 — concaténation :", opts: ["aucune", "injection SQL : requête préparée nécessaire", "trop lent", "rien"], a: 1, exp: "Saisies collées." },
+      { type: "qcm", q: "Faille n°2 — <code>mot_de_passe_hash = mdp</code> :", opts: ["correct", "on stocke le mdp en clair : il faut le HACHER d'abord", "il faut chiffrer", "rien"], a: 1, exp: "Jamais le mdp en clair." },
+      { type: "qcm", q: "Manque n°3 — la politique :", opts: ["rien", "valider la longueur du mot de passe avant", "un COMMIT", "un secret"], a: 1, exp: "Règle de saisie." },
+      { type: "qcm", q: "Le hachage doit être…", opts: ["SHA rapide", "lent et salé (argon2/bcrypt)", "un XOR", "réversible"], a: 1, exp: "Robuste." },
+      { type: "qcm", q: "Après correction, que ne journalise-t-on jamais ?", opts: ["un id", "le mot de passe ou le hash", "un login", "un rôle"], a: 1, exp: "Pas de secret dans les logs." }
+    ],
+    solution: `<pre class="pseudo">Code inscrire(MYSQL *c, const char *login, const char *mdp) {  // inscription durcie, renvoie un Code
+    if (valider_nom(login) != OK) return ERR_SAISIE;          // le login doit être valide (non vide, pas trop long)
+    if (valider_mdp(mdp)   != OK) return ERR_SAISIE;   // le mot de passe doit respecter la longueur minimale
+
+    char hash[crypto_pwhash_STRBYTES];                        // tampon pour l'empreinte
+    if (crypto_pwhash_str(hash, mdp, strlen(mdp),             // calcule le hash salé du mot de passe
+            crypto_pwhash_OPSLIMIT_INTERACTIVE,               // coût en temps de calcul
+            crypto_pwhash_MEMLIMIT_INTERACTIVE) != 0) return ERR_DB;  // coût en mémoire ; si le calcul échoue, renvoie une erreur
+
+    /* requête préparée : lie login et hash (jamais le mdp en clair) */
+    return dao_inserer_utilisateur(c, login, hash);          // enregistre le login et le HASH via une requête préparée
+}</pre>
+<p>Validation, hachage robuste, requête préparée : l'inscription est durcie. Demain : l'autorisation par ressource (anti-IDOR).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projcpro-l09", title: "La politique de mot de passe", level: 2,
+    statement: "Écris Code valider_mdp(const char *mdp) qui exige au moins 12 caractères (ERR_SAISIE sinon, OK sinon). Ajoute deux CHECK : un mot de passe trop court et un valide.",
+    hints: [
+      "strlen(mdp) < 12 → ERR_SAISIE.",
+      "Sinon OK.",
+      "CHECK(valider_mdp(\"court\") == ERR_SAISIE); CHECK(valider_mdp(\"motdepasselong\") == OK);"
+    ],
+    solution: "#include <string.h>   // pour strlen (longueur d'un texte)\ntypedef enum { OK, ERR_STOCK, ERR_SAISIE, ERR_DROIT, ERR_DB } Code;   // Code = liste de valeurs nommees (enum) : OK ou differentes erreurs\n\nCode valider_mdp(const char *mdp) {          // verifie la politique de mot de passe\n    if (strlen(mdp) < 12) return ERR_SAISIE; // moins de 12 caracteres -> refuse\n    return OK;                               // sinon accepte\n}\n\n// tests\n// CHECK(valider_mdp(\"court\") == ERR_SAISIE);       // 5 caracteres -> trop court\n// CHECK(valider_mdp(\"motdepasselong\") == OK);      // 14 caracteres -> valide",
+    note: "La longueur minimale est la règle la plus efficace (elle prime sur la complexité). C'est une simple fonction pure, testée en CI, appliquée avant tout hachage à l'inscription." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

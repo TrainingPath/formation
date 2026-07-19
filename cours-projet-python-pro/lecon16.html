@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Les espaces client, vendeur et administrateur",
+  subtitle: "Trois profils, trois interfaces — chacune protégée, aucune règle nouvelle.",
+  theory: `
+<h3>1. Orchestrer, pas réinventer</h3>
+<p>Les espaces ne créent <strong>aucune logique métier nouvelle</strong> : ils se contentent d'<strong>orchestrer</strong> — d'appeler dans le bon ordre — les services et <strong>QuerySets</strong> déjà écrits et testés (leçons 5-12). C'est le dividende d'une <strong>architecture en couches</strong> : quand chaque brique (modèle, service, filtre) est propre et vérifiée, assembler une interface ne demande plus qu'à les brancher. Une <strong>vue</strong> ne fait ici que choisir les données à afficher et rendre le template.</p>
+
+<h3>2. L'espace client</h3>
+<pre class="pseudo">@login_required   # accessible uniquement si connecte
+def espace_client(request):   # la page personnelle du client
+    return render(request, "client/espace.html", {   # rendre le template avec…
+        "locations": Location.objects.filter(client=request.user)   # …ses locations (filtrees par l'utilisateur connecte)…
+                             .en_cours().select_related("jeu"),   # …en cours, avec le jeu joint (anti-N+1)
+        "achats": Achat.objects.filter(client=request.user).select_related("jeu"),   # …et ses achats, jeu joint
+    })   # fin du contexte passe au template</pre>
+<p>Filtré par <code>request.user</code> (leçon 10) : impossible de voir les données d'un autre.</p>
+
+<h3>3. L'espace vendeur</h3>
+<pre class="pseudo">@user_passes_test(est_vendeur)   # reserve aux vendeurs (et admins)
+def espace_vendeur(request):   # tableau de bord du vendeur
+    return render(request, "vendeur/espace.html", {   # rendre le template avec…
+        "jeux": Jeu.objects.select_related("categorie").order_by("titre"),   # …tous les jeux, categorie jointe, tries
+        "retards": Location.objects.en_retard().select_related("jeu", "client"),   # …les locations en retard (QuerySet deja ecrit)
+    })   # fin du contexte
+# le retour d'un jeu appelle services.rendre (leçon 11) — orchestration</pre>
+
+<h3>4. L'espace admin</h3>
+<pre class="pseudo">@user_passes_test(est_admin)   # reserve aux administrateurs
+def promouvoir(request, user_id):        # POST   # promeut un utilisateur (action modifiante)
+    u = get_object_or_404(User, pk=user_id)   # charger l'utilisateur cible (404 s'il n'existe pas)
+    u.groups.add(Group.objects.get(name="Vendeur"))   # lui ajouter le role Vendeur
+    messages.success(request, f"{u.email} est maintenant vendeur")   # message de confirmation
+    return redirect("espace_admin")   # rediriger vers l'espace admin (Post-Redirect-Get)</pre>
+
+<h3>5. Chaque espace, son test de refus croisé</h3>
+<pre class="pseudo">def test_client_refuse_sur_gestion(self):   # un client ne doit pas atteindre la gestion
+    self.client.login(username="c@ludo.fr", password="Mdp8carac!")   # Client
+    r = self.client.get("/gestion/")   # tenter d'ouvrir la page reservee
+    self.assertEqual(r.status_code, 302)     # redirigé : pas admin</pre>
+<div class="warn">Le menu s'adapte au rôle (confort), mais la barrière reste le décorateur côté serveur : un client qui tape <code>/gestion/</code> à la main est refusé. Et chaque espace a son test de refus croisé en CI — la matrice des droits est verrouillée, pas seulement affichée.</div>
+<div class="tip">Trois espaces, zéro règle métier nouvelle : c'est le signe qu'on a bien investi en semaines 1-2. La dernière ligne droite assemble des briques déjà testées et sécurisées — chaque espace hérite gratuitement de l'anti-IDOR, de l'échappement et des transactions.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les espaces introduisent…", opts: ["Beaucoup de métier nouveau", "Zéro règle métier nouvelle (orchestration)", "Une 2e base", "Un autre langage"], a: 1, exp: "Les services font tout." },
+    { type: "qcm", q: "L'espace client liste…", opts: ["Toutes les locations", "Les locations/achats du connecté seulement", "Les comptes", "Les logs"], a: 1, exp: "Filtré par request.user." },
+    { type: "vf", q: "Un client peut voir l'espace d'un autre en changeant l'URL.", a: false, exp: "Filtre par la session." },
+    { type: "qcm", q: "espace_vendeur est protégé par…", opts: ["@user_passes_test(est_vendeur)", "@login_required seul", "rien", "le CSS"], a: 0, exp: "Rôle exigé." },
+    { type: "qcm", q: "La liste des retards vient de…", opts: ["Location.objects.en_retard() (déjà écrit)", "un for en Python", "un fichier", "l'admin"], a: 0, exp: "QuerySet réutilisé." },
+    { type: "qcm", q: "Le retour d'un jeu appelle…", opts: ["services.rendre (leçon 11)", "du SQL dans la vue", "un template", "rien"], a: 0, exp: "Orchestration." },
+    { type: "qcm", q: "Promouvoir un client :", opts: ["u.groups.add(Vendeur)", "u.role = 2", "un UPDATE brut", "un cookie"], a: 0, exp: "Via les groupes." },
+    { type: "qcm", q: "Qui peut promouvoir ?", opts: ["L'administrateur", "Le client", "Le vendeur", "Tout le monde"], a: 0, exp: "Gestion = admin." },
+    { type: "qcm", q: "La promotion se fait en…", opts: ["POST", "GET", "PUT", "par email"], a: 0, exp: "Écriture = POST." },
+    { type: "qcm", q: "Chaque espace a…", opts: ["Rien", "Son test de refus croisé en CI", "Un WAF", "Un cache"], a: 1, exp: "Matrice verrouillée." },
+    { type: "vf", q: "Un client qui tape /gestion/ à la main y accède.", a: false, exp: "Refus côté serveur." },
+    { type: "qcm", q: "Le menu adapté au rôle est…", opts: ["La sécurité", "Du confort ; la barrière est le décorateur", "Suffisant", "Interdit"], a: 1, exp: "Les deux ensemble." },
+    { type: "qcm", q: "Les espaces héritent gratuitement de…", opts: ["Rien", "Anti-IDOR, échappement, transactions (déjà testés)", "Une 2e base", "Un autre langage"], a: 1, exp: "Le dividende des semaines 1-2." },
+    { type: "qcm", q: "select_related(\"jeu\", \"client\") sur les retards évite…", opts: ["Le N+1 sur deux relations", "Le tri", "Le CSRF", "Les tests"], a: 0, exp: "JOIN double." },
+    { type: "vf", q: "Les trois espaces correspondent aux trois profils du modèle Merise.", a: true, exp: "De la conception à l'interface." }
+  ],
+  final: {
+    title: "Exercice final — Cloisonner les espaces",
+    intro: `<p>On monte les trois espaces et leurs protections.</p>`,
+    questions: [
+      { type: "qcm", q: "espace_client est protégé par :", opts: ["@login_required (ce sont SES données)", "@user_passes_test(est_admin)", "rien", "le menu"], a: 0, exp: "Connecté suffit." },
+      { type: "qcm", q: "Ses données sont filtrées par :", opts: ["request.user", "?client= dans l'URL", "un champ caché", "l'IP"], a: 0, exp: "Session." },
+      { type: "qcm", q: "espace_vendeur exige :", opts: ["est_vendeur (inclut l'admin)", "est_admin seul", "rien", "un mdp en URL"], a: 0, exp: "Matrice." },
+      { type: "qcm", q: "Chaque espace :", opts: ["A son test de refus croisé", "n'est pas testé", "est en prod seulement", "est manuel"], a: 0, exp: "CI verrouille." },
+      { type: "vf", q: "Les espaces réutilisent les services et QuerySets déjà écrits.", a: true, exp: "Zéro règle nouvelle." }
+    ],
+    solution: `<pre class="pseudo">@login_required   # connecte obligatoire
+def espace_client(request):   # espace personnel du client
+    return render(request, "client/espace.html", {   # rendre le template avec…
+        "locations": Location.objects.filter(client=request.user)   # …ses locations…
+                             .en_cours().select_related("jeu"),   # …en cours, jeu joint
+        "achats": Achat.objects.filter(client=request.user).select_related("jeu")})   # …et ses achats, jeu joint
+
+@user_passes_test(est_vendeur)   # reserve aux vendeurs/admins
+def espace_vendeur(request): ...   # tableau de bord vendeur
+
+@user_passes_test(est_admin)   # reserve aux admins
+def promouvoir(request, user_id): ...   # POST + groups.add : promouvoir un utilisateur
+
+# + un test de refus croisé par espace, en CI</pre>
+<p>Chacun chez soi, verrouillé. Demain : l'image de production, durcie.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes espaces et leurs tests…",
+  items: [
+  { id: "proj6py-l16", title: "L'espace vendeur et ses tests de rôle", level: 3,
+    statement: "Écris la vue espace_vendeur (jeux + retards, réservée aux vendeurs/admins) et rendre_vue (POST : appelle services.rendre, attrape DejaRendue). Écris deux tests : un vendeur y accède (200), un client est refusé (302/403). Explique pourquoi le test « un client est refusé » est aussi important que « un vendeur accède ».",
+    hints: [
+      "@user_passes_test(est_vendeur) sur les deux vues.",
+      "Test positif : login vendeur -> 200 ; test négatif : login client -> refus.",
+      "Le test négatif attrape le jour où quelqu'un retire le décorateur."
+    ],
+    solution: "@user_passes_test(est_vendeur)   # reserve aux vendeurs/admins\ndef espace_vendeur(request):   # tableau de bord du vendeur\n    return render(request, \"vendeur/espace.html\", {   # rendre le template avec…\n        \"jeux\": Jeu.objects.select_related(\"categorie\").order_by(\"titre\"),   # …tous les jeux, categorie jointe, tries\n        \"retards\": Location.objects.en_retard().select_related(\"jeu\", \"client\"),   # …les locations en retard (jeu + client joints)\n    })   # fin du contexte\n\n@user_passes_test(est_vendeur)   # reserve aux vendeurs/admins\ndef rendre_vue(request, location_id):   # enregistre le retour d'un jeu\n    if request.method != \"POST\":   # une action modifiante se fait en POST…\n        return redirect(\"espace_vendeur\")   # …sinon rediriger sans rien faire\n    try:   # tenter le retour\n        loc = services.rendre(location_id)   # appeler le service (transaction, stock +1)\n        messages.success(request, f\"{loc.jeu.titre} rendu\")   # message de succes\n    except services.DejaRendue as e:   # deja rendu ?…\n        messages.error(request, str(e))   # …message d'erreur\n    return redirect(\"espace_vendeur\")   # rediriger vers l'espace vendeur\n\n# tests.py — les DEUX faces de la matrice des droits\nclass EspaceVendeurTests(TestCase):   # tests d'acces a l'espace vendeur\n    def setUp(self):   # donnees communes avant chaque test\n        for nom in [\"Client\", \"Vendeur\", \"Administrateur\"]:   # creer les 3 roles…\n            Group.objects.get_or_create(name=nom)   # …s'ils n'existent pas (idempotent)\n        self.vendeur = User.objects.create_user(\"v@ludo.fr\", \"v@ludo.fr\", \"Mdp8carac!\")   # un vendeur\n        self.vendeur.groups.add(Group.objects.get(name=\"Vendeur\"))   # lui donner le role Vendeur\n        self.client_u = User.objects.create_user(\"c@ludo.fr\", \"c@ludo.fr\", \"Mdp8carac!\")   # un client\n        self.client_u.groups.add(Group.objects.get(name=\"Client\"))   # lui donner le role Client\n\n    def test_vendeur_accede(self):   # test POSITIF : le vendeur peut entrer\n        self.client.login(username=\"v@ludo.fr\", password=\"Mdp8carac!\")   # se connecter en vendeur\n        self.assertEqual(self.client.get(\"/vendeur/\").status_code, 200)   # acces autorise (200)\n\n    def test_client_refuse(self):   # test NEGATIF : le client est refuse\n        self.client.login(username=\"c@ludo.fr\", password=\"Mdp8carac!\")   # se connecter en client\n        r = self.client.get(\"/vendeur/\")   # tenter d'ouvrir l'espace vendeur\n        self.assertIn(r.status_code, (302, 403))   # PAS 200 : accès refusé\n\n# Pourquoi le test NÉGATIF compte autant :\n# Le test positif (le vendeur accède) vérifie que la fonctionnalité MARCHE.\n# Le test négatif (le client est refusé) vérifie que la SÉCURITÉ tient — c'est\n# lui qui devient rouge si quelqu'un retire @user_passes_test « pour déboguer »\n# ou élargit le rôle par erreur. Sans lui, une porte peut s'ouvrir en silence.",
+    note: "Tester les deux faces — accès autorisé ET accès refusé — est le réflexe de sécurité qui manque le plus souvent : on teste que ça marche pour les bons, rarement que ça bloque les mauvais. Le test négatif EST le test de sécurité ; en CI, il garantit que la matrice des droits ne s'effrite pas au fil des refactorings. Trois espaces, six tests (un positif, un négatif chacun)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

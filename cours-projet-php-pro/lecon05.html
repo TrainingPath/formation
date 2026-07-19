@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Les modèles Eloquent du catalogue, testés dès l'écriture",
+  subtitle: "La règle métier et son test naissent dans le même commit.",
+  theory: `
+<h3>1. Les modèles Eloquent</h3>
+<p>Un <strong>modèle Eloquent</strong> est une classe PHP qui représente une table de la base : chaque objet correspond à une ligne, et lire ou écrire l'objet lit ou écrit la ligne — le modèle est le porte-parole de la table. <code>extends Model</code> signifie qu'il <em>hérite</em> de la classe <code>Model</code> de Laravel, dont il reçoit gratuitement tout le savoir-faire (chercher, enregistrer, supprimer). Une <strong>relation</strong> décrit le lien entre deux tables : <code>hasMany</code> (« a plusieurs ») dit qu'une catégorie possède plusieurs jeux, et <code>belongsTo</code> (« appartient à ») que chaque jeu appartient à une catégorie — les deux faces d'un même lien.</p>
+<pre class="pseudo">class Categorie extends Model {          // modèle Categorie : représente la table "categories"
+    protected $fillable = ['nom'];       // seul le champ "nom" est remplissable en masse (sécurité)
+    public function jeux() { return $this->hasMany(Jeu::class); }   // relation : une catégorie a plusieurs jeux
+}
+
+class Jeu extends Model {                // modèle Jeu : représente la table "jeux"
+    protected $fillable = ['titre','prix_achat','prix_location','stock_vente','stock_location','categorie_id'];   // champs autorisés en remplissage de masse
+    protected $casts = ['prix_achat' => 'decimal:2', 'prix_location' => 'decimal:2'];   // convertit les prix en décimaux exacts à 2 chiffres
+
+    public function categorie() { return $this->belongsTo(Categorie::class); }   // relation inverse : un jeu appartient à une catégorie
+}</pre>
+<p>Les <code>$casts</code> (« conversions ») en <code>decimal:2</code> convertissent automatiquement ces colonnes en nombres à 2 décimales exactes, garantissant la précision monétaire. <code>$fillable</code> (« remplissable ») liste les seuls champs qu'on autorise à remplir en masse : il protège de l'<strong>affectation de masse</strong> (<em>mass assignment</em>), une faille où une requête malveillante tenterait de remplir un champ non prévu — par exemple un rôle caché.</p>
+
+<h3>2. La règle métier vit dans le modèle</h3>
+<p>Un <strong>accesseur</strong> est une propriété calculée : une méthode nommée <code>getXxxAttribute()</code> que Laravel expose comme un attribut ordinaire (<code>$jeu->est_louable</code>). La règle « est-il louable ? » est ainsi définie <em>une seule fois</em>, au bon endroit, plutôt que recopiée partout.</p>
+<pre class="pseudo">public function getEstLouableAttribute(): bool  { return $this->stock_location > 0; }   // accesseur : "louable" si le stock de location est > 0
+public function getEstAchetableAttribute(): bool { return $this->stock_vente > 0; }     // accesseur : "achetable" si le stock de vente est > 0
+// usage : $jeu->est_louable   (accesseur) — une règle, un endroit</pre>
+
+<h3>3. Le scope pour les requêtes réutilisables</h3>
+<p>Un <strong>scope</strong> (« portée ») est un morceau de requête réutilisable, nommé avec le vocabulaire métier. <code>scopeLouables($q)</code> ajoute la condition <code>where('stock_location', '>', 0)</code> ; on l'appelle ensuite <code>Jeu::louables()</code>, bien plus parlant qu'une condition recopiée à chaque requête.</p>
+<pre class="pseudo">public function scopeLouables($q) { return $q->where('stock_location', '>', 0); }   // scope : ne garde que les jeux dont le stock de location dépasse 0
+// usage : Jeu::louables()->get()  — le vocabulaire métier dans la requête</pre>
+
+<h3>4. Le test, écrit EN MÊME TEMPS</h3>
+<p>Un <strong>test</strong> est un petit programme qui vérifie automatiquement qu'une règle se comporte comme prévu. La classe étend <code>TestCase</code> (l'outillage de test de Laravel). <code>use RefreshDatabase</code> remet une base propre et migrée avant chaque test. <code>factory()->make()</code> fabrique un jeu <em>en mémoire</em> (non enregistré), tandis que <code>factory()->create()</code> l'<em>enregistre</em> vraiment en base. Les <code>assert…</code> sont les vérifications : <code>assertFalse</code> exige que la valeur soit fausse, <code>assertCount(1, …)</code> qu'il y ait exactement un élément. Si une vérification échoue, le test devient rouge.</p>
+<pre class="pseudo">class JeuTest extends TestCase {                 // classe de tests, basée sur l'outillage de Laravel
+    use RefreshDatabase;                         // remet une base propre et migrée avant chaque test
+    public function test_non_louable_si_stock_nul(): void {   // test 1 : un jeu sans stock de location n'est pas louable
+        $jeu = Jeu::factory()->make(['stock_location' => 0]);   // fabrique en mémoire un jeu avec stock_location = 0
+        $this->assertFalse($jeu->est_louable);                  // on VÉRIFIE que est_louable vaut bien false
+    }
+    public function test_scope_louables_exclut_stock_nul(): void {   // test 2 : le scope écarte les stocks nuls
+        Jeu::factory()->create(['stock_location' => 0]);   // enregistre un jeu non louable (stock 0)
+        Jeu::factory()->create(['stock_location' => 3]);   // enregistre un jeu louable (stock 3)
+        $this->assertCount(1, Jeu::louables()->get());     // on VÉRIFIE que le scope n'en retourne qu'un seul
+    }
+}</pre>
+
+<h3>5. « Non testé = non fait »</h3>
+<div class="warn">Au Niveau 6, les tests arrivaient à la semaine 3 — donc souvent jamais. Ici, la règle et son test entrent dans le même commit : la CI les exécute aussitôt, et une régression future devient <strong>rouge à la seconde</strong>. C'est le TDD léger d'une équipe qui a intégré que le code non testé n'est pas fait.</div>
+<div class="tip">Le job de tests de la CI a un service <code>mysql:8.4</code> (cours CI/CD leçon 10) : avec <code>RefreshDatabase</code>, les tests tournent sur une vraie base migrée de zéro, pas une base mémoire qui mentirait sur le comportement SQL réel.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un modèle Eloquent étend…", opts: ["Controller", "Model", "Service", "Request"], a: 1, exp: "Mappé à une table." },
+    { type: "qcm", q: "$casts en decimal:2 garantit…", opts: ["La vitesse", "La précision monétaire", "Le CSS", "Le cache"], a: 1, exp: "Pas d'erreur d'arrondi." },
+    { type: "qcm", q: "$fillable protège de…", opts: ["Rien", "L'affectation de masse (mass assignment)", "Le XSS", "Le CSRF"], a: 1, exp: "Seuls les champs autorisés." },
+    { type: "qcm", q: "est_louable est défini…", opts: ["Partout où on en a besoin", "Une seule fois, dans un accesseur du modèle", "Dans le contrôleur", "En SQL"], a: 1, exp: "Une règle, un endroit." },
+    { type: "qcm", q: "Un scope (scopeLouables) sert à…", opts: ["Déployer", "Réutiliser une requête métier (Jeu::louables())", "Chiffrer", "Le CSS"], a: 1, exp: "Vocabulaire dans la requête." },
+    { type: "qcm", q: "Le test de la règle est écrit…", opts: ["En semaine 3", "En même temps que la règle (même commit)", "Jamais", "En prod"], a: 1, exp: "TDD léger." },
+    { type: "qcm", q: "RefreshDatabase…", opts: ["Supprime la prod", "Migre une base de test propre à chaque exécution", "Chiffre", "Rien"], a: 1, exp: "Base vierge rejouée." },
+    { type: "qcm", q: "Les tests tournent sur…", opts: ["Une base mémoire (SQLite)", "Un vrai MySQL (service CI)", "Rien", "La prod"], a: 1, exp: "Comportement SQL réel." },
+    { type: "qcm", q: "belongsTo(Categorie::class) définit…", opts: ["Un scope", "La relation Jeu -> Categorie", "Un cast", "Un test"], a: 1, exp: "Relation Eloquent." },
+    { type: "qcm", q: "Écrire code + test dans le même commit…", opts: ["Ralentit", "Rend toute régression future immédiatement rouge", "Est interdit", "Est inutile"], a: 1, exp: "Filet permanent." },
+    { type: "vf", q: "Une base mémoire peut mentir sur le comportement SQL réel de MySQL.", a: true, exp: "D'où le vrai MySQL en CI." },
+    { type: "qcm", q: "factory()->make() vs create() :", opts: ["Identiques", "make = en mémoire (non persisté), create = enregistré", "make déploie", "Aucun"], a: 1, exp: "Test rapide vs en base." },
+    { type: "qcm", q: "Réécrire stock_location > 0 partout est…", opts: ["Propre", "Une duplication qui divergera (préférer est_louable)", "Obligatoire", "Plus rapide"], a: 1, exp: "DRY." },
+    { type: "qcm", q: "L'accesseur getEstLouableAttribute expose…", opts: ["Une méthode getX()", "La propriété $jeu->est_louable", "Un scope", "Un cast"], a: 1, exp: "Convention Eloquent." },
+    { type: "vf", q: "La règle métier est plus sûre encapsulée dans le modèle que dispersée.", a: true, exp: "Un seul point de vérité." }
+  ],
+  final: {
+    title: "Exercice final — Les modèles et leur filet",
+    intro: `<p>Modèles + règles + tests, ensemble.</p>`,
+    questions: [
+      { type: "qcm", q: "L'argent est fiable grâce à :", opts: ["$casts en decimal:2", "float", "string sans cast", "int"], a: 0, exp: "Précision." },
+      { type: "qcm", q: "est_louable est :", opts: ["un accesseur du modèle, testé", "réécrit partout", "en SQL", "dans le contrôleur"], a: 0, exp: "Une règle, un endroit." },
+      { type: "qcm", q: "Le test utilise :", opts: ["RefreshDatabase sur un vrai MySQL (CI)", "SQLite mémoire", "aucune base", "un mock total"], a: 0, exp: "Comportement réel." },
+      { type: "qcm", q: "Le test de la règle est écrit :", opts: ["dans le même commit que la règle", "3 semaines après", "jamais", "en prod"], a: 0, exp: "Non testé = non fait." },
+      { type: "vf", q: "Une régression sur est_louable deviendra rouge en CI.", a: true, exp: "Le filet est permanent." }
+    ],
+    solution: `<pre class="pseudo">class Jeu extends Model {                                    // modèle Jeu
+  protected $casts = ['prix_location'=>'decimal:2', ...];    // prix en décimal exact
+  public function categorie(){ return $this->belongsTo(Categorie::class); }   // relation : appartient à une catégorie
+  public function getEstLouableAttribute(): bool { return $this->stock_location > 0; }   // accesseur de la règle "louable"
+  public function scopeLouables($q){ return $q->where('stock_location','>',0); }   // scope réutilisable "louables"
+}
+public function test_non_louable_si_stock_nul(): void {      // test de la règle, écrit dans le même commit
+  $jeu = Jeu::factory()->make(['stock_location'=>0]);        // jeu en mémoire, stock de location 0
+  $this->assertFalse($jeu->est_louable);                     // on vérifie qu'il n'est pas louable
+}</pre>
+<p>Les modèles sont testés. Demain : la couche service et ses règles, sous CI.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes modèles et leurs tests…",
+  items: [
+  { id: "proj6php-l5", title: "Le modèle Jeu, sa règle et son test", level: 2,
+    statement: "Écris le modèle Eloquent Jeu (casts decimal, fillable, relation belongsTo), l'accesseur est_louable, un scope louables(), et deux tests PHPUnit qui les couvrent. Explique en 2-3 lignes pourquoi écrire le test dans le même commit change la donne, et le rôle de $fillable.",
+    hints: [
+      "$casts pour l'argent, $fillable pour l'affectation de masse, belongsTo pour la relation.",
+      "getEstLouableAttribute() = stock_location > 0 ; test des deux branches (make vs create).",
+      "Scope : scopeLouables($q) ; RefreshDatabase pour un vrai MySQL en CI."
+    ],
+    solution: "class Jeu extends Model\n{\n    protected $fillable = [                                      // champs autorises en remplissage de masse\n        'titre','prix_achat','prix_location','stock_vente','stock_location','categorie_id',\n    ];\n    protected $casts = ['prix_achat' => 'decimal:2', 'prix_location' => 'decimal:2'];   // prix convertis en decimal exact a 2 chiffres\n\n    public function categorie() { return $this->belongsTo(Categorie::class); }   // relation : un jeu appartient a une categorie\n\n    public function getEstLouableAttribute(): bool  { return $this->stock_location > 0; }   // accesseur : louable si stock_location > 0\n    public function getEstAchetableAttribute(): bool { return $this->stock_vente > 0; }     // accesseur : achetable si stock_vente > 0\n\n    public function scopeLouables($q) { return $q->where('stock_location', '>', 0); }   // scope reutilisable : ne garde que les louables\n}\n\n// tests/Unit/JeuTest.php — ecrit DANS LE MEME COMMIT que la regle\nuse RefreshDatabase;                                            // base propre et migree avant chaque test\n\npublic function test_non_louable_si_stock_nul(): void {         // test 1 : stock 0 -> non louable\n    $jeu = Jeu::factory()->make(['stock_location' => 0]);       // jeu en memoire (non enregistre), stock 0\n    $this->assertFalse($jeu->est_louable);                      // on verifie est_louable == false\n}\npublic function test_scope_louables_exclut_stock_nul(): void {  // test 2 : le scope ecarte les stocks nuls\n    Jeu::factory()->create(['stock_location' => 0]);            // enregistre un jeu non louable\n    Jeu::factory()->create(['stock_location' => 3]);            // enregistre un jeu louable\n    $this->assertCount(1, Jeu::louables()->get());              // on verifie qu'un seul est retourne\n}\n\n// POURQUOI LE TEST DANS LE MEME COMMIT, ROLE DE $fillable\n// La regle et sa preuve entrent ensemble : la CI les execute aussitot, et toute\n// regression future (quelqu'un change est_louable) devient ROUGE a la seconde.\n// Ecrit trois semaines plus tard, le test n'est souvent jamais ecrit -- et la\n// regression passe en prod. 'Non teste = non fait.'\n// $fillable : sans lui, un create() a partir d'une requete pourrait remplir\n// N'IMPORTE quel champ (ex. un 'role' cache) -- c'est la faille d'affectation de\n// masse. En listant les champs autorises, on ferme cette porte des le modele.",
+    note: "L'encapsulation de la règle dans un accesseur (une seule définition de est_louable) et l'écriture simultanée du test forment le socle du TDD léger de ce cours. $fillable n'est pas un détail : l'affectation de masse est une faille classique en Laravel, et la lister explicitement est une protection posée dès le modèle. Au Niveau 8, sécurité et tests ne sont jamais des étapes séparées, ils naissent avec le code." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

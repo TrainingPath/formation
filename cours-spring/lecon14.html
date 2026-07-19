@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Configuration : application.properties et profils",
+  subtitle: "Une application, plusieurs environnements — sans toucher au code.",
+  theory: `
+<h3>1. Externaliser la configuration</h3>
+<p><strong>Externaliser</strong> la configuration = sortir du code tout ce qui peut changer (port, base de données, plafond d'emprunts…) pour le mettre dans un fichier à part. Un <strong>environnement</strong> est un contexte d'exécution : ta machine (dev), le serveur de test, le serveur de production. Tu connais déjà <code>@Value</code> (leçon 3) ; aujourd'hui on structure. Le fichier de base s'appelle <code>application.properties</code> (format <code>#</code> pour les commentaires, <code>clé=valeur</code>) :</p>
+<pre class="pseudo"># application.properties — les grands classiques
+server.port=8080                                 # port d'écoute du serveur web
+spring.datasource.url=jdbc:h2:mem:biblio         # adresse de la base de données
+spring.jpa.hibernate.ddl-auto=update             # Hibernate ajuste les tables
+spring.jpa.show-sql=true                          # affiche le SQL généré dans la console
+biblio.max-emprunts=5                             # propriété maison : plafond d'emprunts
+biblio.duree-pret-jours=14                        # propriété maison : durée d'un prêt</pre>
+<h3>2. Les profils : dev, test, prod</h3>
+<p>Un <strong>profil</strong> = un jeu de configuration nommé, activé selon l'environnement. On crée un fichier par profil :</p>
+<pre class="pseudo">application.properties           ← commun à tous les environnements
+application-dev.properties       ← spécifique au développement
+application-prod.properties      ← spécifique à la production
+
+# application-dev.properties                       # config du profil dev
+spring.datasource.url=jdbc:h2:mem:biblio           # base H2 en mémoire (jetable)
+spring.jpa.show-sql=true                            # SQL visible : pratique pour apprendre
+spring.jpa.hibernate.ddl-auto=update               # Hibernate ajuste les tables
+
+# application-prod.properties                       # config du profil prod
+spring.datasource.url=jdbc:postgresql://serveur-db:5432/biblio   # vraie base PostgreSQL
+spring.datasource.username=\${DB_USER}       ← variable d'environnement !
+spring.datasource.password=\${DB_PASSWORD}         # mot de passe lu depuis l'environnement
+spring.jpa.show-sql=false                           # pas de SQL dans les logs de prod
+spring.jpa.hibernate.ddl-auto=validate             # vérifie le schéma sans le modifier</pre>
+<p>Activer un profil (trois façons possibles) :</p>
+<pre class="pseudo">spring.profiles.active=dev            # dans application.properties
+java -jar app.jar --spring.profiles.active=prod    # au lancement (ligne de commande)
+SPRING_PROFILES_ACTIVE=prod           # variable d'environnement du système</pre>
+<h3>3. Les secrets NE vont PAS dans les fichiers</h3>
+<p>Un <strong>secret</strong> (mot de passe, clé) en clair dans un fichier versionné dans <strong>Git</strong> (l'outil qui garde l'historique du code) = catastrophe (les dépôts fuient, les historiques n'oublient rien). On lit plutôt les secrets depuis une <strong>variable d'environnement</strong> (une valeur définie sur le serveur, hors du code) avec la syntaxe <code>\${...}</code>. La règle :</p>
+<pre class="pseudo">✅ \${DB_PASSWORD} lu depuis l'environnement du serveur
+❌ spring.datasource.password=SuperSecret123 dans Git</pre>
+<h3>4. @ConfigurationProperties : la config typée</h3>
+<p>Quand les <code>@Value</code> se multiplient, on les regroupe dans une classe (« typée » = chaque propriété a son type Java) :</p>
+<pre class="pseudo"># application.properties
+biblio.max-emprunts=5                             # plafond d'emprunts
+biblio.duree-pret-jours=14                        # durée d'un prêt (en jours)
+biblio.email-rappels=rappels@biblio.be            # adresse d'envoi des rappels
+
+@Component                                        // bean géré par Spring
+@ConfigurationProperties(prefix = "biblio")       // remplit la classe avec les propriétés biblio.*
+public class BiblioProperties {
+    private int maxEmprunts;        // ← biblio.max-emprunts (kebab→camel auto)
+    private int dureePretJours;     // ← biblio.duree-pret-jours
+    private String emailRappels;    // ← biblio.email-rappels
+    // getters ET setters obligatoires             // Spring remplit la classe via les setters
+}                                                 // fin de la classe
+
+// Injection classique ensuite :
+public EmpruntService(BiblioProperties props) { ... }   // on injecte l'objet de configuration
+props.getMaxEmprunts();   // 5</pre>
+<h3>5. @Profile sur un bean</h3>
+<pre class="pseudo">@Bean                                             // méthode qui fabrique un bean
+@Profile("dev")                                   // …mais seulement si le profil dev est actif
+CommandLineRunner donneesDeTest(LivreRepository repo) {  // code exécuté au démarrage
+    return args -> { repo.save(new Livre("Dune", "Herbert")); ... };  // insère des données de test
+}                                                 // fin de la méthode
+// Ce bean N'EXISTE QUE si le profil dev est actif :
+// les données de test ne pollueront jamais la production.</pre>
+<div class="warn">ddl-auto en production : JAMAIS update ni create ! validate (vérifier sans toucher) est la valeur sûre. Un update mal maîtrisé peut altérer un schéma de production — les migrations pros se font avec des outils dédiés (Flyway, Liquibase), à explorer après ce cours.</div>
+<div class="tip">Ordre de priorité (du plus fort au plus faible) : arguments de ligne de commande → variables d'environnement → application-{profil}.properties → application.properties. Le plus spécifique gagne — comme le CSS !</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi externaliser la configuration hors du code ?", opts: ["Pour cacher le code", "Changer d'environnement (dev/prod) sans recompiler", "C'est obligatoire en Java", "Pour la vitesse"], a: 1, exp: "Le même .jar tourne partout ; seule la config change." },
+    { type: "qcm", q: "Qu'est-ce qu'un profil Spring ?", opts: ["Un compte utilisateur", "Un jeu de configuration nommé (dev, test, prod…)", "Un fichier CSS", "Une classe abstraite"], a: 1, exp: "Chaque environnement a son fichier application-{profil}.properties." },
+    { type: "input", q: "Quel fichier contient la configuration spécifique au profil « prod » ?", a: ["application-prod.properties"], ph: "nom du fichier", exp: "Convention : application-{profil}.properties." },
+    { type: "qcm", q: "Comment activer le profil prod au lancement d'un jar ?", opts: ["Impossible", "java -jar app.jar --spring.profiles.active=prod", "En renommant le jar", "En supprimant les autres fichiers"], a: 1, exp: "Ou via la variable d'environnement SPRING_PROFILES_ACTIVE." },
+    { type: "qcm", q: "Une propriété définie dans application-dev.properties ET application.properties (profil dev actif) : laquelle gagne ?", opts: ["application.properties", "Celle du profil : le plus spécifique l'emporte", "Les deux", "Erreur"], a: 1, exp: "Le fichier de profil surcharge le fichier commun." },
+    { type: "qcm", q: "Où doit vivre le mot de passe de la base de production ?", opts: ["Dans application-prod.properties versionné dans Git", "Dans une variable d'environnement du serveur, lue par \\${DB_PASSWORD}", "Dans le code Java", "Dans un commentaire"], a: 1, exp: "Un secret ne se versionne JAMAIS. L'environnement du serveur le fournit." },
+    { type: "qcm", q: "Pourquoi un secret dans Git est-il grave même après suppression ?", opts: ["Ce n'est pas grave", "L'historique Git conserve tout : le secret reste lisible dans les anciens commits", "Git le chiffre", "Git le supprime partout"], a: 1, exp: "L'historique n'oublie rien — il faudrait considérer le secret comme compromis et le changer." },
+    { type: "qcm", q: "Que fait @ConfigurationProperties(prefix = \"biblio\") ?", opts: ["Crée une table biblio", "Remplit la classe avec toutes les propriétés biblio.* (typées, groupées)", "Protège l'application", "Renomme l'application"], a: 1, exp: "L'alternative structurée aux @Value éparpillés." },
+    { type: "qcm", q: "La propriété biblio.duree-pret-jours correspond à quel champ Java ?", opts: ["duree-pret-jours", "dureePretJours : le kebab-case devient camelCase automatiquement", "DUREE_PRET_JOURS", "durée_prêt"], a: 1, exp: "La conversion kebab→camel est automatique (« relaxed binding »)." },
+    { type: "qcm", q: "Que fait @Profile(\"dev\") sur un bean ?", opts: ["Le rend plus rapide", "Le bean n'est créé QUE si le profil dev est actif", "Le documente", "Le duplique"], a: 1, exp: "Parfait pour les données de test : inexistantes en production." },
+    { type: "qcm", q: "Quelle valeur de ddl-auto en production ?", opts: ["create", "update", "validate : vérifier le schéma sans jamais le modifier", "drop"], a: 2, exp: "En prod, le schéma est géré par des migrations contrôlées, pas par Hibernate." },
+    { type: "qcm", q: "Que risque ddl-auto=create en production ?", opts: ["Rien", "Les tables sont recréées : TOUTES les données sont détruites au démarrage", "Un simple avertissement", "Une lenteur"], a: 1, exp: "La configuration qui efface une production : l'erreur qu'on ne fait qu'une fois." },
+    { type: "vf", q: "Un argument de ligne de commande surcharge la même propriété définie dans application.properties.", a: true, exp: "Priorité : ligne de commande > variables d'env > profil > fichier commun." },
+    { type: "qcm", q: "Pourquoi spring.jpa.show-sql=false en production ?", opts: ["Le SQL y est différent", "Performance et discrétion : pas besoin d'inonder les logs de requêtes", "show-sql ne marche qu'en dev", "C'est esthétique"], a: 1, exp: "Précieux en dev, bruyant en prod." },
+    { type: "qcm", q: "@ConfigurationProperties exige quoi sur la classe pour fonctionner ?", opts: ["Rien", "Être un bean (@Component…) et avoir getters/setters", "Être final", "Hériter de Properties"], a: 1, exp: "Spring instancie la classe et la remplit via les setters." }
+  ],
+  final: {
+    title: "Exercice final — Préparer la bibliothèque pour la vraie vie",
+    intro: `<p>Le projet passe en revue de configuration avant un déploiement. Voici l'état des fichiers :</p>
+<pre class="pseudo"># application.properties
+spring.profiles.active=dev                        # profil actif par défaut : dev
+biblio.max-emprunts=5                             # plafond d'emprunts (commun)
+
+# application-dev.properties                        # profil développement
+spring.datasource.url=jdbc:h2:mem:biblio           # base H2 en mémoire
+spring.jpa.hibernate.ddl-auto=update               # Hibernate ajuste les tables
+spring.jpa.show-sql=true                            # SQL visible
+
+# application-prod.properties                        # profil production
+spring.datasource.url=jdbc:postgresql://db:5432/biblio   # base PostgreSQL
+spring.datasource.username=\${DB_USER}              # utilisateur lu depuis l'environnement
+spring.datasource.password=\${DB_PASSWORD}          # mot de passe idem (jamais en clair !)
+spring.jpa.hibernate.ddl-auto=validate             # vérifie sans modifier
+spring.jpa.show-sql=false                           # pas de SQL dans les logs</pre>`,
+    questions: [
+      { type: "qcm", q: "En développement (profil dev), quelle base est utilisée ?", opts: ["PostgreSQL", "H2 en mémoire : rapide, jetable, parfaite pour coder", "MySQL", "Aucune"], a: 1, exp: "Le fichier -dev pointe sur H2." },
+      { type: "qcm", q: "Comment ce MÊME jar utilisera-t-il PostgreSQL sur le serveur ?", opts: ["En recompilant", "En lançant avec --spring.profiles.active=prod (ou la variable d'env)", "En éditant le jar", "Impossible"], a: 1, exp: "Un artefact, plusieurs environnements : c'est le but des profils." },
+      { type: "qcm", q: "Au démarrage prod, d'où viennent DB_USER et DB_PASSWORD ?", opts: ["De Git", "Des variables d'environnement du serveur", "Du code Java", "De H2"], a: 1, exp: "Les secrets vivent sur le serveur, jamais dans le dépôt." },
+      { type: "qcm", q: "En prod, Hibernate détecte que la table livres n'a pas la colonne isbn attendue. Avec validate, que se passe-t-il ?", opts: ["Il ajoute la colonne discrètement", "L'application refuse de démarrer avec une erreur claire : le schéma ne correspond pas", "Il supprime la table", "Rien"], a: 1, exp: "validate = constat sans modification. Mieux vaut un démarrage raté qu'un schéma altéré." },
+      { type: "qcm", q: "Le bean CommandLineRunner qui insère Dune et Fondation est annoté @Profile(\"dev\"). En prod…", opts: ["Il s'exécute quand même", "Il n'existe pas : aucune donnée de test ne polluera la production", "Il plante", "Il vide la base"], a: 1, exp: "Les jeux d'essai restent au laboratoire." }
+    ],
+    solution: `<pre class="pseudo">// La checklist de configuration avant déploiement :
+// ✅ Profils séparés : dev (H2, show-sql, update)
+//                      prod (PostgreSQL, silence, validate)
+// ✅ Secrets : \${DB_USER}/\${DB_PASSWORD} depuis l'environnement
+// ✅ Données de test : @Profile("dev") uniquement
+// ✅ Valeurs métier regroupées : @ConfigurationProperties(prefix="biblio")
+// ✅ Un seul .jar pour tous les environnements
+
+// Lancement en production :
+// export DB_USER=biblio_app                       (définit la variable d'environnement)
+// export DB_PASSWORD=********                      (le secret, hors du code)
+// java -jar biblio.jar --spring.profiles.active=prod   (démarre avec le profil prod)</pre>
+<p>Semaine 2 bouclée : ton API a une base, des requêtes fines, des relations, une validation, des erreurs propres et une configuration pro. Semaine 3 : tests, sécurité et livraison.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

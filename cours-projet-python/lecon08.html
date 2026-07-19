@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Validation et gestion des erreurs",
+  subtitle: "Refuser poliment les mauvaises données, traduire les refus en bons codes HTTP.",
+  theory: `
+<h3>1. Deux familles d'erreurs</h3>
+<p>La <strong>validation</strong>, c'est vérifier que les données reçues respectent les règles avant de les utiliser. On distingue deux familles d'erreurs. Les <strong>données invalides</strong> (prix négatif, titre vide) : la validation les refuse dès la porte, avec un message par champ. Les <strong>refus métier</strong> (stock nul, jeu introuvable) : le service lève une exception nommée, que la couche web traduit en <strong>code HTTP</strong> — un nombre à trois chiffres qui résume le sort de la requête (200 = tout va bien, 404 = introuvable, etc.).</p>
+
+<h3>2. Le ModelForm et ses règles</h3>
+<pre class="pseudo">class JeuForm(forms.ModelForm):                          # un formulaire construit à partir du modèle Jeu
+    class Meta:                                          # réglages du formulaire
+        model = Jeu                                      # modèle source : Jeu
+        fields = ["titre", "prix_achat", "prix_location",   # champs éditables (liste explicite)…
+                  "stock_vente", "stock_location", "categorie"]   # …suite des champs
+
+    def clean_prix_location(self):                       # règle de validation propre au champ prix_location
+        v = self.cleaned_data["prix_location"]           # récupère la valeur déjà nettoyée du champ
+        if v &lt;= 0:                                       # si le prix est nul ou négatif…
+            raise forms.ValidationError("Le prix doit être positif")   # …erreur affichée sous ce champ
+        return v                                         # sinon on renvoie la valeur validée</pre>
+<p>Un <strong>formulaire</strong> est l'objet qui reçoit et vérifie les données saisies par l'utilisateur ; un <strong>ModelForm</strong> se construit automatiquement à partir d'un modèle. Une méthode nommée <code>clean_&lt;champ&gt;</code> ajoute une règle propre à ce champ. <code>form.is_valid()</code> lance toutes les vérifications et renvoie vrai ou faux ; en cas d'échec, il remplit <code>form.errors</code> avec les messages, champ par champ — que le template affichera à côté du champ fautif.</p>
+
+<h3>3. Valider une cohérence croisée</h3>
+<pre class="pseudo">def clean(self):                                     # clean() global : validation qui voit TOUS les champs à la fois
+    d = super().clean()                              # récupère le dictionnaire des champs déjà nettoyés
+    if d.get("prix_location") and d.get("prix_achat") \
+       and d["prix_location"] &gt; d["prix_achat"]:     # si les deux prix existent ET que louer coûte plus que l'achat…
+        raise forms.ValidationError(                 # …on lève une erreur globale (non liée à un seul champ)
+            "Louer ne peut pas coûter plus cher qu'acheter")
+    return d                                          # on renvoie les données validées</pre>
+
+<h3>4. Traduire les erreurs en HTTP (API)</h3>
+<pre class="pseudo">def api_devis(request, jeu_id):                      # vue API : renvoie un devis en JSON
+    try:                                             # on tente l'opération ; on rattrape les erreurs plus bas
+        devis = services.devis_location(jeu_id, int(request.GET.get("jours", 7)))   # appelle le service (jours=7 par défaut)
+        return JsonResponse(devis)                   # succès : renvoie le devis en JSON (code 200)
+    except Jeu.DoesNotExist:                         # le jeu n'existe pas…
+        return JsonResponse({"erreur": "Jeu introuvable"}, status=404)   # …404 Not Found
+    except StockInsuffisant as e:                    # plus de stock (exception métier)…
+        return JsonResponse({"erreur": str(e)}, status=409)   # …409 Conflict, avec le message
+    except ValueError as e:                          # entrée absurde (durée invalide)…
+        return JsonResponse({"erreur": str(e)}, status=400)   # …400 Bad Request</pre>
+<p>Le bloc <code>try</code>/<code>except</code> « essaie » un code et rattrape les exceptions au lieu de planter : chaque <code>except</code> attrape un type d'erreur précis et renvoie le bon <strong>status</strong> (code HTTP). 404 (absent), 409 (conflit avec l'état métier), 400 (requête invalide) : le client comprend ainsi <em>ce qui</em> a échoué. Côté pages HTML, le raccourci <code>get_object_or_404</code> fait la moitié du travail (il charge l'objet, ou renvoie 404 s'il n'existe pas).</p>
+
+<h3>5. Ce que l'utilisateur ne doit jamais voir</h3>
+<div class="warn">Une <strong>stack trace</strong> en production divulgue le code, les chemins, parfois des secrets. <code>DEBUG=0</code> affiche des pages d'erreur sobres — la leçon 20 le verrouillera. Les messages d'erreur décrivent le problème de l'utilisateur, pas nos internes.</div>
+<div class="tip">La règle « prix positif » existe aussi côté service et la contrainte <code>PositiveIntegerField</code> côté base : la défense est en profondeur — le formulaire est la première ligne, pas la seule.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les deux familles d'erreurs :", opts: ["CSS et JS", "Données invalides / refus métier", "404 et 500 seulement", "Python et SQL"], a: 1, exp: "Deux traitements distincts." },
+    { type: "qcm", q: "Ajouter une règle sur un champ d'un ModelForm :", opts: ["clean_<champ>", "un if dans la vue", "un trigger SQL", "du JS seul"], a: 0, exp: "clean_prix_location, etc." },
+    { type: "qcm", q: "form.is_valid() en cas d'échec remplit…", opts: ["form.errors, champ par champ", "une exception fatale", "rien", "la base"], a: 0, exp: "À afficher près des champs." },
+    { type: "qcm", q: "Une cohérence entre plusieurs champs se vérifie dans…", opts: ["clean() (le clean global)", "chaque clean_<champ>", "le template", "urls.py"], a: 0, exp: "Accès à tous les champs." },
+    { type: "qcm", q: "« Louer plus cher qu'acheter » est refusé par…", opts: ["MySQL", "Le clean() croisé du formulaire", "Le navigateur", "Le routeur"], a: 1, exp: "Règle de cohérence." },
+    { type: "qcm", q: "Jeu introuvable dans l'API →", opts: ["500", "404", "200 vide", "302"], a: 1, exp: "Not Found." },
+    { type: "qcm", q: "StockInsuffisant →", opts: ["409 Conflict", "404", "201", "301"], a: 0, exp: "Conflit avec l'état métier." },
+    { type: "qcm", q: "Une durée de location absurde (0 jour) →", opts: ["400 Bad Request", "409", "404", "500"], a: 0, exp: "Requête invalide." },
+    { type: "qcm", q: "get_object_or_404(Jeu, pk=id) :", opts: ["Charge l'objet ou renvoie 404", "Crée l'objet", "Supprime", "Valide un form"], a: 0, exp: "Le réflexe des pages." },
+    { type: "vf", q: "Le service attrape lui-même ses exceptions pour renvoyer du JSON.", a: false, exp: "Il lève ; la couche web traduit." },
+    { type: "qcm", q: "Une stack trace en production…", opts: ["Aide l'utilisateur", "Divulgue le code et les chemins internes", "Est obligatoire", "Est jolie"], a: 1, exp: "DEBUG=0 en prod." },
+    { type: "vf", q: "La validation du formulaire suffit : plus besoin de règles côté service ou base.", a: false, exp: "Défense en profondeur." },
+    { type: "qcm", q: "PositiveIntegerField participe à la validation en tant que…", opts: ["Dernière ligne de défense (structure)", "Seule défense", "Décoration", "Message d'erreur"], a: 0, exp: "Type + contrainte." },
+    { type: "qcm", q: "Le message d'erreur idéal décrit…", opts: ["Nos variables internes", "Le problème du point de vue de l'utilisateur", "La stack", "Le SQL"], a: 1, exp: "\"Le prix doit être positif\"." },
+    { type: "vf", q: "400, 404 et 409 disent au client API ce qui a échoué et pourquoi.", a: true, exp: "Sémantique HTTP." }
+  ],
+  final: {
+    title: "Exercice final — Le formulaire du vendeur",
+    intro: `<p>On sécurise la création d'un jeu et le devis de l'API.</p>`,
+    questions: [
+      { type: "qcm", q: "JeuForm liste ses champs :", opts: ["Explicitement dans Meta.fields", "\"__all__\"", "nulle part", "en JS"], a: 0, exp: "Sortie et entrée maîtrisées." },
+      { type: "qcm", q: "Prix négatif soumis :", opts: ["is_valid() False + message sur le champ", "500", "enregistré", "ignoré"], a: 0, exp: "clean_prix_location." },
+      { type: "qcm", q: "Devis d'un jeu inexistant :", opts: ["404 JSON propre", "stack trace", "200", "302"], a: 0, exp: "DoesNotExist traduit." },
+      { type: "qcm", q: "Devis à stock nul :", opts: ["409 avec le message métier", "400", "200", "201"], a: 0, exp: "StockInsuffisant." },
+      { type: "vf", q: "La même règle peut exister au formulaire, au service et en base.", a: true, exp: "Défense en profondeur, volontaire." }
+    ],
+    solution: `<pre class="pseudo">class JeuForm(forms.ModelForm):                          # formulaire du modèle Jeu
+    class Meta:                                          # réglages
+        model = Jeu                                      # modèle source
+        fields = ["titre", "prix_achat", "prix_location",   # champs éditables…
+                  "stock_vente", "stock_location", "categorie"]   # …suite
+    def clean_prix_location(self):                       # règle sur le champ prix_location
+        v = self.cleaned_data["prix_location"]           # valeur nettoyée du champ
+        if v &lt;= 0: raise forms.ValidationError("Le prix doit être positif")   # refuse un prix nul ou négatif
+        return v                                         # sinon renvoie la valeur
+
+try:                                                     # on tente l'opération
+    devis = services.devis_location(jeu_id, jours)       # appel du service
+except Jeu.DoesNotExist:   return JsonResponse({"erreur": "Jeu introuvable"}, status=404)   # jeu absent -> 404
+except StockInsuffisant as e: return JsonResponse({"erreur": str(e)}, status=409)   # stock nul -> 409
+except ValueError as e:    return JsonResponse({"erreur": str(e)}, status=400)   # entrée invalide -> 400</pre>
+<p>L'application refuse proprement. Demain : les utilisateurs et leurs trois rôles.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton formulaire validé et ta traduction d'erreurs…",
+  items: [
+  { id: "projpython-l8", title: "Le formulaire de location", level: 2,
+    statement: "Écris LocationForm (non lié à un modèle : champs nb_jours IntegerField min 1 max 60) avec un clean_nb_jours qui refuse hors bornes avec un message clair, puis la vue API api_devis(request, jeu_id) qui valide via ce form (400 + form.errors si invalide) avant d'appeler services.devis_location et de traduire DoesNotExist (404) et StockInsuffisant (409).",
+    hints: [
+      "class LocationForm(forms.Form): nb_jours = forms.IntegerField(min_value=1, max_value=60)",
+      "form = LocationForm(request.GET) ; if not form.is_valid(): return JsonResponse({\"erreurs\": form.errors}, status=400)",
+      "Ensuite le try/except à trois branches de la théorie."
+    ],
+    solution: "class LocationForm(forms.Form):   # formulaire NON lié à un modèle (champs libres)\n    nb_jours = forms.IntegerField(   # champ entier « nombre de jours »\n        min_value=1, max_value=60,   # bornes acceptées : de 1 à 60\n        error_messages={   # messages personnalisés selon l'erreur\n            \"min_value\": \"La durée minimale est de 1 jour\",   # message si valeur trop petite\n            \"max_value\": \"La durée maximale est de 60 jours\",   # message si valeur trop grande\n        })   # fin de la définition du champ\n\ndef api_devis(request, jeu_id):   # vue API du devis\n    form = LocationForm(request.GET)   # remplit le formulaire avec les paramètres de l'URL\n    if not form.is_valid():   # si les données ne respectent pas les règles…\n        return JsonResponse({\"erreurs\": form.errors}, status=400)   # …400 avec le détail des erreurs\n\n    try:   # forme valide : on tente le métier\n        devis = services.devis_location(   # appelle le service…\n            jeu_id, form.cleaned_data[\"nb_jours\"])   # …avec la valeur validée (bon type garanti)\n        return JsonResponse(devis)   # succès : le devis en JSON (200)\n    except Jeu.DoesNotExist:   # jeu introuvable…\n        return JsonResponse({\"erreur\": \"Jeu introuvable\"}, status=404)   # …404\n    except StockInsuffisant as e:   # plus de stock…\n        return JsonResponse({\"erreur\": str(e)}, status=409)   # …409 avec le message",
+    note: "Le formulaire valide la FORME (un entier entre 1 et 60), le service décide du FOND (stock, existence). form.cleaned_data garantit le bon type : plus de int() manuel ni de surprise. Les codes 400/404/409 racontent trois histoires différentes au client de l'API — c'est ça, une API prévisible." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

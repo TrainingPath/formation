@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : paiement simulé, stock de vente",
+  subtitle: "La même mécanique que louer, sur l'autre stock.",
+  theory: `
+<h3>1. Acheter vs louer</h3>
+<p>L'<strong>achat</strong> reprend exactement la structure de la location vue hier, mais agit sur un autre stock : <code>stock_vente</code> (les exemplaires destinés à la vente) au lieu de <code>stock_location</code>. Le montant payé est le <strong>prix d'achat</strong> du jeu. C'est ici que les <strong>deux stocks distincts</strong> prévus dans le modèle de données (issu de la méthode <em>Merise</em> vue en analyse) prennent tout leur sens : un même jeu peut être loué ET vendu, chacun sur son propre compteur.</p>
+
+<h3>2. Le service d'achat</h3>
+<pre class="pseudo">class AchatService {                                          // classe regroupant la logique d'achat
+    public function acheter(int \$idClient, int \$idJeu): Achat {  // renvoie l'Achat créé (:Achat = type de retour)
+        return DB::transaction(function () use (\$idClient, \$idJeu) {  // bloc « tout ou rien », dont on renvoie le résultat
+            \$jeu = Jeu::findOrFail(\$idJeu);                   // récupère le jeu (404 s'il n'existe pas)
+            if (\$jeu->stock_vente &lt;= 0) {                    // stock de vente épuisé ?
+                throw new StockInsuffisantException('Plus de stock de vente');  // oui → on refuse (exception)
+            }
+            \$achat = Achat::create([                          // sinon on crée la fiche d'achat…
+                'client_id' => \$idClient,                     // le client acheteur
+                'jeu_id' => \$idJeu,                           // le jeu acheté
+                'date_achat' => now(),                        // date du jour
+                'montant' => \$jeu->prix_achat,                // paiement simulé : on enregistre le prix d'achat
+            ]);
+            \$jeu->decrement('stock_vente');                   // retire 1 au stock de vente
+            return \$achat;                                    // renvoie l'achat créé à l'appelant
+        });
+    }
+}</pre>
+<p>Nouveauté ici : le <code>: Achat</code> après les parenthèses indique que la méthode <strong>renvoie</strong> un objet Achat (contrairement à <code>: void</code> qui ne renvoyait rien). On écrit donc <code>return DB::transaction(...)</code> : la transaction transmet vers l'extérieur ce que la closure renvoie (<code>return \$achat</code>). Le reste est identique à la location : vérifier, créer, décrémenter, le tout de façon atomique.</p>
+
+<h3>3. Le paiement : une frontière</h3>
+<p>Ici le paiement est <strong>simulé</strong> : on se contente d'enregistrer le montant, sans vraie opération bancaire. Dans une application réelle, on appellerait un <strong>prestataire</strong> de paiement (Stripe, PayPal…) — une entreprise externe qui traite l'argent — via un service dédié. Garder cette <strong>frontière</strong> nette (le paiement isolé dans son coin) permettra de brancher un vrai paiement plus tard sans toucher au reste du code.</p>
+
+<h3>4. Réutiliser plutôt que dupliquer</h3>
+<p>Louer et acheter vérifient le stock presque de la même manière. Plutôt que de copier-coller ce contrôle (source de bugs), on l'extrait dans une petite méthode réutilisable — c'est le principe <strong>DRY</strong> (<em>Don't Repeat Yourself</em>, « ne te répète pas »).</p>
+<pre class="pseudo">// la vérification de stock est proche entre louer et acheter
+private function jeuAvecStock(int \$idJeu, string \$champ, string \$msg): Jeu {  // méthode privée réutilisable
+    \$jeu = Jeu::findOrFail(\$idJeu);                          // récupère le jeu (404 sinon)
+    if (\$jeu->\$champ &lt;= 0) throw new StockInsuffisantException(\$msg);  // teste le stock dont le nom est dans \$champ
+    return \$jeu;                                             // renvoie le jeu, stock suffisant garanti
+}</pre>
+<p><code>private</code> signifie que la méthode n'est utilisable qu'à l'intérieur de la classe (usage interne). Le paramètre <code>string \$champ</code> reçoit le <em>nom</em> de la colonne à tester (« stock_vente » ou « stock_location ») ; <code>\$jeu->\$champ</code> est une <strong>variable-variable</strong> : le nom qui suit la flèche est lui-même rangé dans une variable, si bien que <code>\$jeu->\$champ</code> lit la colonne dont le nom est contenu dans <code>\$champ</code>. On adapte ainsi le même contrôle aux deux stocks.</p>
+
+<h3>5. Cohérence du domaine</h3>
+<div class="tip">Acheter et louer sont deux chemins vers le même but : servir un client tout en gardant les stocks justes. Grâce aux transactions, jamais de vente enregistrée sans stock décrémenté. Le domaine « acheter OU louer » du cahier des charges est désormais complet.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'achat agit sur…", opts: ["stock_location", "stock_vente", "les deux", "aucun"], a: 1, exp: "Stock de vente." },
+    { type: "qcm", q: "Le montant payé est…", opts: ["Le prix de location", "Le prix d'achat", "Zéro", "Aléatoire"], a: 1, exp: "prix_achat." },
+    { type: "qcm", q: "L'achat reprend la structure de…", opts: ["La suppression", "La location (transaction + stock)", "Un SELECT", "Un tri"], a: 1, exp: "Même mécanique." },
+    { type: "qcm", q: "Si stock_vente <= 0, on…", opts: ["Vend quand même", "Lève StockInsuffisantException", "Met -1", "Ignore"], a: 1, exp: "Refus." },
+    { type: "qcm", q: "Le paiement est ici…", opts: ["Réel", "Simulé (on enregistre le montant)", "Absent", "Gratuit"], a: 1, exp: "Frontière propre." },
+    { type: "qcm", q: "Un vrai paiement passerait par…", opts: ["Le contrôleur", "Un service externe dédié (Stripe…)", "La base directement", "La vue"], a: 1, exp: "Prestataire externe." },
+    { type: "qcm", q: "Garder une frontière paiement propre permet…", opts: ["De ralentir", "De brancher un vrai paiement plus tard sans tout changer", "De supprimer le stock", "Rien"], a: 1, exp: "Évolutivité." },
+    { type: "qcm", q: "Factoriser la vérification de stock évite…", opts: ["La performance", "La duplication et les bugs", "Les tests", "La base"], a: 1, exp: "DRY." },
+    { type: "qcm", q: "acheter est encadrée par…", opts: ["cache()", "DB::transaction(...)", "queue()", "rien"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "Après un achat réussi, stock_vente…", opts: ["Augmente", "Diminue de 1", "Reste identique", "Passe à 0"], a: 1, exp: "Décrément." },
+    { type: "vf", q: "Les deux stocks distincts servent à louer et acheter séparément.", a: true, exp: "Deux usages." },
+    { type: "qcm", q: "Louer et acheter partagent…", opts: ["Rien", "La vérification et le décrément du stock (logique commune)", "Le même stock", "Le même montant"], a: 1, exp: "Logique factorisable." },
+    { type: "vf", q: "Grâce à la transaction, jamais de vente sans stock décrémenté.", a: true, exp: "Cohérence." },
+    { type: "qcm", q: "Le domaine « acheter OU louer » vient…", opts: ["D'une invention", "Du cahier des charges de la Ludothèque", "Du hasard", "De Laravel"], a: 1, exp: "Besoin métier." },
+    { type: "qcm", q: "Achat::create enregistre…", opts: ["Le stock", "L'achat (client, jeu, date, montant)", "La catégorie", "Rien"], a: 1, exp: "L'opération." }
+  ],
+  final: {
+    title: "Exercice final — Le service d'achat",
+    intro: `<p>On code l'achat, jumeau de la location.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock à vérifier :", opts: ["stock_location", "stock_vente", "les deux", "aucun"], a: 1, exp: "Vente." },
+      { type: "qcm", q: "Le montant enregistré :", opts: ["prix_location", "prix_achat", "0", "aléatoire"], a: 1, exp: "Prix d'achat." },
+      { type: "qcm", q: "Rendre l'opération atomique :", opts: ["DB::transaction(...)", "cache()", "queue()", "rien"], a: 0, exp: "Transaction." },
+      { type: "qcm", q: "Stock épuisé → :", opts: ["StockInsuffisantException", "continuer", "stock = -1", "supprimer"], a: 0, exp: "Refus métier." },
+      { type: "vf", q: "acheter et louer se ressemblent, mais touchent des stocks différents.", a: true, exp: "Même motif, autre stock." }
+    ],
+    solution: `<pre class="pseudo">public function acheter(int \$idClient, int \$idJeu): Achat {   // renvoie l'Achat créé
+    return DB::transaction(function () use (\$idClient, \$idJeu) {  // bloc atomique dont on renvoie le résultat
+        \$jeu = Jeu::findOrFail(\$idJeu);                       // récupère le jeu (404 sinon)
+        if (\$jeu->stock_vente &lt;= 0) {                        // stock de vente épuisé ?
+            throw new StockInsuffisantException('Plus de stock de vente');  // oui → refus (exception)
+        }
+        \$achat = Achat::create([                             // crée la fiche d'achat…
+            'client_id' => \$idClient, 'jeu_id' => \$idJeu,     // client + jeu
+            'date_achat' => now(), 'montant' => \$jeu->prix_achat,  // date + montant (paiement simulé)
+        ]);
+        \$jeu->decrement('stock_vente');                      // retire 1 au stock de vente
+        return \$achat;                                       // renvoie l'achat créé
+    });
+}</pre>
+<p>Le métier est complet (louer ET acheter). Demain : le frontend Blade.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service d'achat…",
+  items: [
+  { id: "projphp-l13", title: "Le total dépensé par un client", level: 2,
+    statement: "Écris une méthode totalAchats($idClient) dans AchatService qui renvoie la somme des montants de tous les achats d'un client. Utilise une requête Eloquent d'agrégation ; renvoie 0 s'il n'a rien acheté.",
+    hints: [
+      "Achat::where('client_id', $idClient)->sum('montant').",
+      "sum() renvoie 0 si aucune ligne.",
+      "On peut aussi passer par la relation : User::find($idClient)->achats()->sum('montant')."
+    ],
+    solution: "public function totalAchats(int $idClient): float {          // renvoie la somme dépensée (nombre à virgule)\n    return (float) Achat::where('client_id', $idClient)->sum('montant');  // additionne les montants côté base ; (float) force le type ; 0 si aucun achat\n}",
+    note: "On délègue l'agrégation à la base avec sum() : c'est bien plus efficace que de charger tous les achats et d'additionner en PHP (rappel du cours MySQL). sum() renvoie naturellement 0 pour un client sans achat. Cette méthode alimentera l'espace client (leçon 16)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

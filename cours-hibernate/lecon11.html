@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "La relation 1-1 et les types embarqués (@Embeddable)",
+  subtitle: "Une carte par membre, une adresse dans le membre — deux outils qui se ressemblent, deux tables très différentes.",
+  theory: `
+<h3>1. Deux besoins qui se ressemblent, deux solutions</h3>
+<p>La Ludothèque a deux nouvelles demandes. Un : chaque membre possède <strong>une seule</strong> carte d'abonnement, et chaque carte appartient à un seul membre — une vraie relation <strong>1-1</strong> (« un-vers-un ») entre <strong>deux tables</strong> du Niveau 4. Deux : chaque membre a une adresse (rue, code postal, ville) — mais là, pas de table adresse : ce sont juste <strong>trois colonnes de la table membre</strong> qu'on aimerait regrouper dans une classe. JPA offre un outil pour chaque cas : <strong>@OneToOne</strong> et <strong>@Embeddable</strong>. Les confondre, c'est créer des tables fantômes ou des jointures inutiles.</p>
+
+<h3>2. @OneToOne : Membre ↔ CarteAbonnement</h3>
+<p>Côté SQL, un 1-1 est une FK ordinaire… avec une contrainte <strong>UNIQUE</strong> : la colonne carte_id de membre ne peut pointer deux fois vers la même carte. Côté propriétaire (celui qui porte la FK) :</p>
+<pre class="pseudo">@Entity                                    // Membre est une entité
+public class Membre {                       // début de la classe Membre
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée
+  private Long id;                          // l'identifiant du membre
+
+  @OneToOne                                 // relation 1-1 : UN membre ↔ UNE carte
+  @JoinColumn(name = "carte_id", unique = true)   // la FK carte_id, UNIQUE (une carte prise une seule fois)
+  private CarteAbonnement carte;            // référence objet vers la carte (côté PROPRIÉTAIRE)
+}                                           // fin de la classe Membre
+
+@Entity                                     // CarteAbonnement est une entité
+public class CarteAbonnement {              // début de la classe
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée
+  private Long id;                          // l'identifiant de la carte
+
+  @Column(nullable = false, length = 20)    // colonne numero : NOT NULL, VARCHAR(20)
+  private String numero;                    // le numéro scanné à l'accueil
+
+  private LocalDate dateExpiration;         // date d'expiration (colonne date_expiration)
+
+  @OneToOne(mappedBy = "carte")             // côté INVERSE : miroir de l'attribut "carte" — aucune colonne ici
+  private Membre membre;                    // le membre à qui appartient la carte
+}                                           // fin de la classe CarteAbonnement</pre>
+<p>Mêmes règles que les leçons 8-9 : le propriétaire porte @JoinColumn, l'inverse porte mappedBy avec le nom de l'attribut Java. Et membre.getCarte().getNumero() déclenche la jointure à ta place.</p>
+
+<h3>3. @Embeddable : l'adresse fondue dans membre</h3>
+<p>L'adresse n'a ni identité ni existence propre : personne ne cherche « l'adresse n°12 ». C'est un <strong>groupe de colonnes</strong> qu'on veut manipuler comme un objet. On la déclare @Embeddable (« embarquable ») — <strong>sans @Id, sans @Entity</strong> :</p>
+<pre class="pseudo">@Embeddable                                 // classe EMBARQUÉE : ses colonnes iront dans la table de l'hôte
+public class Adresse {                       // PAS @Entity, PAS d'@Id !
+  @Column(length = 120)                      // colonne rue : VARCHAR(120)
+  private String rue;                        // la rue
+
+  @Column(name = "code_postal", length = 10) // colonne code_postal : VARCHAR(10)
+  private String codePostal;                 // le code postal
+
+  @Column(length = 80)                       // colonne ville : VARCHAR(80)
+  private String ville;                      // la ville
+
+  protected Adresse() {}                     // constructeur sans argument : même règle POJO que les entités
+}                                            // fin de la classe Adresse
+
+@Entity                                      // Membre est une entité
+public class Membre {                        // début de la classe Membre
+  // ...                                     // (id, pseudo, etc.)
+  @Embedded                                  // on EMBARQUE une Adresse dans cette entité
+  private Adresse adresse;                   // rue, code_postal, ville sont ajoutés à la table membre
+}                                            // fin de la classe Membre</pre>
+<p>Résultat en base : <strong>aucune table adresse</strong>, aucune jointure. Le DDL généré reste fidèle au Niveau 4 :</p>
+<pre class="pseudo">CREATE TABLE membre (                        -- une SEULE table membre
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,      -- clé primaire du membre
+  pseudo VARCHAR(40) NOT NULL UNIQUE,        -- le pseudo : obligatoire et unique
+  rue VARCHAR(120),                          -- colonne de l'@Embeddable Adresse...
+  code_postal VARCHAR(10),                   -- ...fondue dans la MÊME table membre...
+  ville VARCHAR(80),                         -- ...(aucune table adresse séparée)
+  carte_id BIGINT UNIQUE                     -- la FK du @OneToOne (UNIQUE = relation 1-1)
+);                                           -- fin de la table membre</pre>
+
+<h3>4. @AttributeOverride : embarquer deux fois</h3>
+<p>Que se passe-t-il si Membre a une adresse de domicile ET une adresse de facturation ? Deux @Embedded Adresse voudraient créer deux fois la colonne rue — collision. <strong>@AttributeOverride</strong> renomme les colonnes d'un embarqué :</p>
+<pre class="pseudo">@Embedded                                    // première Adresse embarquée : le domicile
+private Adresse domicile;                    // → colonnes rue, code_postal, ville
+
+@Embedded                                    // seconde Adresse embarquée : la facturation
+@AttributeOverride(name = "rue",        column = @Column(name = "fact_rue"))         // renomme la colonne rue
+@AttributeOverride(name = "codePostal", column = @Column(name = "fact_code_postal")) // renomme code_postal
+@AttributeOverride(name = "ville",      column = @Column(name = "fact_ville"))       // renomme ville
+private Adresse facturation;                 // → colonnes fact_rue, fact_code_postal, fact_ville</pre>
+<p>Note : name désigne l'<strong>attribut Java</strong> de l'@Embeddable (codePostal), column la <strong>colonne SQL</strong> cible.</p>
+
+<h3>5. Choisir : 1-1 ou embarqué ?</h3>
+<p>Pose trois questions. L'objet a-t-il une <strong>identité propre</strong> (on le cherche, on le référence ailleurs) ? La donnée a-t-elle un <strong>cycle de vie indépendant</strong> (une carte peut exister avant d'être attribuée, être révoquée…) ? Veut-on pouvoir <strong>ne pas la charger</strong> (grosse donnée, leçon 12) ? Trois non → @Embeddable. Au moins un oui → @OneToOne. La carte a un numéro qu'on scanne à l'accueil : entité. L'adresse n'est qu'un paquet de champs : embarquée. Ailleurs : owned entity types en EF Core jouent le rôle d'@Embeddable, Django et Eloquent aplatissent en colonnes simples — et tes entités Spring Data acceptent les deux sans rien changer aux repositories.</p>
+<div class="warn">Ne mets JAMAIS d'@Id dans un @Embeddable : l'adresse n'a pas d'identité, elle vit et meurt avec son membre. Si tu sens le besoin d'un id (parce qu'on la référence ailleurs, qu'on la recherche…), c'est le signe que ce n'est pas un embarqué mais une entité — change d'outil, pas d'annotation.</div>
+<div class="tip">Un @Embeddable est réutilisable dans plusieurs entités : la même classe Adresse peut servir dans Membre et, au Niveau 6, dans une entité Fournisseur — avec @AttributeOverride si les noms de colonnes diffèrent. C'est le premier pas vers un vrai « value object » du domaine.</div>`,
+  exercises: [
+    { type: "qcm", q: "La relation Membre ↔ CarteAbonnement (chacun exactement un de l'autre) se mappe avec…", opts: ["@ManyToOne", "@OneToOne", "@ManyToMany", "@Embedded"], a: 1, exp: "Un 1-1 entre deux tables : @OneToOne des deux côtés." },
+    { type: "qcm", q: "Côté SQL, un 1-1 se matérialise par…", opts: ["Une table de jonction", "Deux tables fusionnées", "Une FK avec contrainte UNIQUE", "Un index FULLTEXT"], a: 2, exp: "carte_id UNIQUE dans membre : la FK ne peut pointer deux fois vers la même carte." },
+    { type: "qcm", q: "Le côté propriétaire d'un @OneToOne est celui qui…", opts: ["Porte la colonne FK et l'annotation @JoinColumn", "Porte mappedBy", "A le plus d'attributs", "Est créé en premier"], a: 0, exp: "Même logique que les leçons 8-9 : la FK désigne le propriétaire ; l'autre côté met mappedBy." },
+    { type: "vf", q: "Une classe @Embeddable génère sa propre table en base.", a: false, exp: "C'est tout l'intérêt : ses colonnes sont fondues dans la table de l'entité qui l'embarque — zéro table, zéro jointure." },
+    { type: "input", q: "Quelle annotation marque une classe destinée à être embarquée dans une entité ?", a: ["@Embeddable", "Embeddable", "embeddable", "@embeddable"], ph: "@…", exp: "@Embeddable sur la classe, @Embedded sur l'attribut de l'entité qui l'utilise." },
+    { type: "qcm", q: "Dans l'entité Membre, l'attribut Adresse se déclare avec…", opts: ["@Embeddable", "@OneToOne", "@JoinColumn", "@Embedded"], a: 3, exp: "@Embeddable décore la classe Adresse ; @Embedded décore le champ qui l'embarque." },
+    { type: "qcm", q: "Une classe @Embeddable doit…", opts: ["Déclarer un @Id", "Étendre l'entité hôte", "Ne PAS avoir d'@Id (pas d'identité propre)", "Être final"], a: 2, exp: "Un embarqué n'a pas d'identité : il vit et meurt avec son entité hôte." },
+    { type: "vf", q: "Avec @Embedded, lire l'adresse d'un membre déclenche une jointure SQL.", a: false, exp: "rue, code_postal et ville sont dans la table membre : le SELECT du membre les ramène déjà." },
+    { type: "qcm", q: "@AttributeOverride sert à…", opts: ["Supprimer un attribut hérité", "Renommer les colonnes d'un embarqué (ex. deux Adresse dans Membre)", "Surcharger une méthode Java", "Créer une vue MySQL"], a: 1, exp: "Sans lui, domicile et facturation créeraient deux fois la colonne rue : collision." },
+    { type: "qcm", q: "Dans @AttributeOverride(name = \"codePostal\", column = @Column(name = \"fact_code_postal\")), name désigne…", opts: ["L'attribut Java de l'@Embeddable", "La colonne SQL", "Le nom de la table", "Le schéma MySQL"], a: 0, exp: "name = attribut Java visé ; column = colonne SQL de destination." },
+    { type: "qcm", q: "La carte d'abonnement mérite d'être une entité (et pas un embarqué) car…", opts: ["Elle a moins de trois champs", "Les entités sont plus rapides", "MySQL l'exige", "Elle a une identité propre (numéro scanné, cycle de vie indépendant)"], a: 3, exp: "On la recherche, elle peut exister avant attribution : les critères du choix 1-1." },
+    { type: "input", q: "Quel attribut de @JoinColumn traduit la contrainte 1-1 sur la FK carte_id ?", a: ["unique = true", "unique=true", "unique"], ph: "attribut = valeur…", exp: "@JoinColumn(name = \"carte_id\", unique = true) : la FK UNIQUE du Niveau 4." },
+    { type: "qcm", q: "Le côté inverse CarteAbonnement → Membre se déclare…", opts: ["@OneToOne(mappedBy = \"carte\")", "@OneToOne @JoinColumn(name = \"membre_id\")", "@Embedded", "@ManyToOne(unique = true)"], a: 0, exp: "mappedBy pointe vers l'attribut carte de Membre ; aucune colonne côté inverse." },
+    { type: "vf", q: "Le constructeur sans argument est exigé aussi pour les classes @Embeddable.", a: true, exp: "Même règle POJO que les entités (leçon 3) : Hibernate instancie Adresse par réflexion." },
+    { type: "qcm", q: "L'équivalent des @Embeddable dans EF Core (C#) :", opts: ["Les migrations", "Les owned entity types", "Les DbSet", "LINQ"], a: 1, exp: "Owned types : des objets sans identité fondus dans la table du propriétaire — même concept." }
+  ],
+  final: {
+    title: "Exercice final — La fiche membre complète",
+    intro: `<p>Objectif : enrichir Membre avec sa carte d'abonnement (table carte_abonnement, FK carte_id UNIQUE dans membre) et son adresse (colonnes rue, code_postal, ville de la table membre). Chaque outil à sa place.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mapping correct de la carte dans Membre (côté propriétaire) :", opts: ["@Embedded private CarteAbonnement carte;", "@OneToOne(mappedBy = \"membre\") private CarteAbonnement carte;", "@OneToOne @JoinColumn(name = \"carte_id\", unique = true) private CarteAbonnement carte;", "@ManyToMany private Set&lt;CarteAbonnement&gt; cartes;"], a: 2, exp: "Le propriétaire porte la FK ; mappedBy irait dans CarteAbonnement." },
+      { type: "vf", q: "Après ajout de @Embedded Adresse adresse, un SELECT sur membre suffit pour lire la ville — aucune jointure.", a: true, exp: "Les colonnes de l'embarqué vivent dans la table membre elle-même." },
+      { type: "input", q: "Quelle annotation poser sur la classe Adresse elle-même ?", a: ["@Embeddable", "Embeddable", "embeddable", "@embeddable"], ph: "@…", exp: "@Embeddable sur la classe — et surtout ni @Entity ni @Id." },
+      { type: "qcm", q: "On ajoute une adresse de facturation en plus du domicile. Sans @AttributeOverride, Hibernate…", opts: ["Préfixe les colonnes automatiquement", "Échoue : les colonnes rue, code_postal, ville seraient dupliquées (collision)", "Crée une table adresse", "Ignore la seconde adresse"], a: 1, exp: "Deux embarqués identiques dans la même table exigent @AttributeOverride pour renommer." },
+      { type: "qcm", q: "L'historique des paiements du membre (des dizaines de lignes datées, consultables seules) devrait être…", opts: ["Un @Embeddable Paiement", "Un @OneToOne", "Une colonne TEXT avec du JSON", "Une entité Paiement reliée en @ManyToOne/@OneToMany"], a: 3, exp: "Identité propre, cycle de vie indépendant, multiplicité N : les trois questions du choix mènent à l'entité." }
+    ],
+    solution: `<pre class="pseudo">@Entity                                          // Membre est une entité
+public class Membre {                            // début de la classe Membre
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée
+  private Long id;                               // l'identifiant du membre
+
+  @OneToOne                                      // relation 1-1
+  @JoinColumn(name = "carte_id", unique = true)   // FK UNIQUE vers la carte
+  private CarteAbonnement carte;                 // la carte (une entité à part entière)
+
+  @Embedded                                      // adresse EMBARQUÉE (pas une table à part)
+  private Adresse adresse;      // rue, code_postal, ville DANS la table membre
+}                                                // fin de la classe Membre
+
+@Embeddable                                      // classe embarquée (pas une entité)
+public class Adresse {          // pas d'@Id : aucune identité propre
+  private String rue;                            // colonne rue
+  @Column(name = "code_postal") private String codePostal;  // colonne code_postal
+  private String ville;                          // colonne ville
+  protected Adresse() {}                         // constructeur sans argument obligatoire
+}                                                // fin de la classe Adresse
+
+// Carte = entité (identité, cycle de vie) · Adresse = embarqué (paquet de colonnes)</pre>
+<p>Toutes les formes de relations sont mappées : N-1, 1-N, N-N, 1-1 et embarqué. Demain, la question qui fâche : quand Hibernate charge un membre, charge-t-il aussi sa carte, ses locations, ses avis ? Lazy ou eager — et la fameuse LazyInitializationException.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l11", title: "Entité, 1-1 ou embarqué ? L'audit de la fiche membre", level: 2,
+    statement: "Le client veut enrichir la fiche membre de la Ludothèque avec quatre blocs de données : (1) une adresse postale (rue, code postal, ville) ; (2) une carte d'abonnement avec numéro unique scanné à l'accueil et date d'expiration ; (3) des préférences d'affichage (thème sombre oui/non, langue) ; (4) une photo de profil de plusieurs Mo, affichée uniquement sur la page « mon compte ». Pour chacun des quatre, choisis entre colonnes simples, @Embeddable, @OneToOne ou autre relation, rédige le mapping retenu et justifie avec les trois questions du cours (identité propre ? cycle de vie indépendant ? chargement séparé souhaitable ?).",
+    hints: [
+      "Applique les trois questions du point 5 à chaque bloc : un seul « oui » suffit à basculer vers @OneToOne.",
+      "Pour la photo : que se passe-t-il si ses méga-octets sont fondus dans la table membre et chargés à CHAQUE em.find(Membre.class, id) ?",
+      "Deux champs seulement (thème, langue) : un @Embeddable se justifie-t-il déjà, ou est-ce du zèle ? Pense réutilisation et lisibilité."
+    ],
+    solution: "1) Adresse → @Embeddable + @Embedded.\n   Identité propre ? non. Cycle de vie ? meurt avec le membre. Chargement séparé ? inutile (3 petites colonnes).\n   @Embeddable class Adresse { rue; codePostal; ville; }\n   @Embedded private Adresse adresse;   // colonnes dans membre\n\n2) Carte d'abonnement → @OneToOne, entité CarteAbonnement.\n   Identité propre ? OUI : numéro unique scanné, on la recherche.\n   Cycle de vie ? OUI : émise avant attribution, révocable seule.\n   @OneToOne @JoinColumn(name = \"carte_id\", unique = true)\n   private CarteAbonnement carte;\n\n3) Préférences (thème, langue) → deux colonnes simples suffisent ;\n   un @Embeddable Preferences est acceptable pour la lisibilité,\n   mais aucune des trois questions ne l'IMPOSE : choix de confort, pas de structure.\n\n4) Photo de profil → surtout PAS de colonne dans membre : ses Mo seraient\n   charges a chaque find du membre (listes, connexions...).\n   → entité PhotoProfil en @OneToOne, chargée seulement sur la page compte\n   (le contrôle fin du chargement arrive leçon 12 avec LAZY).\n\nGrille finale : embarqué = paquet de colonnes sans vie propre ;\n1-1 = identité, cycle de vie ou volume qui justifient une table séparée.",
+    note: "Cette grille identité / cycle de vie / volume est exactement celle des « value objects » contre « entities » du Domain-Driven Design, que tu recroiseras au Niveau 6 — et la question du chargement de la photo est le pont parfait vers la leçon 12 : lazy ou eager, c'est demain." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

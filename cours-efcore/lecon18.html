@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Le problème N+1, AsNoTracking et les performances",
+  subtitle: "Une boucle innocente, 501 requêtes, et ta page qui rame : le bug de perf le plus répandu des ORM.",
+  theory: `
+<h3>1. Le crime parfait : une requête + une boucle</h3>
+<p>Le <strong>problème N+1</strong> (une requête initiale qui en déclenche N autres, une par élément) est le piège de performance le plus fréquent de tous les ORM, et il est <em>invisible</em> tant qu'on ne regarde pas le SQL. Le scénario : tu charges une liste (les jeux), puis dans une boucle tu accèdes à une <strong>navigation</strong> (une propriété qui pointe vers les objets liés, ici les avis d'un jeu). Sans Include (leçon 12), EF Core fait ce que tu lui demandes… au pied de la lettre : <strong>1 requête</strong> pour la liste, puis <strong>N requêtes</strong> — une par élément — pour aller chercher les avis à la demande (chargement paresseux, dit <em>lazy loading</em>, ou accès explicite). 500 jeux = <strong>501 requêtes</strong> vers SQL Server pour afficher un tableau.</p>
+<pre class="pseudo">var jeux = ctx.Jeux.ToList();               // 1 requête : SELECT * FROM Jeux (charge tous les jeux d'un coup)
+foreach (var jeu in jeux)                   // on parcourt chaque jeu récupéré
+{
+    // Accès à la navigation → EF va chercher les avis, jeu par jeu
+    var nb = jeu.Avis.Count;                // jeu.Avis déclenche +1 requête À CHAQUE TOUR (un SELECT sur Avis)
+    Console.WriteLine(jeu.Titre + " : " + nb + " avis");   // affiche le titre du jeu et son nombre d'avis
+}
+// 500 jeux → 1 + 500 = 501 allers-retours réseau. Le N+1.   // total = 1 (la liste) + N (un par jeu)</pre>
+<p>En dev avec 20 jeux, la page répond en 50 ms : personne ne voit rien. En prod avec 5 000 jeux, chaque aller-retour coûte sa latence réseau, et la page met 12 secondes. Le N+1 ne se détecte pas à l'œil : il se détecte au <strong>LogTo</strong> (leçon 2), où tu vois défiler la cascade de SELECT identiques.</p>
+
+<h3>2. Les trois parades : Include, projection, une requête</h3>
+<p>La cure du N+1 tient en un mot : <strong>ramène ce dont tu as besoin en UNE requête (ou deux), pas en cinq cents</strong>. Trois techniques, toutes déjà vues :</p>
+<pre class="pseudo">// PARADE A — Include (leçon 12) : un JOIN, les avis arrivent avec les jeux
+var jeux = ctx.Jeux.Include(j =&gt; j.Avis).ToList();   // 1 seule requête (ou 2 avec AsSplitQuery) : les avis viennent avec les jeux
+
+// PARADE B — projection vers DTO (leçon 14) : le COUNT est fait par SQL
+var stats = ctx.Jeux                                  // on part du DbSet Jeux…
+    .Select(j =&gt; new { j.Titre, NbAvis = j.Avis.Count })  // …et on projette : titre + nombre d'avis compté par SQL
+    .ToList();                                        // 1 requête, l'agrégat (COUNT) est calculé côté serveur
+
+// PARADE C — charger les deux listes puis relier en mémoire (cas avancé)
+//            2 requêtes au lieu de N+1</pre>
+<p>La <strong>parade B est souvent la meilleure</strong> pour de l'affichage : elle ne ramène que les colonnes utiles, fait compter SQL Server, et ne suit aucune entité. Include convient quand tu as vraiment besoin des entités complètes pour les modifier ensuite.</p>
+
+<h3>3. AsNoTracking : couper le suivi pour lire vite</h3>
+<p>Depuis la leçon 6, tu sais que le <strong>change tracker</strong> (le suivi des changements) prend un <strong>instantané</strong> de chaque entité chargée, pour détecter plus tard ce qui a changé. C'est indispensable quand tu vas <em>modifier</em> et SaveChanges. Mais pour une lecture <strong>en lecture seule</strong> — afficher un catalogue, remplir une page — ce suivi est du <strong>travail et de la mémoire gaspillés</strong> : tu ne modifieras rien. <strong>AsNoTracking()</strong> dit à EF Core « ne suis pas ces entités » : pas d'instantané, moins de mémoire, matérialisation plus rapide.</p>
+<pre class="pseudo">// Lecture pure : AsNoTracking, aucun suivi, plus léger et plus rapide
+var catalogue = ctx.Jeux                    // on part du DbSet Jeux…
+    .AsNoTracking()                          // …on coupe le suivi : pas d'instantané, moins de mémoire
+    .Where(j =&gt; j.EstDisponible)             // filtre : ne garder que les jeux disponibles
+    .ToList();                     // affichage seulement → parfait   // matérialise la liste (entités NON suivies)
+
+// Si tu vas modifier et sauvegarder : PAS d'AsNoTracking (le tracker doit suivre)
+var jeu = ctx.Jeux.First(j =&gt; j.Id == 5);   // charge le jeu 5 AVEC suivi (comportement par défaut)
+jeu.Prix = 4.50m;                            // modifie une propriété : le tracker note un UPDATE à faire
+ctx.SaveChanges();                 // le suivi est nécessaire ici   // envoie l'UPDATE ; impossible sans suivi</pre>
+<p>Nuance importante : une <strong>projection vers un DTO n'a pas besoin d'AsNoTracking</strong> — un type anonyme ou un DTO n'est de toute façon pas une entité, donc jamais suivi. AsNoTracking est utile quand tu charges de <strong>vraies entités</strong> que tu ne comptes pas modifier.</p>
+
+<h3>4. Diagnostiquer et mesurer : LogTo, ToQueryString, index</h3>
+<p>On n'optimise pas au hasard : on <strong>mesure d'abord</strong>. Tes trois instruments : <strong>LogTo</strong> journalise chaque requête envoyée (compte-les : une cascade = N+1), <strong>ToQueryString()</strong> montre le SQL d'un IQueryable avant exécution, et le temps affiché par LogTo (« Executed DbCommand (12ms) ») donne l'ordre de grandeur. Et n'oublie pas la leçon la plus rentable du Niveau 4 : une requête lente est souvent une requête <strong>sans index</strong> (l'index = la structure qui accélère la recherche sur une colonne) sur la colonne filtrée. EF Core pose des index sur les clés étrangères, mais un WHERE fréquent sur une colonne non indexée (une recherche par email, par date) mérite un <strong>HasIndex</strong> en Fluent API (leçon 7). Le meilleur code C# ne rattrape pas une table sans index.</p>
+<pre class="pseudo">// Compter les requêtes : brancher LogTo puis lire la console
+optionsBuilder.LogTo(Console.WriteLine, LogLevel.Information);   // écrit chaque SQL généré par EF dans la console
+// Cascade de « SELECT ... FROM Avis WHERE JeuId = @p » répétés → N+1 démasqué
+
+// Index manquant côté modèle (leçon 7) :
+modelBuilder.Entity&lt;Membre&gt;().HasIndex(m =&gt; m.Email);   // pose un index sur Email : accélère les WHERE sur cette colonne</pre>
+
+<h3>5. La checklist de performance — et les cousins</h3>
+<p>Grave cette liste dans un coin de ta tête : <strong>(1)</strong> pas de N+1 — Include ou projection au lieu d'une boucle sur les navigations ; <strong>(2)</strong> AsNoTracking pour toute lecture seule d'entités ; <strong>(3)</strong> projection vers DTO pour l'affichage — ne ramène que les colonnes utiles ; <strong>(4)</strong> pagination (leçon 16) — jamais tout le catalogue d'un coup ; <strong>(5)</strong> des index sur les colonnes filtrées. Chacune de ces règles a son cousin ailleurs : le N+1 hante <strong>tous</strong> les ORM — Hibernate le résout avec JOIN FETCH ou @BatchSize, Eloquent avec l'<strong>eager loading</strong> ->with('avis') (charger tout de suite, par opposition au <em>lazy loading</em> qui charge à la demande), Django avec <strong>select_related</strong> (N-1) et <strong>prefetch_related</strong> (1-N/N-N). Le problème est universel, les parades aussi.</p>
+<div class="warn"><strong>Le N+1 est un bug qui grandit avec ta base.</strong> Il passe tous les tests en dev (petit jeu de données), franchit la revue de code (le C# a l'air propre), et n'explose qu'en production quand la table gonfle. Seule défense fiable : lire le SQL au LogTo dès le développement et compter les requêtes. Une page = quelques requêtes, pas quelques centaines.</div>
+<div class="tip">Règle mnémotechnique : « <strong>lecture → AsNoTracking + projection ; boucle sur une navigation → STOP, c'est un N+1</strong> ». Dès que tu écris foreach et que tu accèdes à jeu.Avis, jeu.Locations à l'intérieur, remonte d'un cran : c'est un Include ou un Select qu'il te faut, pas une boucle.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Une erreur de compilation", "1 requête pour la liste + N requêtes (une par élément) pour aller chercher une navigation dans une boucle", "Un conflit de migration", "Un index dupliqué"], a: 1, exp: "500 éléments → 501 allers-retours réseau. Le piège de perf le plus répandu des ORM." },
+    { type: "qcm", q: "Pourquoi le N+1 échappe-t-il aux tests en développement ?", opts: ["Il est chiffré", "Avec peu de données, les 501 requêtes restent rapides ; il n'explose qu'en prod avec une grosse table", "EF Core le corrige tout seul en dev", "Il ne se produit qu'avec SQLite"], a: 1, exp: "20 jeux → 50 ms, personne ne voit rien. 5 000 jeux → 12 secondes. Le bug grandit avec la base." },
+    { type: "input", q: "Quel outil (vu leçon 2) permet de compter les requêtes réellement envoyées et donc de démasquer un N+1 ?", a: ["LogTo", "LogTo()", "logto"], ph: "Nom de la méthode…", exp: "LogTo journalise chaque requête : une cascade de SELECT identiques = N+1 démasqué." },
+    { type: "qcm", q: "Charger les jeux avec leurs avis en UNE requête (JOIN) se fait avec…", opts: ["AsNoTracking", "Include(j =&gt; j.Avis)", "Skip/Take", "BeginTransaction"], a: 1, exp: "Include (leçon 12) : les avis arrivent avec les jeux, plus de boucle qui déclenche N requêtes." },
+    { type: "qcm", q: "Pour un tableau « titre + nombre d'avis », la parade souvent optimale est…", opts: ["Une boucle avec jeu.Avis.Count", "Une projection Select(j =&gt; new { j.Titre, NbAvis = j.Avis.Count })", "Charger tous les avis d'abord", "Un Include sans Select"], a: 1, exp: "La projection fait faire le COUNT par SQL Server, ne ramène que l'utile, et ne suit aucune entité." },
+    { type: "vf", q: "AsNoTracking désactive la prise d'instantané du change tracker pour les entités chargées.", a: true, exp: "Pas de snapshot, moins de mémoire, matérialisation plus rapide : idéal en lecture seule." },
+    { type: "qcm", q: "Quand ne FAUT-IL PAS utiliser AsNoTracking ?", opts: ["Pour afficher un catalogue", "Quand tu vas modifier les entités et appeler SaveChanges", "Pour une page de statistiques", "Pour une recherche"], a: 1, exp: "SaveChanges a besoin du suivi pour détecter les changements : AsNoTracking couperait cette détection." },
+    { type: "vf", q: "Une projection vers un DTO nécessite AsNoTracking pour ne pas être suivie.", a: false, exp: "Un DTO ou type anonyme n'est pas une entité : il n'est de toute façon jamais suivi. AsNoTracking sert aux VRAIES entités lues." },
+    { type: "qcm", q: "Le principe qui résume la cure du N+1 :", opts: ["Ajouter des try/catch", "Ramener ce dont on a besoin en une (ou deux) requête, pas en cinq cents", "Augmenter la RAM du serveur", "Désactiver LINQ"], a: 1, exp: "Include ou projection remplacent la boucle sur les navigations : la base fait le travail d'un coup." },
+    { type: "qcm", q: "Une requête reste lente malgré Include et AsNoTracking. Le suspect suivant :", opts: ["Un WHERE sur une colonne sans index", "Trop de commentaires", "Le change tracker", "Le nom de la table"], a: 0, exp: "Leçon du Niveau 4 : le meilleur C# ne rattrape pas une table sans index sur la colonne filtrée." },
+    { type: "input", q: "Quelle méthode Fluent API (leçon 7) pose un index sur une colonne souvent filtrée, comme Email ?", a: ["HasIndex", "HasIndex()"], ph: "Nom de la méthode…", exp: "modelBuilder.Entity&lt;Membre&gt;().HasIndex(m =&gt; m.Email) : EF indexe les FK, mais pas tes WHERE métier." },
+    { type: "qcm", q: "L'équivalent Django des parades N+1 (N-1 et 1-N) est…", opts: ["select_related et prefetch_related", "filter et exclude", "migrate et makemigrations", "raw et cursor"], a: 0, exp: "select_related (JOIN, N-1), prefetch_related (1-N/N-N). Hibernate : JOIN FETCH ; Eloquent : ->with()." },
+    { type: "qcm", q: "L'eager loading de Laravel (->with('avis')) s'oppose à…", opts: ["La pagination", "Le lazy loading, qui déclenche justement le N+1", "Les migrations", "Les transactions"], a: 1, exp: "Eager (charger tout de suite, groupé) vs lazy (à la demande, une requête par accès) : le lazy est la source du N+1." },
+    { type: "vf", q: "On optimise une requête au feeling, sans mesurer, pour aller plus vite.", a: false, exp: "On MESURE d'abord (LogTo, temps, nombre de requêtes) : optimiser à l'aveugle fait perdre du temps sur les mauvaises cibles." },
+    { type: "qcm", q: "Signal d'alerte immédiat d'un N+1 dans ton code :", opts: ["Un Select sans Where", "Un foreach dans lequel on accède à une navigation (jeu.Avis, jeu.Locations)", "Un ToQueryString", "Un AsNoTracking"], a: 1, exp: "Boucle + accès à une navigation à l'intérieur = STOP : remonte à un Include ou une projection." }
+  ],
+  final: {
+    title: "Exercice final — La page catalogue qui rame",
+    intro: `<p>La page « catalogue avec note » de la Ludothèque charge tous les jeux puis, dans une boucle, calcule pour chacun sa note moyenne via jeu.Avis. En prod (4 000 jeux), elle met 15 secondes. Diagnostique et corrige.</p>`,
+    questions: [
+      { type: "qcm", q: "Le nom exact du problème et son coût en requêtes pour 4 000 jeux :", opts: ["Un deadlock, 1 requête", "Un N+1 : 1 + 4 000 = 4 001 requêtes", "Une injection SQL, 0 requête", "Une explosion cartésienne, 1 requête"], a: 1, exp: "Une requête pour la liste + une par jeu pour ses avis : 4 001 allers-retours." },
+      { type: "qcm", q: "La réécriture la plus efficace pour un affichage (titre + note moyenne) :", opts: ["Include(j =&gt; j.Avis) puis calcul en C#", "Une projection Select(j =&gt; new { j.Titre, Moyenne = j.Avis.Average(...) })", "Une boucle avec AsNoTracking", "Skip/Take seulement"], a: 1, exp: "La projection fait faire l'AVG par SQL Server, une requête, colonnes minimales, zéro suivi." },
+      { type: "vf", q: "Si on gardait des entités complètes en lecture seule, AsNoTracking les allègerait.", a: true, exp: "Vrai : pour des entités lues et non modifiées, AsNoTracking supprime le suivi inutile. (Avec projection DTO, c'est déjà inutile.)" },
+      { type: "input", q: "Quel outil confirme, avant/après correction, le nombre de requêtes envoyées à SQL Server ?", a: ["LogTo", "LogTo()"], ph: "Nom de la méthode…", exp: "LogTo : 4 001 lignes avant, 1 après. La preuve chiffrée de la correction." },
+      { type: "qcm", q: "Bonus : la page reste un peu lente car elle charge les 4 000 jeux. Le dernier réflexe :", opts: ["Ajouter de la RAM", "Paginer (Skip/Take, leçon 16) : ne ramener que les 20 jeux affichés", "Supprimer les avis", "Désactiver LogTo"], a: 1, exp: "Personne n'affiche 4 000 lignes : la pagination termine le travail de la projection." }
+    ],
+    solution: `<pre class="pseudo">Diagnostic  : N+1 → 1 + 4 000 = 4 001 requêtes (visible au LogTo)
+Correction  : remplacer la boucle par UNE projection agrégée
+  ctx.Jeux
+     .Select(j =&gt; new JeuNoteDto {
+         Titre = j.Titre,
+         Moyenne = j.Avis.Average(a =&gt; (double?)a.Note) })  // AVG côté SQL
+     .Skip((page-1)*20).Take(20)                            // + pagination
+     .ToList();
+Résultat    : 1 requête (paginée) au lieu de 4 001. 15 s → quelques ms.
+
+Checklist perf EF Core :
+1. Pas de N+1 → Include ou projection, jamais une boucle sur les navigations
+2. AsNoTracking pour toute lecture SEULE d'entités
+3. Projection DTO pour l'affichage (colonnes minimales, zéro suivi)
+4. Pagination (Skip/Take) — jamais tout le catalogue
+5. Index sur les colonnes filtrées (HasIndex)
+Toujours : MESURER au LogTo avant/après. Ne jamais optimiser à l'aveugle.
+Ailleurs : JOIN FETCH (Hibernate), ->with() (Eloquent),
+           select_related/prefetch_related (Django).</pre>
+<p>Tu sais désormais écrire des requêtes rapides ET sûres. Prochaine leçon : le cycle de vie complet d'une entité — états, Attach, et le dernier réglage de perf, AsSplitQuery.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l18", title: "La chasse au N+1 documentée", level: 3,
+    statement: "La page GET /api/jeux/catalogue de la Ludothèque affiche, pour chaque jeu, son titre, son prix et sa note moyenne. Un collègue l'a codée en chargeant ctx.Jeux.ToList() puis en calculant, dans un foreach, jeu.Avis.Average(a => a.Note). Les utilisateurs se plaignent d'une lenteur qui empire chaque mois. Rédige le rapport d'optimisation complet : (1) identifie et nomme le problème, chiffre le nombre de requêtes pour 4 000 jeux, et explique COMMENT tu l'as prouvé (quel outil, quelle observation) ; (2) réécris la requête en une seule projection, en gérant le cas du jeu sans avis ; (3) explique le rôle éventuel d'AsNoTracking ici et dis honnêtement s'il est utile avec ta réécriture ; (4) complète par pagination et index si pertinents, et donne la métrique avant/après attendue.",
+    hints: [
+      "Nomme le problème et compte : une requête pour la liste + une par jeu accédant à jeu.Avis = combien pour 4 000 jeux ? Quel outil de la leçon 2 te montre la cascade ?",
+      "Ta projection : Select vers un DTO avec Moyenne = j.Avis.Average(a => (double?)a.Note). Pourquoi le cast nullable (rappel leçon 14) ? Et AsNoTracking est-il utile sur un DTO ?",
+      "Termine par la pagination (leçon 16) et un mot sur l'index : EF indexe les FK, mais un WHERE métier fréquent mérite un HasIndex."
+    ],
+    solution: "1. IDENTIFICATION ET PREUVE\n   Problème : N+1. Le foreach accède à jeu.Avis pour chaque jeu, ce qui\n   déclenche une requête par jeu. Coût : 1 (liste) + 4 000 (avis) = 4 001\n   requêtes. Preuve : LogTo(Console.WriteLine) branché sur le contexte →\n   la console affiche 1 SELECT sur Jeux suivi de 4 000 SELECT identiques\n   « ... FROM Avis WHERE JeuId = @p ». La lenteur empire chaque mois car\n   le nombre de requêtes suit la taille de la table.\n\n2. RÉÉCRITURE EN UNE PROJECTION\n   var catalogue = await ctx.Jeux\n       .Select(j => new JeuNoteDto {\n           Titre   = j.Titre,\n           Prix    = j.Prix,\n           Moyenne = j.Avis.Average(a => (double?)a.Note)  // null si aucun avis\n       })\n       .ToListAsync();\n   Le cast (double?) évite l'exception « Sequence contains no elements »\n   sur un jeu sans avis : Average renvoie null, affiché « pas encore noté ».\n   EF génère UNE requête avec l'AVG en sous-requête corrélée.\n\n3. ROLE D'AsNoTracking\n   Ici, INUTILE : la projection produit des JeuNoteDto, qui ne sont pas\n   des entités et ne sont donc jamais suivis par le change tracker.\n   AsNoTracking n'aurait servi que si j'avais chargé des entités Jeu\n   complètes en lecture seule (ex. Include(j => j.Avis) pour affichage).\n\n4. PAGINATION ET INDEX\n   Personne n'affiche 4 000 lignes : ajouter .Skip((page-1)*20).Take(20)\n   après un OrderBy stable (leçon 16). Index : les FK (Avis.JeuId) sont\n   déjà indexées par EF ; si on filtrait souvent les jeux par titre ou\n   catégorie, un HasIndex sur cette colonne accélérerait le WHERE.\n\n   MÉTRIQUE : 4 001 requêtes / ~15 s  →  1 requête paginée / quelques ms.\n   Vérifié au LogTo (1 seule ligne SQL) et au temps affiché.",
+    note: "Ce rapport est exactement ce qu'on attend en revue de code et en entretien : nommer le N+1, le PROUVER au LogTo, corriger par projection, et savoir quand AsNoTracking sert (et quand il ne sert à rien). Le même diagnostic mot pour mot s'applique en Hibernate (JOIN FETCH), Laravel (->with) et Django (select_related/prefetch_related). Au Niveau 6, ton API full-stack vivra ou mourra sur ce réflexe." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

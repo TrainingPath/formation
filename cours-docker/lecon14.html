@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Développer dans les conteneurs (bind mounts)",
+  subtitle: "Voir chaque modification immédiatement — sans rebuild, sans quitter Compose.",
+  theory: `
+<h3>1. Le problème du développeur</h3>
+<p>Avec l'image de production, chaque petite modification de code obligerait à reconstruire l'image (<code>docker compose build</code>) — insupportable en développement. Ce qu'on veut en dev : sauvegarder <code>views.py</code>, recharger la page, et voir le changement. Tout de suite. La solution est le <strong>bind mount</strong> (leçon 8) : brancher le dossier de code de ta machine directement dans le conteneur.</p>
+
+<h3>2. Le bind mount de code</h3>
+<p>On monte le dossier courant (<code>.</code>) sur <code>/app</code> dans le conteneur. Le conteneur voit alors le code <em>vivant</em> de ta machine à la place de celui figé dans l'image.</p>
+<pre class="pseudo">volumes:
+  - .:/app          # bind mount : le dossier local '.' REMPLACE /app dans le conteneur, en temps réel</pre>
+<p>Le conteneur exécute désormais le code du <strong>dossier local</strong> : chaque sauvegarde est visible immédiatement dedans. L'image n'est plus qu'un environnement d'exécution (Python + dépendances) ; le code, lui, vient de ta machine.</p>
+
+<h3>3. compose.override.yaml</h3>
+<p>Compose lit AUTOMATIQUEMENT un second fichier, <code>compose.override.yaml</code> (« surcharge »), et le fusionne par-dessus le principal. On y met tout ce qui est spécifique au dev, sans jamais toucher au fichier de production.</p>
+<pre class="pseudo"># compose.override.yaml — lu AUTOMATIQUEMENT et fusionné par 'docker compose up'
+services:
+  app:
+    volumes:
+      - .:/app                                       # bind mount du code local (dev uniquement)
+    command: python manage.py runserver 0.0.0.0:8000   # REMPLACE le CMD : runserver recharge tout seul à chaque modification
+    environment:
+      DJANGO_DEBUG: "1"                              # mode debug activé en dev (pages d'erreur détaillées)
+
+# dev  : docker compose up                       # sans -f : compose.yaml + override sont FUSIONNÉS automatiquement
+# prod : docker compose -f compose.yaml up -d    # avec -f explicite : SEUL le fichier nommé est lu -> l'override est ignoré</pre>
+<p>Le fichier principal reste la <strong>vérité de production</strong> ; l'override n'existe que pour le poste de dev.</p>
+
+<h3>4. Les pièges du bind mount</h3>
+<p>Deux pièges classiques. Un <strong>volume anonyme</strong> (sans nom, juste un chemin) posé sur un sous-dossier le « masque » : le montage le plus précis l'emporte. Et sous Linux, un fichier créé par le conteneur appartient à <strong>root</strong> sur ta machine, sauf si on aligne les identités (l'<strong>UID</strong>, le numéro d'utilisateur).</p>
+<pre class="pseudo">⚠ .venv local monté par-dessus /app -> les dépendances de l'HÔTE écrasent celles de l'image   # ton venv local pollue le conteneur
+   (exclure : volumes: - /app/.venv  -> un volume anonyme "masque" ce sous-dossier)            # ce montage plus précis cache le .venv de l'hôte
+⚠ fichiers créés PAR le conteneur (migrations...) appartiennent à root sur l'hôte              # sous Linux, ils sortent en 'root'...
+   (Linux : user: "1000:1000" dans l'override aligne les identités)                            # ...user: "1000:1000" force ton UID/GID habituel</pre>
+
+<h3>5. Le quotidien du développeur conteneurisé</h3>
+<p>Une journée type tient en quelques commandes.</p>
+<pre class="pseudo">docker compose up               # tout démarre, les logs défilent à l'écran (au premier plan)
+# ... coder, sauvegarder, F5 ...   # on édite le code local, on rafraîchit la page : le changement est déjà là (bind mount + runserver)
+docker compose exec app python manage.py makemigrations   # génère un fichier de migration DANS le conteneur -> visible sur l'hôte (bind mount)
+docker compose exec app python manage.py test             # lance la suite de tests dans le même environnement que l'exécution
+docker compose down             # fin de journée : arrête les conteneurs (les volumes de données restent intacts)</pre>
+<div class="warn">Le bind mount de code est un outil de <strong>dev uniquement</strong> : en production, le code vient de l'image (testée, versionnée, immuable). Un serveur avec <code>- .:/app</code> exécute ce qui traîne dans un dossier — l'exact contraire de la reproductibilité.</div>
+<div class="tip">Même MySQL en dev garde son <strong>volume nommé</strong> (les données de test survivent) : bind mount pour le <em>code</em>, volume nommé pour l'<em>état</em> — chaque outil à sa place.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans bind mount, chaque modification de code exige…", opts: ["Rien", "Un rebuild de l'image", "Un reboot", "Un push"], a: 1, exp: "Le code est figé dans l'image." },
+    { type: "qcm", q: "- .:/app fait que…", opts: ["L'image est modifiée", "Le dossier local remplace /app dans le conteneur, en direct", "Le code est copié une fois", "Un volume nommé naît"], a: 1, exp: "Chaque sauvegarde est visible dedans." },
+    { type: "qcm", q: "Avec le bind mount + runserver, une modification de views.py…", opts: ["Exige un rebuild", "Est visible au prochain rechargement de page", "Casse le conteneur", "Est ignorée"], a: 1, exp: "Le confort du dev, retrouvé." },
+    { type: "qcm", q: "compose.override.yaml est lu…", opts: ["Jamais", "Automatiquement par docker compose up", "Seulement avec -f", "En prod"], a: 1, exp: "Convention Compose." },
+    { type: "qcm", q: "En production, on lance…", opts: ["docker compose up (avec override)", "docker compose -f compose.yaml up -d (sans override)", "l'override seul", "docker run"], a: 1, exp: "-f explicite = override ignoré." },
+    { type: "qcm", q: "Dans l'override de dev, command devient…", opts: ["gunicorn", "python manage.py runserver 0.0.0.0:8000", "bash", "rien"], a: 1, exp: "Rechargement automatique." },
+    { type: "vf", q: "Le compose.yaml principal doit rester la vérité de production.", a: true, exp: "L'override n'est que pour le poste de dev." },
+    { type: "qcm", q: "Le .venv local monté dans le conteneur cause…", opts: ["Rien", "Des dépendances de l'hôte qui écrasent celles de l'image", "Un gain de vitesse", "Une erreur YAML"], a: 1, exp: "À masquer par un volume anonyme." },
+    { type: "qcm", q: "Exclure un sous-dossier du bind mount :", opts: ["volumes: - /app/.venv (volume anonyme qui masque)", "un if", ".gitignore", "impossible"], a: 0, exp: "Le montage le plus précis gagne." },
+    { type: "qcm", q: "Les fichiers créés par le conteneur sur le bind mount (Linux) appartiennent à…", opts: ["L'utilisateur courant", "root (sauf user: aligné)", "Personne", "Docker Hub"], a: 1, exp: "user: \"1000:1000\" dans l'override." },
+    { type: "qcm", q: "makemigrations en dev conteneurisé :", opts: ["docker compose exec app python manage.py makemigrations", "sur l'hôte sans venv", "impossible", "docker build"], a: 0, exp: "La migration apparaît dans le dossier local (bind mount)." },
+    { type: "vf", q: "Un bind mount de code en production est une bonne idée.", a: false, exp: "Le serveur exécuterait « ce qui traîne » : anti-reproductible." },
+    { type: "qcm", q: "En dev, les données MySQL utilisent…", opts: ["Un bind mount", "Toujours le volume nommé", "La couche d'écriture", "Un zip"], a: 1, exp: "Code = bind, état = volume." },
+    { type: "qcm", q: "DJANGO_DEBUG en dev / en prod :", opts: ["1 / 0 (via l'override et l'env de prod)", "0 / 1", "toujours 1", "toujours 0"], a: 0, exp: "Chaque environnement sa config." },
+    { type: "qcm", q: "La fin de journée du dev :", opts: ["docker compose down", "rm -rf", "docker rmi tout", "éteindre le PC directement"], a: 0, exp: "Les volumes restent, les conteneurs partent." }
+  ],
+  final: {
+    title: "Exercice final — Le poste de dev conteneurisé",
+    intro: `<p>On monte l'environnement de développement complet.</p>`,
+    questions: [
+      { type: "qcm", q: "L'override contient :", opts: ["bind mount du code + runserver + DEBUG=1", "l'image de prod", "les secrets de prod", "un healthcheck"], a: 0, exp: "Le confort du dev." },
+      { type: "qcm", q: "docker compose up en dev fusionne :", opts: ["compose.yaml + compose.override.yaml", "que l'override", "que le yaml", "les deux + .env.prod"], a: 0, exp: "Automatique." },
+      { type: "qcm", q: "Une modification de template est visible :", opts: ["Au prochain F5, sans rebuild", "après docker build", "jamais", "après down/up"], a: 0, exp: "Bind mount + runserver." },
+      { type: "qcm", q: "Les tests en dev :", opts: ["docker compose exec app python manage.py test", "sur l'hôte", "en prod", "impossible"], a: 0, exp: "Même environnement que l'exécution." },
+      { type: "vf", q: "La prod, elle, exécute le code de l'IMAGE, jamais un bind mount.", a: true, exp: "Testée, versionnée, immuable." }
+    ],
+    solution: `<pre class="pseudo"># compose.override.yaml
+services:
+  app:
+    volumes:
+      - .:/app                  # bind mount : le code local, à chaud
+      - /app/.venv              # volume anonyme : masque un éventuel venv local
+    command: python manage.py runserver 0.0.0.0:8000   # rechargement auto (remplace le CMD gunicorn)
+    environment:
+      DJANGO_DEBUG: "1"         # debug activé en dev
+
+# dev  : docker compose up                        # fusionne compose.yaml + override
+#        (coder, F5, exec makemigrations/test, down)   # boucle de développement
+# prod : docker compose -f compose.yaml up -d      # override ignoré : le code vient de l'image</pre>
+<p>Fin de la semaine 2 : la Ludothèque complète tourne et se développe en conteneurs. Lundi : alléger les images.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton environnement de dev…",
+  items: [
+  { id: "docker-l14", title: "L'override de dev complet", level: 3,
+    statement: "Écris le compose.override.yaml complet du poste de dev de la Ludothèque : bind mount du code avec masquage de .venv, runserver, DEBUG=1, user aligné (1000:1000), et le port de debug 8000 ; puis la « journée type » en 6 commandes commentées (up, makemigrations, migrate, test, logs, down) en précisant lesquelles modifient le dossier LOCAL grâce au bind mount.",
+    hints: [
+      "user: \"1000:1000\" évite les fichiers root sur l'hôte (Linux).",
+      "makemigrations écrit dans ./catalogue/migrations/ de l'HÔTE — c'est le bind mount.",
+      "Les données MySQL restent dans le volume nommé : down ne les touche pas."
+    ],
+    solution: "# compose.override.yaml — poste de dev uniquement\nservices:\n  app:\n    user: \"1000:1000\"           # les fichiers créés m'appartiennent\n    volumes:\n      - .:/app                   # code local, à chaud\n      - /app/.venv               # masque un éventuel venv local\n    command: python manage.py runserver 0.0.0.0:8000\n    environment:\n      DJANGO_DEBUG: \"1\"\n    ports:\n      - \"8000:8000\"\n\n# Journée type :\ndocker compose up -d                 # 1. tout démarre (yaml + override)\ndocker compose exec app python manage.py makemigrations\n#                                    # 2. ÉCRIT dans ./catalogue/migrations/\n#                                    #    sur l'HÔTE (bind mount) -> commitable\ndocker compose exec app python manage.py migrate    # 3. applique à la base (volume)\ndocker compose exec app python manage.py test       # 4. tests dans le même env\ndocker compose logs -f app           # 5. suivre les requêtes/erreurs\ndocker compose down                  # 6. fin : conteneurs supprimés,\n                                     #    volume MySQL intact",
+    note: "Le point subtil : makemigrations tourne DANS le conteneur mais écrit sur l'HÔTE via le bind mount — le fichier de migration est immédiatement visible pour Git. C'est toute l'élégance du montage : l'environnement est conteneurisé, le code reste chez toi. Toute l'équipe a désormais le MÊME environnement de dev en une commande." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

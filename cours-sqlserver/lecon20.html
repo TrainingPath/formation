@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Projet guidé : la Ludothèque en T-SQL",
+  subtitle: "Assembler tout le cours en une base complète et vivante.",
+  theory: `
+<h3>1. Le plan d'ensemble</h3>
+<p>Cette leçon rassemble tout ce qu'on a appris. On va créer les tables (avec contraintes et IDENTITY), les remplir, les interroger (jointures, fenêtrage) puis automatiser le métier (procédures, transactions, triggers). La <strong>Ludothèque</strong> est le fil rouge : une base qui gère des jeux qu'on peut louer ou acheter. On la retrouve dans les autres cours pour comparer les langages — ici, en version SQL Server.</p>
+
+<h3>2. Le schéma (rappel)</h3>
+<p>Le <strong>schéma</strong>, c'est la liste des tables et de leurs colonnes. Entre parenthèses, les colonnes de chaque table :</p>
+<pre class="pseudo">CATEGORIE(idCategorie, libelle)   -- les familles de jeux (identifiant + nom)
+FOURNISSEUR(idFournisseur, nom)   -- les fournisseurs qui procurent les jeux
+UTILISATEUR(idUtilisateur, nom, email)  -- + CLIENT / VENDEUR / ADMINISTRATEUR   -- les personnes, déclinées en rôles
+JEU(idJeu, titre, prixAchat, prixLocation,   -- la table centrale : chaque jeu
+    stockVente, stockLocation, idCategorie, idFournisseur)   -- avec ses deux stocks et ses liens
+LOUER(idClient, idJeu, dateDebut, nbJours)   -- qui a loué quel jeu, quand, combien de jours
+ACHETER(idClient, idJeu, dateAchat)   -- qui a acheté quel jeu, à quelle date
+RESERVER(idClient, idJeu, dateResa)   -- qui a réservé quel jeu, à quelle date</pre>
+<p>Deux stocks distincts (<code>stockVente</code>, <code>stockLocation</code>) et un fournisseur relié au jeu : le cœur du modèle Ludothèque.</p>
+
+<h3>3. Créer et peupler</h3>
+<p>On crée la table avec toutes ses protections, puis on y insère des lignes.</p>
+<pre class="pseudo">CREATE TABLE JEU (   -- création de la table centrale JEU
+    idJeu INT IDENTITY(1,1) PRIMARY KEY,   -- identifiant auto-généré, clé primaire
+    titre NVARCHAR(120) NOT NULL,   -- titre obligatoire (Unicode)
+    prixLocation DECIMAL(6,2) CHECK (prixLocation &gt; 0),   -- prix de location, strictement positif
+    stockVente INT NOT NULL DEFAULT 0 CHECK (stockVente &gt;= 0),   -- stock de vente : 0 par défaut, jamais négatif
+    stockLocation INT NOT NULL DEFAULT 0 CHECK (stockLocation &gt;= 0),   -- stock de location : idem
+    idCategorie INT NOT NULL,   -- catégorie obligatoire
+    idFournisseur INT NULL,   -- fournisseur facultatif (NULL autorisé)
+    CONSTRAINT FK_Jeu_Cat FOREIGN KEY (idCategorie) REFERENCES CATEGORIE(idCategorie),   -- lien obligatoire vers CATEGORIE
+    CONSTRAINT FK_Jeu_Four FOREIGN KEY (idFournisseur) REFERENCES FOURNISSEUR(idFournisseur)   -- lien facultatif vers FOURNISSEUR
+);
+INSERT INTO JEU (titre, prixLocation, stockVente, stockLocation, idCategorie)   -- on remplit sans idJeu (auto-généré)
+VALUES (N'Catan', 5.00, 3, 2, 1), (N'Dixit', 3.50, 5, 4, 2);   -- deux jeux insérés d'un coup (groupes séparés par une virgule)</pre>
+
+<h3>4. Interroger la Ludothèque</h3>
+<p>Une requête d'analyse qui combine jointure, agrégat et fenêtrage pour trouver le jeu vedette de chaque catégorie.</p>
+<pre class="pseudo">-- top 1 jeu le plus loué par catégorie (fenêtrage)   -- objectif : un gagnant par catégorie
+WITH classe AS (   -- CTE de classement
+  SELECT j.titre, j.idCategorie,   -- titre et catégorie
+    ROW_NUMBER() OVER (PARTITION BY j.idCategorie   -- repartir de 1 dans chaque catégorie
+                       ORDER BY COUNT(l.idJeu) DESC) AS r   -- classer par nombre de locations décroissant
+  FROM JEU j LEFT JOIN LOUER l ON j.idJeu = l.idJeu   -- LEFT JOIN pour compter aussi les jeux à 0 location
+  GROUP BY j.titre, j.idCategorie   -- un total par jeu
+)
+SELECT titre, idCategorie FROM classe WHERE r = 1;   -- garder le rang 1 = le plus loué de chaque catégorie</pre>
+
+<h3>5. Automatiser une location (le cœur métier)</h3>
+<p>La procédure qui réunit tout : contrôle métier, transaction et gestion d'erreurs.</p>
+<pre class="pseudo">CREATE PROCEDURE Louer @idClient INT, @idJeu INT   -- procédure Louer avec deux paramètres d'entrée
+AS
+BEGIN
+    SET NOCOUNT ON;   -- pas de message « n lignes affectées »
+    BEGIN TRY   -- zone protégée
+        BEGIN TRANSACTION;   -- ouvrir la transaction (tout ou rien)
+            IF (SELECT stockLocation FROM JEU WHERE idJeu = @idJeu) &lt;= 0   -- si plus de stock de location...
+                THROW 50010, N'Stock de location épuisé', 1;   -- ... lever une erreur métier et stopper
+            INSERT INTO LOUER (idClient, idJeu, dateDebut, nbJours)   -- sinon, enregistrer la location
+            VALUES (@idClient, @idJeu, GETDATE(), 7);   -- date du jour, durée 7 jours
+            UPDATE JEU SET stockLocation = stockLocation - 1 WHERE idJeu = @idJeu;   -- baisser le stock de 1
+        COMMIT;   -- tout a réussi : valider
+    END TRY
+    BEGIN CATCH   -- en cas d'erreur (stock épuisé ou autre)
+        IF @@TRANCOUNT &gt; 0 ROLLBACK;   -- annuler la transaction si elle est ouverte
+        THROW;   -- relancer l'erreur vers l'appelant
+    END CATCH;
+END;</pre>
+<div class="tip">Cette procédure réunit tout le cours : contrainte métier (THROW si stock nul), transaction (INSERT + UPDATE indivisibles), gestion d'erreurs (TRY…CATCH + ROLLBACK). C'est la Ludothèque qui fonctionne pour de vrai.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le modèle Ludothèque a…", opts: ["Un seul stock", "Deux stocks : stockVente et stockLocation", "Aucun stock", "Trois stocks"], a: 1, exp: "Vente et location séparées." },
+    { type: "qcm", q: "FOURNISSEUR est relié à…", opts: ["CLIENT", "JEU (idFournisseur)", "LOUER", "CATEGORIE"], a: 1, exp: "Le jeu a un fournisseur." },
+    { type: "qcm", q: "idJeu se déclare avec…", opts: ["NVARCHAR", "INT IDENTITY(1,1) PRIMARY KEY", "UNIQUE seul", "DEFAULT"], a: 1, exp: "Clé auto-incrémentée." },
+    { type: "qcm", q: "Empêcher un stock négatif :", opts: ["NOT NULL", "CHECK (stockLocation >= 0)", "UNIQUE", "IDENTITY"], a: 1, exp: "CHECK." },
+    { type: "qcm", q: "Relier JEU à CATEGORIE :", opts: ["UNIQUE", "FOREIGN KEY (idCategorie) REFERENCES CATEGORIE", "CHECK", "DEFAULT"], a: 1, exp: "Clé étrangère." },
+    { type: "qcm", q: "Le top jeu par catégorie utilise…", opts: ["GROUP BY seul", "ROW_NUMBER OVER (PARTITION BY ...) + WHERE r = 1", "TOP 1 global", "UNION"], a: 1, exp: "Fenêtrage." },
+    { type: "qcm", q: "Louer implique idéalement…", opts: ["Une seule écriture", "INSERT dans LOUER + UPDATE du stock, en transaction", "Aucune écriture", "Un SELECT"], a: 1, exp: "Opérations liées." },
+    { type: "qcm", q: "Signaler un stock épuisé :", opts: ["PRINT seul", "THROW 50010, N'...', 1", "RETURN", "COMMIT"], a: 1, exp: "Erreur métier." },
+    { type: "qcm", q: "Protéger la procédure des erreurs :", opts: ["WHERE", "TRY…CATCH + ROLLBACK", "TOP", "index"], a: 1, exp: "Robustesse." },
+    { type: "qcm", q: "idFournisseur peut être NULL car…", opts: ["Toujours obligatoire", "Un jeu peut ne pas avoir de fournisseur enregistré", "C'est une clé primaire", "C'est un index"], a: 1, exp: "Relation optionnelle." },
+    { type: "vf", q: "La même Ludothèque sert de fil rouge dans tous les cours pour comparer les langages.", a: true, exp: "Application commune." },
+    { type: "qcm", q: "Peupler JEU sans fournir idJeu, c'est normal car…", opts: ["Oubli", "idJeu est IDENTITY (auto-généré)", "Erreur", "NULL"], a: 1, exp: "IDENTITY." },
+    { type: "vf", q: "La procédure Louer combine contrainte métier, transaction et gestion d'erreurs.", a: true, exp: "Synthèse du cours." },
+    { type: "qcm", q: "Compter les locations par jeu, 0 compris :", opts: ["INNER JOIN + COUNT(*)", "LEFT JOIN LOUER + COUNT(l.idJeu)", "TOP", "UNION"], a: 1, exp: "LEFT JOIN." },
+    { type: "qcm", q: "ACHETER et LOUER sont…", opts: ["La même table", "Deux tables distinctes (acheter vs louer)", "Des vues", "Des index"], a: 1, exp: "Deux usages du jeu." }
+  ],
+  final: {
+    title: "Exercice final — La procédure d'achat complète",
+    intro: `<p>À l'image de Louer, on veut une procédure Acheter, robuste et atomique.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock concerné par un achat :", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "La vente touche stockVente." },
+      { type: "qcm", q: "Rendre l'achat indivisible :", opts: ["Deux requêtes séparées", "BEGIN TRANSACTION ... COMMIT", "TOP", "UNION"], a: 1, exp: "Transaction." },
+      { type: "qcm", q: "Refuser si stock nul :", opts: ["PRINT", "THROW une erreur métier", "COMMIT", "SELECT"], a: 1, exp: "THROW." },
+      { type: "qcm", q: "En cas d'erreur :", opts: ["COMMIT", "ROLLBACK dans le CATCH", "TOP", "rien"], a: 1, exp: "Annulation." },
+      { type: "vf", q: "La structure d'Acheter reprend celle de Louer, sur stockVente au lieu de stockLocation.", a: true, exp: "Même motif." }
+    ],
+    solution: `<pre class="pseudo">CREATE PROCEDURE Acheter @idClient INT, @idJeu INT   -- procédure Acheter, deux paramètres
+AS
+BEGIN
+    SET NOCOUNT ON;   -- silence le compteur de lignes
+    BEGIN TRY   -- zone protégée
+        BEGIN TRANSACTION;   -- ouvrir la transaction
+            IF (SELECT stockVente FROM JEU WHERE idJeu = @idJeu) &lt;= 0   -- si plus de stock de vente...
+                THROW 50011, N'Stock de vente épuisé', 1;   -- ... lever une erreur métier
+            INSERT INTO ACHETER (idClient, idJeu, dateAchat)   -- enregistrer l'achat
+            VALUES (@idClient, @idJeu, GETDATE());   -- à la date du jour
+            UPDATE JEU SET stockVente = stockVente - 1 WHERE idJeu = @idJeu;   -- baisser le stock de vente
+        COMMIT;   -- valider si tout va bien
+    END TRY
+    BEGIN CATCH   -- en cas d'erreur
+        IF @@TRANCOUNT &gt; 0 ROLLBACK;   -- annuler la transaction
+        THROW;   -- relancer l'erreur
+    END CATCH;
+END;</pre>
+<p>La Ludothèque tourne en T-SQL. Demain : l'examen final.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête de synthèse…",
+  items: [
+  { id: "sqlsrv-l20", title: "Tableau de bord de la Ludothèque", level: 3,
+    statement: "Écris une requête « tableau de bord » qui, pour chaque catégorie, affiche : le libellé, le nombre de jeux, le stock de location total, le stock de vente total et le nombre total de locations. Utilise les bonnes jointures (LEFT JOIN pour ne perdre aucune catégorie) et un GROUP BY.",
+    hints: [
+      "Pars de CATEGORIE, LEFT JOIN JEU, LEFT JOIN LOUER.",
+      "SUM(stockLocation), SUM(stockVente), COUNT(DISTINCT j.idJeu), COUNT(l.idJeu).",
+      "GROUP BY c.libelle ; attention à compter les jeux distincts (la jointure LOUER multiplie les lignes)."
+    ],
+    solution: "SELECT c.libelle,\n       COUNT(DISTINCT j.idJeu) AS nb_jeux,\n       SUM(j.stockLocation)   AS stock_loc,\n       SUM(j.stockVente)      AS stock_vente,\n       COUNT(l.idJeu)         AS nb_locations\nFROM CATEGORIE c\nLEFT JOIN JEU   j ON j.idCategorie = c.idCategorie\nLEFT JOIN LOUER l ON l.idJeu = j.idJeu\nGROUP BY c.libelle\nORDER BY nb_jeux DESC;",
+    note: "Ce tableau de bord mobilise tout : jointures externes pour garder toutes les catégories, agrégats multiples, et COUNT(DISTINCT) pour ne pas surcompter les jeux quand la jointure avec LOUER duplique les lignes. C'est le genre de requête d'analyse qu'on écrit au quotidien sur une vraie base." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

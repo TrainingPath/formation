@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Qualité : logs, performance (N+1), .env",
+  subtitle: "Les réflexes qui rendent l'application prête pour de vrais utilisateurs.",
+  theory: `
+<h3>1. Journaliser (logs)</h3>
+<p><strong>Journaliser</strong> (ou « logguer »), c'est écrire dans un <strong>journal</strong> (en anglais <em>log</em>) une trace de ce que fait l'application, comme le carnet de bord d'un navire. Cela sert à l'<em>audit</em> (savoir qui a fait quoi) et au <em>débogage</em> (comprendre un bug après coup).</p>
+<pre class="pseudo">use Illuminate\\Support\\Facades\\Log;                      // importe l'outil de journalisation
+
+Log::info('Location enregistrée', ['jeu' => \$idJeu, 'client' => \$idClient]);  // message d'INFO + contexte (quel jeu, quel client)
+Log::warning('Stock épuisé', ['jeu' => \$idJeu]);           // message d'AVERTISSEMENT : situation anormale mais gérée
+Log::error('Échec du paiement', ['exception' => \$e->getMessage()]);  // message d'ERREUR : quelque chose a échoué</pre>
+<p><code>Log</code> est une <strong>façade</strong> : un point d'accès simple et global à un outil de Laravel. On choisit un <strong>niveau</strong> selon la gravité — <code>info</code> (information normale), <code>warning</code> (avertissement), <code>error</code> (erreur) — et on joint un <strong>contexte</strong> structuré (un tableau de détails) qui rend le journal exploitable.</p>
+<div class="warn">Ne jamais journaliser de données sensibles : mot de passe, jeton, numéro de carte. Un log est lu par d'autres et conservé longtemps.</div>
+
+<h3>2. Le problème N+1</h3>
+<p>Afficher 20 jeux puis lire <code>\$jeu-&gt;categorie</code> pour chacun déclenche <strong>1 + 20 requêtes</strong> à la base (1 pour la liste, puis 1 par jeu). C'est le fameux <strong>problème N+1</strong> : sur de grandes listes, cette avalanche de requêtes rend tout très lent.</p>
+<pre class="pseudo">// solution : eager loading (chargement anticipé)
+\$jeux = Jeu::with('categorie')->paginate(10);   // charge toutes les catégories en UNE seule requête</pre>
+<p>L'<strong>eager loading</strong> (« chargement anticipé »), via <code>with('categorie')</code>, précharge d'un coup les données liées : on passe de 1 + N requêtes à seulement 2. Une <strong>requête</strong> étant une question posée à la base de données.</p>
+
+<h3>3. Ne demander que le nécessaire</h3>
+<pre class="pseudo">Jeu::count();                          // compte les jeux côté base, sans les charger
+Jeu::where('stock_location', '>', 0)->exists();  // test d'existence : « y a-t-il au moins un jeu en stock ? » (vrai/faux)
+Jeu::select('id', 'titre')->get();     // ne récupère que les colonnes id et titre (pas toute la ligne)</pre>
+<p>On laisse la <strong>base</strong> filtrer, compter, paginer — c'est son métier et elle est optimisée pour ça — plutôt que de tout ramener en PHP pour le traiter ensuite. <code>count()</code> compte, <code>exists()</code> teste la présence, <code>select(...)</code> limite les colonnes rapatriées.</p>
+
+<h3>4. Les secrets dans .env</h3>
+<pre class="pseudo"># .env — fichier de configuration, jamais mis dans Git
+DB_PASSWORD=...                        # mot de passe de la base de données
+STRIPE_SECRET=...                      # clé secrète du prestataire de paiement
+// dans le code : config('services.stripe.secret'), jamais écrit en dur</pre>
+<p>Un <strong>secret</strong> est une information confidentielle (mot de passe, clé d'accès). On les range dans un fichier <code>.env</code> (pour <em>environment</em>, « environnement »), séparé du code et lu via la fonction <code>config()</code>. <strong>Git</strong> étant l'outil qui archive et partage le code : un secret <em>commité</em> (enregistré dans l'historique Git) est un secret compromis, car visible par tous ceux qui ont accès au dépôt.</p>
+
+<h3>5. Cache et index</h3>
+<div class="tip">On ajoute un <strong>index</strong> sur les colonnes souvent filtrées (titre, categorie_id) — comme en cours MySQL, c'est une table des matières qui accélère les recherches — et on peut mettre en <strong>cache</strong> (garder en mémoire rapide) des données coûteuses à recalculer (<code>Cache::remember(...)</code>). Logs, N+1, secrets, index : ces réflexes distinguent un exercice d'une application déployable. On les met en place avant la mise en ligne (demain).</div>`,
+  exercises: [
+    { type: "qcm", q: "Les logs servent à…", opts: ["Trier", "Tracer ce qui se passe (audit, débogage)", "Chiffrer", "Compiler"], a: 1, exp: "Observabilité." },
+    { type: "qcm", q: "La façade de log :", opts: ["echo", "Log::info(...)", "print", "var_dump"], a: 1, exp: "Log." },
+    { type: "qcm", q: "Un niveau de log courant :", opts: ["info / warning / error", "big / small", "on / off", "red / green"], a: 0, exp: "Niveaux." },
+    { type: "qcm", q: "Logguer un mot de passe…", opts: ["Est utile", "Est interdit (donnée sensible)", "Accélère", "Sécurise"], a: 1, exp: "Jamais de secret." },
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Un bug d'affichage", "1 + N requêtes en boucle (très lent)", "Une faille XSS", "Un souci de CSS"], a: 1, exp: "Trop de requêtes." },
+    { type: "qcm", q: "Éviter le N+1 :", opts: ["Boucler plus vite", "with('categorie') (eager loading)", "Supprimer la relation", "Un index unique"], a: 1, exp: "Préchargement." },
+    { type: "qcm", q: "Compter sans tout charger :", opts: ["all()->count()", "Jeu::count()", "un stream", "un DTO"], a: 1, exp: "count() délègue à la base." },
+    { type: "qcm", q: "Filtrer se fait idéalement…", opts: ["En PHP après tout charger", "Côté base (where)", "Dans la vue", "Dans le log"], a: 1, exp: "La base travaille." },
+    { type: "qcm", q: "Les secrets viennent…", opts: ["Du code en dur", "De .env (via config())", "Du dépôt Git", "Du HTML"], a: 1, exp: "Hors du code." },
+    { type: "qcm", q: "Un secret commité dans Git est…", opts: ["Sûr", "Compromis", "Chiffré", "Ignoré"], a: 1, exp: "À révoquer." },
+    { type: "vf", q: "On laisse la base filtrer/compter/paginer plutôt que tout charger.", a: true, exp: "Efficacité." },
+    { type: "qcm", q: "Indexer aide sur…", opts: ["Les colonnes jamais utilisées", "Les colonnes souvent filtrées (titre, categorie_id)", "Le CSS", "Les logs"], a: 1, exp: "Recherche rapide." },
+    { type: "vf", q: "Log::info accepte un contexte structuré (tableau).", a: true, exp: "Contexte utile." },
+    { type: "qcm", q: "Cache::remember sert à…", opts: ["Trier", "Mettre en cache des données coûteuses", "Migrer", "Router"], a: 1, exp: "Performance." },
+    { type: "qcm", q: "Ces réflexes servent surtout…", opts: ["À ralentir", "À rendre l'app prête pour la production", "À supprimer des tests", "À rien"], a: 1, exp: "Qualité." }
+  ],
+  final: {
+    title: "Exercice final — Durcir l'application",
+    intro: `<p>On applique les réflexes de production.</p>`,
+    questions: [
+      { type: "qcm", q: "Tracer une location :", opts: ["Log::info('Location', ['jeu' => $idJeu])", "echo", "print", "var_dump"], a: 0, exp: "Log structuré." },
+      { type: "qcm", q: "Corriger un N+1 :", opts: ["with('categorie')", "boucler plus", "supprimer la relation", "un index unique"], a: 0, exp: "Eager loading." },
+      { type: "qcm", q: "Compter efficacement :", opts: ["Jeu::count()", "all()->count()", "tout charger", "un log"], a: 0, exp: "Délégué à la base." },
+      { type: "qcm", q: "Le mot de passe de base :", opts: ["en dur", "dans .env (config())", "dans une vue", "dans un log"], a: 1, exp: "Secret externe." },
+      { type: "vf", q: "Un secret ne doit jamais être commité dans le dépôt.", a: true, exp: "Compromission." }
+    ],
+    solution: `<pre class="pseudo">use Illuminate\\Support\\Facades\\Log;                      // outil de journalisation
+Log::info('Location', ['jeu' => \$idJeu, 'client' => \$idClient]);  // trace le succès + contexte
+
+// éviter le N+1
+\$jeux = Jeu::with('categorie')->paginate(10);              // précharge les catégories (1 requête, pas N)
+
+// secrets
+# .env : STRIPE_SECRET=...
+\$cle = config('services.stripe.secret');   // lu via config(), jamais écrit en dur</pre>
+<p>L'application est robuste et rapide. Demain : la mettre en ligne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes améliorations de qualité…",
+  items: [
+  { id: "projphp-l19", title: "Tracer et optimiser la location", level: 2,
+    statement: "Dans LocationService::louer, ajoute un log d'information au succès (id du jeu et du client) et un log d'avertissement quand le stock est insuffisant, avant de lever l'exception. Indique aussi comment éviter un N+1 si on affiche la catégorie de chaque location.",
+    hints: [
+      "use Illuminate\\Support\\Facades\\Log;",
+      "Log::warning('Stock épuisé', ['jeu' => $idJeu]); avant le throw ; Log::info(...) après le decrement.",
+      "Pour le N+1 : Location::with('jeu.categorie')->get() au moment de l'affichage."
+    ],
+    solution: "use Illuminate\\Support\\Facades\\Log;                      // outil de journalisation\n\npublic function louer(int $idClient, int $idJeu): void {    // méthode « louer » (ne renvoie rien)\n    DB::transaction(function () use ($idClient, $idJeu) {   // bloc atomique « tout ou rien »\n        $jeu = Jeu::findOrFail($idJeu);                     // récupère le jeu (404 sinon)\n        if ($jeu->stock_location <= 0) {                    // stock de location épuisé ?\n            Log::warning('Stock de location épuisé', ['jeu' => $idJeu]);  // trace l'anomalie (avertissement)\n            throw new StockInsuffisantException('Plus de stock de location');  // puis refuse (exception)\n        }\n        Location::create([                                  // crée la fiche de location…\n            'client_id' => $idClient, 'jeu_id' => $idJeu,   // client + jeu\n            'date_debut' => now(), 'nb_jours' => 7,         // date du jour, durée 7 jours\n        ]);\n        $jeu->decrement('stock_location');                  // retire 1 au stock de location\n        Log::info('Location enregistrée', ['jeu' => $idJeu, 'client' => $idClient]);  // trace le succès + contexte\n    });\n}\n\n// à l'affichage, éviter le N+1 :\n// Location::with('jeu.categorie')->get();",
+    note: "Les logs tracent succès et anomalie avec un contexte structuré, sans jamais divulguer de secret. L'eager loading (with('jeu.categorie')) supprime le N+1 sur les listes — une requête au lieu de N, comme en cours MySQL. Ce sont les réflexes qui rendent l'application déployable." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

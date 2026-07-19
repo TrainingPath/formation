@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Les services et leurs durées de vie",
+  subtitle: "Singleton, Scoped, Transient : quand le conteneur crée-t-il les objets ?",
+  theory: `
+<h3>1. La question du jour</h3>
+<p>Rappel : un <strong>service</strong> est un objet réutilisable qui rend un service à d'autres objets (accéder aux données, envoyer un mail…), et le <strong>conteneur</strong> est l'annuaire qui les fabrique et les fournit (leçon 2). Hier, tu as enregistré des services avec <code>AddScoped</code>. Mais le conteneur propose trois méthodes : <code>AddSingleton</code>, <code>AddScoped</code>, <code>AddTransient</code>. La différence ? <strong>La durée de vie</strong> de l'objet créé — c'est-à-dire <em>combien de temps le même objet est réutilisé</em> avant que le conteneur en fabrique un neuf.</p>
+<p>Avant tout, un mot clé : une <strong>requête HTTP</strong> est un aller-retour complet entre le navigateur (qui demande) et ton serveur (qui répond) — une commande passée au restaurant, servie, puis terminée. La « durée de vie » se mesure par rapport à ces requêtes.</p>
+<h3>2. Les trois durées de vie</h3>
+<pre class="pseudo">AddSingleton&lt;ICompteur, Compteur&gt;();                 // enregistre un Compteur en SINGLETON
+→ UNE instance pour TOUTE la vie de l'application.
+  Tous les utilisateurs, toutes les requêtes : le même objet.
+
+AddScoped&lt;IStockage, StockageBdd&gt;();                // enregistre un StockageBdd en SCOPED
+→ UNE instance PAR REQUÊTE HTTP.
+  Tous les services d'une même requête partagent l'objet ;
+  la requête suivante en reçoit un neuf.
+
+AddTransient&lt;IGenerateurId, GenerateurId&gt;();        // enregistre un GenerateurId en TRANSIENT
+→ UNE instance NEUVE À CHAQUE injection.
+  Deux classes qui le demandent reçoivent deux objets différents.</pre>
+<p><strong>Singleton</strong> (« un seul ») = un unique exemplaire partagé par tout le monde. <strong>Scoped</strong> vient de <em>scope</em> (« portée ») : ici la portée est la requête, donc un exemplaire par requête. <strong>Transient</strong> (« éphémère ») = un exemplaire jetable, recréé à chaque fois qu'on le réclame.</p>
+<h3>3. Comment choisir ?</h3>
+<ul>
+<li><strong>Singleton</strong> : état partagé global, objets coûteux à créer, caches, configuration. Attention : partagé par tous → doit supporter les accès simultanés, et ne JAMAIS y stocker des données propres à un utilisateur.</li>
+<li><strong>Scoped</strong> : le choix par défaut du web. Le contexte de base de données (DbContext, leçon 8) est Scoped : une unité de travail par requête.</li>
+<li><strong>Transient</strong> : petits services légers et sans état.</li>
+</ul>
+<h3>4. Le piège classique</h3>
+<pre class="pseudo">builder.Services.AddSingleton&lt;PanierUtilisateur&gt;();   // ⚠ BUG ! un seul panier partagé par TOUS les visiteurs du site</pre>
+<p>Un panier en Singleton = <strong>le même panier pour tous les visiteurs du site</strong>. Aurélia ajoute un article, Marc le voit dans SON panier. Les données par utilisateur ne vont jamais dans un Singleton.</p>
+<h3>5. Notre premier vrai service : le stockage en mémoire</h3>
+<p>En attendant la base de données (semaine 2), le gestionnaire de tâches utilisera un stockage en mémoire — la List&lt;T&gt; de la leçon 10 de C#. « En mémoire » veut dire « dans la RAM, sans fichier ni base » : rapide, mais effacé au redémarrage.</p>
+<pre class="pseudo">public class StockageMemoire : IStockageTaches      // implémente le contrat IStockageTaches (leçon 2)
+{
+    private readonly List&lt;Tache&gt; _taches = new();    // la liste qui garde les tâches en RAM ; new() la crée vide
+    private int _prochainId = 1;                     // le prochain identifiant à attribuer (démarre à 1)
+
+    public List&lt;Tache&gt; ToutesLesTaches() =&gt; _taches; // renvoie la liste complète (=> = méthode d'une seule ligne)
+    public void Ajouter(Tache t) { t.Id = _prochainId++; _taches.Add(t); }  // affecte un id puis (++ ) l'incrémente, et range la tâche
+}
+
+// Singleton : la liste doit SURVIVRE d'une requête à l'autre !
+builder.Services.AddSingleton&lt;IStockageTaches, StockageMemoire&gt;();  // un seul StockageMemoire pour toute l'appli → la liste persiste</pre>
+<div class="warn">Si tu enregistres StockageMemoire en Scoped, chaque requête reçoit une liste NEUVE : tes tâches « disparaissent » à chaque appel. Ce bug déroutant est un grand classique du débutant.</div>
+<div class="tip">En cas de doute : Scoped. C'est le bon choix pour presque tout ce qui touche aux données d'une requête, et le DbContext de la semaine 2 l'exigera.</div>
+<h3>Aller plus loin — pré-incrément (++i) et post-incrément (i++)</h3>
+<p>Les deux écritures ajoutent 1 à la variable ; la différence n'apparaît que lorsqu'on <strong>lit la valeur au moment même</strong> de l'incrémentation. La formule à retenir : <code>i++</code> « donne sa valeur, PUIS grandit » ; <code>++i</code> « grandit, PUIS donne sa valeur ».</p>
+<pre class="pseudo">int a = 5;        // a vaut 5
+int b = a++;      // POST-increment : b prend l'ANCIENNE valeur -> b = 5, et ENSUITE a passe a 6
+int c = 5;        // c vaut 5
+int d = ++c;      // PRE-increment : c passe d'abord a 6, PUIS d prend la NOUVELLE valeur -> d = 6</pre>
+<p>Dans une boucle <code>for (i = 0; i &lt; 5; i++)</code>, on ne lit pas le résultat de <code>i++</code> : on veut seulement « ajouter 1 ». C'est pourquoi <code>i++</code> et <code>++i</code> y donnent exactement la même boucle et sont interchangeables.</p>`,
+  exercises: [
+    { type: "qcm", q: "Combien d'instances d'un service Singleton existent dans l'application ?", opts: ["Une par requête", "Une seule, partagée par tout le monde, pour toute la vie de l'application", "Une par injection", "Deux"], a: 1, exp: "Single = unique." },
+    { type: "qcm", q: "Et pour un service Scoped ?", opts: ["Une seule pour toujours", "Une par requête HTTP, partagée au sein de cette requête", "Une par classe", "Aucune"], a: 1, exp: "Le « scope » (portée) d'ASP.NET Core, c'est la requête." },
+    { type: "qcm", q: "Et pour un Transient ?", opts: ["Une par requête", "Une nouvelle instance à CHAQUE injection", "Une pour toute l'application", "Une par jour"], a: 1, exp: "Transient = éphémère : jamais partagé." },
+    { type: "qcm", q: "Deux services de la MÊME requête demandent le même service Scoped. Ils reçoivent :", opts: ["Deux instances différentes", "La même instance", "Une erreur", "null"], a: 1, exp: "Partagé dans la requête, renouvelé entre les requêtes." },
+    { type: "qcm", q: "Quel est le bon choix pour un cache d'application coûteux à construire ?", opts: ["Transient", "Singleton : construit une fois, partagé par tous", "Scoped", "Aucun"], a: 1, exp: "Un cache par requête n'aurait aucun intérêt." },
+    { type: "qcm", q: "Pourquoi un PanierUtilisateur en Singleton est-il un bug grave ?", opts: ["Trop lent", "Le panier serait PARTAGÉ entre tous les visiteurs du site", "Il serait vidé à chaque requête", "Le compilateur refuse"], a: 1, exp: "Données par utilisateur ≠ état global. Jamais dans un Singleton." },
+    { type: "qcm", q: "Pourquoi notre StockageMemoire doit-il être Singleton ?", opts: ["Pour la vitesse", "La liste des tâches doit survivre d'une requête à l'autre : en Scoped, elle serait recréée vide à chaque appel", "C'est la mode", "Sinon erreur de compilation"], a: 1, exp: "L'état en mémoire n'a de sens que s'il persiste entre les requêtes." },
+    { type: "qcm", q: "Symptôme : « j'ajoute une tâche, mais GET /taches renvoie toujours une liste vide ». Diagnostic probable ?", opts: ["Kestrel est cassé", "Le stockage en mémoire est enregistré en Scoped/Transient : chaque requête reçoit une liste neuve", "La liste est privée", "Il manque un using"], a: 1, exp: "LE bug classique des durées de vie." },
+    { type: "qcm", q: "Quelle durée de vie aura le DbContext d'Entity Framework (semaine 2) ?", opts: ["Singleton", "Scoped : une unité de travail par requête", "Transient", "Aucune"], a: 1, exp: "AddDbContext l'enregistre en Scoped par défaut — pour de bonnes raisons." },
+    { type: "qcm", q: "Quel réflexe en cas de doute sur la durée de vie ?", opts: ["Singleton", "Scoped, le choix par défaut du web", "Transient", "Pile ou face"], a: 1, exp: "Sûr et adapté à la majorité des cas." },
+    { type: "qcm", q: "Un service Singleton peut-il stocker l'utilisateur actuellement connecté dans un champ ?", opts: ["Oui, c'est pratique", "Non : le champ serait écrasé par chaque requête concurrente — données par utilisateur interdites", "Oui, en readonly", "Oui, le vendredi"], a: 1, exp: "Tous les visiteurs partagent l'objet : chaos garanti." },
+    { type: "qcm", q: "Un GenerateurDeCouleurAleatoire, minuscule et sans état. Durée de vie naturelle ?", opts: ["Singleton obligatoirement", "Transient convient parfaitement (léger, sans état)", "Scoped obligatoirement", "Aucune"], a: 1, exp: "Sans état, la question du partage ne se pose pas : Transient est le plus simple." },
+    { type: "input", q: "Quelle méthode enregistre un service avec une instance par requête HTTP ?", a: ["AddScoped", "addscoped"], ph: "nom de la méthode", exp: "builder.Services.AddScoped<I, C>()." },
+    { type: "vf", q: "Un Singleton est détruit et recréé à la fin de chaque requête.", a: false, exp: "Non : il vit aussi longtemps que l'application." },
+    { type: "vf", q: "Le choix de la durée de vie se fait à l'ENREGISTREMENT (Program.cs), pas dans la classe elle-même.", a: true, exp: "La même classe pourrait être Singleton dans une app et Scoped dans une autre." }
+  ],
+  final: {
+    title: "Exercice final — L'audit des durées de vie",
+    intro: `<p>Un stagiaire a enregistré ces services pour le gestionnaire de tâches. Audit !</p>
+<pre class="pseudo">// 1. Le stockage en mémoire des tâches (List&lt;Tache&gt; interne)
+builder.Services.AddTransient&lt;IStockageTaches, StockageMemoire&gt;();  // ⚠ Transient : une liste NEUVE à chaque injection → tâches perdues
+
+// 2. Le compteur global de visites (statistiques du site)
+builder.Services.AddScoped&lt;ICompteurVisites, CompteurVisites&gt;();    // ⚠ Scoped : le compteur repart de zéro à chaque requête
+
+// 3. Les préférences de l'utilisateur CONNECTÉ (thème, langue)
+builder.Services.AddSingleton&lt;PreferencesUtilisateur&gt;();            // ⚠ Singleton : mêmes préférences partagées par TOUS les visiteurs
+
+// 4. Un formateur de dates, sans état
+builder.Services.AddTransient&lt;IFormateurDate, FormateurDate&gt;();     // OK : sans état et léger → Transient est un choix sain</pre>`,
+    questions: [
+      { type: "qcm", q: "Enregistrement 1 (stockage mémoire en Transient) : conséquence ?", opts: ["Correct", "Chaque injection reçoit une liste NEUVE : les tâches disparaissent — il faut Singleton", "Trop lent", "Erreur de compilation"], a: 1, exp: "L'état doit survivre : Singleton." },
+      { type: "qcm", q: "Enregistrement 2 (compteur global en Scoped) : conséquence ?", opts: ["Correct", "Le compteur repart de zéro à chaque requête : les statistiques sont fausses — il faut Singleton", "Le compteur est trop rapide", "404"], a: 1, exp: "Un état GLOBAL appartient à un Singleton." },
+      { type: "qcm", q: "Enregistrement 3 (préférences utilisateur en Singleton) : conséquence ?", opts: ["Correct", "Tous les visiteurs partagent les mêmes préférences : Aurélia passe en thème sombre, tout le site aussi — Scoped (ou mieux : par session)", "Les préférences sont perdues", "Rien"], a: 1, exp: "Données par utilisateur ≠ Singleton. LE piège de la leçon." },
+      { type: "qcm", q: "Enregistrement 4 (formateur sans état en Transient) :", opts: ["Bug", "Correct : léger et sans état, Transient est un choix sain", "Il faut Singleton obligatoirement", "Il faut le supprimer"], a: 1, exp: "Un des rares enregistrements corrects du stagiaire !" },
+      { type: "vf", q: "Ces quatre bugs seraient tous visibles à la compilation.", a: false, exp: "Aucun ! Les durées de vie compilent toujours — les bugs n'apparaissent qu'à l'exécution. D'où l'importance de comprendre." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 3 :
+// 1. Singleton : 1 instance pour l'application → état global, caches.
+//    JAMAIS de données par utilisateur.
+// 2. Scoped : 1 instance par requête → le défaut du web, futur DbContext.
+// 3. Transient : 1 instance par injection → petits services sans état.
+// 4. Stockage EN MÉMOIRE → Singleton (l'état doit survivre aux requêtes).
+// 5. Ces bugs ne se compilent pas : ils s'exécutent. Comprendre > retenir.</pre>
+<p>Assez de plomberie : demain, on expose enfin notre première API avec un vrai contrôleur !</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-stockage-memoire", title: "Le stockage en mémoire du gestionnaire", level: 2,
+    statement: "Écris l'interface <code>IStockageTaches</code> (méthodes : <code>List&lt;Tache&gt; Toutes()</code>, <code>Tache? ParId(int id)</code>, <code>void Ajouter(Tache t)</code>) puis la classe <code>StockageMemoire</code> qui l'implémente avec une <code>List&lt;Tache&gt;</code> privée et un compteur d'id auto-incrémenté. <code>ParId</code> utilisera la méthode LINQ <code>FirstOrDefault</code> (leçon 18 de C#). Termine par la ligne d'enregistrement au conteneur avec la BONNE durée de vie.",
+    hints: [
+      "L'interface liste les signatures, sans corps. La classe : public class StockageMemoire : IStockageTaches.",
+      "Ajouter : t.Id = _prochainId++; puis _taches.Add(t);",
+      "La liste doit survivre entre les requêtes : quelle durée de vie garantit une instance unique ?"
+    ],
+    solution: "public interface IStockageTaches                 // le contrat du stockage des tâches\n{\n    List<Tache> Toutes();                        // renvoyer toutes les tâches\n    Tache? ParId(int id);                        // renvoyer une tâche par son id, ou null\n    void Ajouter(Tache t);                       // ajouter une tâche\n}\n\npublic class StockageMemoire : IStockageTaches   // une implémentation qui garde tout en RAM\n{\n    private readonly List<Tache> _taches = new();  // l'état, privé\n    private int _prochainId = 1;                 // prochain id à attribuer\n\n    public List<Tache> Toutes() => _taches;      // renvoie la liste complète\n\n    public Tache? ParId(int id)\n        => _taches.FirstOrDefault(t => t.Id == id); // LINQ, leçon 18 de C#\n\n    public void Ajouter(Tache t)\n    {\n        t.Id = _prochainId++;                       // id auto-incrémenté\n        _taches.Add(t);                             // range la tâche dans la liste\n    }\n}\n\n// Program.cs — Singleton : la liste doit SURVIVRE aux requêtes\nbuilder.Services.AddSingleton<IStockageTaches, StockageMemoire>();",
+    note: "Ce service nous accompagne jusqu'à la leçon 8, où Entity Framework le remplacera… en changeant une seule ligne d'enregistrement. La magie de la DI." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

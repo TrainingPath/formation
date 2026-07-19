@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Concevoir l'API de la Ludothèque : les endpoints",
+  subtitle: "Avant d'écrire une ligne de code, on dessine le contrat.",
+  theory: `
+<h3>1. Partir du domaine, pas du code</h3>
+<p>Semaine 1, tu as appris la grammaire : HTTP, JSON, méthodes, codes, ressources. Cette semaine, on s'en sert pour <strong>concevoir une vraie API</strong> : celle de la <strong>Ludothèque</strong>, l'application de location et de vente de jeux de société que tu retrouveras dans les capstones. La première étape ne parle ni de Django ni de Spring : on <strong>inventorie les ressources du domaine</strong>. Le <strong>domaine</strong>, c'est le « sujet » de l'application (ici : prêter et vendre des jeux) ; une <strong>ressource</strong>, rappelons-le, est une « chose » manipulable exposée par l'API. On cherche donc les concepts métier que les clients de l'API voudront lire et manipuler.</p>
+<pre class="pseudo">La Ludothèque, c'est quoi ?                             # on liste les grands concepts métier (les futures « ressources »)
+→ des JEUX      (le catalogue : Catan, Azul, Dixit…)   # ressource 1 : les jeux à louer ou à vendre
+→ des MEMBRES   (les personnes inscrites)              # ressource 2 : les personnes inscrites
+→ des LOCATIONS (tel membre emprunte tel jeu)          # ressource 3 : un emprunt (en cours ou passé)
+→ des AVIS      (un membre note un jeu)                # ressource 4 : les notes et commentaires</pre>
+<p>Quatre ressources. Si tu sais dire « les clients voudront lister X, créer un X, modifier un X », alors X est probablement une ressource.</p>
+
+<h3>2. Les nommer : des noms, au pluriel</h3>
+<p>Leçon 6, tu l'as vu : une URL désigne une <strong>chose</strong>, jamais une action. Convention : <strong>nom commun, au pluriel, en minuscules</strong>. Le verbe, lui, est déjà porté par la méthode HTTP — inutile de le répéter dans le chemin. Une mauvaise habitude qu'on voit revenir sans cesse s'appelle un <strong>anti-pattern</strong> (un « faux bon réflexe » à éviter) :</p>
+<pre class="pseudo">✗ À BANNIR                    ✓ À LA PLACE               # à gauche : URL fautive (un verbe dedans) ; à droite : la bonne forme
+/creerJeu                     POST   /jeux               # « créer » est déjà dit par POST → l'URL ne garde que la chose : /jeux
+/jeux/supprimer/5             DELETE /jeux/5             # « supprimer » est dit par DELETE → chemin = /jeux/5
+/getAllJeux                   GET    /jeux               # « get all » est dit par GET → chemin = /jeux
+/modifierMembre?id=12         PATCH  /membres/12         # « modifier » est dit par PATCH → chemin = /membres/12</pre>
+<p>Nos quatre collections s'appellent donc <code>/jeux</code>, <code>/membres</code>, <code>/locations</code> et <code>/avis</code>, sous l'<strong>URL de base</strong> (le début d'adresse commun à tous les endpoints) <code>https://api.ludotheque.example</code>.</p>
+
+<h3>3. Croiser ressources et méthodes : le tableau des endpoints</h3>
+<p>Un <strong>endpoint</strong> (« point d'accès ») = une méthode + un chemin, c'est-à-dire une opération précise qu'on peut appeler. On croise chaque ressource avec les méthodes HTTP qui ont du sens pour elle. Voici <strong>LE contrat de la Ludothèque</strong>, que les leçons suivantes vont détailler et enrichir :</p>
+<pre class="pseudo">GET    /jeux                   → lister le catalogue               # lire la collection entière des jeux
+POST   /jeux                   → ajouter un jeu                    # créer un nouveau jeu
+GET    /jeux/5                 → détail du jeu 5                   # lire un élément précis
+PUT    /jeux/5                 → remplacer le jeu 5 en entier      # remplacement COMPLET de la fiche
+PATCH  /jeux/5                 → modifier partiellement le jeu 5   # retouche de quelques champs
+DELETE /jeux/5                 → retirer le jeu 5                  # suppression de l'élément
+GET    /jeux/5/avis            → les avis du jeu 5                 # sous-ressource : les avis appartenant au jeu 5
+POST   /jeux/5/avis            → poster un avis sur le jeu 5       # créer un avis SOUS le jeu 5
+                                                                  # (ligne vide : on passe à une autre ressource)
+GET    /membres                → lister les membres               # collection des membres
+POST   /membres                → inscrire un membre               # créer un membre
+GET    /membres/12             → détail du membre 12              # lire le membre n°12
+GET    /membres/12/locations   → les locations du membre 12       # sous-ressource : les emprunts du membre 12
+                                                                  # (ligne vide : ressource suivante)
+GET    /locations              → lister les locations             # collection des locations
+POST   /locations              → créer une location (un emprunt)  # créer un emprunt
+PATCH  /locations/40           → modifier la location 40 (ex. retour)   # changer l'état d'un emprunt (ex. le rendre)</pre>
+<p>Remarque ce qui <em>manque</em> : pas de <code>DELETE /membres/12/locations</code>, pas de <code>PUT /locations</code>… On ne publie que ce qui a un sens métier. Un endpoint publié est une promesse.</p>
+
+<h3>4. Définir les représentations JSON</h3>
+<p>Pour chaque ressource, on fixe la <strong>représentation</strong> : la forme concrète (les champs, leurs types, leurs formats) sous laquelle la ressource voyagera. C'est ce que le serveur renverra et ce que le client enverra.</p>
+<pre class="pseudo">jeu      { "id": 5, "titre": "Catan", "editeur": "Kosmos",     # ressource JEU : id (nombre), titre & éditeur (chaînes)…
+           "annee": 1995, "categorie": "strategie",            # …année (nombre), catégorie (chaîne)…
+           "prix_location": 3.50, "prix_vente": 39.90,         # …deux prix (nombres décimaux, séparateur = point)…
+           "disponible": true }                                # …et disponibilité (booléen)
+                                                               # (ligne vide entre deux ressources)
+membre   { "id": 12, "nom": "Aïcha Diallo",                    # ressource MEMBRE : id (nombre) + nom (chaîne)…
+           "email": "aicha@example.com",                       # …email (chaîne)…
+           "date_inscription": "2026-01-15" }                  # …date d'inscription (chaîne, format AAAA-MM-JJ)
+                                                               # (ligne vide)
+location { "id": 40, "jeu": 5, "membre": 12,                   # ressource LOCATION : "jeu" et "membre" = ids qui RÉFÉRENCENT d'autres ressources
+           "date_debut": "2026-07-01", "date_retour": null,    # date de début ; date_retour = null tant que non rendu
+           "statut": "en_cours" }                              # statut = état de l'emprunt (en_cours / terminee)
+                                                               # (ligne vide)
+avis     { "id": 7, "jeu": 5, "membre": 12, "note": 4,         # ressource AVIS : références jeu + membre, note (nombre de 1 à 5)
+           "commentaire": "Excellent jeu de négociation",      # commentaire libre (chaîne)
+           "date": "2026-07-03" }                              # date de l'avis (chaîne, format AAAA-MM-JJ)</pre>
+<p>Note comme <code>location</code> et <code>avis</code> pointent vers un jeu et un membre par leur <strong>id</strong> : c'est la façon la plus simple de représenter une <strong>relation</strong> (un lien entre deux ressources) — la leçon 11 explorera les alternatives.</p>
+
+<h3>5. Les cas particuliers : des états, pas des verbes</h3>
+<p>« Retourner un jeu » ressemble à une action… donc à un verbe. Piège ! On le modélise comme un <strong>changement d'état</strong> de la ressource location — un état étant la « situation » actuelle de la ressource (ici : en cours, puis terminée) :</p>
+<pre class="pseudo">PATCH /locations/40                                    # on RETOUCHE la location 40 (surtout pas de verbe « retourner » dans l'URL !)
+Content-Type: application/json                         # en-tête : le corps ci-dessous est du JSON
+                                                       # (séparation entre les en-têtes et le corps)
+{ "statut": "terminee", "date_retour": "2026-07-09" }  # corps : on passe le statut à « terminee » et on note la date de retour</pre>
+<p>Même logique pour « rendre un jeu indisponible » : <code>PATCH /jeux/5</code> avec <code>{ "disponible": false }</code>. Quand une action te démange, demande-toi toujours : <em>quel état de quelle ressource change-t-elle ?</em></p>
+<div class="warn">Un verbe dans l'URL (<code>/creerJeu</code>, <code>/jeux/supprimer/5</code>) est le signe d'une API mal conçue : la méthode HTTP dit déjà l'action, l'URL doit dire la chose. Ces anti-patterns sont bannis pour tout le reste du cours.</div>
+<div class="tip">Ce tableau d'endpoints est <strong>le contrat du cours</strong> : la leçon 9 détaille le CRUD de <code>/jeux</code>, la 10 ajoute filtres et pagination, la 11 creuse <code>/jeux/5/avis</code>, la 12 les erreurs, la 13 le préfixe de version, la 14 la documentation. Garde-le sous les yeux.</div>`,
+  exercises: [
+    { type: "qcm", q: "La toute première étape pour concevoir une API :", opts: ["Choisir le framework", "Écrire les contrôleurs", "Inventorier les ressources du domaine", "Acheter un nom de domaine"], a: 2, exp: "Le métier d'abord, le code ensuite." },
+    { type: "qcm", q: "Les quatre ressources de la Ludothèque :", opts: ["jeux, ventes, factures, stocks", "jeux, membres, locations, avis", "clients, produits, paniers, avis", "jeux, joueurs, parties, scores"], a: 1, exp: "Ce sont les concepts que les clients de l'API manipulent." },
+    { type: "qcm", q: "Le bon nom pour la collection des jeux :", opts: ["/getJeux", "/jeu", "/jeux", "/listeDesJeux"], a: 2, exp: "Un nom, au pluriel, en minuscules, sans verbe." },
+    { type: "qcm", q: "Pourquoi ne met-on pas de verbe dans l'URL ?", opts: ["Parce que l'action est déjà portée par la méthode HTTP", "Parce que les verbes sont trop longs", "Parce que HTTP interdit les verbes", "Pour économiser de la bande passante"], a: 0, exp: "GET, POST, PATCH, DELETE : les verbes sont là." },
+    { type: "qcm", q: "Ajouter un jeu au catalogue :", opts: ["POST /jeux", "POST /jeux/creer", "GET /jeux/nouveau", "PUT /jeux"], a: 0, exp: "POST sur la collection crée un nouvel élément." },
+    { type: "qcm", q: "Par quoi remplacer l'anti-pattern /jeux/supprimer/5 ?", opts: ["GET /jeux/5/suppression", "DELETE /jeux/5", "POST /supprimerJeu?id=5", "PATCH /jeux/5?action=delete"], a: 1, exp: "La méthode DELETE porte l'action, l'URL désigne le jeu." },
+    { type: "qcm", q: "Le retour d'un jeu loué se modélise par :", opts: ["POST /retournerJeu", "DELETE /locations/40", "PATCH /locations/40 avec « statut »: « terminee »", "GET /locations/40/retour"], a: 2, exp: "Une action métier = un changement d'état d'une ressource." },
+    { type: "qcm", q: "GET /membres/12/locations renvoie…", opts: ["Le membre 12", "Toutes les locations de la Ludothèque", "Les locations du membre 12", "Les jeux disponibles"], a: 2, exp: "Le chemin se lit de gauche à droite : les locations DU membre 12." },
+    { type: "qcm", q: "Dans le JSON d'une location, le jeu emprunté apparaît comme…", opts: ["« jeu »: 5 — une référence par id", "Le JSON complet du jeu, toujours", "Le titre du jeu en texte", "Rien : on devine"], a: 0, exp: "La référence par id est la forme la plus simple (alternatives en leçon 11)." },
+    { type: "qcm", q: "https://api.ludotheque.example est…", opts: ["Un endpoint complet", "L'URL de base commune à tous les endpoints", "Le nom de la base de données", "Une adresse IP"], a: 1, exp: "On y accroche les chemins : /jeux, /membres…" },
+    { type: "vf", q: "Une même URL comme /jeux/5 peut répondre à plusieurs méthodes HTTP.", a: true, exp: "GET, PUT, PATCH, DELETE : quatre endpoints sur le même chemin." },
+    { type: "vf", q: "Nommer les collections au pluriel (/jeux, /membres) est la convention recommandée.", a: true, exp: "C'est la convention dominante ; l'essentiel est d'être cohérent partout." },
+    { type: "vf", q: "/creerJeu est acceptable du moment que c'est bien documenté.", a: false, exp: "Verbe dans l'URL = anti-pattern, documenté ou pas." },
+    { type: "input", q: "La méthode HTTP pour retirer le jeu 5 du catalogue :", a: ["DELETE", "delete", "Delete"], ph: "MÉTHODE", exp: "DELETE /jeux/5 — l'URL désigne, la méthode agit." },
+    { type: "input", q: "Le chemin exact pour lister les avis du jeu 5 :", a: ["/jeux/5/avis", "jeux/5/avis", "GET /jeux/5/avis"], ph: "/…", exp: "Les avis vivent sous le jeu qu'ils commentent." }
+  ],
+  final: {
+    title: "Exercice final — Le contrat est posé",
+    intro: `<p>Tu viens de dessiner l'API complète de la Ludothèque. Vérifions que le tableau des endpoints est bien en tête.</p>`,
+    questions: [
+      { type: "qcm", q: "La démarche de conception, dans l'ordre :", opts: ["Coder, tester, nommer, documenter", "Inventorier les ressources, les nommer, croiser avec les méthodes, définir le JSON, traiter les cas particuliers", "Choisir le framework, générer le code, publier", "Écrire la doc, puis inventer les endpoints"], a: 1, exp: "Cinq étapes, du domaine vers le contrat." },
+      { type: "qcm", q: "Créer une location (un emprunt) :", opts: ["POST /locations", "POST /emprunterJeu", "PUT /locations", "GET /locations/creer"], a: 0, exp: "POST sur la collection des locations." },
+      { type: "vf", q: "Le tableau des endpoints constitue le contrat de l'API : chaque ligne publiée est une promesse faite aux clients.", a: true, exp: "C'est pour ça qu'on le conçoit AVANT de coder." },
+      { type: "qcm", q: "« Rendre le jeu 5 indisponible » se traduit par :", opts: ["POST /jeux/5/desactiver", "DELETE /jeux/5", "PATCH /jeux/5 avec « disponible »: false", "GET /jeux/5?disponible=false"], a: 2, exp: "Un changement d'état = PATCH sur la ressource." },
+      { type: "input", q: "La méthode qui porte l'action de création d'une ressource :", a: ["POST", "post", "Post"], ph: "MÉTHODE", exp: "POST /jeux, POST /membres, POST /locations…" }
+    ],
+    solution: `<pre class="pseudo">Démarche : ressources → noms (pluriel) → méthodes → JSON → cas particuliers   # les 5 étapes de conception, dans l'ordre
+                                                                              # (ligne vide)
+Ressources : jeux, membres, locations, avis                                   # les 4 concepts métier retenus
+Base       : https://api.ludotheque.example                                   # l'URL commune à tous les endpoints
+                                                                              # (ligne vide)
+GET/POST  /jeux            GET/PUT/PATCH/DELETE  /jeux/5                       # collection /jeux et élément /jeux/5
+GET/POST  /jeux/5/avis                                                        # sous-ressource : les avis d'un jeu
+GET/POST  /membres         GET  /membres/12      GET  /membres/12/locations   # membres, un membre, ses locations
+GET/POST  /locations       PATCH /locations/40   (retour d'un jeu)            # locations ; le retour = un simple PATCH
+                                                                              # (ligne vide)
+Anti-patterns bannis : /creerJeu, /jeux/supprimer/5, /getAllJeux             # ces URLs à verbe sont INTERDITES
+Règle d'or : l'URL désigne une chose, la méthode porte l'action.</pre>        # la phrase à retenir
+<p>Le contrat est dessiné. Prochaine leçon : on le fait vivre — le CRUD complet de <em>/jeux</em>, requête et réponse pour chacune des cinq opérations.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l8", title: "La ressource réservations", level: 2,
+    statement: "La Ludothèque veut ajouter une fonctionnalité : un membre peut réserver un jeu actuellement loué, pour être prévenu à son retour. Applique toute la démarche de la leçon : identifie et nomme la ressource, dresse le tableau complet de ses endpoints (méthode + chemin + rôle), propose sa représentation JSON, puis traite le cas particulier « annuler une réservation » en justifiant ton choix.",
+    hints: [
+      "Une réservation est une ressource à part entière, comme les locations : trouve-lui un nom commun, au pluriel.",
+      "Croise la ressource avec GET, POST, PATCH, DELETE : que signifie chaque méthode ici ? Toutes ont-elles un sens métier ?",
+      "« Annuler » n'est pas un verbe d'URL : c'est soit un changement d'état (statut), soit une suppression. Compare les deux avant de trancher."
+    ],
+    solution: "Ressource : reservations (nom, pluriel)\n\nGET    /reservations       → lister (filtrable par membre, jeu, statut)\nPOST   /reservations       → créer une réservation\nGET    /reservations/9     → détail de la réservation 9\nPATCH  /reservations/9     → changer le statut (annulation, notification…)\nGET    /jeux/5/reservations → variante utile : la file d'attente du jeu 5\n\nJSON : { \"id\": 9, \"jeu\": 5, \"membre\": 12,\n         \"date_demande\": \"2026-07-09\", \"statut\": \"en_attente\" }\n(statuts possibles : en_attente, notifiee, annulee)\n\nCas particulier — annuler :\nPATCH /reservations/9 avec { \"statut\": \"annulee\" }\nplutôt que DELETE /reservations/9 : le PATCH conserve l'historique\n(qui a réservé quoi, combien d'annulations…), utile au métier.\nDELETE se défend si l'on ne veut garder aucune trace — l'important\nest de choisir UNE option et de la documenter.",
+    note: "Cette démarche — ressources, noms, méthodes, JSON, cas particuliers — est exactement celle que tu rejoueras dans le capstone Ludothèque, quel que soit le framework : Django, Spring, Laravel et ASP.NET Core n'en sont que des implémentations. Un tableau d'endpoints clair, validé avant de coder, économise des heures de refactoring et sert de base à la documentation OpenAPI de la leçon 14." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

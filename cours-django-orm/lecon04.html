@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Les migrations : makemigrations et migrate",
+  subtitle: "models.py décrit, makemigrations traduit, migrate applique : la base MySQL suit ton code, pas l'inverse.",
+  theory: `
+<h3>1. La base doit suivre le code</h3>
+<p>À la leçon 3, tu as écrit les modèles <strong>Jeu</strong> et <strong>Membre</strong> dans <em>models.py</em>. Mais MySQL ne lit pas le Python : pour l'instant, aucune table <em>ludotheque_jeu</em> n'existe. Avec un ORM, <strong>le modèle Python est la source de vérité du schéma</strong> (« source de vérité » = le document de référence qui fait autorité en cas de doute) : tu ne dessines plus tes tables dans Workbench comme au Niveau 4, tu les décris en Python et Django les fabrique. Le pont entre les deux, ce sont les <strong>migrations</strong>. Une <strong>migration</strong> est un fichier qui décrit un changement de schéma (créer une table, ajouter une colonne…), un peu comme une « recette de modification » que Django saura rejouer sur n'importe quelle base.</p>
+<pre class="pseudo">models.py (Python)          ── makemigrations ──►  ludotheque/migrations/0001_initial.py   # ton code -> un fichier "plan"
+0001_initial.py (le plan)   ── migrate ─────────►  CREATE TABLE ludotheque_jeu (...) sur MySQL   # le plan -> vrai SQL execute</pre>
+<p>Même idée ailleurs : <strong>EF Core Migrations</strong> en C#, les migrations d'<strong>Eloquent/Laravel</strong> et de <strong>Doctrine</strong> en PHP, <strong>Flyway/Liquibase</strong> côté Java/Spring (Hibernate délègue souvent le schéma à ces outils).</p>
+
+<h3>2. makemigrations : générer le plan</h3>
+<p>La commande <strong>makemigrations</strong> (« fabrique les migrations ») compare l'état actuel de tes modèles avec les migrations déjà écrites, et génère un fichier Python décrivant les <strong>opérations</strong> à faire (CreateModel pour créer une table, AddField pour ajouter une colonne…). Elle ne touche <strong>pas</strong> à MySQL : elle ne fait qu'écrire un fichier.</p>
+<pre class="pseudo">(venv) python manage.py makemigrations ludotheque   # demande a Django de generer le plan pour l'app "ludotheque"
+Migrations for 'ludotheque':                        # message : voici ce qui a ete cree
+  ludotheque/migrations/0001_initial.py             # le fichier de migration genere (numero 0001, "initial")
+    - Create model Jeu                              # operation : creer la table du modele Jeu
+    - Create model Membre                           # operation : creer la table du modele Membre</pre>
+<p>Ouvre <em>0001_initial.py</em> : c'est du Python lisible, une classe Migration avec une liste <em>operations</em>. Chaque nouvelle exécution de makemigrations crée un fichier numéroté suivant : 0002, 0003…</p>
+
+<h3>3. migrate et sqlmigrate : appliquer et lire le SQL</h3>
+<p><strong>migrate</strong> exécute sur MySQL toutes les migrations en attente, traduites en vrai SQL. Et pour <em>voir</em> ce SQL sans l'exécuter — le réflexe cousin de print(qs.query) de la leçon 2 — il y a <strong>sqlmigrate</strong> (« montre-moi le SQL de la migration ») :</p>
+<pre class="pseudo">(venv) python manage.py sqlmigrate ludotheque 0001   # affiche (sans executer) le SQL de la migration 0001
+CREATE TABLE ludotheque_jeu (                        -- CREATE TABLE = cree une nouvelle table
+    id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY,   -- cle primaire auto-incrementee ajoutee par Django
+    titre varchar(120) NOT NULL,                     -- colonne texte 120 ; NOT NULL = valeur obligatoire
+    editeur varchar(80) NOT NULL,                    -- colonne texte 80, obligatoire
+    prix numeric(6, 2) NOT NULL,                     -- decimal 6 chiffres dont 2 apres la virgule
+    stock integer UNSIGNED NOT NULL,                 -- entier positif (UNSIGNED = sans signe, donc >= 0)
+    date_sortie date NULL,                           -- date ; NULL autorise (champ facultatif)
+    disponible bool NOT NULL                         -- booleen vrai/faux, obligatoire
+);                                                    -- fin de la definition de la table
+
+(venv) python manage.py migrate                      # applique VRAIMENT les migrations en attente sur MySQL
+Applying ludotheque.0001_initial... OK               # message : migration 0001 appliquee avec succes (OK)</pre>
+<p>Retrouve tout ce que tu connais du Niveau 4 : types SQL, NOT NULL, PRIMARY KEY, AUTO_INCREMENT. CharField(max_length=120) est devenu varchar(120), DecimalField(6, 2) est devenu numeric(6, 2). L'ORM n'a rien inventé : il a écrit ton SQL à ta place.</p>
+
+<h3>4. showmigrations et la table django_migrations</h3>
+<p>Comment Django sait-il ce qui est déjà appliqué ? Il tient un <strong>registre</strong> (un journal de suivi) : la table <strong>django_migrations</strong> (colonnes app, name, applied), créée sur MySQL au premier migrate. La commande <strong>showmigrations</strong> (« montre les migrations ») l'affiche lisiblement :</p>
+<pre class="pseudo">(venv) python manage.py showmigrations ludotheque    # affiche l'etat de la chaine de migrations de l'app
+ludotheque                                           # nom de l'application
+ [X] 0001_initial          ← appliquée (présente dans django_migrations)   # [X] = deja appliquee sur la base
+ [ ] 0002_jeu_categorie    ← en attente : le prochain migrate l'exécutera  # [ ] = pas encore appliquee</pre>
+<p>migrate ne rejoue donc jamais deux fois la même migration : il compare les fichiers présents avec le contenu de django_migrations et n'applique que la différence.</p>
+
+<h3>5. Faire évoluer Jeu : nouveau champ, default, Git</h3>
+<p>La Ludothèque veut classer ses jeux. Tu ajoutes <em>categorie = models.CharField(max_length=40)</em> à Jeu. Problème : la table contient déjà des lignes, et cette colonne sera NOT NULL (obligatoire). Que mettre dans les lignes existantes ? makemigrations te le demande :</p>
+<pre class="pseudo">It is impossible to add a non-nullable field 'categorie' to jeu   # "impossible d'ajouter un champ obligatoire..."
+without specifying a default...                                   # "... sans preciser une valeur par defaut"
+ 1) Provide a one-off default now                                 # option 1 : donner une valeur unique tout de suite
+ 2) Quit and manually define a default value in models.py         # option 2 : quitter et definir un default dans le modele</pre>
+<p>Le plus propre : ajouter <em>default='famille'</em> (ou blank=True + une valeur) dans le modèle, puis relancer makemigrations. Le fichier 0002 généré contient une ligne <em>dependencies = [('ludotheque', '0001_initial')]</em> : les migrations forment une <strong>chaîne ordonnée</strong>, 0002 ne peut s'appliquer qu'après 0001. Enfin, ces fichiers font partie du code : on les <strong>committe dans Git</strong> (cours Git, leçon 3 !) — « committer » = enregistrer dans l'historique du projet. Un collègue qui clone le projet lance simplement migrate et obtient exactement le même schéma que toi.</p>
+<div class="warn">Ne modifie <strong>jamais</strong> une table gérée par Django à la main dans MySQL Workbench, et ne supprime jamais une migration déjà appliquée : la réalité de la base et le registre django_migrations ne correspondraient plus, et le prochain migrate échouerait de façon incompréhensible.</div>
+<div class="tip">Avant chaque migrate sur une base qui compte, prends 10 secondes pour lire le SQL avec sqlmigrate : tu vérifies ce que l'ORM va faire ET tu révises ton SQL du Niveau 4 gratuitement.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans le duo makemigrations / migrate, qui écrit réellement dans MySQL ?", opts: ["makemigrations", "migrate", "models.py", "Le shell Django"], a: 1, exp: "makemigrations génère des fichiers Python ; migrate les traduit en SQL et les exécute." },
+    { type: "qcm", q: "python manage.py makemigrations ludotheque produit…", opts: ["Un fichier comme ludotheque/migrations/0001_initial.py", "Une table MySQL", "Un dump des données", "Un commit Git automatique"], a: 0, exp: "Un plan en Python, numéroté, rien n'est encore appliqué." },
+    { type: "input", q: "Commande manage.py (un seul mot) qui applique les migrations en attente sur la base :", a: ["migrate"], ph: "python manage.py …", exp: "migrate exécute le SQL de toutes les migrations non encore appliquées." },
+    { type: "qcm", q: "Pour lire le SQL qu'une migration exécutera, sans l'appliquer :", opts: ["sqlmigrate", "showmigrations", "dbshell", "runserver"], a: 0, exp: "python manage.py sqlmigrate ludotheque 0001 affiche le CREATE TABLE." },
+    { type: "vf", q: "makemigrations se connecte à MySQL pour créer les tables.", a: false, exp: "Elle compare modèles et migrations existantes, et écrit un fichier Python. C'est migrate qui touche la base." },
+    { type: "qcm", q: "Avec un ORM, la source de vérité du schéma est…", opts: ["models.py", "MySQL Workbench", "settings.py", "la table django_migrations"], a: 0, exp: "On décrit le schéma en Python ; la base est générée à partir du code." },
+    { type: "input", q: "Table où Django enregistre les migrations déjà appliquées :", a: ["django_migrations"], ph: "nom de la table…", exp: "Colonnes app, name, applied : le registre que migrate consulte." },
+    { type: "qcm", q: "showmigrations affiche…", opts: ["[X] pour appliquée, [ ] pour en attente", "Le SQL complet de chaque migration", "Le contenu des tables", "Les erreurs Python du projet"], a: 0, exp: "Une liste à cocher : l'état de la chaîne de migrations." },
+    { type: "qcm", q: "Tu ajoutes à Jeu un champ NOT NULL (sans default) alors que la table contient déjà des jeux. makemigrations…", opts: ["Te demande un default pour remplir les lignes existantes", "Refuse définitivement", "Supprime les lignes existantes", "Ignore le nouveau champ"], a: 0, exp: "MySQL doit mettre quelque chose dans les lignes déjà présentes : one-off default ou default dans le modèle." },
+    { type: "vf", q: "Les fichiers de migrations doivent être versionnés dans Git.", a: true, exp: "Ils font partie du code : toute l'équipe rejoue la même chaîne et obtient le même schéma." },
+    { type: "qcm", q: "Dans 0002, la ligne dependencies = [('ludotheque', '0001_initial')] signifie…", opts: ["0002 ne peut s'appliquer qu'après 0001", "0001 sera supprimée", "0002 est facultative", "Les deux migrations fusionnent"], a: 0, exp: "Les migrations forment une chaîne ordonnée que migrate respecte." },
+    { type: "qcm", q: "L'équivalent des migrations Django en C#/ASP.NET Core :", opts: ["EF Core Migrations", "Flyway", "Eloquent", "Hibernate Session"], a: 0, exp: "Add-Migration / Update-Database. Côté Java : Flyway ou Liquibase ; côté Laravel : php artisan migrate." },
+    { type: "vf", q: "Ajouter une colonne à ludotheque_jeu à la main dans Workbench est sans danger, Django s'adaptera tout seul.", a: false, exp: "Django ne le saura pas : models.py, la base et django_migrations divergent. Toujours passer par les migrations." },
+    { type: "qcm", q: "Un collègue clone le projet (code + migrations) sur sa machine. Pour créer le schéma sur son MySQL, il lance…", opts: ["migrate", "makemigrations", "sqlmigrate", "git push"], a: 0, exp: "Les migrations existent déjà dans le dépôt : il n'a qu'à les appliquer." },
+    { type: "qcm", q: "Une migration Django est…", opts: ["Un fichier Python décrivant des opérations de schéma (CreateModel, AddField…)", "Un script SQL écrit à la main", "Une sauvegarde des données", "Un plugin MySQL"], a: 0, exp: "Du Python lisible, numéroté, avec ses dépendances, traduit en SQL par migrate." }
+  ],
+  final: {
+    title: "Exercice final — Le cycle de vie du schéma",
+    intro: `<p>La Ludothèque évolue : on vérifie que tu maîtrises le circuit complet, du modèle au CREATE TABLE.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre correct pour ajouter le champ categorie à Jeu :", opts: ["Modifier models.py → makemigrations → migrate", "migrate → makemigrations → modifier models.py", "Modifier la table dans Workbench → makemigrations", "makemigrations → modifier models.py → migrate"], a: 0, exp: "Le code d'abord : il est la source de vérité." },
+      { type: "input", q: "Commande manage.py pour afficher le SQL de la migration 0002 sans l'exécuter :", a: ["sqlmigrate"], ph: "python manage.py … ludotheque 0002", exp: "sqlmigrate ludotheque 0002 : on lit l'ALTER TABLE avant de le lancer." },
+      { type: "vf", q: "Grâce à la table django_migrations, migrate n'applique jamais deux fois la même migration.", a: true, exp: "Il compare les fichiers présents au registre et n'exécute que la différence." },
+      { type: "qcm", q: "Champ NOT NULL ajouté sur une table déjà remplie : la solution propre est…", opts: ["Un default dans le modèle (ou un one-off default assumé)", "Vider la table", "Éditer le SQL dans Workbench", "Supprimer la migration 0001"], a: 0, exp: "Les lignes existantes doivent recevoir une valeur : c'est toi qui la choisis." },
+      { type: "qcm", q: "On versionne les migrations dans Git pour…", opts: ["Que toute l'équipe rejoue la même chaîne et obtienne le même schéma", "Faire joli dans le dépôt", "Éviter d'installer MySQL", "Remplacer les sauvegardes"], a: 0, exp: "Migrations = code. Un clone + migrate = le schéma exact du projet." }
+    ],
+    solution: `<pre class="pseudo">1. models.py          : j'ajoute/modifie un champ (source de vérité)      # le code decide du schema
+2. makemigrations     : Django génère 000N_....py (le plan, rien en base)  # fabrique le fichier plan
+3. sqlmigrate         : je LIS le SQL (CREATE TABLE / ALTER TABLE)         # verifier avant d'appliquer
+4. migrate            : le SQL part sur MySQL, django_migrations est mis à jour   # applique + enregistre
+5. showmigrations     : [X] appliquée / [ ] en attente                     # controler l'etat
+6. git add + commit   : les migrations voyagent avec le code               # partager avec l'equipe
+
+NOT NULL sur table remplie → default obligatoire (Django le demande).      # sinon que mettre dans les lignes existantes ?
+Ailleurs : EF Core Migrations (C#), Doctrine/Laravel (PHP), Flyway/Liquibase (Java).   # meme idee, autres outils</pre>
+<p>Le schéma de la Ludothèque existe enfin sur MySQL — mais les tables sont vides. Leçon 5 : <strong>Créer et lire : save, create, get, all</strong> — tes premiers INSERT et SELECT écrits en Python.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l4", title: "Le collègue qui a triché dans Workbench", level: 1,
+    statement: "Scénario : un collègue de la Ludothèque, pressé, a ajouté une colonne remise directement dans la table ludotheque_jeu via MySQL Workbench, sans toucher à models.py ni créer de migration. Rédige une analyse en trois parties : (1) ce qui va concrètement mal se passer pour lui, pour toi qui clones le projet, et lors du prochain makemigrations/migrate ; (2) pourquoi cela contredit le principe « le modèle Python est la source de vérité » ; (3) la procédure correcte qu'il aurait dû suivre, étape par étape, jusqu'au commit Git.",
+    hints: [
+      "Pense aux trois états qui doivent rester synchronisés : models.py, les fichiers de migrations, la base MySQL. Lequel est désormais en avance sur les autres ?",
+      "Toi qui clones le projet et lances migrate : ta base aura-t-elle la colonne remise ? Et l'ORM du collègue connaît-il ce champ pour ses requêtes ?",
+      "La procédure correcte tient en quatre commandes vues dans la leçon, plus un commit."
+    ],
+    solution: "1) Conséquences\n- Sa base a la colonne remise, mais models.py l'ignore : l'ORM ne peut ni lire ni écrire ce champ.\n- Aucun fichier de migration ne décrit ce changement : Git ne le transporte pas.\n- Moi qui clone + migrate : ma base N'A PAS la colonne → deux bases différentes pour le même code.\n- S'il ajoute ensuite remise dans models.py et lance makemigrations + migrate,\n  la migration tentera un ALTER TABLE ... ADD remise → erreur : la colonne existe déjà chez lui.\n\n2) Principe violé\n- La base doit être GÉNÉRÉE depuis le code, jamais modifiée en direct.\n- django_migrations ne reflète plus la réalité de sa base : le registre ment.\n\n3) Procédure correcte\n- (annuler la modif manuelle dans Workbench)\n- models.py : remise = models.DecimalField(max_digits=4, decimal_places=2, default=0)\n- python manage.py makemigrations ludotheque   → 0003_jeu_remise.py\n- python manage.py sqlmigrate ludotheque 0003  → relire l'ALTER TABLE\n- python manage.py migrate                     → appliqué + enregistré\n- git add ludotheque/ && git commit -m \"Jeu : champ remise\"",
+    note: "Ce réflexe « le schéma vit dans le code » est la grande rupture avec le Niveau 4 (MySQL), où tu dessinais les tables à la main dans Workbench : ici Workbench redevient un simple outil d'observation. Au Niveau 3 (Django), tu avais lancé migrate sans comprendre — maintenant tu sais exactement ce qu'il fait. Et dans le projet full-stack du Niveau 6, c'est ce mécanisme qui permettra à toute l'équipe de partager un schéma identique via un simple git pull + migrate." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

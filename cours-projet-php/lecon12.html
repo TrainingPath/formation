@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Louer un jeu : transaction, stock, réservation",
+  subtitle: "Le cœur métier : deux écritures indissociables.",
+  theory: `
+<h3>1. Le besoin</h3>
+<p>Une <strong>écriture</strong> désigne toute modification enregistrée dans la base de données (créer, modifier ou supprimer une donnée) — par opposition à une simple <em>lecture</em> qui ne fait que consulter. Louer un jeu, c'est <strong>deux écritures</strong> qui vont ensemble : créer la <strong>location</strong> (la fiche « ce client emprunte ce jeu ») ET diminuer le <strong>stock</strong> de location (le nombre d'exemplaires encore disponibles). Les deux réussissent ensemble, ou aucune ne se fait. Si le stock est épuisé, on refuse la location.</p>
+
+<h3>2. L'exception métier</h3>
+<p>Une <strong>exception</strong> est un signal d'erreur qu'on « lève » quand quelque chose empêche de continuer — comme tirer un signal d'alarme : l'exécution normale s'arrête net. On crée ici notre propre type d'exception, avec un nom parlant :</p>
+<pre class="pseudo">class StockInsuffisantException extends \\Exception {}   // notre exception « métier » : plus de stock disponible</pre>
+<p><code>class … extends \\Exception</code> crée une nouvelle classe d'exception qui <strong>hérite</strong> de l'exception standard de PHP (elle en reprend tout le fonctionnement, on ne fait que la renommer). Une exception dédiée rend la règle explicite et pourra ensuite être traduite en <strong>code HTTP</strong> — les numéros que le serveur renvoie au navigateur, ici <strong>409</strong> (« conflit »).</p>
+
+<h3>3. Le service transactionnel</h3>
+<p>Un <strong>service</strong> est une classe qui regroupe une logique métier réutilisable, à l'écart des contrôleurs. Une <strong>transaction</strong> regroupe plusieurs écritures en un seul bloc « tout ou rien ».</p>
+<pre class="pseudo">class LocationService {                                       // classe qui contient la logique de location
+    public function louer(int \$idClient, int \$idJeu): void {  // méthode « louer » ; :void = ne renvoie rien
+        DB::transaction(function () use (\$idClient, \$idJeu) { // ouvre une transaction « tout ou rien »
+            \$jeu = Jeu::findOrFail(\$idJeu);                    // récupère le jeu (erreur 404 s'il n'existe pas)
+            if (\$jeu->stock_location &lt;= 0) {                  // si le stock de location est épuisé…
+                throw new StockInsuffisantException('Plus de stock de location');  // …on lève l'exception (STOP)
+            }
+            Location::create([                                // sinon on crée la fiche de location…
+                'client_id' => \$idClient,                     // le client qui emprunte
+                'jeu_id' => \$idJeu,                           // le jeu emprunté
+                'date_debut' => now(),                        // date du jour (fonction now())
+                'nb_jours' => 7,                              // durée : 7 jours
+            ]);
+            \$jeu->decrement('stock_location');                // et on retire 1 au stock de location
+        });                                                   // fin du bloc : COMMIT si tout va bien
+    }
+}</pre>
+<p><code>int \$idClient</code> annonce que le paramètre est un <strong>entier</strong> (<em>int</em>) ; <code>: void</code> indique que la méthode ne renvoie <em>rien</em>. <code>function () use (\$idClient, \$idJeu)</code> est une closure (mini-fonction) à qui <code>use</code> « prête » les variables du dehors. <code>findOrFail</code> cherche l'objet et échoue avec une erreur <strong>404</strong> (« introuvable ») s'il n'existe pas. <code>throw new …</code> lève l'exception. <code>now()</code> donne la date et l'heure actuelles. <code>decrement('champ')</code> retire 1 à une colonne (son inverse est <code>increment</code>).</p>
+
+<h3>4. Pourquoi la transaction est indispensable</h3>
+<p>Sans <code>DB::transaction</code>, si la création de la location réussissait mais que la diminution du stock échouait, on obtiendrait une location « fantôme » sans décompte. La transaction garantit l'<strong>atomicité</strong> : soit tout se fait, soit rien. La moindre exception déclenche un <strong>ROLLBACK</strong> (annulation qui remet la base dans son état d'avant) ; si tout réussit, un <strong>COMMIT</strong> valide définitivement. La base reste ainsi toujours cohérente.</p>
+
+<h3>5. Réservation : une variante</h3>
+<pre class="pseudo">public function reserver(int \$idClient, int \$idJeu): void {  // « réserver » : mettre un jeu de côté
+    Reservation::create([                                     // crée une fiche de réservation…
+        'client_id' => \$idClient,                             // le client qui réserve
+        'jeu_id' => \$idJeu,                                   // le jeu réservé
+        'date_resa' => now(),                                 // date de la réservation (aujourd'hui)
+    ]);
+}</pre>
+<div class="tip">C'est exactement la transaction MySQL vue en cours de bases de données, pilotée par Laravel : <code>DB::transaction</code> ouvre, valide (COMMIT) ou annule (ROLLBACK) automatiquement autour du bloc. C'est le principe <strong>ACID</strong> appliqué au métier de la Ludothèque.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer un jeu implique…", opts: ["Une seule écriture", "Deux écritures : location + décrément du stock", "Aucune écriture", "Un SELECT"], a: 1, exp: "Opérations liées." },
+    { type: "qcm", q: "Les deux écritures doivent…", opts: ["Réussir indépendamment", "Réussir ensemble ou être annulées", "S'exécuter deux fois", "Être ignorées"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "Rendre la méthode atomique :", opts: ["cache()", "DB::transaction(...)", "queue()", "rien"], a: 1, exp: "Transaction." },
+    { type: "qcm", q: "Si le stock est nul, on…", opts: ["Loue quand même", "Lève StockInsuffisantException", "Met le stock à -1", "Ignore"], a: 1, exp: "Refus métier." },
+    { type: "qcm", q: "Une exception dans DB::transaction…", opts: ["Valide (COMMIT)", "Déclenche un ROLLBACK", "N'a pas d'effet", "Relance le serveur"], a: 1, exp: "Annulation." },
+    { type: "qcm", q: "Sans transaction, un échec partiel donne…", opts: ["Une base cohérente", "Une location fantôme sans décompte", "Rien", "Un tri"], a: 1, exp: "Incohérence." },
+    { type: "qcm", q: "Décrémenter le stock :", opts: ["$jeu->decrement('stock_location')", "$jeu->delete()", "stock = 0", "rien"], a: 0, exp: "Une unité en moins." },
+    { type: "qcm", q: "Créer la location :", opts: ["Location::create([...])", "Location::all()", "Location::find()", "rien"], a: 0, exp: "Persistance." },
+    { type: "qcm", q: "Réserver, c'est…", opts: ["Louer immédiatement", "Mettre de côté sans finaliser", "Supprimer le jeu", "Acheter"], a: 1, exp: "Variante." },
+    { type: "qcm", q: "DB::transaction gère COMMIT/ROLLBACK…", opts: ["À la main", "Automatiquement autour du bloc", "Jamais", "Dans la vue"], a: 1, exp: "Géré par Laravel." },
+    { type: "vf", q: "C'est la transaction MySQL du cours BDD, pilotée par Laravel.", a: true, exp: "Même principe ACID." },
+    { type: "qcm", q: "L'ordre logique de louer :", opts: ["Décrémenter puis vérifier", "Vérifier le stock, créer, décrémenter", "Supprimer le jeu", "Ne rien vérifier"], a: 1, exp: "Contrôle d'abord." },
+    { type: "vf", q: "Une exception métier dédiée rend la règle explicite et traduisible en HTTP.", a: true, exp: "Lisibilité." },
+    { type: "qcm", q: "findOrFail($idJeu) gère…", opts: ["Le stock", "Le cas d'un jeu introuvable (404)", "La casse", "Le tri"], a: 1, exp: "404 possible." },
+    { type: "qcm", q: "Le stock concerné par une location :", opts: ["stock_vente", "stock_location", "les deux", "aucun"], a: 1, exp: "Stock de location." }
+  ],
+  final: {
+    title: "Exercice final — Le service de location",
+    intro: `<p>On code la location atomique.</p>`,
+    questions: [
+      { type: "qcm", q: "Encadrer la méthode :", opts: ["DB::transaction(...)", "cache(...)", "queue(...)", "rien"], a: 0, exp: "Atomicité." },
+      { type: "qcm", q: "Vérifier avant d'agir :", opts: ["if stock_location <= 0 -> exception", "décrémenter d'abord", "supprimer", "ignorer"], a: 0, exp: "Contrôle du stock." },
+      { type: "qcm", q: "Enregistrer la location :", opts: ["Location::create([...])", "$jeu->delete()", "rien", "un SELECT"], a: 0, exp: "Persistance." },
+      { type: "qcm", q: "Puis mettre à jour le stock :", opts: ["$jeu->decrement('stock_location')", "supprimer le jeu", "rien", "stock = 100"], a: 0, exp: "Décrément." },
+      { type: "vf", q: "Une exception annule toute la transaction (location + stock).", a: true, exp: "ROLLBACK." }
+    ],
+    solution: `<pre class="pseudo">public function louer(int \$idClient, int \$idJeu): void {      // méthode « louer » (ne renvoie rien)
+    DB::transaction(function () use (\$idClient, \$idJeu) {     // bloc « tout ou rien »
+        \$jeu = Jeu::findOrFail(\$idJeu);                       // récupère le jeu (404 sinon)
+        if (\$jeu->stock_location &lt;= 0) {                     // stock de location épuisé ?
+            throw new StockInsuffisantException('Plus de stock de location');  // oui → on refuse (exception)
+        }
+        Location::create([                                   // crée la fiche de location…
+            'client_id' => \$idClient, 'jeu_id' => \$idJeu,     // client + jeu
+            'date_debut' => now(), 'nb_jours' => 7,           // date du jour, durée 7 jours
+        ]);
+        \$jeu->decrement('stock_location');                   // retire 1 au stock de location
+    });                                                      // fin : COMMIT si tout a réussi
+}</pre>
+<p>On sait louer. Demain : acheter, sur l'autre stock.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service transactionnel…",
+  items: [
+  { id: "projphp-l12", title: "Rendre un jeu loué", level: 3,
+    statement: "Écris une méthode rendre($idLocation) dans LocationService qui, dans une transaction, marque la location comme rendue et ré-incrémente de 1 le stock de location du jeu. Lève une exception si la location est introuvable ou déjà rendue.",
+    hints: [
+      "DB::transaction(...) ; Location::findOrFail($idLocation).",
+      "if ($loc->rendue) throw new \\RuntimeException('Déjà rendue');",
+      "$loc->update(['rendue' => true]); puis Jeu::find($loc->jeu_id)->increment('stock_location')."
+    ],
+    solution: "public function rendre(int $idLocation): void {              // méthode « rendre » un jeu loué\n    DB::transaction(function () use ($idLocation) {          // bloc atomique « tout ou rien »\n        $loc = Location::findOrFail($idLocation);            // récupère la location (404 si introuvable)\n        if ($loc->rendue) {                                  // déjà rendue ?\n            throw new \\RuntimeException('Location déjà rendue');  // oui → on refuse (exception)\n        }\n        $loc->update(['rendue' => true]);                    // marque la location comme rendue\n        Jeu::findOrFail($loc->jeu_id)->increment('stock_location');  // remet 1 exemplaire en stock\n    });                                                      // fin : COMMIT si tout a réussi\n}",
+    note: "Le retour est l'opération inverse de la location : il remet une unité en stock, de façon atomique. Le test sur $loc->rendue empêche de créditer deux fois le stock avec la même location. DB::transaction garantit que le marquage et le ré-incrément vont de pair ou échouent ensemble." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

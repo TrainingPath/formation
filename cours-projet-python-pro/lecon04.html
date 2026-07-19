@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Du MCD Merise aux migrations (dans le conteneur)",
+  subtitle: "Couler la première brique métier — versionnée et rejouée par la CI.",
+  theory: `
+<h3>1. Le schéma vient de Merise</h3>
+<p>Comme au Niveau 6, la conception précède le code. Le <strong>MCD</strong> (« modèle conceptuel de données ») est le plan de la base dessiné avec la méthode <strong>Merise</strong> : il liste les <strong>entités</strong> (les grandes notions à mémoriser — un jeu, une catégorie) et leurs liens. Chaque entité devient un <strong>modèle</strong> Django (une classe Python qui décrit une table), et chaque <strong>CIF</strong> (contrainte d'intégrité fonctionnelle, c'est-à-dire « ce jeu appartient à une catégorie ») devient une <code>ForeignKey</code> — une <strong>clé étrangère</strong>, la colonne qui pointe vers la ligne d'une autre table. La nouveauté du Niveau 8 : tout se fait <strong>dans le conteneur</strong>, et l'<strong>index</strong> de recherche — un répertoire trié qui évite de parcourir toute la table (un <em>scan</em> lent) — est posé dès le départ, parce qu'on sait déjà qu'on <strong>paginera</strong> (afficher les résultats page par page).</p>
+
+<h3>2. Les modèles du catalogue</h3>
+<pre class="pseudo">class Categorie(models.Model):   # une categorie de jeux (ex. « Ambiance ») = une table en base
+    nom = models.CharField(max_length=100, unique=True)   # texte court, unique : jamais deux fois le meme nom
+
+class Jeu(models.Model):   # un jeu du catalogue = une table, reliee a une categorie
+    titre = models.CharField(max_length=200)   # texte court : le titre du jeu
+    prix_achat = models.DecimalField(max_digits=6, decimal_places=2)   # argent = Decimal (jamais Float : arrondis exacts)
+    prix_location = models.DecimalField(max_digits=6, decimal_places=2)   # prix d'une location, aussi en Decimal
+    stock_vente = models.PositiveIntegerField(default=0)   # quantite en vente ; le type interdit un nombre negatif
+    stock_location = models.PositiveIntegerField(default=0)   # quantite louable ; 0 par defaut
+    categorie = models.ForeignKey(Categorie, on_delete=models.PROTECT)   # lien vers une categorie ; PROTECT empeche sa suppression si utilisee
+    class Meta:   # options du modele (ce qui n'est pas un champ)
+        indexes = [models.Index(fields=["titre"])]   # index sur titre : accelere la recherche frequente</pre>
+<p>Un <strong>modèle</strong> est une classe qui hérite de <code>models.Model</code> ; chaque attribut est un <strong>champ</strong>, c'est-à-dire une colonne de la table. <code>CharField</code> stocke un texte court (avec une longueur maximale), <code>DecimalField</code> un nombre à virgule <em>exact</em> — indispensable pour l'argent, car les nombres « flottants » (<code>FloatField</code>) arrondissent faux. <code>PositiveIntegerField</code> n'accepte que des entiers ≥ 0 : le stock ne peut structurellement pas devenir négatif. <code>unique=True</code> interdit deux catégories du même nom. La classe interne <code>Meta</code> regroupe les options qui ne sont pas des champs, comme la liste des <code>indexes</code>.</p>
+
+<h3>3. Migrer dans le conteneur</h3>
+<pre class="pseudo">docker compose exec app python manage.py makemigrations catalogue   # generer le fichier de migration a partir des modeles de l'app catalogue
+docker compose exec app python manage.py migrate   # appliquer les migrations : creer/modifier les tables en base
+docker compose exec app python manage.py sqlmigrate catalogue 0001   # afficher le SQL exact genere par la migration 0001 (sans l'executer)</pre>
+<p>Une <strong>migration</strong> est un fichier qui décrit un changement de schéma (créer une table, ajouter une colonne). <code>makemigrations</code> compare tes modèles à l'état connu et <em>génère</em> ce fichier ; <code>migrate</code> l'<em>applique</em> réellement à la base ; <code>sqlmigrate</code> montre le <strong>SQL</strong> (le langage des bases de données) qu'il exécuterait, sans rien changer. Comme ce fichier est <strong>versionné</strong> dans Git, le schéma évolue par étapes rejouables — à l'identique en dev, en CI et en prod.</p>
+
+<h3>4. La CI rejoue les migrations sur une base NEUVE</h3>
+<pre class="pseudo">Ta base locale a évolué migration par migration — elle a « de la chance ».
+Le runner de CI (leçon 7) part de ZÉRO : il applique toutes les migrations
+sur une base vierge à chaque commit → il détecte la migration qui ne passe
+que par hasard. « Ça migre chez moi » ne suffit plus.</pre>
+<p>Le <strong>runner</strong> de CI part d'une base <strong>vierge</strong> et rejoue toute la suite de migrations depuis zéro. C'est le meilleur test possible du schéma : si une migration ne « passait que par hasard » sur ta base déjà remplie, elle échouera ici, à la seconde.</p>
+
+<h3>5. on_delete : une décision, pas un défaut</h3>
+<p><code>on_delete</code> décide de ce qui arrive aux lignes liées quand on supprime la ligne « parente ». Ce n'est pas un détail technique mais une <strong>décision métier</strong> :</p>
+<pre class="pseudo">PROTECT   refuse de supprimer une catégorie encore utilisée (choisi ici)
+CASCADE   supprimerait les jeux avec elle (dangereux)
+SET_NULL  met la FK à NULL (pour le fournisseur, nullable)</pre>
+<div class="warn">Poser l'index sur <code>titre</code> maintenant plutôt qu'« un jour » évite une dette : ajouter un index sur une grosse table en production est une opération lourde. On anticipe les usages connus (recherche, « mes locations ») dès la conception du schéma — c'est le réflexe performance/sécurité intégré.</div>
+<div class="tip">Rien de neuf côté Django par rapport au Niveau 6 : ce qui change, c'est le <em>contexte</em> — commandes dans le conteneur, migrations rejouées par la CI, index anticipés. Le même savoir, appliqué avec des réflexes d'équipe.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le schéma de la Ludothèque vient…", opts: ["Du hasard", "Du MCD Merise (entité → modèle, CIF → FK)", "Du frontend", "De la CI"], a: 1, exp: "Conception → code." },
+    { type: "qcm", q: "Pour l'argent, on utilise…", opts: ["FloatField", "DecimalField", "IntegerField", "CharField"], a: 1, exp: "Les flottants arrondissent faux." },
+    { type: "qcm", q: "Les commandes de migration se lancent…", opts: ["Sur l'hôte", "Dans le conteneur (docker compose exec app …)", "En prod seulement", "Jamais"], a: 1, exp: "Tout est conteneurisé." },
+    { type: "qcm", q: "Une migration est…", opts: ["Jetable", "Un fichier versionné, rejouable partout", "Un backup", "Un test"], a: 1, exp: "Le schéma versionné." },
+    { type: "qcm", q: "L'index sur titre est posé…", opts: ["Un jour, peut-être", "Dès le départ (recherche/pagination anticipées)", "En prod à la main", "Jamais"], a: 1, exp: "Anticiper les usages connus." },
+    { type: "qcm", q: "La CI applique les migrations sur…", opts: ["La base de prod", "Une base NEUVE à chaque commit", "Ta base locale", "Aucune"], a: 1, exp: "Détecte la migration « chanceuse »." },
+    { type: "qcm", q: "« Ça migre chez moi » …", opts: ["Suffit", "Ne suffit plus : la CI part de zéro", "Est un test", "Est la prod"], a: 1, exp: "Base vierge en CI." },
+    { type: "qcm", q: "on_delete=PROTECT :", opts: ["Supprime en cascade", "Refuse de supprimer une catégorie utilisée", "Met NULL", "Ignore"], a: 1, exp: "Intégrité." },
+    { type: "qcm", q: "sqlmigrate montre…", opts: ["Les logs", "Le SQL exact de la migration", "Le CSS", "Les tests"], a: 1, exp: "Le CREATE TABLE généré." },
+    { type: "qcm", q: "PositiveIntegerField pour les stocks garantit…", opts: ["La vitesse", "Qu'un stock négatif est refusé par le type", "L'unicité", "Le tri"], a: 1, exp: "Contrainte structurelle." },
+    { type: "vf", q: "Ajouter un index sur une grosse table en prod est une opération lourde.", a: true, exp: "D'où l'anticipation." },
+    { type: "qcm", q: "Le CREATE TABLE généré correspond…", opts: ["À rien", "À celui écrit à la main au cours MySQL (mêmes contraintes)", "Au CSS", "À un cookie"], a: 1, exp: "L'ORM traduit." },
+    { type: "qcm", q: "unique=True sur Categorie.nom devient…", opts: ["Un commentaire", "Une contrainte UNIQUE en base", "Un JOIN", "Un trigger"], a: 1, exp: "Comme au cours MySQL." },
+    { type: "qcm", q: "Par rapport au Niveau 6, ce qui change ici :", opts: ["Django lui-même", "Le contexte : conteneur, CI, index anticipés", "Le langage", "La base"], a: 1, exp: "Mêmes savoirs, réflexes d'équipe." },
+    { type: "vf", q: "Le fichier de migration part dans Git avec le code.", a: true, exp: "L'histoire du schéma." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma coulé",
+    intro: `<p>On traduit le cœur du MCD et on migre dans le conteneur.</p>`,
+    questions: [
+      { type: "qcm", q: "prix_location est un :", opts: ["DecimalField(6,2)", "FloatField", "IntegerField", "TextField"], a: 0, exp: "Argent = Decimal." },
+      { type: "qcm", q: "L'index de recherche :", opts: ["indexes = [Index(fields=['titre'])] dès le départ", "ajouté un jour", "en prod à la main", "jamais"], a: 0, exp: "Anticipé." },
+      { type: "qcm", q: "Migrer :", opts: ["docker compose exec app python manage.py makemigrations && migrate", "à la main sur l'hôte", "un CREATE TABLE manuel", "rien"], a: 0, exp: "Dans le conteneur." },
+      { type: "qcm", q: "La CI vérifie les migrations :", opts: ["En les rejouant sur une base neuve à chaque commit", "jamais", "en prod", "au hasard"], a: 0, exp: "Depuis zéro." },
+      { type: "vf", q: "on_delete=PROTECT empêche de supprimer une catégorie encore utilisée.", a: true, exp: "Décision de conception." }
+    ],
+    solution: `<pre class="pseudo">class Categorie(models.Model):   # une categorie de jeux = une table
+    nom = models.CharField(max_length=100, unique=True)   # nom court et unique
+
+class Jeu(models.Model):   # un jeu du catalogue = une table
+    titre = models.CharField(max_length=200)   # titre du jeu
+    prix_achat = models.DecimalField(max_digits=6, decimal_places=2)   # prix d'achat en Decimal (argent)
+    prix_location = models.DecimalField(max_digits=6, decimal_places=2)   # prix de location en Decimal
+    stock_vente = models.PositiveIntegerField(default=0)   # stock vente >= 0 garanti par le type
+    stock_location = models.PositiveIntegerField(default=0)   # stock location >= 0
+    categorie = models.ForeignKey(Categorie, on_delete=models.PROTECT)   # FK protegee : pas de suppression si utilisee
+    class Meta:   # options du modele
+        indexes = [models.Index(fields=["titre"])]   # index anticipe sur titre (recherche)
+
+# docker compose exec app python manage.py makemigrations &amp;&amp; migrate   # generer puis appliquer la migration dans le conteneur</pre>
+<p>Le schéma est coulé et versionné. Demain : les modèles, testés dès l'écriture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes modèles et migrations…",
+  items: [
+  { id: "proj6py-l4", title: "Les modèles Location et Achat, indexés", level: 3,
+    statement: "Écris les modèles Location (client FK User, jeu FK, date_debut, nb_jours, date_retour nullable) et Achat (client, jeu, date_achat, montant Decimal), avec les on_delete justifiés et les index anticipés (Location.client pour « mes locations », date pour tri), puis les commandes de migration dans le conteneur. Commente pourquoi chaque index est posé maintenant.",
+    hints: [
+      "client = ForeignKey(settings.AUTH_USER_MODEL, on_delete=PROTECT) — on ne supprime pas un historique.",
+      "date_retour = DateTimeField(null=True, blank=True) : NULL = en cours.",
+      "indexes = [Index(fields=['client']), Index(fields=['-date_debut'])]."
+    ],
+    solution: "from django.conf import settings   # pour referencer le modele User du projet\n\nclass Location(models.Model):   # une location = une ligne d'historique\n    client = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)   # qui loue ; PROTECT : on ne supprime pas un client ayant un historique\n    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)   # quel jeu ; PROTECT protege l'archive\n    date_debut = models.DateTimeField()   # date/heure de debut de la location\n    nb_jours = models.PositiveIntegerField(default=7)   # duree en jours (>= 0), 7 par defaut\n    date_retour = models.DateTimeField(null=True, blank=True)   # NULL = location encore en cours\n    class Meta:   # options du modele\n        indexes = [   # index anticipes d'apres les usages connus\n            models.Index(fields=[\"client\"]),      # « mes locations » : filtre par client\n            models.Index(fields=[\"-date_debut\"]),  # tri « recent d'abord »\n        ]   # fin de la liste des index\n\nclass Achat(models.Model):   # un achat = une ligne d'historique\n    client = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)   # acheteur ; archive protegee\n    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT)   # jeu achete\n    date_achat = models.DateTimeField()   # date/heure de l'achat\n    montant = models.DecimalField(max_digits=6, decimal_places=2)   # prix fige au moment de l'achat (Decimal)\n    class Meta:   # options du modele\n        indexes = [models.Index(fields=[\"client\"])]   # « mes achats » : filtre par client\n\n# docker compose exec app python manage.py makemigrations catalogue   # generer la migration\n# docker compose exec app python manage.py migrate   # appliquer la migration en base\n\n# Pourquoi ces index MAINTENANT :\n# - Index(client) : l'espace client filtre systematiquement par client ;\n#   sans index, chaque affichage scanne toute la table -> lent ET vecteur de DoS.\n# - Index(-date_debut) : le tri « recent d'abord » est l'affichage par defaut.\n# Anticiper evite un ALTER TABLE lourd sur une table pleine en production.",
+    note: "PROTECT partout : locations et achats sont des archives, on ne supprime pas un client ni un jeu qui a un historique. Les index sont posés d'après les USAGES connus (filtrer par client, trier par date), pas au hasard — c'est le réflexe performance intégré à la conception, pas rajouté après un incident de lenteur en prod." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

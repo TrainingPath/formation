@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Projet guidé : l'API de la bibliothèque",
+  subtitle: "Tout ce que tu as appris, assemblé en une application complète.",
+  theory: `
+<h3>1. Le cahier des charges</h3>
+<p>Un <strong>cahier des charges</strong> est la liste écrite de tout ce que l'application doit faire (les « besoins »). On le rédige AVANT de coder, pour savoir où l'on va. Voici le nôtre :</p>
+<pre class="pseudo">L'API de la bibliothèque municipale :
+- Catalogue public : consulter, chercher (titre, auteur, disponibilité)
+- Comptes : inscription publique, connexion, rôles MEMBRE/BIBLIOTHECAIRE/ADMIN
+- Emprunts : emprunter (max 5, livre disponible), rendre (le sien !),
+  consulter SES emprunts ; durée de prêt configurable
+- Gestion (bibliothécaire) : ajouter/retirer des livres, voir tous les emprunts,
+  liste des retards
+- Admin : gestion des comptes, statistiques
+- Qualité : validation, erreurs uniformes, tests, logs, health</pre>
+<h3>2. L'architecture cible</h3>
+<p>L'<strong>architecture cible</strong> est le plan des dossiers (paquets) du projet, un par rôle — exactement les couches de la leçon 7 :</p>
+<pre class="pseudo">com.exemple.biblio                                       // paquet racine
+├── controller/   LivreController, MembreController, EmpruntController,   // couche web
+│                 AdminController, (pages Thymeleaf éventuelles)
+├── service/      CatalogueService, MembreService, EmpruntService, StatsService  // couche métier
+├── repository/   LivreRepository, MembreRepository, EmpruntRepository    // couche données
+├── model/        Livre, Membre, Emprunt                                  // les entités
+├── dto/          CreationLivreDto, InscriptionDto, EmpruntDto, ErreurDto...  // contrats d'échange
+├── config/       SecuriteConfig, BiblioProperties                        // configuration
+└── exception/    GestionErreurs + les exceptions métier                  // gestion des erreurs</pre>
+<h3>3. Le tableau des routes (le contrat de l'API)</h3>
+<p>Le <strong>contrat de l'API</strong> est la liste des routes (URL + méthode HTTP) et de qui a le droit de les appeler. C'est la promesse faite aux clients :</p>
+<pre class="pseudo">Public :                                                 // accessible sans compte
+  GET  /api/livres, /api/livres/{id}, /api/livres/recherche?q=...   // consulter le catalogue
+  POST /api/membres                         (inscription)           // créer un compte
+Connecté (MEMBRE+) :                                     // il faut être authentifié
+  POST   /api/emprunts                      {livreId}   → 201       // emprunter un livre
+  DELETE /api/emprunts/{id}                 (rendre le SIEN) → 204  // rendre son emprunt
+  GET    /api/mes-emprunts                                          // voir ses emprunts
+Bibliothécaire+ :                                        // rôle BIBLIOTHECAIRE minimum
+  POST   /api/livres          PUT/DELETE /api/livres/{id}           // gérer le catalogue
+  GET    /api/emprunts        GET /api/emprunts/retards             // suivre les emprunts
+Admin :                                                  // rôle ADMIN
+  GET/PUT/DELETE /api/admin/membres/**      GET /api/admin/stats    // gérer comptes et stats</pre>
+<h3>4. L'ordre de construction conseillé</h3>
+<pre class="pseudo">1. Entités + repositories (+ données de test @Profile("dev"))
+2. Services avec les règles + exceptions métier
+3. Contrôleurs + DTO + validation
+4. GestionErreurs (advice)
+5. SecuriteConfig + UserDetailsService + hash BCrypt
+6. Tests : services (unitaires) puis contrôleurs (@WebMvcTest)
+7. Logs, @Transactional, actuator, profils</pre>
+<p>Toujours ce sens : <strong>données → métier → web → sécurité → qualité</strong>. Chaque étape se teste avant la suivante.</p>
+<h3>5. Les règles métier, noir sur blanc</h3>
+<p>Une <strong>règle métier</strong> est une contrainte du domaine (« ce qui est autorisé ou non »). On les écrit clairement, avec le code HTTP renvoyé en cas de violation :</p>
+<pre class="pseudo">R1  Un livre indisponible ne peut pas être emprunté        → 409
+R2  Un membre a au maximum \${biblio.max-emprunts} en cours → 409
+R3  On ne rend que SES emprunts (sauf bibliothécaire+)     → 403
+R4  Un email d'inscription est unique                       → 409
+R5  Retard = emprunt en cours depuis plus de
+    \${biblio.duree-pret-jours} jours</pre>
+<div class="warn">La tentation du projet : tout coder d'un bloc puis « voir si ça marche ». Résiste ! Une étape = un commit = des tests verts. Le projet guidé sert autant à apprendre la MÉTHODE que le résultat.</div>
+<div class="tip">Compare avec la leçon 20 du cours Java : la même bibliothèque, en console. Regarde le chemin parcouru — mêmes règles métier, mais persistance réelle, API, sécurité, tests. Le métier n'a pas changé : c'est le PROFESSIONNALISME autour qui a grandi.</div>`,
+  exercises: [
+    { type: "qcm", q: "Par quoi COMMENCE la construction du projet ?", opts: ["Les contrôleurs", "Les entités et repositories : les fondations de données", "La sécurité", "Le CSS"], a: 1, exp: "Données → métier → web : on bâtit de bas en haut." },
+    { type: "qcm", q: "Où vit la règle R2 (plafond d'emprunts) ?", opts: ["Dans EmpruntController", "Dans EmpruntService, avec le plafond lu depuis la configuration", "Dans le repository", "Dans le navigateur"], a: 1, exp: "Règle métier → service ; valeur variable → @ConfigurationProperties." },
+    { type: "qcm", q: "Quel statut pour une violation de R1 (livre indisponible) ?", opts: ["404", "409 Conflict via l'exception métier et l'advice", "500", "401"], a: 1, exp: "La table de traduction de la leçon 13 s'applique au projet entier." },
+    { type: "qcm", q: "POST /api/emprunts n'envoie que {livreId}. D'où vient le membre ?", opts: ["D'un paramètre membreId", "Du Principal : l'identité authentifiée (anti-IDOR, leçon 17)", "Du JSON", "Au hasard"], a: 1, exp: "L'emprunteur EST l'utilisateur connecté — jamais un champ falsifiable." },
+    { type: "qcm", q: "La liste des retards (R5) utilise quelle brique de la leçon 10 ?", opts: ["findAll", "La @Query « en cours ET dateEmprunt < :limite » avec limite = now() - durée configurée", "deleteById", "existsById"], a: 1, exp: "enRetard(LocalDate.now().minusDays(props.getDureePretJours()))." },
+    { type: "qcm", q: "Qui a le droit d'appeler DELETE /api/livres/3 ?", opts: ["Tout le monde", "Bibliothécaire et Admin, selon le tableau des routes", "Les membres", "Personne"], a: 1, exp: "Gestion du catalogue = rôle BIBLIOTHECAIRE minimum." },
+    { type: "qcm", q: "Un livre actuellement emprunté doit-il pouvoir être supprimé du catalogue ?", opts: ["Oui, sans réfléchir", "Question métier à trancher ! Probablement refuser (409) tant qu'un emprunt est en cours", "Oui mais en silence", "La base décide seule"], a: 1, exp: "Le projet t'oblige à PENSER les règles, pas seulement à coder. (Et la clé étrangère te rattraperait !)" },
+    { type: "qcm", q: "Où le mot de passe reçu à l'inscription est-il haché ?", opts: ["Dans le DTO", "Dans MembreService, avec le PasswordEncoder injecté, avant le save", "Dans le contrôleur", "Il ne l'est pas"], a: 1, exp: "encoder.encode(dto.getMotDePasse()) : le geste de la leçon 16." },
+    { type: "qcm", q: "Quels tests écrire pour EmpruntService en premier ?", opts: ["Aucun", "Les règles R1-R3 : emprunt refusé si indisponible, si plafond, retour refusé si pas le sien", "Le CSS", "Les tests de Spring lui-même"], a: 1, exp: "Les règles métier sont le cœur : ce sont elles qu'on protège en priorité." },
+    { type: "qcm", q: "@Transactional est indispensable sur…", opts: ["Toutes les méthodes du projet", "emprunter() et rendre() : plusieurs écritures liées", "Les getters", "Les contrôleurs"], a: 1, exp: "Là où une exception à mi-chemin laisserait des données incohérentes." },
+    { type: "qcm", q: "Le jeu de données de démonstration (livres + comptes) doit être…", opts: ["Dans le code de production", "Dans un CommandLineRunner @Profile(\"dev\")", "Dans un fichier Word", "Tapé à la main à chaque fois"], a: 1, exp: "Leçon 14 : les données de test n'approchent jamais la production." },
+    { type: "qcm", q: "GET /api/mes-emprunts renvoie les entités Emprunt directement ?", opts: ["Oui, c'est plus simple", "Non : des EmpruntDto plats (cycle JSON, lazy loading — leçon 11)", "Oui mais en XML", "Non, rien du tout"], a: 1, exp: "Les entités restent à l'intérieur ; les DTO sont le visage public." },
+    { type: "vf", q: "Une étape du plan = du code qui compile + des tests verts + un commit.", a: true, exp: "La discipline du projet : jamais deux chantiers ouverts en même temps." },
+    { type: "qcm", q: "L'AdminController expose /api/admin/stats. Deux protections le couvrent :", opts: ["Aucune", "La route /api/admin/** (hasRole ADMIN) + @PreAuthorize sur les méthodes", "Le mot de passe du wifi", "Le port 8080"], a: 1, exp: "Défense en profondeur, leçon 17." },
+    { type: "qcm", q: "Quelle est la différence FONDAMENTALE avec la bibliothèque console du cours Java ?", opts: ["Le métier a changé", "Le métier est identique ; autour : persistance réelle, API, sécurité, tests, observabilité", "Java a changé", "Il n'y en a pas"], a: 1, exp: "Spring n'a pas remplacé ta logique — il l'a entourée d'infrastructure professionnelle." }
+  ],
+  final: {
+    title: "Exercice final — La revue de code du projet",
+    intro: `<p>Un camarade termine son projet et te demande une revue. Voici ses choix — valide ou corrige :</p>
+<pre class="pseudo">A. POST /api/emprunts reçoit {"membreId": 12, "livreId": 3}   // le membre vient du CORPS (danger ?)
+B. La vérification du plafond est dans EmpruntController        // règle métier dans la couche web (danger ?)
+C. Le mot de passe est stocké tel quel « pour simplifier les tests »   // en clair en base (danger ?)
+D. GET /api/emprunts (tous les emprunts) est permitAll « pour déboguer »   // route ouverte à tous (danger ?)
+E. emprunter() modifie le livre puis save l'emprunt, sans @Transactional   // deux écritures non protégées</pre>`,
+    questions: [
+      { type: "qcm", q: "Choix A (membreId dans le corps) :", opts: ["Correct", "Faille IDOR : n'importe qui emprunte au nom du membre 12. L'identité doit venir du Principal", "Plus rapide, donc mieux", "Question de goût"], a: 1, exp: "Leçon 17 : les données personnelles suivent l'authentification, pas le JSON." },
+      { type: "qcm", q: "Choix B (plafond dans le contrôleur) :", opts: ["Correct", "Règle métier au mauvais étage : dans le service, sinon tout autre chemin d'accès la contourne", "C'est plus court", "Le contrôleur est fait pour ça"], a: 1, exp: "Leçon 7 : le service est le gardien des règles." },
+      { type: "qcm", q: "Choix C (mot de passe en clair) :", opts: ["Acceptable temporairement", "Inacceptable même en dev : BCrypt dès le premier jour, les tests utilisent encoder.matches", "OK si la base est locale", "OK avec un commentaire TODO"], a: 1, exp: "Leçon 16 : le mot de passe en clair ne doit jamais exister en base — l'habitude se prend immédiatement." },
+      { type: "qcm", q: "Choix D (tous les emprunts en permitAll) :", opts: ["Pratique, gardons-le", "Fuite de données personnelles : rôle BIBLIOTHECAIRE minimum, le « débogage » n'excuse rien", "OK le week-end", "OK si personne ne connaît l'URL"], a: 1, exp: "« Personne ne connaît l'URL » n'est pas une protection. Leçons 16-17." },
+      { type: "qcm", q: "Choix E (pas de @Transactional) :", opts: ["Aucun risque", "Une exception entre les deux écritures laisse un livre bloqué sans emprunt : transaction obligatoire", "Les transactions sont optionnelles", "Ça va plus vite sans"], a: 1, exp: "Leçon 19 : écritures multiples liées = tout ou rien." }
+    ],
+    solution: `<pre class="pseudo">// Le verdict de la revue, avec les références :
+// A. ❌ IDOR              → Principal (leçon 17)
+// B. ❌ mauvais étage     → EmpruntService (leçon 7)
+// C. ❌ mot de passe nu   → BCrypt partout, toujours (leçon 16)
+// D. ❌ fuite de données  → hasAnyRole('BIBLIOTHECAIRE','ADMIN') (leçon 17)
+// E. ❌ incohérence       → @Transactional (leçon 19)
+
+// Cinq erreurs, cinq leçons du cours. Une revue de code n'est pas
+// une critique : c'est le filet de sécurité HUMAIN, complémentaire
+// des tests. Les meilleurs développeurs la réclament pour leur
+// propre code.</pre>
+<p>Le projet est ton portfolio : héberge-le sur un dépôt Git propre (README avec le tableau des routes, instructions de lancement). Demain : l'examen final du cours !</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-projet-emprunter", title: "La méthode emprunter() finale", level: 3,
+    statement: "Écris la version DÉFINITIVE de <code>EmpruntService.emprunter(String emailDemandeur, Long livreId)</code>, celle du projet : transactionnelle, journalisée, qui applique R1 (disponibilité) et R2 (plafond configuré via <code>BiblioProperties</code>), charge le membre par email et le livre par id (exceptions 404 sinon), crée l'emprunt daté d'aujourd'hui et renvoie l'<code>EmpruntDto</code>.",
+    hints: [
+      "Signature : @Transactional public EmpruntDto emprunter(String emailDemandeur, Long livreId).",
+      "Ordre des vérifications : membre (404) → plafond (409) → livre (404) → disponibilité (409).",
+      "Termine par EmpruntDto.depuis(empruntRepo.save(new Emprunt(m, l, LocalDate.now())))."
+    ],
+    solution: "@Service\npublic class EmpruntService {\n    private static final Logger log = LoggerFactory.getLogger(EmpruntService.class);\n    private final MembreRepository membreRepo;\n    private final LivreRepository livreRepo;\n    private final EmpruntRepository empruntRepo;\n    private final BiblioProperties props;        // max-emprunts configurable\n    // ... constructeur d'injection des 4 ...\n\n    @Transactional                               // 2 écritures : tout ou rien\n    public EmpruntDto emprunter(String emailDemandeur, Long livreId) {\n        log.info(\"Emprunt demandé : demandeur={}, livre={}\", emailDemandeur, livreId);\n\n        // 1. le membre (identité authentifiée → jamais falsifiable)\n        Membre m = membreRepo.findByEmail(emailDemandeur)\n            .orElseThrow(() -> new MembreIntrouvableException(emailDemandeur));\n\n        // 2. R2 : le plafond configuré\n        long enCours = empruntRepo.countByMembreIdAndDateRetourIsNull(m.getId());\n        if (enCours >= props.getMaxEmprunts())\n            throw new PlafondEmpruntsAtteintException(m.getId(), props.getMaxEmprunts());\n\n        // 3. le livre\n        Livre l = livreRepo.findById(livreId)\n            .orElseThrow(() -> new LivreIntrouvableException(livreId));\n\n        // 4. R1 : la disponibilité\n        if (!l.isDisponible())\n            throw new LivreIndisponibleException(livreId);\n\n        // 5. l'action : écriture 1 + écriture 2, sous transaction\n        l.setDisponible(false);\n        Emprunt e = empruntRepo.save(new Emprunt(m, l, LocalDate.now()));\n        log.info(\"Emprunt {} créé\", e.getId());\n        return EmpruntDto.depuis(e);             // DTO plat vers le contrôleur\n    }\n}",
+    note: "Cette méthode convoque 9 leçons d'un coup : DI (2), couches (7), JPA (8-9), requête dérivée (10), relations et DTO (11), exceptions (13), config (14), Principal (17), logs et transaction (19). C'est ÇA, un framework maîtrisé." },
+  { id: "spring-projet-retards", title: "L'endpoint des retards", level: 3,
+    statement: "Implémente la fonctionnalité « retards » de bout en bout : la méthode de service <code>retards()</code> (emprunts en cours depuis plus de <code>props.getDureePretJours()</code> jours, convertis en DTO) et la route <code>GET /api/emprunts/retards</code> réservée aux bibliothécaires/admins, qui renvoie la liste en JSON.",
+    hints: [
+      "La date limite : LocalDate.now().minusDays(props.getDureePretJours()).",
+      "Réutilise la @Query enRetard(limite) écrite à la leçon 10.",
+      "Sur le contrôleur ou le service : @PreAuthorize(\"hasAnyRole('BIBLIOTHECAIRE','ADMIN')\")."
+    ],
+    solution: "// --- SERVICE ---\n@PreAuthorize(\"hasAnyRole('BIBLIOTHECAIRE','ADMIN')\") // défense au plus près\npublic List<EmpruntDto> retards() {\n    LocalDate limite = LocalDate.now()\n        .minusDays(props.getDureePretJours());   // ex. aujourd'hui - 14 jours\n\n    return empruntRepo.enRetard(limite)          // la @Query de la leçon 10\n                      .stream()\n                      .map(EmpruntDto::depuis)   // entités → DTO plats\n                      .toList();\n}\n\n// --- CONTROLLER ---\n@RestController\n@RequestMapping(\"/api/emprunts\")\npublic class EmpruntController {\n    // ... injection d'EmpruntService ...\n\n    @GetMapping(\"/retards\")                    // GET /api/emprunts/retards\n    public List<EmpruntDto> retards() {\n        return service.retards();                // délégation, zéro logique\n    }\n}\n\n// Rappel leçon 5 : /retards (chemin exact) gagne sur /{id} (variable) —\n// pas de conflit avec GET /api/emprunts/12.",
+    note: "La durée de prêt vient de la configuration : la bibliothèque passe à 21 jours ? Une ligne dans application.properties, zéro recompilation. C'est la leçon 14 qui sourit." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Recherche, filtres et pagination",
+  subtitle: "Rendre un grand catalogue navigable et rapide.",
+  theory: `
+<h3>1. Le besoin</h3>
+<p>Un catalogue de centaines de jeux ne s'affiche pas d'un seul bloc (ce serait illisible et lent). On ajoute trois outils : une <strong>recherche</strong> par titre (taper un mot pour retrouver un jeu), un <strong>filtre</strong> par catégorie (n'afficher qu'un genre) et une <strong>pagination</strong> (découper en pages) — l'idée étant de ne charger que ce qu'on montre à l'écran.</p>
+
+<h3>2. Composer la requête LINQ</h3>
+<p>On construit la requête par morceaux, en n'ajoutant chaque condition que si elle est utile :</p>
+<pre class="pseudo">public async Task&lt;List&lt;Jeu&gt;&gt; RechercherAsync(string? titre, int? idCategorie,   // recherche : titre et catégorie facultatifs
+                                             int page = 1, int taille = 10) {     // page 1 et 10 résultats par page, par défaut
+    var q = _db.Jeux.AsNoTracking().AsQueryable();                                // requête de base, sans suivi (lecture seule)
+    if (!string.IsNullOrWhiteSpace(titre))                                        // si un titre a été saisi…
+        q = q.Where(j =&gt; j.Titre.Contains(titre));                                // …ne garder que les titres qui le contiennent
+    if (idCategorie is not null)                                                  // si une catégorie a été choisie…
+        q = q.Where(j =&gt; j.CategorieId == idCategorie);                           // …ne garder que cette catégorie
+    return await q.OrderBy(j =&gt; j.Titre)                                          // trier par titre (indispensable avant de paginer)
+                  .Skip((page - 1) * taille)                                       // sauter les résultats des pages précédentes
+                  .Take(taille)                                                    // en prendre "taille" (le contenu d'une page)
+                  .ToListAsync();                                                  // exécuter : EF Core envoie UN seul SQL
+}</pre>
+<p><code>AsQueryable()</code> permet d'assembler la requête étape par étape. Les <code>Where</code> s'ajoutent <strong>conditionnellement</strong> (seulement si le critère existe). Point clé : LINQ est <strong>différé</strong> — rien n'est envoyé à la base tant qu'on n'exécute pas (<code>ToListAsync</code>). EF Core compose alors <strong>un seul SQL</strong> avec la clause <code>OFFSET/FETCH</code> de SQL Server.</p>
+
+<h3>3. Skip/Take = OFFSET/FETCH</h3>
+<p><code>Skip</code>/<code>Take</code> se traduisent par la pagination native de SQL Server :</p>
+<pre class="pseudo">-- SQL généré (SQL Server)                          -- voici la requête réellement envoyée à la base
+SELECT ... FROM Jeux WHERE Titre LIKE '%catan%'      -- ne garder que les titres contenant "catan"
+ORDER BY Titre                                       -- trier par titre
+OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY;   -- page 3, taille 10</pre>
+<p><code>LIKE '%catan%'</code> cherche « catan » n'importe où dans le titre ; <code>OFFSET 20</code> saute les 20 premiers, <code>FETCH NEXT 10</code> en prend 10 (c'est la 3ᵉ page de 10).</p>
+<div class="warn">Une pagination sans <code>OrderBy</code> n'a aucun sens : sans ordre <strong>stable</strong>, la base peut renvoyer les lignes dans un ordre différent à chaque fois, et la page 2 contiendrait des jeux déjà vus en page 1. On trie <em>toujours</em> avant de paginer.</div>
+
+<h3>4. Les paramètres viennent de l'URL</h3>
+<pre class="pseudo">[HttpGet("/api/jeux")]   // /api/jeux?titre=catan&page=2       // GET /api/jeux avec des paramètres dans l'URL
+public async Task&lt;ActionResult&gt; Chercher([FromQuery] string? titre,        // "titre" lu dans la query string
+        [FromQuery] int? categorie, [FromQuery] int page = 1) { ... }      // "categorie" et "page" aussi ; page=1 par défaut</pre>
+<p>La <strong>query string</strong> est la partie de l'URL après le <code>?</code> (ici <code>titre=catan&amp;page=2</code>). L'attribut <code>[FromQuery]</code> dit « prends cette valeur dans l'URL ». Côté Razor Pages, un formulaire GET renvoie vers la même page avec ces paramètres — l'URL reste ainsi <strong>partageable</strong> (on peut l'envoyer à un ami, elle rejoue la même recherche).</p>
+
+<h3>5. Compter pour afficher les pages</h3>
+<pre class="pseudo">var total = await q.CountAsync();          // avant Skip/Take        // compte TOUS les résultats filtrés (sans pagination)
+var nbPages = (int)Math.Ceiling(total / (double)taille);            // nombre de pages = total ÷ taille, arrondi au supérieur</pre>
+<p><code>Math.Ceiling</code> arrondit vers le haut : 23 jeux avec 10 par page font 3 pages (pas 2). On compte <em>avant</em> de paginer, sur la requête filtrée, sinon le total serait faux.</p>
+<div class="tip"><code>AsNoTracking()</code> convient aux lectures pures : EF Core ne <strong>suit pas</strong> les entités (il ne guette pas leurs modifications), ce qui rend la requête plus légère et rapide. C'est le réflexe idéal pour afficher un catalogue.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Paginer sert à…", opts: ["Trier", "Ne charger que la page affichée", "Sécuriser", "Valider"], a: 1, exp: "Performance et lisibilité." },
+    { type: "qcm", q: "Sauter les 20 premiers puis en prendre 10 :", opts: [".Skip(20).Take(10)", ".Take(20).Skip(10)", ".Limit(10)", ".Page(3)"], a: 0, exp: "Skip puis Take." },
+    { type: "qcm", q: "Skip/Take devient en SQL Server…", opts: ["LIMIT", "OFFSET … FETCH NEXT …", "TOP seul", "GROUP BY"], a: 1, exp: "Le dialecte vu en cours SQL Server." },
+    { type: "qcm", q: "Pour la page p de taille t, on saute…", opts: ["p * t", "(p - 1) * t", "t / p", "p"], a: 1, exp: "Page 1 → 0 sauté." },
+    { type: "vf", q: "On peut paginer sans OrderBy.", a: false, exp: "Ordre instable = pages incohérentes." },
+    { type: "qcm", q: "Ajouter un filtre seulement s'il est fourni :", opts: ["if (...) q = q.Where(...)", "toujours Where", "un deuxième DbContext", "du SQL brut"], a: 0, exp: "Composition conditionnelle." },
+    { type: "qcm", q: "Combien de requêtes SQL génère la composition de 2 Where + Skip/Take ?", opts: ["4", "1", "2", "0"], a: 1, exp: "LINQ est différé : un seul SQL final." },
+    { type: "qcm", q: "Recherche partielle sur le titre :", opts: ["j.Titre == titre", "j.Titre.Contains(titre)", "j.Titre.Length", "Equals"], a: 1, exp: "→ LIKE '%…%'." },
+    { type: "qcm", q: "Les paramètres de recherche arrivent par…", opts: ["Le corps JSON", "La query string ([FromQuery])", "Un cookie", "Le jeton"], a: 1, exp: "GET → URL partageable." },
+    { type: "qcm", q: "AsNoTracking() sert à…", opts: ["Suivre les entités", "Alléger les lectures pures (pas de suivi)", "Ouvrir une transaction", "Chiffrer"], a: 1, exp: "Catalogue = lecture seule." },
+    { type: "qcm", q: "Le nombre total de pages se calcule avec…", opts: ["CountAsync avant Skip/Take", "Take(1000)", "la taille du JSON", "un compteur manuel"], a: 0, exp: "Ceiling(total / taille)." },
+    { type: "vf", q: "CountAsync doit s'appliquer à la requête filtrée mais non paginée.", a: true, exp: "Sinon le total est faux." },
+    { type: "qcm", q: "page = 1 par défaut dans la signature évite…", opts: ["Le N+1", "Une erreur quand l'URL n'a pas ?page=", "Le XSS", "Les migrations"], a: 1, exp: "Valeur par défaut." },
+    { type: "qcm", q: "Un index SQL sur Titre aide surtout…", opts: ["L'INSERT", "La recherche par titre", "Le layout", "Le JWT"], a: 1, exp: "Cours MySQL/SQL Server réutilisé." },
+    { type: "vf", q: "L'URL /catalogue?titre=catan&page=2 peut être partagée et rejouée.", a: true, exp: "Tout l'état est dans l'URL." }
+  ],
+  final: {
+    title: "Exercice final — Le catalogue navigable",
+    intro: `<p>On assemble recherche, filtre et pagination.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre correct :", opts: ["Where → OrderBy → Skip → Take", "Take → Skip → Where", "OrderBy seul", "Skip → Where"], a: 0, exp: "Filtrer, trier, paginer." },
+      { type: "qcm", q: "Le filtre catégorie s'ajoute :", opts: ["Seulement si idCategorie est non nul", "Toujours", "Dans la vue", "En SQL brut"], a: 0, exp: "Conditionnel." },
+      { type: "qcm", q: "Page 3, taille 10 →", opts: ["Skip(20).Take(10)", "Skip(30).Take(10)", "Skip(10).Take(30)", "Take(3)"], a: 0, exp: "(3-1)*10." },
+      { type: "qcm", q: "Le SQL généré contient :", opts: ["OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY", "LIMIT 10, 20", "TOP 30", "HAVING"], a: 0, exp: "Dialecte SQL Server." },
+      { type: "vf", q: "AsNoTracking convient au catalogue en lecture.", a: true, exp: "Pas de modification ici." }
+    ],
+    solution: `<pre class="pseudo">var q = _db.Jeux.AsNoTracking().AsQueryable();    // requête de base, sans suivi (lecture seule)
+if (!string.IsNullOrWhiteSpace(titre))            // si un titre est saisi…
+    q = q.Where(j =&gt; j.Titre.Contains(titre));    // …filtrer sur ce titre
+if (idCategorie is not null)                      // si une catégorie est choisie…
+    q = q.Where(j =&gt; j.CategorieId == idCategorie);  // …filtrer sur cette catégorie
+
+var total = await q.CountAsync();                 // compte les résultats filtrés (avant pagination)
+var jeux  = await q.OrderBy(j =&gt; j.Titre)         // trier par titre
+                   .Skip((page - 1) * 10).Take(10)  // sauter les pages précédentes, prendre 10
+                   .ToListAsync();                // exécuter (un seul SQL)</pre>
+<p>Le catalogue est navigable. Demain : un espace pour chacun des trois profils.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta méthode de recherche paginée…",
+  items: [
+  { id: "projcsharp-l15", title: "La recherche paginée", level: 3,
+    statement: "Écris CatalogueService.RechercherAsync(string? titre, int? idCategorie, int page, int taille) : requête AsNoTracking, filtres conditionnels sur le titre (Contains) et la catégorie, tri par titre, pagination Skip/Take, et retour d'un objet PageResultat(Jeux, Total) où Total est le CountAsync de la requête filtrée.",
+    hints: [
+      "var q = _db.Jeux.AsNoTracking().AsQueryable(); puis les if.",
+      "Le CountAsync se fait AVANT Skip/Take (sur la requête filtrée).",
+      "return new PageResultat(await q.OrderBy(...).Skip(...).Take(...).ToListAsync(), total);"
+    ],
+    solution: "public record PageResultat(List<Jeu> Jeux, int Total);   // paquet de retour : les jeux + le total\n\npublic async Task<PageResultat> RechercherAsync(       // recherche paginee\n        string? titre, int? idCategorie, int page = 1, int taille = 10) {   // criteres et pagination (defauts)\n    var q = _db.Jeux.AsNoTracking().AsQueryable();      // requete de base, sans suivi\n    if (!string.IsNullOrWhiteSpace(titre))             // si un titre est saisi…\n        q = q.Where(j => j.Titre.Contains(titre));     // …filtrer sur ce titre\n    if (idCategorie is not null)                       // si une categorie est choisie…\n        q = q.Where(j => j.CategorieId == idCategorie); // …filtrer sur cette categorie\n\n    var total = await q.CountAsync();                  // total des resultats filtres (avant pagination)\n    var jeux = await q.OrderBy(j => j.Titre)           // trier par titre\n                      .Skip((page - 1) * taille)       // sauter les pages precedentes\n                      .Take(taille)                    // prendre une page\n                      .ToListAsync();                  // executer\n    return new PageResultat(jeux, total);              // renvoyer jeux + total\n}",
+    note: "La requête se compose morceau par morceau mais ne part vers SQL Server qu'aux deux points d'exécution (CountAsync, ToListAsync) : deux requêtes SQL au total, quel que soit le nombre de filtres. Le total permet à la vue d'afficher « page 2 sur 7 ». AsNoTracking allège cette lecture pure." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

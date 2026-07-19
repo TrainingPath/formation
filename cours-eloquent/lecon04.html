@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Les migrations : le schéma versionné",
+  subtitle: "Ton CREATE TABLE devient du code PHP, versionné dans Git comme le reste.",
+  theory: `
+<h3>1. Le problème : un schéma qui vit hors de Git</h3>
+<p>Au Niveau 4, tu as créé les tables de la Ludothèque avec des CREATE TABLE tapés dans MySQL. Un <strong>schéma</strong>, c'est le plan de toutes les tables et colonnes de la base (analogie : les plans d'un bâtiment — la liste des pièces et de leurs dimensions). Problème : ce schéma n'existe que <strong>dans ta base</strong>. Un collègue qui clone le projet n'a rien ; le serveur de production non plus ; et si tu ajoutes une colonne, il faut penser à rejouer le bon ALTER partout, dans le bon ordre. Rappel : <strong>Git</strong> est l'outil qui versionne ton code (il garde l'historique de chaque changement), mais il ne connaît pas le contenu de MySQL.</p>
+<pre class="pseudo">Sans migrations                     Avec migrations
+schéma = état de MA base            schéma = fichiers PHP dans Git
+« tu as bien lancé l'ALTER ? »      php artisan migrate, partout pareil
+historique perdu                    chaque évolution datée et rejouable</pre>
+<p>Une <strong>migration</strong> est un fichier PHP qui décrit un changement de schéma (analogie : une fiche de travaux « ajouter une cloison ici », datée et rangée dans un classeur). La suite ordonnée des migrations reconstruit la base de zéro. C'est le « Git de ton schéma » — même rôle que Flyway/Liquibase côté Java, les Migrations d'EF Core, ou makemigrations/migrate chez Django.</p>
+
+<h3>2. Créer une migration : make:migration</h3>
+<p><strong>artisan</strong> est l'outil en ligne de commande livré avec Laravel : tu tapes des ordres dans le terminal et il génère des fichiers ou lance des tâches (analogie : la télécommande du framework). La commande ci-dessous fabrique un fichier de migration vide et daté :</p>
+<pre class="pseudo">php artisan make:migration create_jeux_table   # commande shell : crée le fichier de migration, horodaté
+
+// database/migrations/2026_07_10_101500_create_jeux_table.php   ← le fichier généré (le préfixe = date + heure)
+return new class extends Migration            // une classe (sans nom) qui hérite de la classe Migration de Laravel
+{
+    public function up(): void                // up() = ce qu'on APPLIQUE quand on migre « en avant »
+    {
+        Schema::create('jeux', function (Blueprint $table) {   // CREATE TABLE jeux ( … ) : demande la création de la table
+            // description de la table, section 3   → les colonnes se déclarent ici
+        });                                   // fin de la définition de la table
+    }
+
+    public function down(): void              // down() = la marche arrière, ce qui ANNULE up()
+    {
+        Schema::dropIfExists('jeux');         // DROP TABLE IF EXISTS jeux : supprime la table si elle existe
+    }
+};</pre>
+<p>Deux méthodes : <strong>up()</strong> applique le changement, <strong>down()</strong> l'annule. Le préfixe horodaté du fichier garantit l'<strong>ordre d'exécution</strong> — crée donc jeux avant locations, qui la référence.</p>
+
+<h3>3. Blueprint : décrire les colonnes en PHP</h3>
+<p>L'objet <strong>Blueprint</strong> (« plan » en anglais) est le carnet où tu dessines la table : chaque appel de méthode ajoute une colonne (analogie : le plan d'architecte de la table, une ligne par pièce). Il traduit tes types SQL du Niveau 4 en méthodes fluides :</p>
+<pre class="pseudo">Schema::create('jeux', function (Blueprint $table) {   // ouvre la définition de la table jeux
+    $table-&gt;id();                              // colonne id : BIGINT UNSIGNED AUTO_INCREMENT, clé primaire
+    $table-&gt;string('titre', 150);              // colonne titre : VARCHAR(150)
+    $table-&gt;decimal('prix_location', 6, 2);    // colonne prix : DECIMAL(6,2) (6 chiffres, 2 après la virgule)
+    $table-&gt;unsignedInteger('stock')-&gt;default(0);   // entier positif, valeur par défaut 0
+    $table-&gt;text('description')-&gt;nullable();   // TEXT ; nullable() = la colonne accepte NULL (facultative)
+    $table-&gt;foreignId('editeur_id')            // colonne editeur_id : BIGINT UNSIGNED
+          -&gt;constrained('editeurs');           // + FOREIGN KEY REFERENCES editeurs(id) : la contrainte de clé étrangère
+    $table-&gt;timestamps();                      // ajoute created_at + updated_at d'un coup
+});                                            // ferme et valide la définition de la table</pre>
+<p><strong>foreignId(...)-&gt;constrained()</strong> crée la colonne ET la contrainte de clé étrangère — celle que tu écrivais à la main au Niveau 4. Une <strong>clé étrangère</strong> est une colonne qui pointe vers l'id d'une autre table (ici editeur_id renvoie vers la table editeurs). Ajoute <em>-&gt;cascadeOnDelete()</em> pour reproduire un ON DELETE CASCADE. Pour la table locations :</p>
+<pre class="pseudo">Schema::create('locations', function (Blueprint $table) {   // CREATE TABLE locations ( … )
+    $table-&gt;id();                                        // clé primaire auto-incrémentée
+    $table-&gt;foreignId('jeu_id')-&gt;constrained('jeux');    // FK jeu_id → jeux(id)
+    $table-&gt;foreignId('membre_id')-&gt;constrained('membres');   // FK membre_id → membres(id)
+    $table-&gt;date('date_location');                       // colonne DATE : jour de la location
+    $table-&gt;date('date_retour')-&gt;nullable();   // NULL = pas encore rendu
+    $table-&gt;timestamps();                                // created_at + updated_at
+});                                                      // fin de la table locations</pre>
+
+<h3>4. Exécuter, annuler, recommencer</h3>
+<p>Une fois les fichiers écrits, tu les joues avec artisan. Chaque commande a un rôle précis :</p>
+<pre class="pseudo">php artisan migrate            # joue les migrations jamais exécutées (appelle leurs up())
+php artisan migrate:rollback   # annule le dernier lot de migrations (appelle leurs down())
+php artisan migrate:status     # liste qui est déjà passé, qui attend
+php artisan migrate:fresh      # DROP toutes les tables, puis rejoue tout depuis zéro
+php artisan migrate:fresh --seed   # idem, + insère les données de test (seeders)</pre>
+<p>Comment Laravel sait-il où il en est ? Grâce à la table <strong>migrations</strong>, créée automatiquement : elle mémorise le nom de chaque fichier déjà joué et son numéro de lot (batch). Une migration ne se rejoue jamais deux fois.</p>
+
+<h3>5. Faire évoluer une table existante</h3>
+<p>Règle capitale : <strong>on ne modifie jamais une migration déjà jouée</strong> (les autres machines l'ont déjà exécutée dans son ancienne version). On en crée une nouvelle :</p>
+<pre class="pseudo">php artisan make:migration add_note_moyenne_to_jeux_table   # crée une migration de MODIFICATION, datée après les autres
+
+public function up(): void                                   // en avant : on ajoute la colonne
+{
+    Schema::table('jeux', function (Blueprint $table) {   // table(), pas create() : on MODIFIE une table existante
+        $table-&gt;decimal('note_moyenne', 3, 1)-&gt;nullable();   // ALTER TABLE … ADD note_moyenne DECIMAL(3,1) NULL
+    });
+}
+
+public function down(): void                                 // marche arrière : on retire ce qu'on a ajouté
+{
+    Schema::table('jeux', function (Blueprint $table) {   // on rouvre la table jeux
+        $table-&gt;dropColumn('note_moyenne');   // ALTER TABLE … DROP COLUMN note_moyenne
+    });
+}</pre>
+<p>L'historique reste linéaire : n'importe qui, sur n'importe quelle machine, obtient le même schéma en lançant migrate. Ton SQL du Niveau 4 n'est pas perdu : il est devenu du code, revu en pull request comme le reste.</p>
+<div class="warn">migrate:fresh DÉTRUIT toutes les tables et leurs données : parfait en développement, interdit sur une base qui contient de vraies données. Et ne modifie jamais une migration déjà poussée sur Git : crée une nouvelle migration corrective, sinon les bases de tes collègues divergent de la tienne.</div>
+<div class="tip">Nomme tes migrations comme des phrases : create_jeux_table, add_note_moyenne_to_jeux_table. Laravel comprend même ces noms pour pré-remplir le squelette. Et après chaque migration, un coup de SHOW CREATE TABLE dans MySQL te montre le SQL exact généré — le réflexe Niveau 4 reste ton meilleur allié.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une migration est…", opts: ["Un fichier PHP décrivant un changement de schéma, versionné dans Git", "Une copie de sauvegarde de la base", "Un export CSV", "Un transfert de serveur"], a: 0, exp: "La suite des migrations reconstruit la base de zéro, partout pareil." },
+    { type: "qcm", q: "Le problème que résolvent les migrations :", opts: ["La lenteur des SELECT", "Le schéma qui n'existe que dans une base locale, impossible à partager et historiser", "Le poids des images", "Les mots de passe faibles"], a: 1, exp: "Le schéma devient du code : clonable, rejouable, revu en PR." },
+    { type: "input", q: "Quelle commande artisan crée un fichier de migration ?", a: ["make:migration", "php artisan make:migration", "artisan make:migration"], ph: "php artisan …", exp: "php artisan make:migration create_jeux_table." },
+    { type: "qcm", q: "Les deux méthodes d'une migration sont…", opts: ["start() et stop()", "create() et drop()", "up() et down()", "run() et undo()"], a: 2, exp: "up() applique, down() annule — c'est ce qui rend le rollback possible." },
+    { type: "qcm", q: "Le préfixe horodaté du nom de fichier (2026_07_10_...) sert à…", opts: ["Décorer", "Garantir l'ordre d'exécution des migrations", "Chiffrer le fichier", "Compter les lignes"], a: 1, exp: "jeux doit exister avant locations qui la référence : l'ordre compte." },
+    { type: "qcm", q: "$table->id() génère…", opts: ["Un VARCHAR(36)", "Un BIGINT UNSIGNED auto-incrémenté, clé primaire", "Un index secondaire", "Une colonne uuid"], a: 1, exp: "Exactement la convention de PK attendue par Eloquent (leçon 2)." },
+    { type: "qcm", q: "Pour une colonne VARCHAR(150) nommée titre :", opts: ["$table->varchar('titre', 150)", "$table->text('titre')", "$table->char('titre')", "$table->string('titre', 150)"], a: 3, exp: "string() = VARCHAR ; text() = TEXT sans longueur." },
+    { type: "qcm", q: "$table->foreignId('jeu_id')->constrained('jeux') crée…", opts: ["La colonne ET la contrainte de clé étrangère vers jeux.id", "Seulement un index", "Une table pivot", "Un trigger MySQL"], a: 0, exp: "Le FOREIGN KEY ... REFERENCES du Niveau 4, en une ligne fluide." },
+    { type: "input", q: "Quelle méthode de Blueprint crée d'un coup created_at et updated_at ?", a: ["timestamps", "timestamps()", "$table->timestamps()"], ph: "$table->…", exp: "timestamps() : les deux colonnes que Eloquent remplit automatiquement." },
+    { type: "vf", q: "$table->date('date_retour')->nullable() autorise la valeur NULL, idéale pour « pas encore rendu ».", a: true, exp: "nullable() lève le NOT NULL par défaut — le même choix de modélisation qu'au Niveau 4." },
+    { type: "qcm", q: "php artisan migrate exécute…", opts: ["Toutes les migrations, même déjà jouées", "Seulement les migrations jamais exécutées sur cette base", "Uniquement la dernière", "Les down() de toutes"], a: 1, exp: "La table migrations mémorise ce qui est déjà passé." },
+    { type: "qcm", q: "La table qui mémorise les migrations déjà jouées s'appelle…", opts: ["schema_log", "artisan", "migrations", "historique"], a: 2, exp: "Créée automatiquement : nom du fichier + numéro de lot (batch)." },
+    { type: "vf", q: "Pour corriger une migration déjà poussée sur Git, on l'édite directement et on relance migrate.", a: false, exp: "Jamais : les autres bases l'ont jouée dans l'ancienne version. On crée une migration corrective." },
+    { type: "qcm", q: "migrate:fresh…", opts: ["Supprime toutes les tables puis rejoue toutes les migrations", "Annule le dernier lot", "Ne touche qu'aux index", "Optimise les requêtes"], a: 0, exp: "Reconstruction totale : parfait en dev, destructeur en production." },
+    { type: "qcm", q: "Les équivalents des migrations chez Django et EF Core :", opts: ["tinker et artisan", "makemigrations/migrate et EF Core Migrations", "pip et nuget", "Il n'y en a pas"], a: 1, exp: "Et Flyway/Liquibase côté Java : versionner le schéma est un standard de l'industrie." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma devenu code",
+    intro: `<p>La Ludothèque doit pouvoir se reconstruire sur n'importe quelle machine en une commande. Vérifions la mécanique.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre correct de création des tables (contraintes obligent) :", opts: ["locations, avis, jeux, membres", "peu importe, MySQL se débrouille", "editeurs/categories, puis jeux, membres, puis locations et avis", "avis en premier"], a: 2, exp: "Une table référencée doit exister avant la table qui porte la FK : le préfixe horodaté matérialise cet ordre." },
+      { type: "input", q: "Quelle méthode de Blueprint autorise NULL sur une colonne ?", a: ["nullable", "nullable()", "->nullable()"], ph: "$table->date('date_retour')->…", exp: "nullable() — sinon NOT NULL par défaut." },
+      { type: "qcm", q: "Ajouter une colonne note_moyenne à une table jeux déjà en place :", opts: ["Éditer create_jeux_table et relancer migrate", "migrate:fresh en production", "Un ALTER à la main sur chaque machine", "Nouvelle migration avec Schema::table('jeux', ...)"], a: 3, exp: "Schema::table modifie l'existant ; l'historique reste linéaire et partagé." },
+      { type: "vf", q: "php artisan migrate rejoue systématiquement toutes les migrations depuis le début.", a: false, exp: "Seules les migrations absentes de la table migrations sont exécutées." },
+      { type: "qcm", q: "Le down() de Schema::create('jeux', ...) est logiquement…", opts: ["Schema::dropIfExists('jeux')", "Schema::create('jeux') aussi", "un TRUNCATE", "un SELECT"], a: 0, exp: "down() annule up() : créer ↔ supprimer, ajouter une colonne ↔ dropColumn." }
+    ],
+    solution: `<pre class="pseudo">make:migration create_jeux_table   → up() : Schema::create + Blueprint
+                                     down() : Schema::dropIfExists
+
+Blueprint : id() · string('titre', 150) · decimal('prix_location', 6, 2)
+            foreignId('jeu_id')-&gt;constrained('jeux') · nullable()
+            timestamps()
+
+Cycle     : migrate → migrate:status → migrate:rollback → migrate:fresh (dev !)
+Mémoire   : table migrations (fichier + batch), rien ne se rejoue deux fois
+Évolution : JAMAIS éditer une migration jouée → nouvelle migration Schema::table
+
+Ailleurs  : Flyway/Liquibase (Java), EF Core Migrations, Django migrate.</pre>
+<p>Le schéma vit dans Git, les modèles sont branchés dessus. Il est temps de faire vivre les données : leçon 5, créer et lire avec create, find, first et all.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l4", title: "Réécrire le schéma du Niveau 4 en migrations", level: 1,
+    statement: "Reprends ton CREATE TABLE locations du Niveau 4 (id, jeu_id, membre_id, date_location, date_retour nullable, timestamps) et réécris-le sous forme de migration Laravel complète : nom du fichier, up() avec le Blueprint exact (types, contraintes de clés étrangères, nullable), down(). Explique ensuite en quelques lignes pourquoi cette migration doit être horodatée APRÈS celles de jeux et membres, et ce qui se passerait si ce n'était pas le cas.",
+    hints: [
+      "Chaque type SQL a son équivalent Blueprint : BIGINT PK → id(), DATE → date(), FK → foreignId()->constrained().",
+      "date_retour est NULL tant que le jeu n'est pas rendu : quelle méthode fluide traduit cela ?",
+      "Pour l'ordre : que répond MySQL si tu crées une FOREIGN KEY vers une table qui n'existe pas encore ?"
+    ],
+    solution: "Fichier : 2026_07_10_120000_create_locations_table.php\n(horodaté après create_jeux_table et create_membres_table)\n\npublic function up(): void\n{\n    Schema::create('locations', function (Blueprint $table) {\n        $table->id();\n        $table->foreignId('jeu_id')->constrained('jeux');\n        $table->foreignId('membre_id')->constrained('membres');\n        $table->date('date_location');\n        $table->date('date_retour')->nullable();\n        $table->timestamps();\n    });\n}\n\npublic function down(): void\n{\n    Schema::dropIfExists('locations');\n}\n\nPourquoi l'ordre compte : constrained('jeux') génère un\nFOREIGN KEY ... REFERENCES jeux(id). Si la migration locations passait\nAVANT create_jeux_table, MySQL refuserait la contrainte (erreur 1824 :\ntable référencée inexistante) et migrate s'arrêterait net. Le préfixe\nhorodaté encode donc la même dépendance que celle que je respectais\nau Niveau 4 en tapant mes CREATE TABLE dans le bon ordre.",
+    note: "Tu viens de faire le trajet inverse du Niveau 4 : du SQL vers le code qui le génère. En entreprise, ce fichier passerait en revue de code avant d'atteindre la production — exactement comme un changeset Liquibase (Java), une Migration EF Core ou un fichier généré par makemigrations (Django). Au Niveau 6, ton projet full-stack démarrera par cette pile de migrations." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

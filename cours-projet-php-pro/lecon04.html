@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Du MCD Merise aux migrations Laravel (dans le conteneur)",
+  subtitle: "Le schéma devient du code versionné, rejoué à l'identique partout.",
+  theory: `
+<h3>1. Merise d'abord, migration ensuite</h3>
+<p>Comme au Niveau 6, le schéma vient du <strong>MCD</strong> : Categorie (1,n)—(1,1) Jeu. Deux stocks distincts (vente / location), l'argent en <code>decimal</code>, jamais en flottant. Ce qui change : le schéma est écrit en <strong>migrations Laravel</strong> versionnées, rejouées à l'identique du poste à la production.</p>
+<p>Précisons le vocabulaire. <strong>Merise</strong> est une méthode de conception de bases de données ; son <strong>MCD</strong> (Modèle Conceptuel de Données) est un schéma décrivant les <em>entités</em> (Categorie, Jeu) et leurs relations avant d'écrire la moindre ligne — comme le plan d'un architecte avant de bâtir. La notation <code>(1,n)—(1,1)</code> donne les <strong>cardinalités</strong> : une catégorie contient plusieurs jeux (1,n), mais un jeu appartient à exactement une catégorie (1,1). Le type <strong>decimal</strong> stocke un nombre avec une précision exacte (parfait pour l'argent), là où un <strong>flottant</strong> (<em>float</em>) l'approxime et introduit de petites erreurs d'arrondi — inacceptables sur des euros. Une <strong>migration</strong> est un fichier de code, horodaté et versionné, qui décrit une modification du schéma (créer une table, ajouter une colonne).</p>
+
+<h3>2. Les migrations</h3>
+<p>Dans une migration, <code>Schema::create('jeux', …)</code> demande la création d'une table nommée <code>jeux</code>. L'objet <code>Blueprint $t</code> (« plan ») offre des méthodes pour décrire chaque colonne : <code>$t->id()</code> crée une clé primaire auto-incrémentée (un numéro unique par ligne) ; <code>string('titre', 200)</code> une colonne texte d'au plus 200 caractères ; <code>unique()</code> interdit les doublons ; <code>decimal('prix_achat', 6, 2)</code> un nombre à 6 chiffres dont 2 après la virgule ; <code>unsignedInteger</code> un entier <em>positif ou nul</em> (un stock n'est jamais négatif) ; <code>default(0)</code> fixe la valeur par défaut. <code>foreignId('categorie_id')->constrained()</code> pose une <strong>clé étrangère</strong> — un lien obligatoire vers la table <code>categories</code> garantissant qu'un jeu pointe toujours vers une catégorie réelle ; <code>restrictOnDelete()</code> empêche de supprimer une catégorie encore utilisée. <code>index('titre')</code> crée un <strong>index</strong> — un « répertoire trié » qui accélère les recherches. <code>timestamps()</code> ajoute deux colonnes de dates (création, modification).</p>
+<pre class="pseudo">// database/migrations/..._create_categories_table.php
+Schema::create('categories', function (Blueprint $t) {   // crée la table "categories" ; $t décrit ses colonnes
+    $t->id();                              // colonne id : clé primaire auto-incrémentée (un numéro unique par ligne)
+    $t->string('nom', 100)->unique();      // "nom" (texte, max 100) ; unique() interdit deux catégories de même nom
+    $t->timestamps();                      // deux colonnes de dates : created_at et updated_at
+});
+// ..._create_jeux_table.php
+Schema::create('jeux', function (Blueprint $t) {   // crée la table "jeux"
+    $t->id();                              // clé primaire auto-incrémentée
+    $t->string('titre', 200);              // titre du jeu (texte, max 200 caractères)
+    $t->decimal('prix_achat', 6, 2);       // prix d'achat : nombre exact à 2 décimales (jamais un flottant pour l'argent)
+    $t->decimal('prix_location', 6, 2);    // prix de location, même type décimal
+    $t->unsignedInteger('stock_vente')->default(0);      // stock de vente : entier positif ou nul, 0 par défaut
+    $t->unsignedInteger('stock_location')->default(0);   // stock de location : idem
+    $t->foreignId('categorie_id')->constrained()->restrictOnDelete();   // clé étrangère vers "categories" ; empêche de supprimer une catégorie utilisée
+    $t->index('titre');                    // recherche anticipée (on paginera)
+    $t->timestamps();                      // dates de création et de modification
+});</pre>
+
+<h3>3. Migrer dans le conteneur</h3>
+<p><strong>artisan</strong> est l'outil en ligne de commande de Laravel ; <code>php artisan migrate</code> applique les migrations non encore jouées. Comme tout tourne en conteneurs, on préfixe par <code>docker compose exec app</code> pour exécuter la commande <em>dans</em> le conteneur « app ». Laravel tient une table spéciale <code>migrations</code> qui mémorise les fichiers déjà appliqués, si bien qu'il ne les rejoue jamais deux fois ; <code>migrate:status</code> affiche cet état.</p>
+<pre class="pseudo">$ docker compose exec app php artisan migrate        # exécute "artisan migrate" DANS le conteneur app : applique les migrations non encore jouées
+# table migrations : Laravel sait quelles migrations sont déjà appliquées   (colonne interne : évite de rejouer deux fois)
+$ docker compose exec app php artisan migrate:status # affiche l'état : quelles migrations sont appliquées, lesquelles restent</pre>
+
+<h3>4. Des données de test reproductibles</h3>
+<p>Une <strong>factory</strong> (« fabrique ») est une recette qui génère des enregistrements de test crédibles à la volée. La méthode <code>definition()</code> renvoie les valeurs d'un faux jeu, produites par l'assistant <code>fake()</code> (données aléatoires réalistes : titres, prix…). On évite ainsi de coder des jeux « en dur » dans chaque test.</p>
+<pre class="pseudo">// database/factories/JeuFactory.php
+public function definition(): array {          // renvoie les valeurs d'un faux jeu, sous forme de tableau
+    return ['titre' => fake()->words(2, true),           // un titre de 2 mots inventés
+            'prix_achat' => fake()->randomFloat(2, 10, 60),      // prix d'achat aléatoire entre 10 et 60, à 2 décimales
+            'prix_location' => fake()->randomFloat(2, 2, 10),    // prix de location aléatoire entre 2 et 10
+            'stock_location' => fake()->numberBetween(0, 5),     // stock de location : entier aléatoire de 0 à 5
+            'categorie_id' => Categorie::factory()];             // crée aussi une catégorie liée (clé étrangère satisfaite)
+}
+// les factories alimentent les TESTS (leçon 5) sans données en dur</pre>
+
+<h3>5. Rejouable de zéro — la clé</h3>
+<div class="warn">Le job de tests de la CI (leçon 6) part d'une base <strong>vierge</strong> : Laravel rejoue toutes les migrations de zéro à chaque fois (via <code>RefreshDatabase</code>). Fini le « ça a migré par chance sur mon poste » — une migration cassée est rouge en CI, pas découverte en prod. Chaque migration est un fichier horodaté <strong>immuable</strong> une fois poussé : on corrige avec une nouvelle migration, on ne réécrit jamais une ancienne déjà appliquée.</div>
+<div class="tip">L'index sur <code>titre</code> est posé DÈS le départ : on sait qu'on cherchera et paginera par titre (leçon 15). Anticiper l'usage évite le scan lent et le futur « ALTER en catastrophe ». Le savoir performance/sécurité est intégré au schéma, pas ajouté après.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le schéma vient d'abord de…", opts: ["L'inspiration", "Merise (le MCD)", "Eloquent", "La prod"], a: 1, exp: "Modélisation avant SQL." },
+    { type: "qcm", q: "L'argent est stocké en…", opts: ["float", "decimal", "int", "string"], a: 1, exp: "Jamais de flottant pour de l'argent." },
+    { type: "qcm", q: "Le schéma est écrit en…", opts: ["SQL à la main sur le serveur", "Migrations Laravel versionnées", "Un tableur", "La chance"], a: 1, exp: "Versionnées, rejouables." },
+    { type: "qcm", q: "La table 'migrations' sert à…", opts: ["Stocker les jeux", "Tracer quelles migrations sont appliquées", "Les logs", "Rien"], a: 1, exp: "Laravel sait où il en est." },
+    { type: "qcm", q: "->constrained()->restrictOnDelete() pose…", opts: ["Un index", "Une clé étrangère avec intégrité référentielle", "Un cache", "Rien"], a: 1, exp: "Un jeu a toujours une catégorie valide." },
+    { type: "qcm", q: "L'index sur titre est posé…", opts: ["Un jour, en prod", "Dès la migration (usage anticipé)", "Jamais", "À la main"], a: 1, exp: "On paginera par titre." },
+    { type: "qcm", q: "Les factories servent à…", opts: ["Déployer", "Générer des données de test reproductibles", "Chiffrer", "Le CSS"], a: 1, exp: "Tests sans données en dur." },
+    { type: "qcm", q: "Une migration déjà poussée…", opts: ["Se réécrit", "Est immuable (on corrige par une nouvelle)", "Se supprime", "Change en prod"], a: 1, exp: "Historique fiable." },
+    { type: "qcm", q: "La CI rejoue les migrations…", opts: ["Sur la prod", "De zéro, sur une base vierge (RefreshDatabase)", "Jamais", "Une fois par mois"], a: 1, exp: "Plus de 'migré par chance'." },
+    { type: "qcm", q: "migrate:status affiche…", opts: ["Le CSS", "Quelles migrations sont appliquées", "Le rôle", "Le cache"], a: 1, exp: "État du schéma." },
+    { type: "vf", q: "Une migration cassée est découverte en CI, pas en prod.", a: true, exp: "Base vierge rejouée." },
+    { type: "qcm", q: "On applique les migrations…", opts: ["Sur le poste hôte", "Dans le conteneur (php artisan migrate)", "Manuellement en prod", "Jamais"], a: 1, exp: "docker compose exec." },
+    { type: "qcm", q: "Deux stocks distincts (vente/location) car…", opts: ["C'est joli", "Un jeu peut être loué ET vendu séparément", "Obligé par MySQL", "Par hasard"], a: 1, exp: "Règle métier du N4." },
+    { type: "qcm", q: "unsignedInteger pour un stock…", opts: ["Autorise le négatif", "Interdit le négatif (>= 0)", "Est décoratif", "Ralentit"], a: 1, exp: "Un stock n'est jamais négatif." },
+    { type: "vf", q: "L'index de recherche est intégré au schéma dès le départ, pas ajouté après.", a: true, exp: "Performance anticipée." }
+  ],
+  final: {
+    title: "Exercice final — Le schéma versionné et migré",
+    intro: `<p>Migrations Laravel, rejouables de zéro.</p>`,
+    questions: [
+      { type: "qcm", q: "La source de vérité du schéma :", opts: ["les migrations Laravel versionnées", "un SQL à la main", "Eloquent qui devine", "la prod"], a: 0, exp: "Fichiers horodatés." },
+      { type: "qcm", q: "L'argent :", opts: ["decimal(6,2)", "float", "double", "string"], a: 0, exp: "Précision exacte." },
+      { type: "qcm", q: "L'index sur titre :", opts: ["posé dès la migration (usage anticipé)", "jamais", "en prod à la main", "inutile"], a: 0, exp: "Pagination à venir." },
+      { type: "qcm", q: "Les tests utilisent :", opts: ["une base vierge rejouée (RefreshDatabase)", "la prod", "aucune base", "des données en dur"], a: 0, exp: "Migration fiable." },
+      { type: "vf", q: "Une migration poussée est immuable ; on corrige par une nouvelle.", a: true, exp: "Historique fiable." }
+    ],
+    solution: `<pre class="pseudo">// migration jeux : id, titre, decimal(6,2) x2, unsignedInteger x2,       // colonnes principales de la table jeux
+//   foreignId('categorie_id')->constrained()->restrictOnDelete(), index('titre')   // clé étrangère protégée + index de recherche
+// factories : données de test reproductibles pour les tests             // données de test, jamais en dur
+
+$ docker compose exec app php artisan migrate         # applique les migrations dans le conteneur
+$ docker compose exec app php artisan migrate:status  # vérifie l'état du schéma</pre>
+<p>Le schéma est versionné et migré. Demain : les modèles Eloquent, testés dès l'écriture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta migration et ta factory…",
+  items: [
+  { id: "proj6php-l4", title: "La migration + la factory du catalogue", level: 2,
+    statement: "Écris les migrations categories et jeux (deux stocks, decimal, clé étrangère avec intégrité, index titre) et la factory de Jeu. Explique en 3-4 lignes pourquoi les migrations plutôt qu'un SQL à la main, et pourquoi une migration poussée est immuable.",
+    hints: [
+      "decimal('prix_achat', 6, 2) ; unsignedInteger pour les stocks ; foreignId->constrained()->restrictOnDelete().",
+      "index('titre') : on cherchera par titre (leçon 15).",
+      "Immuable : la table migrations trace ce qui est appliqué ; réécrire casserait les bases déjà migrées."
+    ],
+    solution: "// database/migrations/..._create_categories_table.php\nSchema::create('categories', function (Blueprint $t) {   // cree la table \"categories\" ; $t decrit ses colonnes\n    $t->id();                              // cle primaire auto-incrementee\n    $t->string('nom', 100)->unique();      // nom (texte max 100), unique() interdit les doublons\n    $t->timestamps();                      // colonnes created_at et updated_at\n});\n\n// database/migrations/..._create_jeux_table.php\nSchema::create('jeux', function (Blueprint $t) {   // cree la table \"jeux\"\n    $t->id();                              // cle primaire auto-incrementee\n    $t->string('titre', 200);              // titre du jeu (texte max 200)\n    $t->decimal('prix_achat', 6, 2);       // prix d'achat : decimal exact (pas de flottant pour l'argent)\n    $t->decimal('prix_location', 6, 2);    // prix de location : decimal exact\n    $t->unsignedInteger('stock_vente')->default(0);      // stock vente : entier >= 0, 0 par defaut\n    $t->unsignedInteger('stock_location')->default(0);   // stock location : idem\n    $t->foreignId('categorie_id')->constrained()->restrictOnDelete();   // cle etrangere vers categories ; bloque la suppression d'une categorie utilisee\n    $t->index('titre');                    // recherche/pagination anticipee\n    $t->timestamps();                      // dates de creation et de modification\n});\n\n// database/factories/JeuFactory.php\npublic function definition(): array {      // renvoie les valeurs d'un faux jeu (tableau)\n    return [\n        'titre' => fake()->words(2, true),               // titre de 2 mots inventes\n        'prix_achat' => fake()->randomFloat(2, 10, 60),  // prix d'achat aleatoire 10..60, 2 decimales\n        'prix_location' => fake()->randomFloat(2, 2, 10),// prix de location aleatoire 2..10\n        'stock_vente' => fake()->numberBetween(0, 5),    // stock vente aleatoire 0..5\n        'stock_location' => fake()->numberBetween(0, 5), // stock location aleatoire 0..5\n        'categorie_id' => Categorie::factory(),          // cree une categorie liee (cle etrangere satisfaite)\n    ];\n}\n\n// POURQUOI DES MIGRATIONS, POURQUOI IMMUABLES\n// Un SQL applique a la main sur le serveur n'est ni versionne, ni rejouable, ni\n// revu en PR : impossible de garantir que dev, CI et prod ont le meme schema.\n// Les migrations Laravel sont du CODE horodate, rejoue a l'identique partout et\n// verifie en CI sur une base vierge.\n// IMMUABLE : la table 'migrations' enregistre chaque fichier applique. Reecrire\n// une migration deja jouee ne rejouerait PAS le changement sur les bases existantes\n// (dev, prod) et casserait la coherence. On corrige TOUJOURS par une nouvelle migration.",
+    note: "Les migrations transforment le schéma en code : versionné, revu en PR, rejoué à l'identique du poste du développeur jusqu'à la production. Les factories, elles, rendent les données de test reproductibles et lisibles — plus de jeux codés en dur dans chaque test. La règle d'immuabilité est le pendant de l'immuabilité des images Docker (leçon 17) : un artefact déjà livré ne se modifie pas, on en produit un nouveau." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

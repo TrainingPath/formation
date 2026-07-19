@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les transactions : atomic",
+  subtitle: "Décrémenter le stock ET créer la Location : tout ou rien — sinon la base ment.",
+  theory: `
+<h3>1. Rappel du Niveau 4 : tout ou rien</h3>
+<p>Tu l'as appris avec MySQL et InnoDB (le « moteur » de MySQL qui gère les transactions) : une <strong>transaction</strong> regroupe plusieurs écritures en une opération <strong>indivisible</strong> — le A d'<strong>ACID</strong> (les quatre garanties Atomicité, Cohérence, Isolation, Durabilité), l'atomicité. Soit tout est validé (<strong>COMMIT</strong>, « valider »), soit tout est annulé (<strong>ROLLBACK</strong>, « revenir en arrière »), jamais un entre-deux. La Ludothèque en a un besoin criant : <strong>louer un jeu</strong>, c'est <em>décrémenter le stock</em> ET <em>créer la Location</em>. Deux écritures, deux tables :</p>
+<pre class="pseudo">Louer « Catan » pour zelda42 :
+  1. UPDATE ludotheque_jeu SET stock = stock - 1 WHERE id = 3   -- ecriture 1 : baisser le stock
+  2. INSERT INTO ludotheque_location (jeu_id, membre_id, prix_location, ...)   -- ecriture 2 : creer la location
+
+Si le serveur meurt ENTRE les deux :
+  stock décrémenté, aucune location créée → un exemplaire a « disparu ».   -- etat incoherent
+  La base ment, et personne ne s'en apercevra avant l'inventaire.   -- bug invisible et dangereux</pre>
+
+<h3>2. Par défaut, Django est en autocommit</h3>
+<p>Mauvaise nouvelle : sans rien demander, Django travaille en <strong>autocommit</strong> (« validation automatique »). Chaque <em>save()</em>, <em>create()</em>, <em>update()</em> est <strong>committé immédiatement</strong>, indépendamment des autres. Nos deux écritures sont donc deux transactions séparées :</p>
+<pre class="pseudo">def louer_jeu(jeu_id, membre_id):        # fonction qui loue un jeu
+    jeu = Jeu.objects.get(pk=jeu_id)     # on recupere le jeu
+    jeu.stock -= 1                       # on baisse le stock en memoire (raccourci de jeu.stock = jeu.stock - 1)
+    jeu.save()                          # COMMIT immédiat : le stock est décrémenté   # deja grave en base !
+    # ... le processus meurt ICI (crash, coupure, exception) ...   # tout s'arrete
+    Location.objects.create(            # jamais exécuté   # cette ligne ne tournera pas
+        jeu=jeu, membre_id=membre_id, prix_location=Decimal('4.50'))</pre>
+<p>Le save() est déjà gravé dans MySQL, le create() n'aura jamais lieu : état incohérent, sans aucun message d'erreur côté base. L'autocommit est confortable pour les écritures isolées — et piégeux dès qu'une action métier en enchaîne plusieurs.</p>
+
+<h3>3. with transaction.atomic() : le bloc tout-ou-rien</h3>
+<p>La solution tient en une ligne : <em>from django.db import transaction</em>, puis un bloc <strong>with transaction.atomic():</strong>. Le mot-clé <strong>with</strong> ouvre un « gestionnaire de contexte » : un bloc qui fait quelque chose à l'entrée et quelque chose à la sortie. Tout ce qui s'écrit dans le bloc part dans <strong>UNE seule transaction</strong> : sortie normale → COMMIT ; exception → <strong>ROLLBACK automatique</strong>, et l'exception continue de remonter (« atomic » = atomique, insécable).</p>
+<pre class="pseudo">from django.db import transaction         # le module qui fournit atomic
+from django.db.models import F            # F pour le decrement cote base (lecon 14)
+
+def louer_jeu(jeu_id, membre_id):
+    with transaction.atomic():            # DEBUT du bloc tout-ou-rien
+        jeu = Jeu.objects.get(pk=jeu_id)  # on lit le jeu
+        if jeu.stock &lt; 1:                 # s'il n'y a plus de stock...
+            raise ValueError('Plus aucun exemplaire disponible')   # ...on LEVE une exception -> ROLLBACK
+        Jeu.objects.filter(pk=jeu_id).update(stock=F('stock') - 1)  # leçon 14   # decrement atomique cote base
+        Location.objects.create(          # creation de la location
+            jeu=jeu, membre_id=membre_id, prix_location=Decimal('4.50'))
+    # sortie normale du with  → COMMIT (les deux écritures ensemble)   # tout est valide d'un coup
+    # exception dans le bloc  → ROLLBACK (aucune des deux), l'exception remonte   # rien n'est garde</pre>
+<p>Remarque le F('stock') - 1 de la leçon 14 (décrément côté base, sans écraser une valeur lue trop tôt) et la vérification du stock qui <strong>lève une exception</strong> : lever, c'est précisément ce qui déclenche le ROLLBACK.</p>
+
+<h3>4. Le décorateur, l'imbrication, ATOMIC_REQUESTS</h3>
+<p>Trois variantes à connaître. Un <strong>décorateur</strong> (un mot précédé de @, posé au-dessus d'une fonction pour lui ajouter un comportement) enveloppe une fonction ou une vue entière ; l'<strong>imbrication</strong> (un bloc dans un autre) crée des points de sauvegarde ; et un réglage global existe :</p>
+<pre class="pseudo">@transaction.atomic                 # toute la fonction = une transaction   # decorateur pose sur la fonction
+def louer_jeu(jeu_id, membre_id):
+    ...                             # tout le corps est protege
+
+# Imbrication : un atomic DANS un atomic → SAVEPOINT (rollback partiel possible)
+with transaction.atomic():          # transaction externe
+    ...
+    with transaction.atomic():      # savepoint : son échec n'annule que lui   # point de sauvegarde interne
+        ...
+
+# settings.py → DATABASES['default']['ATOMIC_REQUESTS'] = True   # reglage global
+# chaque requête HTTP entière devient une transaction (simple et sûr,   # 1 requete web = 1 transaction
+# mais coût : transactions longues, verrous tenus plus longtemps)         # attention au cout</pre>
+
+<h3>5. Verrouiller pour de bon : select_for_update()</h3>
+<p>Dernier raffinement, en mention : il reste <strong>un</strong> exemplaire de Catan et <strong>deux</strong> membres cliquent « louer » au même instant. Deux processus lisent stock=1, les deux valident… stock à -1. Pour l'empêcher, <em>select_for_update()</em> génère un <strong>SELECT … FOR UPDATE</strong> : la ligne est <strong>verrouillée</strong> (« réservée ») jusqu'à la fin de la transaction, le second processus attend son tour. À utiliser <strong>obligatoirement dans un bloc atomic</strong> :</p>
+<pre class="pseudo">with transaction.atomic():                                  # un verrou n'existe que dans une transaction
+    jeu = Jeu.objects.select_for_update().get(pk=jeu_id)    # verrouille la ligne du jeu
+    # SELECT ... FROM ludotheque_jeu WHERE id = 3 FOR UPDATE   -- FOR UPDATE = "je reserve cette ligne"
+    # → la ligne est verrouillée jusqu'au COMMIT/ROLLBACK       # le 2e processus patiente
+    if jeu.stock &lt; 1:                                       # verification du stock
+        raise ValueError('Plus aucun exemplaire disponible')   # sinon on annule
+    ...                                                     # suite : decrement + create</pre>
+<p>Une ligne d'équivalents pour finir : @Transactional (Spring/JPA), BeginTransaction/SaveChanges (EF Core), DB::transaction(closure) (Eloquent).</p>
+<div class="warn">N'attrape <strong>jamais</strong> une exception À L'INTÉRIEUR d'un bloc atomic pour continuer comme si de rien n'était : Django a marqué la transaction comme cassée, et les écritures suivantes peuvent lever TransactionManagementError — ou pire, partir dans un état incohérent. Le try/except se place <strong>autour</strong> du bloc atomic, pas dedans.</div>
+<div class="tip">La règle d'or : une action métier = une fonction = un atomic. Si tu dois raconter l'opération avec un « et » — décrémenter le stock ET créer la location, débiter ET créditer — il te faut une transaction.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans ACID, l'atomicité garantit…", opts: ["Que les requêtes sont rapides", "Que la base est chiffrée", "Qu'un groupe d'écritures est appliqué en entier ou pas du tout", "Que deux lectures donnent le même résultat"], a: 2, exp: "Tout ou rien : COMMIT pour valider l'ensemble, ROLLBACK pour tout annuler — ton Niveau 4." },
+    { type: "qcm", q: "Par défaut, Django fonctionne en mode…", opts: ["Transaction unique par session", "Autocommit : chaque écriture est committée immédiatement", "Lecture seule", "ROLLBACK systématique"], a: 1, exp: "Chaque save(), create(), update() part seul dans sa propre transaction." },
+    { type: "vf", q: "Sans atomic, deux save() consécutifs sont automatiquement regroupés dans la même transaction.", a: false, exp: "Autocommit : chaque écriture est validée indépendamment ; un crash entre les deux laisse la base incohérente." },
+    { type: "qcm", q: "Si une exception éclate au milieu d'un bloc with transaction.atomic():…", opts: ["Django committe ce qui a déjà été écrit", "ROLLBACK automatique et l'exception continue de remonter", "L'exception est avalée silencieusement", "La base se verrouille définitivement"], a: 1, exp: "Rien n'est gardé, et l'appelant voit l'exception : à lui de réagir (autour du bloc)." },
+    { type: "input", q: "Complète l'import : from django.db import …", a: ["transaction"], ph: "un mot", exp: "from django.db import transaction — le module qui fournit atomic." },
+    { type: "qcm", q: "À la sortie normale (sans exception) d'un bloc atomic, Django exécute…", opts: ["Un ROLLBACK", "Un COMMIT de toutes les écritures du bloc", "Un save() global", "Rien : il faut committer à la main"], a: 1, exp: "Sortie normale = validation groupée ; c'est le « tout » du tout-ou-rien." },
+    { type: "qcm", q: "Pourquoi louer_jeu exige-t-il une transaction ?", opts: ["Parce que la table est grande", "Parce que deux écritures liées (stock ET Location) doivent réussir ou échouer ensemble", "Pour accélérer la requête", "Parce que MySQL l'impose toujours"], a: 1, exp: "Décrémenter sans créer la Location (ou l'inverse) = une base qui ment." },
+    { type: "qcm", q: "Pour envelopper une fonction entière dans une transaction, on écrit…", opts: ["@transaction.atomic au-dessus de la fonction", "@atomic.transaction", "with function.atomic():", "transaction(fonction)"], a: 0, exp: "Le décorateur équivaut à un with transaction.atomic(): autour de tout le corps." },
+    { type: "qcm", q: "Un atomic imbriqué dans un autre atomic crée…", opts: ["Une erreur", "Une deuxième connexion MySQL", "Un savepoint : son échec peut n'annuler que le bloc interne", "Un commit immédiat du bloc interne"], a: 2, exp: "Le SAVEPOINT de ton Niveau 4 : un point de retour partiel dans la transaction externe." },
+    { type: "input", q: "Le réglage de DATABASES qui enveloppe chaque requête HTTP dans une transaction :", a: ["ATOMIC_REQUESTS", "atomic_requests", "ATOMIC_REQUESTS=True"], ph: "DATABASES['default']['…'] = True", exp: "ATOMIC_REQUESTS = True : sûr et simple, au prix de transactions plus longues." },
+    { type: "vf", q: "ATOMIC_REQUESTS = True est gratuit : aucune conséquence sur les performances.", a: false, exp: "Chaque requête HTTP tient une transaction (et ses verrous) du début à la fin : c'est un coût réel." },
+    { type: "qcm", q: "select_for_update() génère en SQL…", opts: ["SELECT ... FOR UPDATE, qui verrouille les lignes lues", "UPDATE ... SET", "LOCK TABLES", "SELECT DISTINCT"], a: 0, exp: "Les lignes restent verrouillées jusqu'au COMMIT/ROLLBACK : l'autre processus attend." },
+    { type: "qcm", q: "select_for_update() doit s'utiliser…", opts: ["N'importe où", "Uniquement en lecture seule", "Uniquement dans un shell", "À l'intérieur d'un bloc transaction.atomic()"], a: 3, exp: "Un verrou n'a de sens que dans une transaction ; hors atomic, Django lève une erreur." },
+    { type: "qcm", q: "Un try/except À L'INTÉRIEUR du bloc atomic, qui avale l'exception et continue d'écrire…", opts: ["Est la bonne pratique officielle", "Annule proprement la transaction", "Risque TransactionManagementError : la transaction est marquée cassée", "Accélère le COMMIT"], a: 2, exp: "Attrape AUTOUR du bloc : Django doit voir l'exception sortir pour faire son ROLLBACK." },
+    { type: "qcm", q: "L'équivalent de @transaction.atomic chez Spring/JPA (Java) :", opts: ["@Autowired", "@Transactional", "@Entity", "@Rollback"], a: 1, exp: "Même idée partout : BeginTransaction/SaveChanges (EF Core), DB::transaction(closure) (Eloquent)." }
+  ],
+  final: {
+    title: "Exercice final — Tout ou rien",
+    intro: `<p>La location de jeux part en production : on vérifie que plus aucun exemplaire ne pourra « disparaître » entre deux écritures.</p>`,
+    questions: [
+      { type: "qcm", q: "Sans transaction, le serveur meurt entre jeu.save() (stock décrémenté) et Location.objects.create(). Résultat :", opts: ["MySQL annule le save() tout seul", "Le stock est décrémenté mais aucune location n'existe : base incohérente", "Django rejoue le create() au redémarrage", "Une erreur s'affiche à l'inventaire"], a: 1, exp: "L'autocommit a déjà gravé le save() ; personne ne saura qu'un exemplaire a disparu." },
+      { type: "input", q: "Le gestionnaire de contexte qui regroupe un bloc d'écritures en une seule transaction :", a: ["atomic", "atomic()", "transaction.atomic", "transaction.atomic()"], ph: "with transaction.…:", exp: "with transaction.atomic(): — sortie normale = COMMIT, exception = ROLLBACK." },
+      { type: "vf", q: "Dans un bloc atomic, lever une exception quand le stock est insuffisant suffit à déclencher le ROLLBACK de tout le bloc.", a: true, exp: "C'est même le mécanisme prévu : lever pour annuler, attraper autour du bloc pour réagir." },
+      { type: "qcm", q: "Deux membres louent en même temps le dernier Catan. Pour empêcher le stock négatif :", opts: ["select_for_update() dans un atomic : la ligne est verrouillée, le second attend", "Un sleep() entre les écritures", "Un deuxième serveur", "refresh_from_db() après coup"], a: 0, exp: "SELECT ... FOR UPDATE sérialise l'accès à la ligne du jeu le temps de la transaction." },
+      { type: "qcm", q: "Où placer le try/except qui affiche « stock épuisé » à l'utilisateur ?", opts: ["À l'intérieur du bloc atomic", "Autour du bloc atomic (côté appelant)", "Dans models.py", "Nulle part : atomic gère l'affichage"], a: 1, exp: "L'exception doit SORTIR du bloc pour déclencher le ROLLBACK ; on l'attrape ensuite, dehors." }
+    ],
+    solution: `<pre class="pseudo">Niveau 4    : transaction = tout ou rien (ACID, COMMIT/ROLLBACK, InnoDB)   # rappel du cours MySQL
+Défaut      : autocommit — chaque save()/create()/update() committé seul   # ecritures isolees
+Le bloc     : from django.db import transaction                          # l'import
+              with transaction.atomic():                                 # ouvre le bloc tout-ou-rien
+                  vérifier le stock (lever si insuffisant)               # lever = declencher le ROLLBACK
+                  update(stock=F('stock') - 1)      ← leçon 14           # decrement atomique
+                  Location.objects.create(...)                          # 2e ecriture
+              sortie normale → COMMIT · exception → ROLLBACK + remontée   # tout ou rien
+Variantes   : @transaction.atomic · atomic imbriqué = SAVEPOINT          # decorateur + points de sauvegarde
+              ATOMIC_REQUESTS=True (1 requête HTTP = 1 transaction, mais coût)   # reglage global
+Concurrence : select_for_update() DANS un atomic → SELECT ... FOR UPDATE  # verrouille la ligne
+try/except  : AUTOUR du bloc, jamais dedans (TransactionManagementError)  # l'exception doit sortir
+Ailleurs    : @Transactional (Spring/JPA) · BeginTransaction/SaveChanges (EF Core)   # equivalents
+              · DB::transaction(closure) (Eloquent)</pre>
+<p>Ta Ludothèque écrit désormais sans mentir. Reste le grand classique des ORM lents : la page qui déclenche 401 requêtes au lieu de 2. Leçon 18 : <strong>Le problème N+1 : select_related et prefetch_related</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l17", title: "L'autopsie du louer_jeu bugué", level: 2,
+    statement: "Un stagiaire de la Ludothèque a écrit ceci : def louer_jeu(jeu_id, membre_id): jeu = Jeu.objects.get(pk=jeu_id) ; jeu.stock -= 1 ; jeu.save() ; try: Location.objects.create(jeu=jeu, membre_id=membre_id, prix_location=4.50) ; except Exception: pass — les deux écritures sont hors transaction, et l'except silencieux avale toute erreur du create(). Rédige ton analyse en trois parties. 1) Liste les scénarios de corruption : que contient la base si le create() échoue ? si le serveur meurt entre save() et create() ? si deux membres louent le dernier exemplaire en même temps ? 2) Réécris la version correcte : transaction.atomic, vérification du stock qui lève une exception, décrément avec F('stock') - 1 (leçon 14), création de la Location. 3) Dis précisément où placer le try/except qui prévient l'utilisateur, et pourquoi l'except À L'INTÉRIEUR du bloc serait encore un bug.",
+    hints: [
+      "Pour chaque scénario, demande-toi : quelles écritures sont DÉJÀ committées (autocommit !) au moment où ça casse, et lesquelles n'auront jamais lieu ?",
+      "La version correcte suit la règle d'or : une action métier = une fonction = un atomic ; la vérification du stock doit LEVER une exception — c'est elle qui déclenche le ROLLBACK.",
+      "Django doit VOIR l'exception sortir du bloc atomic pour faire le ROLLBACK ; un except pass à l'intérieur la lui cache — et le pire scénario, deux clics simultanés, appelle select_for_update."
+    ],
+    solution: "1) Scénarios de corruption\n- create() échoue (contrainte, panne) : l'except pass avale l'erreur, mais le save()\n  est DÉJÀ committé (autocommit) → stock décrémenté, aucune Location, personne n'est prévenu.\n- Crash entre save() et create() : même résultat — un exemplaire a « disparu ».\n- Deux membres, dernier exemplaire : les deux lisent stock=1, les deux passent,\n  et jeu.stock -= 1 en Python écrase avec une valeur périmée → stock faux, deux locations\n  pour un seul exemplaire.\n\n2) Version correcte\nfrom django.db import transaction\nfrom django.db.models import F\n\ndef louer_jeu(jeu_id, membre_id):\n    with transaction.atomic():\n        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)\n        if jeu.stock < 1:\n            raise ValueError('Plus aucun exemplaire disponible')\n        Jeu.objects.filter(pk=jeu_id).update(stock=F('stock') - 1)\n        Location.objects.create(jeu=jeu, membre_id=membre_id,\n                                prix_location=Decimal('4.50'))\n    # sortie normale → COMMIT des deux écritures ; exception → ROLLBACK total\n\n3) Le try/except se place CHEZ L'APPELANT, autour de l'appel :\ntry:\n    louer_jeu(3, 7)\nexcept ValueError as e:\n    afficher le message à l'utilisateur\nUn except à l'intérieur du bloc cacherait l'exception à Django : pas de ROLLBACK,\ntransaction marquée cassée, TransactionManagementError possible à l'écriture suivante.\nLever DANS le bloc, attraper AUTOUR : c'est le contrat d'atomic.",
+    note: "Le COMMIT/ROLLBACK que tu tapais à la main dans MySQL au Niveau 4 devient ici un simple bloc with — mais c'est bien la même mécanique InnoDB qui tourne dessous. Au Niveau 3, tes vues Django écrivaient sans transaction sans que tu le saches ; au Niveau 6, chaque action métier de ton projet full-stack (commander, réserver, payer) devra suivre cette règle d'or : un « et » dans la phrase, un atomic dans le code." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

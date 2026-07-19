@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Les relations : /jeux/5/avis",
+  subtitle: "Un avis n'existe pas tout seul : comment représenter les liens entre ressources ?",
+  theory: `
+<h3>1. Les liens du domaine</h3>
+<p>Nos ressources ne vivent pas isolées : un <strong>avis</strong> appartient à un jeu et est écrit par un membre ; une <strong>location</strong> relie un jeu et un membre. La question de la leçon : comment ces liens se traduisent-ils dans les <strong>URLs</strong> (les adresses) et dans le <strong>JSON</strong> (le corps) ? Deux outils existent, et ils se complètent : la <strong>sous-ressource</strong> (le lien exprimé dans le chemin, comme un dossier rangé dans un dossier parent) et la <strong>référence</strong> (le lien exprimé dans le corps, en désignant l'autre ressource).</p>
+
+<h3>2. La sous-ressource : quand il y a appartenance forte</h3>
+<p>Un avis n'a aucun sens sans le jeu qu'il commente : supprime le jeu, les avis disparaissent avec. Cette <strong>appartenance forte</strong> (l'un ne peut pas exister sans l'autre) justifie de nicher les avis <em>sous</em> le jeu dans l'URL :</p>
+<pre class="pseudo">GET /jeux/5/avis            → 200 + les avis du jeu 5    # lire la SOUS-ressource « avis » nichée sous le jeu 5
+POST /jeux/5/avis           → créer un avis sur le jeu 5 # créer un avis SOUS le jeu 5
+Content-Type: application/json                          # en-tête : le corps est du JSON
+                                                        # (séparation en-têtes / corps)
+{ "membre": 12, "note": 4,                              # corps : l'auteur (id 12) et la note ; PAS de "jeu" (déjà dans l'URL)
+  "commentaire": "Excellent jeu de négociation" }       # le commentaire libre
+                                                        # (séparation requête / réponse)
+HTTP/1.1 201 Created                                    # réponse : 201 = avis créé
+Location: /jeux/5/avis/7                                # en-tête Location : l'adresse du nouvel avis (n°7, sous le jeu 5)
+                                                        # (séparation en-têtes / corps)
+{ "id": 7, "jeu": 5, "membre": 12, "note": 4,           # corps : l'avis créé ; le serveur a AJOUTÉ "id" et "jeu" tout seul
+  "commentaire": "Excellent jeu de négociation", "date": "2026-07-03" }   # commentaire + date ajoutée par le serveur</pre>
+<p>Remarque : dans le POST, le client n'envoie pas <code>"jeu": 5</code> — le jeu est déjà dans l'URL. Le serveur complète.</p>
+
+<h3>3. Trois façons d'écrire une référence dans le JSON</h3>
+<p>Dans le corps d'un avis, comment désigner le jeu ? Trois options, trois compromis :</p>
+<pre class="pseudo">1) L'id simple (choix Ludothèque)                                   # option 1 : ne mettre que le numéro
+   "jeu": 5                                                          # "jeu": 5 → un simple identifiant
+   → léger, simple ; le client refait une requête pour les détails   # avantage : léger ; coût : une requête en plus pour le détail
+                                                                     # (ligne vide)
+2) L'objet imbriqué                                                  # option 2 : inclure l'objet complet à l'intérieur
+   "jeu": { "id": 5, "titre": "Catan", "prix_location": 3.50 }       # le jeu est directement inséré dans l'avis
+   → confortable pour le client (une seule requête) ;                # avantage : tout est là d'un coup…
+     réponses plus lourdes, risque de duplication                   # …coût : réponses plus grosses, données répétées
+                                                                     # (ligne vide)
+3) L'URL (style hypermédia / HATEOAS)                                # option 3 : donner un lien à suivre
+   "jeu": "https://api.ludotheque.example/jeux/5"                    # la référence est une URL cliquable
+   → auto-descriptif, le client suit le lien ;                       # avantage : le client sait exactement où aller…
+     plus rare, un peu plus verbeux                                 # …coût : moins courant, un peu plus long</pre>
+<p>Le mot <strong>hypermédia / HATEOAS</strong> (Hypermedia As The Engine Of Application State) désigne le style où la réponse contient elle-même les liens à suivre, comme les liens d'une page web. Aucune des trois options n'est « la bonne » : on choisit selon les besoins des clients, et on reste <strong>cohérent</strong> dans toute l'API. Un compromis fréquent : l'id partout, plus un objet imbriqué en lecture sur les écrans qui en ont besoin.</p>
+
+<h3>4. Ne pas imbriquer au-delà de deux niveaux</h3>
+<p>La tentation : continuer à creuser. <code>/jeux/5/avis/7/membre</code>… Stop. Au-delà de <strong>deux niveaux</strong> (collection/id/sous-collection), les URLs deviennent illisibles et rigides.</p>
+<pre class="pseudo">✗ GET /jeux/5/avis/7/membre        (3 niveaux : trop profond)          # 3 niveaux imbriqués → URL rigide et illisible : à éviter
+✓ GET /jeux/5/avis                 → l'avis 7 contient "membre": 12    # bon : on lit l'avis, qui donne l'id du membre
+✓ GET /membres/12                  → puis on va chercher le membre     # bon : on récupère le membre par sa propre adresse</pre>
+<p>Chaque ressource garde son <strong>adresse canonique courte</strong> (son adresse « officielle » de référence) : un membre vit à <code>/membres/12</code>, même quand on l'a découvert via un avis.</p>
+
+<h3>5. Deux chemins pour la même chose : choisir et documenter</h3>
+<p>« Les locations du membre 12 » peut s'écrire de deux façons, toutes deux légitimes :</p>
+<pre class="pseudo">GET /membres/12/locations       → sous-ressource (lecture naturelle)   # via le membre : « les locations DU membre 12 »
+GET /locations?membre=12        → collection racine + filtre (leçon 10) # via la collection /locations, filtrée par membre</pre>
+<p>Choix de la Ludothèque : les <strong>avis</strong> vivent sous les jeux (<code>/jeux/5/avis</code>, appartenance forte), les <strong>locations</strong> vivent à la racine avec des filtres (<code>/locations?membre=12&amp;statut=en_cours</code>) car elles relient deux ressources et se filtrent dans tous les sens ; on garde <code>GET /membres/12/locations</code> comme raccourci documenté, strictement équivalent au filtre. Côté DRF, une sous-ressource se câble avec une action ou un router imbriqué (drf-nested-routers) ; Spring l'exprime avec <code>@GetMapping("/jeux/{jeuId}/avis")</code>, Laravel avec des routes imbriquées, ASP.NET Core avec <code>[Route("jeux/{jeuId}/avis")]</code>.</p>
+<div class="warn">L'imbrication profonde est une dette : <code>/jeux/5/avis/7/membre/12/locations</code> soude tes URLs à un chemin de navigation particulier. Deux niveaux maximum, puis on repasse par l'adresse canonique de la ressource.</div>
+<div class="tip">Quand deux chemins équivalents existent, le pire choix est de laisser les deux à moitié spécifiés. Choisis-en un comme référence, documente l'autre comme alias (ou supprime-le), et assure-toi qu'ils renvoient EXACTEMENT la même chose.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une sous-ressource comme /jeux/5/avis se justifie quand…", opts: ["Les deux ressources ont le même nombre de champs", "Il y a appartenance forte : l'avis n'existe pas sans le jeu", "On manque de place dans l'URL", "Le serveur est lent"], a: 1, exp: "Supprime le jeu, les avis n'ont plus de sens." },
+    { type: "qcm", q: "POST /jeux/5/avis : pourquoi le client n'envoie-t-il pas « jeu »: 5 dans le corps ?", opts: ["Parce que le jeu est déjà identifié par l'URL", "Parce que c'est interdit en JSON", "Parce que l'avis n'a pas de jeu", "Pour économiser un octet"], a: 0, exp: "Le serveur complète à partir du chemin." },
+    { type: "qcm", q: "La représentation « jeu »: 5 dans un avis est…", opts: ["Un objet imbriqué", "Une URL hypermédia", "Une référence par id", "Une erreur"], a: 2, exp: "Légère et simple ; le détail se récupère via GET /jeux/5." },
+    { type: "qcm", q: "L'avantage de l'objet imbriqué (« jeu »: { « id »: 5, « titre »: « Catan » }) :", opts: ["Réponses plus légères", "Le client évite une requête supplémentaire", "Impossible à mettre en cache", "Aucun"], a: 1, exp: "Confort du client, au prix de réponses plus lourdes." },
+    { type: "qcm", q: "« jeu »: « https://api.ludotheque.example/jeux/5 » est le style…", opts: ["Hypermédia (HATEOAS)", "SOAP", "Query string", "GraphQL"], a: 0, exp: "La référence est un lien que le client peut suivre." },
+    { type: "qcm", q: "La profondeur maximale conseillée pour les URLs imbriquées :", opts: ["1 niveau", "2 niveaux (collection/id/sous-collection)", "4 niveaux", "Illimitée"], a: 1, exp: "/jeux/5/avis oui ; /jeux/5/avis/7/membre non." },
+    { type: "qcm", q: "Pour obtenir l'auteur de l'avis 7 (qui contient « membre »: 12) :", opts: ["GET /jeux/5/avis/7/membre", "GET /membres/12", "GET /avis/membre/7", "POST /membres"], a: 1, exp: "On repasse par l'adresse canonique du membre." },
+    { type: "qcm", q: "GET /membres/12/locations et GET /locations?membre=12 :", opts: ["Le premier est faux", "Le second est faux", "Les deux sont légitimes : on en choisit un et on documente", "Ils renvoient des ressources différentes par nature"], a: 2, exp: "L'important est la cohérence et l'équivalence exacte." },
+    { type: "qcm", q: "Le choix de la Ludothèque pour les locations :", opts: ["Sous /jeux uniquement", "À la racine avec filtres (?membre=12, ?statut=en_cours)", "Sous /avis", "Pas d'endpoint"], a: 1, exp: "Elles relient jeu ET membre : les filtres offrent tous les angles." },
+    { type: "qcm", q: "En Spring, une sous-ressource s'exprime par…", opts: ["@GetMapping(« /jeux/{jeuId}/avis »)", "Route::apiResource", "filterset_fields", "un fichier XML"], a: 0, exp: "Le chemin imbriqué se déclare dans l'annotation de mapping." },
+    { type: "vf", q: "L'adresse canonique d'un membre reste /membres/12, même quand on le découvre via un avis.", a: true, exp: "Chaque ressource garde une adresse courte et stable." },
+    { type: "vf", q: "Il faut toujours imbriquer les objets liés dans le JSON pour éviter des requêtes.", a: false, exp: "C'est un compromis : confort du client contre poids des réponses." },
+    { type: "vf", q: "Un POST /jeux/5/avis réussi renvoie 201 avec l'avis créé.", a: true, exp: "Création de sous-ressource = mêmes règles que le CRUD de la leçon 9." },
+    { type: "input", q: "Le chemin pour poster un avis sur le jeu 5 :", a: ["/jeux/5/avis", "jeux/5/avis", "POST /jeux/5/avis"], ph: "/…", exp: "POST /jeux/5/avis — l'appartenance forte se lit dans l'URL." },
+    { type: "input", q: "Le nombre maximal de niveaux d'imbrication conseillé :", a: ["2", "deux"], ph: "nombre", exp: "Au-delà, on repasse par l'adresse canonique." }
+  ],
+  final: {
+    title: "Exercice final — Des liens propres",
+    intro: `<p>Sous-ressources, références, profondeur : vérifions que les relations de la Ludothèque sont bien câblées.</p>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi les avis vivent-ils sous /jeux/5/avis mais pas les locations sous /jeux/5/locations ?", opts: ["Par hasard", "L'avis appartient fortement au jeu ; la location relie deux ressources et se filtre dans tous les sens", "Les locations sont secrètes", "DRF l'interdit"], a: 1, exp: "Appartenance forte → sous-ressource ; relation multiple → racine + filtres." },
+      { type: "qcm", q: "Dans le JSON d'une location, « jeu »: 5 et « membre »: 12 sont…", opts: ["Des objets imbriqués", "Des références par id", "Des URLs", "Des erreurs de conception"], a: 1, exp: "Le choix par défaut de la Ludothèque : léger et cohérent." },
+      { type: "vf", q: "GET /locations?membre=12 doit renvoyer exactement la même chose que GET /membres/12/locations.", a: true, exp: "Deux chemins, une seule vérité — et c'est documenté." },
+      { type: "input", q: "Le chemin canonique du membre 12 :", a: ["/membres/12", "membres/12", "GET /membres/12"], ph: "/…", exp: "Court, stable, indépendant du chemin de navigation." },
+      { type: "qcm", q: "/jeux/5/avis/7/membre est à remplacer par…", opts: ["GET /membres/12 (l'avis contient « membre »: 12)", "GET /jeux/5/membres", "POST /membres/12", "Rien, c'est correct"], a: 0, exp: "Trois niveaux = trop profond ; la référence dans le JSON suffit." }
+    ],
+    solution: `<pre class="pseudo">Appartenance forte  → sous-ressource : GET/POST /jeux/5/avis (2 niveaux max)   # l'avis appartient au jeu → niché sous /jeux/5
+Relation multiple   → racine + filtres : /locations?membre=12&amp;statut=en_cours   # la location relie 2 choses → racine + filtres
+Raccourci documenté → /membres/12/locations ≡ /locations?membre=12             # les deux chemins renvoient la MÊME chose
+                                                                              # (ligne vide)
+Référence dans le JSON : "jeu": 5 (id)  |  objet imbriqué  |  URL (HATEOAS)    # 3 façons d'écrire un lien dans le corps
+→ la Ludothèque choisit l'id, partout, et chaque ressource garde              # choix : l'id simple, partout, pour la cohérence…
+  son adresse canonique (/membres/12).</pre>                                   # …et chaque ressource garde son adresse courte
+<p>Nos ressources sont reliées proprement. Mais que se passe-t-il quand un client envoie une note de 7 sur 5 ? Prochaine leçon : échouer proprement — le contrat d'erreur de la Ludothèque.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l11", title: "L'écran « détail d'un jeu »", level: 2,
+    statement: "L'équipe front prépare l'écran « détail d'un jeu » : il affiche la fiche du jeu 5, la liste de ses avis, et pour chaque avis le NOM du membre qui l'a écrit (pas seulement son id). Propose la ou les requêtes nécessaires et la représentation JSON de la réponse des avis. Compare au moins deux solutions (référence par id, objet imbriqué partiel…), donne leurs avantages et inconvénients, et justifie ton choix final.",
+    hints: [
+      "Solution 1 : GET /jeux/5 puis GET /jeux/5/avis avec « membre »: 12 — combien de requêtes le front doit-il faire pour afficher les noms ?",
+      "Solution 2 : imbriquer un objet membre PARTIEL dans chaque avis (id + nom seulement) — que gagne-t-on, qu'alourdit-on ?",
+      "Pense au cas 30 avis : une requête par membre (problème dit « N+1 côté client ») est-elle acceptable ?"
+    ],
+    solution: "Besoin : fiche du jeu 5 + avis + nom de chaque auteur.\n\nSolution A — références par id pures :\nGET /jeux/5 puis GET /jeux/5/avis → chaque avis contient \"membre\": 12\nLe front doit ensuite appeler GET /membres/12, /membres/15… \n→ 30 avis = jusqu'à 30 requêtes de plus (N+1 côté client). Trop.\n\nSolution B — objet membre PARTIEL imbriqué (choix retenu) :\nGET /jeux/5/avis →\n[ { \"id\": 7, \"note\": 4,\n    \"commentaire\": \"Excellent jeu de négociation\",\n    \"date\": \"2026-07-03\",\n    \"membre\": { \"id\": 12, \"nom\": \"Aïcha Diallo\" } } ]\n→ 2 requêtes en tout (le jeu, les avis), réponses à peine plus\n  lourdes, l'id reste présent pour naviguer vers /membres/12.\n\nJustification : l'imbrication est PARTIELLE (id + nom, pas l'email\nni la date d'inscription) et documentée. En écriture (POST), on\ncontinue d'envoyer un id simple : l'imbrication ne vaut qu'en lecture.",
+    note: "Ce dilemme lecture riche / écriture simple est un classique : DRF le résout avec deux serializers (ou un depth contrôlé), Spring avec des DTO dédiés, Laravel avec les API Resources. Tu le rencontreras dès le capstone Ludothèque, et le point de vue du client sera approfondi en leçon 20." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

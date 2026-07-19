@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "La relation N-1 : une location a un jeu et un membre",
+  subtitle: "La clé étrangère devient un objet : bienvenue dans la navigation.",
+  theory: `
+<h3>1. Du MCD au code : la relation côté Merise</h3>
+<p>Souviens-toi de ton MCD du Niveau 4 : l'association <em>CONCERNER</em> entre LOCATION et JEU portait les cardinalités <strong>1,1 côté Location</strong> et <strong>0,N côté Jeu</strong>. Traduction MLD : la clé de JEU migre dans LOCATION comme <strong>clé étrangère</strong> (une colonne qui pointe vers la ligne d'une autre table, comme un renvoi « voir fiche n° … »). Une location concerne exactement <strong>un</strong> jeu et <strong>un</strong> membre ; un jeu peut apparaître dans <strong>N</strong> locations. C'est la relation la plus fréquente de toutes les bases de données : la <strong>N-1</strong> (many-to-one, vue depuis Location). En SQL, tu l'écrivais avec FOREIGN KEY REFERENCES. En EF Core, tu vas l'écrire avec des <strong>objets</strong>.</p>
+<pre class="pseudo">MCD : LOCATION ──(1,1)── CONCERNER ──(0,N)── JEU
+MLD : Location(Id, DateDebut, DateRetour, #JeuId, #MembreId)
+SQL : CONSTRAINT FK_Location_Jeu
+      FOREIGN KEY (JeuId) REFERENCES Jeux(Id)</pre>
+<p>Ce bloc montre la même relation à trois étages : le MCD (Merise), le MLD (la table avec ses clés étrangères notées #), puis le SQL réel qui pose la contrainte FOREIGN KEY.</p>
+
+<h3>2. L'entité Location : FK + navigation, le duo gagnant</h3>
+<p>Une entité EF Core bien écrite porte la relation <strong>deux fois</strong>, sous deux formes complémentaires : la <strong>propriété de clé étrangère</strong> (<em>int JeuId</em>) — la valeur brute, celle qui finit dans la colonne SQL — et la <strong>propriété de navigation</strong> (<em>Jeu Jeu</em>) — l'objet complet, celui que ton code C# manipule. Une navigation est un raccourci qui te fait « sauter » vers l'objet lié, comme un lien hypertexte entre deux fiches. La FK répond à « quel est le numéro du jeu ? », la navigation répond à « donne-moi LE jeu, avec son titre et son prix ». Une ligne d'équivalence : c'est le @ManyToOne de JPA/Hibernate, le belongsTo d'Eloquent, le ForeignKey de l'ORM Django.</p>
+<pre class="pseudo">public class Location                          // le moule d'une ligne de la table Locations
+{
+    public int Id { get; set; }               // clé primaire de la location
+    public DateTime DateDebut { get; set; }    // date de début de la location
+    public DateTime? DateRetour { get; set; }  // date de retour (nullable : null tant que le jeu n'est pas rendu)
+
+    public int JeuId { get; set; }        // clé étrangère (colonne SQL) : le numéro du jeu loué
+    public Jeu Jeu { get; set; }          // navigation (objet C#) : le jeu complet, avec titre et prix
+
+    public int MembreId { get; set; }     // clé étrangère : le numéro du membre qui loue
+    public Membre Membre { get; set; }    // navigation : le membre complet
+}</pre>
+
+<h3>3. Comment EF Core devine la FK : les conventions</h3>
+<p>Pourquoi ça marche sans configuration ? Parce que EF Core applique ses <strong>conventions de découverte</strong> : il voit la navigation <em>Jeu</em>, cherche une propriété nommée <strong>JeuId</strong> (nom de la navigation + Id) ou <strong>Id</strong> tout court dans certains cas, la trouve, et déclare : « JeuId est la clé étrangère de la relation Location → Jeu ». Même mécanique pour <em>MembreId</em>. Si tu avais nommé ta propriété <em>CodeJeu</em>, la convention échouerait : EF créerait une colonne fantôme <em>JeuId1</em> (une <strong>shadow property</strong>, une propriété « de l'ombre » que EF ajoute sans que tu l'aies déclarée) et ta base divergerait de ton intention. Les conventions sont magiques… jusqu'au jour où elles se trompent en silence.</p>
+
+<h3>4. La configuration explicite : HasOne / WithMany / HasForeignKey</h3>
+<p>En Fluent API (leçon 7 !), tu écris la relation noir sur blanc, en trois temps qui se lisent comme une phrase : une Location <strong>a un</strong> Jeu, qui lui <strong>a plusieurs</strong> Locations, reliés <strong>par la clé</strong> JeuId. C'est aussi là que tu règles <strong>OnDelete</strong> : que faire des locations si on supprime le jeu ? <strong>DeleteBehavior.Cascade</strong> les supprime avec lui (l'historique part à la poubelle — dangereux), <strong>DeleteBehavior.Restrict</strong> interdit la suppression tant que des locations existent (ton historique est protégé).</p>
+<pre class="pseudo">public class LocationConfiguration : IEntityTypeConfiguration&lt;Location&gt;   // config dédiée de l'entité Location
+{
+    public void Configure(EntityTypeBuilder&lt;Location&gt; builder)            // méthode où l'on décrit les relations
+    {
+        builder.HasOne(l =&gt; l.Jeu)                     // une Location A UN Jeu…
+               .WithMany(j =&gt; j.Locations)             // …et un Jeu A PLUSIEURS Locations
+               .HasForeignKey(l =&gt; l.JeuId)            // reliés par la clé étrangère JeuId
+               .OnDelete(DeleteBehavior.Restrict);     // supprimer un jeu est INTERDIT s'il a des locations (protège l'historique)
+
+        builder.HasOne(l =&gt; l.Membre)                  // une Location A UN Membre…
+               .WithMany(m =&gt; m.Locations)             // …et un Membre A PLUSIEURS Locations
+               .HasForeignKey(l =&gt; l.MembreId)         // reliés par la clé étrangère MembreId
+               .OnDelete(DeleteBehavior.Restrict);     // suppression du membre bloquée tant qu'il a des locations
+    }
+}</pre>
+<p>Piège classique sur SQL Server : Location a <strong>deux</strong> FK en cascade potentielles (vers Jeu et vers Membre). SQL Server refuse les <strong>chemins de cascade multiples</strong> (erreur « may cause cycles or multiple cascade paths ») dès que plusieurs chaînes de suppression peuvent atteindre la même table. La parade habituelle : passer au moins une des relations en <strong>Restrict</strong>.</p>
+
+<h3>5. Créer une location : par la FK ou par l'objet</h3>
+<p>Deux styles, même résultat SQL. Style « base de données » : tu connais les identifiants (ils arrivent d'un formulaire ASP.NET Core, par exemple), tu poses <strong>juste JeuId et MembreId</strong> — aucun SELECT préalable, EF génère directement l'INSERT. Style « objet » : tu as déjà les entités <em>jeu</em> et <em>membre</em> chargées, tu affectes les <strong>navigations</strong> — EF en déduit les FK au moment du SaveChanges. Le premier style est plus économe ; le second plus naturel quand les objets sont déjà là.</p>
+<pre class="pseudo">// Style 1 : par les clés étrangères (aucune lecture en base)
+var location = new Location {                              // on construit une location en mémoire…
+    JeuId = 42, MembreId = 7, DateDebut = DateTime.Today   // …en posant directement les FK et la date du jour
+};
+context.Locations.Add(location);                          // note l'insertion dans le change tracker
+context.SaveChanges();   // INSERT direct                  // envoie l'INSERT en base, sans aucun SELECT préalable
+
+// Style 2 : par les navigations (objets déjà chargés)
+var jeu = context.Jeux.Find(42);                          // charge le jeu d'Id 42
+var membre = context.Membres.Find(7);                     // charge le membre d'Id 7
+context.Locations.Add(new Location {                      // construit et note une nouvelle location…
+    Jeu = jeu, Membre = membre, DateDebut = DateTime.Today // …en affectant les navigations (les objets déjà chargés)
+});
+context.SaveChanges();   // EF déduit JeuId = 42, MembreId = 7   // au SaveChanges, EF remplit les FK à partir des objets liés</pre>
+<div class="warn">Ne mélange jamais les deux styles avec des valeurs contradictoires : si JeuId = 42 mais que la navigation Jeu pointe vers le jeu 13, EF Core doit trancher — et ce genre d'ambiguïté finit en exception ou en donnée fausse. Une source de vérité par opération.</div>
+<div class="tip">Pour une table d'historique comme Location, adopte Restrict par défaut : on ne veut pas qu'un DELETE anodin sur un jeu efface silencieusement des années de locations. La suppression devient un acte volontaire : archiver ou nettoyer d'abord, supprimer ensuite.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans la Ludothèque, la relation Location → Jeu est de type…", opts: ["1-1", "N-N", "N-1 (plusieurs locations pour un jeu)", "0-0"], a: 2, exp: "Une location concerne un jeu ; un jeu a N locations." },
+    { type: "qcm", q: "Dans l'entité Location, la propriété int JeuId est…", opts: ["La clé primaire", "La propriété de clé étrangère", "Une navigation", "Une shadow property"], a: 1, exp: "C'est la valeur brute qui finit dans la colonne SQL JeuId." },
+    { type: "qcm", q: "Et la propriété Jeu Jeu { get; set; } est…", opts: ["Une propriété de navigation", "Une clé composée", "Un index", "Un DbSet"], a: 0, exp: "Elle donne accès à l'objet Jeu complet depuis une Location." },
+    { type: "input", q: "Par convention, quelle propriété EF Core cherche-t-il comme FK pour la navigation Jeu ?", a: ["JeuId"], ph: "Nom de la propriété…", exp: "Nom de la navigation + Id : Jeu → JeuId." },
+    { type: "vf", q: "Si la FK s'appelle CodeJeu au lieu de JeuId, la convention la trouve quand même.", a: false, exp: "EF créerait une shadow property JeuId1 ; il faut HasForeignKey(l =&gt; l.CodeJeu)." },
+    { type: "qcm", q: "La phrase Fluent complète pour la relation Location → Jeu :", opts: ["HasMany(l =&gt; l.Jeu).WithOne()", "HasOne(l =&gt; l.Jeu).WithMany(j =&gt; j.Locations).HasForeignKey(l =&gt; l.JeuId)", "HasKey(l =&gt; l.JeuId).IsUnique()", "Property(l =&gt; l.Jeu).IsRequired()"], a: 1, exp: "Une location A UN jeu, qui A PLUSIEURS locations, reliés par JeuId." },
+    { type: "qcm", q: "On configure la relation depuis Location. Le premier appel est donc…", opts: ["WithMany", "HasForeignKey", "HasOne", "OnDelete"], a: 2, exp: "On part du côté « un » vu par l'entité configurée : HasOne(l =&gt; l.Jeu)." },
+    { type: "input", q: "Quelle méthode Fluent désigne explicitement la propriété servant de clé étrangère ?", a: ["HasForeignKey", "HasForeignKey()"], ph: "Méthode…", exp: "HasForeignKey(l =&gt; l.JeuId) lève toute ambiguïté." },
+    { type: "qcm", q: "DeleteBehavior.Cascade sur Location → Jeu signifie que…", opts: ["Supprimer un jeu supprime toutes ses locations", "Supprimer un jeu est interdit", "Les locations deviennent orphelines", "Le jeu est archivé"], a: 0, exp: "La suppression se propage : l'historique disparaît avec le jeu." },
+    { type: "qcm", q: "Pour protéger l'historique des locations quand on supprime un jeu :", opts: ["DeleteBehavior.Cascade", "DeleteBehavior.Restrict", "HasDefaultValue(false)", "IsUnique()"], a: 1, exp: "Restrict bloque le DELETE tant que des locations référencent le jeu." },
+    { type: "qcm", q: "SQL Server refuse parfois deux FK en cascade sur Location avec l'erreur…", opts: ["Deadlock detected", "Multiple cascade paths / cycles", "Timeout expired", "Index fragmentation"], a: 1, exp: "Les chemins de cascade multiples sont interdits ; on passe une relation en Restrict." },
+    { type: "vf", q: "Pour créer une Location, il faut obligatoirement charger le Jeu et le Membre depuis la base.", a: false, exp: "Poser JeuId = 42 et MembreId = 7 suffit : INSERT direct, zéro SELECT." },
+    { type: "qcm", q: "Avec new Location { Jeu = jeu, Membre = membre }, les colonnes JeuId et MembreId sont remplies…", opts: ["Jamais : elles restent NULL", "Par EF Core à partir des navigations, au SaveChanges", "Par un trigger SQL Server", "Manuellement après coup"], a: 1, exp: "EF déduit les FK des objets liés au moment de sauver." },
+    { type: "vf", q: "Une entité peut porter à la fois la propriété FK (JeuId) et la navigation (Jeu).", a: true, exp: "C'est même la forme recommandée : la valeur brute ET l'objet." },
+    { type: "qcm", q: "L'équivalent de cette relation N-1 chez Eloquent (Laravel) est…", opts: ["hasMany", "belongsTo", "@OneToMany", "related_name"], a: 1, exp: "belongsTo = Eloquent ; @ManyToOne = JPA ; ForeignKey = Django." }
+  ],
+  final: {
+    title: "Exercice final — Le contrat de location complet",
+    intro: `<p>Tu implémentes la vraie table Location de la Ludothèque, avec ses deux relations et sa politique de suppression. Dernière vérification avant la migration.</p>`,
+    questions: [
+      { type: "qcm", q: "L'entité Location complète porte, pour sa relation au Membre :", opts: ["Seulement int MembreId", "Seulement Membre Membre", "int MembreId + Membre Membre", "Une List&lt;Membre&gt;"], a: 2, exp: "FK pour la base, navigation pour le code : le duo gagnant." },
+      { type: "input", q: "Quelle méthode Fluent règle le comportement de suppression d'une relation ?", a: ["OnDelete", "OnDelete()"], ph: "Méthode…", exp: "OnDelete(DeleteBehavior.Restrict) ou Cascade, au bout de la chaîne HasOne/WithMany." },
+      { type: "qcm", q: "Location a deux FK (Jeu, Membre) toutes deux en Cascade. Sur SQL Server, la migration risque…", opts: ["De réussir sans problème", "D'échouer pour cause de chemins de cascade multiples", "De supprimer la table Jeux", "De créer un index unique"], a: 1, exp: "La parade : passer au moins une relation en Restrict." },
+      { type: "vf", q: "Créer une location avec juste JeuId = 42 et MembreId = 7 génère un INSERT sans aucun SELECT préalable.", a: true, exp: "C'est le style « base de données » : économe et parfait pour les formulaires web." },
+      { type: "qcm", q: "L'annotation équivalente chez Hibernate/JPA pour Location → Jeu :", opts: ["@OneToMany", "@ManyToOne", "@JoinTable", "@ElementCollection"], a: 1, exp: "Many locations vers one jeu : @ManyToOne, le miroir exact de HasOne...WithMany." }
+    ],
+    solution: `<pre class="pseudo">Merise : LOCATION (1,1)──CONCERNER──(0,N) JEU  →  FK JeuId dans Location
+
+Entité  : int JeuId (FK)  +  Jeu Jeu (navigation)
+          int MembreId    +  Membre Membre
+Convention : navigation Jeu → EF cherche JeuId
+Fluent  : HasOne(l =&gt; l.Jeu)
+            .WithMany(j =&gt; j.Locations)
+            .HasForeignKey(l =&gt; l.JeuId)
+            .OnDelete(DeleteBehavior.Restrict)   ← protège l'historique
+
+Créer   : { JeuId = 42, MembreId = 7 }      → INSERT direct
+     ou : { Jeu = jeu, Membre = membre }    → EF déduit les FK</pre>
+<p>Tu as configuré le côté « une location a un jeu ». Leçon 9 : on traverse le miroir — jeu.Locations, membre.Locations, les collections de navigation du côté 1-N.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l8", title: "Du MLD Merise à la config EF Core", level: 2,
+    statement: "Reprends ton MLD du Niveau 4 : Location(Id, DateDebut, DateRetour, #JeuId, #MembreId). Traduis-le intégralement en EF Core : écris (en pseudo-code C#) l'entité Location avec ses FK et navigations, puis la configuration Fluent des deux relations. Choisis un DeleteBehavior pour chacune (Jeu et Membre) et justifie chaque choix en te plaçant du point de vue du gérant de la ludothèque : que doit-il se passer quand on retire un jeu du catalogue ? Quand un membre ferme son compte ?",
+    hints: [
+      "Chaque # du MLD devient DEUX propriétés C# : la FK (int) et la navigation (objet).",
+      "Pour le DeleteBehavior, la question métier : les locations sont un HISTORIQUE — a-t-on le droit de l'effacer en supprimant un jeu ?",
+      "Souviens-toi du piège SQL Server : deux Cascade sur la même table = migration refusée."
+    ],
+    solution: "Entité :\n  class Location\n    int Id\n    DateTime DateDebut, DateTime? DateRetour\n    int JeuId      + Jeu Jeu          (relation 1 : le jeu loué)\n    int MembreId   + Membre Membre    (relation 2 : le locataire)\n\nConfiguration Fluent (LocationConfiguration) :\n  HasOne(l => l.Jeu).WithMany(j => j.Locations)\n     .HasForeignKey(l => l.JeuId).OnDelete(Restrict)\n  HasOne(l => l.Membre).WithMany(m => m.Locations)\n     .HasForeignKey(l => l.MembreId).OnDelete(Restrict)\n\nJustification métier :\n  Jeu → Restrict : retirer un jeu du catalogue ne doit PAS effacer\n    l'historique des locations (comptabilité, statistiques, litiges).\n    Le gérant marque plutôt le jeu indisponible (soft delete).\n  Membre → Restrict : un compte fermé garde ses locations passées ;\n    on anonymise le membre plutôt que de casser l'historique.\n  Bonus technique : deux Cascade vers Location = chemins de cascade\n    multiples, SQL Server refuserait la migration de toute façon.\n\nBilan : le # de Merise = HasForeignKey ; la cardinalité (1,1)/(0,N)\n= HasOne/WithMany ; la politique de suppression = décision MÉTIER.",
+    note: "Remarque le glissement : au Niveau 4, ON DELETE était une clause SQL presque anecdotique ; ici c'est devenu une décision d'architecture discutée avec le métier. C'est exactement le même arbitrage que @ManyToOne(cascade = ...) chez Hibernate ou on_delete=models.PROTECT chez Django — chaque ORM te force à choisir, et « Restrict pour l'historique » est un réflexe qui te servira dans ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

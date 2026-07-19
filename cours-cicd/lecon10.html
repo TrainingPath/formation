@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Le job de tests (avec MySQL de service)",
+  subtitle: "Les 50+ tests du capstone tournent à chaque commit — sur une base neuve.",
+  theory: `
+<h3>1. Le besoin</h3>
+<p>Les tests de la Ludothèque exigent une base de données <strong>MySQL</strong> (le système qui stocke les données de l'application). Or le runner (la machine de CI) est neuf : aucun MySQL dessus. GitHub Actions fournit pour cela les <strong>services</strong> : des <strong>conteneurs lancés à côté du job</strong> pendant toute sa durée. Un <strong>conteneur</strong> est un mini-environnement isolé qui embarque un logiciel prêt à tourner (vu au cours Docker). On réutilise donc Docker tel quel.</p>
+
+<h3>2. Le service MySQL</h3>
+<pre class="pseudo">jobs:
+  tests:                                    # un job nommé "tests"
+    runs-on: ubuntu-latest                  # sur une machine Ubuntu neuve
+    services:                               # services = conteneurs d'appoint lancés à côté du job
+      mysql:                                # on nomme ce service "mysql"
+        image: mysql:8.4                    # image = le logiciel prêt à l'emploi ; :8.4 = version épinglée (comme toujours)
+        env:                                # env = variables passées au conteneur pour l'initialiser
+          MYSQL_ROOT_PASSWORD: ci-root       # mot de passe de l'administrateur (root) de MySQL
+          MYSQL_DATABASE: ludotheque         # nom de la base créée automatiquement au démarrage
+          MYSQL_USER: ludo_app               # un utilisateur applicatif créé au démarrage
+          MYSQL_PASSWORD: ci-secret          # son mot de passe (jetable, valable seulement le temps de la CI)
+        ports: ["3306:3306"]                # publie le port 3306 du conteneur vers le runner (pour que le job puisse s'y connecter)
+        options: >-                         # options = arguments Docker supplémentaires ; >- = écrire la valeur sur plusieurs lignes
+          --health-cmd="mysqladmin ping -h localhost"   # commande de "healthcheck" : teste si MySQL répond
+          --health-interval=5s --health-timeout=3s --health-retries=10   # tester toutes les 5s, abandonner à 3s, jusqu'à 10 essais</pre>
+<p>Un <strong>healthcheck</strong> (« contrôle de santé ») est un test régulier qui vérifie qu'un service est vraiment prêt (démarré ≠ prêt à répondre). GitHub <strong>attend que le service soit sain</strong> (<em>healthy</em>) avant de lancer les steps. Un <strong>port</strong> est un numéro de « porte » réseau ; le <em>publier</em> rend le service joignable depuis le job.</p>
+
+<h3>3. L'étape de tests</h3>
+<pre class="pseudo">    steps:
+      - uses: actions/checkout@v4                          # récupérer le code du dépôt
+      - uses: actions/setup-python@v5                      # installer Python…
+        with: { python-version: "3.14", cache: "pip" }     # …version 3.14 ; cache "pip" = réutiliser les paquets déjà téléchargés
+      - run: pip install -r requirements.txt               # installer les dépendances du projet
+      - name: Tests                                        # libellé de l'étape
+        run: python manage.py test                         # lancer TOUS les tests Django
+        env:                                               # variables d'environnement pour cette étape
+          DJANGO_SECRET_KEY: cle-de-ci                      # clé jetable de CI
+          DB_HOST: 127.0.0.1                                # adresse de la base : 127.0.0.1 = "cette machine" (le port publié du service)
+          DB_PASSWORD: ci-secret                            # le mot de passe défini plus haut pour le service</pre>
+<p><code>manage.py test</code> crée sa propre <strong>base de test</strong>, applique les <strong>migrations</strong> (les scripts qui construisent la structure de la base : tables, colonnes…), exécute tous les tests, puis détruit cette base — comme en local, mais sur une machine neutre.</p>
+
+<h3>4. Lire un échec</h3>
+<pre class="pseudo">FAIL: test_achat_fige_le_prix (catalogue.tests.ServicesTests)   # FAIL = ce test a échoué ; son nom complet est indiqué
+AssertionError: Decimal('39.99') != Decimal('29.99')            # AssertionError = une vérification du test s'est révélée fausse ; attendu != obtenu
+# le step Tests est rouge, la PR est bloquée, le log dit QUEL test et POURQUOI</pre>
+<p>Une <strong>assertion</strong> est une affirmation que le test vérifie (« le prix DOIT valoir 29,99 ») ; si elle est fausse, le test échoue avec une <code>AssertionError</code> qui montre l'écart.</p>
+
+<h3>5. Ce qu'on vient de gagner</h3>
+<p>Chaque commit prouve désormais que : les migrations s'appliquent sur une base <strong>vierge</strong>, les 50+ règles métier tiennent, et rien de tout ça ne dépend d'un poste particulier.</p>
+<div class="warn">Le service MySQL de CI est <strong>éphémère et jetable</strong> — ses mots de passe (<code>ci-secret</code>) ne protègent rien et peuvent vivre dans le YAML. Ne pas confondre avec les secrets de production (leçon 13) : rien de ce YAML ne touche la prod.</div>
+<div class="tip">La CI vérifie au passage un point souvent oublié : les migrations rejouent <strong>depuis zéro</strong>. En local, ta base a évolué migration par migration ; le runner, lui, part de rien — c'est lui qui détectera la migration qui ne passe que « par chance ».</div>`,
+  exercises: [
+    { type: "qcm", q: "Le runner neuf n'a pas de MySQL. Solution :", opts: ["L'installer à la main à chaque run", "Un service : conteneur MySQL lancé à côté du job", "Tester sans base", "Utiliser la prod"], a: 1, exp: "Le cours Docker en CI." },
+    { type: "qcm", q: "Le service MySQL est déclaré…", opts: ["Dans services: du job", "Dans steps:", "Sur le serveur", "Dans requirements.txt"], a: 0, exp: "Un conteneur d'appoint." },
+    { type: "qcm", q: "L'image du service est…", opts: ["mysql:latest", "mysql:8.4 (épinglée, comme partout)", "mariadb au hasard", "python"], a: 1, exp: "Cohérence avec la prod." },
+    { type: "qcm", q: "MYSQL_DATABASE/USER/PASSWORD dans le service…", opts: ["Sont des secrets de prod", "Initialisent la base au démarrage (Docker l.11)", "Sont inutiles", "Chiffrent"], a: 1, exp: "Le premier démarrage initialise." },
+    { type: "qcm", q: "Le healthcheck du service sert à…", opts: ["Décorer", "GitHub attend que MySQL soit PRÊT avant les steps", "Redémarrer", "Publier"], a: 1, exp: "Démarré ≠ prêt (Docker l.13)." },
+    { type: "qcm", q: "Depuis les steps, le service est joignable sur…", opts: ["localhost du conteneur MySQL", "127.0.0.1:3306 (port publié vers le runner)", "bdd:3306", "l'IP de la prod"], a: 1, exp: "D'où DB_HOST: 127.0.0.1." },
+    { type: "qcm", q: "manage.py test en CI…", opts: ["Utilise la base de prod", "Crée base de test, migre, teste, détruit", "Saute les migrations", "Ne teste que la moitié"], a: 1, exp: "Comme en local, en neutre." },
+    { type: "qcm", q: "Un test rouge en CI…", opts: ["Passe inaperçu", "Bloque la PR avec le nom du test et l'assertion en log", "Supprime le test", "Relance à l'infini"], a: 1, exp: "Diagnostic immédiat." },
+    { type: "qcm", q: "ci-secret dans le YAML est acceptable car…", opts: ["Personne ne le voit", "Le service est éphémère et ne protège rien de réel", "GitHub le chiffre", "C'est le mot de passe de prod"], a: 1, exp: "≠ secrets de prod (leçon 13)." },
+    { type: "vf", q: "Ce job touche à la base de production.", a: false, exp: "Tout est éphémère, détruit après le run." },
+    { type: "qcm", q: "La CI vérifie « depuis zéro » un point souvent oublié :", opts: ["Le CSS", "Les migrations rejouent sur une base totalement vierge", "Le nom des branches", "Les emojis"], a: 1, exp: "Ta base locale, elle, a « de la chance »." },
+    { type: "qcm", q: "Les tests exécutés sont…", opts: ["De nouveaux tests écrits pour la CI", "Ceux du capstone (leçons 17-18), tels quels", "Des tests aléatoires", "Aucun"], a: 1, exp: "La CI exécute l'existant." },
+    { type: "qcm", q: "cache: \"pip\" sert à…", opts: ["Cacher des secrets", "Réutiliser les paquets téléchargés entre exécutions", "Compiler", "Rien"], a: 1, exp: "Pipeline plus rapide." },
+    { type: "vf", q: "Chaque exécution repart d'une base MySQL neuve.", a: true, exp: "Déterminisme : aucun résidu d'hier." },
+    { type: "qcm", q: "Si un test ne passe qu'en local mais pas en CI, le suspect n° 1 :", opts: ["GitHub", "Une dépendance à l'état local (données, fichier, version)", "MySQL", "Le YAML"], a: 1, exp: "La machine neutre révèle les dépendances cachées." }
+  ],
+  final: {
+    title: "Exercice final — Les 50 tests à chaque commit",
+    intro: `<p>Le job de tests complet entre en service.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service déclare :", opts: ["image mysql:8.4 + env MYSQL_* + ports + healthcheck", "juste l'image", "un volume de prod", "un bind mount"], a: 0, exp: "Initialisé, publié, sondé." },
+      { type: "qcm", q: "GitHub lance les steps :", opts: ["Quand le service est healthy", "immédiatement", "après 60 s fixes", "jamais"], a: 0, exp: "Le healthcheck commande." },
+      { type: "qcm", q: "L'étape de tests reçoit :", opts: ["DB_HOST=127.0.0.1 et DB_PASSWORD=ci-secret en env", "les secrets de prod", "rien", "un fichier .env commité"], a: 0, exp: "La config de CI." },
+      { type: "qcm", q: "Un échec montre :", opts: ["Le test exact et l'assertion en log", "juste « rouge »", "rien", "un email"], a: 0, exp: "Diagnostic direct." },
+      { type: "vf", q: "Le prix figé, le double-rendu et la course au stock sont désormais vérifiés à chaque commit.", a: true, exp: "Les règles du capstone, sous garde permanente." }
+    ],
+    solution: `<pre class="pseudo">jobs:
+  tests:                                    # le job de tests
+    runs-on: ubuntu-latest                  # machine neuve
+    services:                               # conteneur d'appoint
+      mysql:                                # service MySQL
+        image: mysql:8.4                    # image épinglée
+        env: { MYSQL_ROOT_PASSWORD: ci-root, MYSQL_DATABASE: ludotheque,     # variables d'initialisation de la base
+               MYSQL_USER: ludo_app, MYSQL_PASSWORD: ci-secret }             # utilisateur applicatif + mot de passe jetable
+        ports: ["3306:3306"]                # port publié vers le runner
+        options: >-                         # options Docker sur plusieurs lignes
+          --health-cmd="mysqladmin ping -h localhost"                        # healthcheck : MySQL répond-il ?
+          --health-interval=5s --health-timeout=3s --health-retries=10       # rythme des vérifications
+    steps:
+      - uses: actions/checkout@v4                          # récupérer le code
+      - uses: actions/setup-python@v5                      # installer Python…
+        with: { python-version: "3.14", cache: "pip" }     # …3.14, avec cache pip
+      - run: pip install -r requirements.txt               # installer les dépendances
+      - run: python manage.py test                         # lancer tous les tests
+        env: { DJANGO_SECRET_KEY: cle-de-ci, DB_HOST: 127.0.0.1, DB_PASSWORD: ci-secret }   # config de CI (base sur 127.0.0.1)</pre>
+<p>Les règles métier sont sous garde permanente. Demain : lint, format et couverture.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton job de tests…",
+  items: [
+  { id: "cicd-l10", title: "Le test qui ne passe qu'en local", level: 3,
+    statement: "Scénario de débogage : le job de tests échoue en CI sur test_export_csv (« FileNotFoundError: exports/rapport.csv ») alors qu'il passe en local. Écris le diagnostic (pourquoi le runner neuf échoue là où ton poste réussit), la correction du test (fichier créé par le test lui-même dans un dossier temporaire), et la leçon générale sur les dépendances à l'état local.",
+    hints: [
+      "Ton poste a un dossier exports/ créé il y a des mois ; le runner n'a que le dépôt.",
+      "Correction : tempfile.TemporaryDirectory() ou setUp qui crée ce dont le test a besoin.",
+      "Règle : un test doit créer TOUT ce qu'il consomme."
+    ],
+    solution: "# DIAGNOSTIC\n# En local : le dossier exports/ existe (créé à la main il y a des mois,\n# absent de Git car ignoré). Le test s'appuie dessus SANS le créer.\n# En CI : runner neuf = uniquement le contenu du dépôt -> FileNotFoundError.\n# Le test était FAUX depuis le début ; la CI vient de le prouver.\n\n# CORRECTION — le test crée ce qu'il consomme\nimport tempfile\nfrom pathlib import Path\n\nclass ExportTests(TestCase):\n    def test_export_csv(self):\n        with tempfile.TemporaryDirectory() as dossier:\n            chemin = Path(dossier) / \"rapport.csv\"\n            services.exporter_locations_csv(chemin)   # le chemin est un paramètre\n            contenu = chemin.read_text()\n            self.assertIn(\"titre;client;date_debut\", contenu)\n# (et exporter_locations_csv accepte le chemin au lieu de le coder en dur\n#  -> corrigé aussi : le chemin en dur était le vrai coupable)\n\n# LA LEÇON GÉNÉRALE\n# Un test qui dépend de l'état local (dossier, fichier, donnée résiduelle,\n# variable oubliée) est un test qui MENT : il valide ton poste, pas le code.\n# La machine neuve de la CI est le détecteur parfait de ces dépendances\n# cachées — chaque « ça passe chez moi mais pas en CI » en révèle une.",
+    note: "Ce scénario arrive à toutes les équipes la première semaine de CI — et c'est une excellente nouvelle : chaque échec de ce type corrige un test menteur. Remarque le double correctif : le test (dossier temporaire) ET le code (chemin paramétrable au lieu de codé en dur) — la CI a amélioré les deux." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

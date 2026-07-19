@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les transactions : ACID côté ORM",
+  subtitle: "Louer un jeu, c'est trois écritures qui réussissent ensemble ou échouent ensemble — jamais à moitié.",
+  theory: `
+<h3>1. Rappel du Niveau 4 : ACID et le tout-ou-rien</h3>
+<p>Au Niveau 4, tu as rencontré la <strong>transaction</strong> : un groupe d'opérations traité comme une unité indivisible (soit tout se fait, soit rien), gouverné par les propriétés <strong>ACID</strong> — <strong>A</strong>tomicité (tout ou rien), <strong>C</strong>ohérence (la base reste valide), <strong>I</strong>solation (les transactions ne se marchent pas dessus), <strong>D</strong>urabilité (une fois validé, c'est gravé). L'exemple canonique : un virement bancaire où débit et crédit doivent réussir <em>ensemble</em>. Dans la Ludothèque, l'équivalent est <strong>louer un jeu</strong> : créer la location, décrémenter le stock, marquer le jeu indisponible. Si l'une échoue, aucune ne doit rester. EF Core n'invente rien ici : il pilote les transactions de SQL Server que tu connais déjà (BEGIN TRAN / COMMIT / ROLLBACK).</p>
+<pre class="pseudo">Louer « Catane » = 3 écritures qui forment UN acte métier :
+  1. INSERT Location       (qui, quoi, quand)
+  2. UPDATE Jeux SET Stock = Stock - 1
+  3. UPDATE Jeux SET EstDisponible = 0   (si stock tombe à 0)
+Une seule échoue → les trois doivent être annulées. Sinon : stock faux,
+jeu « loué » sans location, ou location fantôme. Corruption des données.</pre>
+
+<h3>2. SaveChanges est DÉJÀ une transaction atomique</h3>
+<p>Voici le point que la plupart des débutants ignorent : <strong>un appel à SaveChanges est déjà atomique</strong>. Peu importe le nombre d'INSERT, UPDATE et DELETE que le <strong>change tracker</strong> (le carnet de brouillon d'EF qui repère les objets modifiés, leçons 5 et 6) a accumulés, EF Core les enveloppe automatiquement dans <strong>une seule transaction implicite</strong>. Si la troisième écriture viole une contrainte, les deux premières sont annulées (ROLLBACK) et SaveChanges lève une exception. Tu n'as donc <strong>rien de spécial à écrire</strong> tant que tout ton acte métier tient dans un unique SaveChanges.</p>
+<pre class="pseudo">var location = new Location { JeuId = 5, MembreId = 3, DateDebut = DateTime.Now };  // crée la location en mémoire (jeu 5, membre 3, maintenant)
+ctx.Locations.Add(location);                     // le change tracker note qu'un INSERT devra être fait
+
+var jeu = await ctx.Jeux.FindAsync(5);           // charge le jeu n°5 ; il est désormais suivi par le tracker
+jeu.Stock -= 1;                                  // décrémente son stock : le tracker note un UPDATE à venir
+if (jeu.Stock == 0) jeu.EstDisponible = false;   // s'il ne reste plus rien, marque le jeu indisponible (autre UPDATE)
+
+await ctx.SaveChangesAsync();   // 1 INSERT + 2 UPDATE, DANS UNE SEULE TRANSACTION   // envoie tout d'un bloc, de façon atomique
+// Une contrainte violée ? Les trois sont annulées. Atomicité gratuite.             // en cas d'échec : ROLLBACK complet + exception</pre>
+<p>Retiens la règle d'or : <strong>groupe tes changements liés et fais UN seul SaveChanges</strong>. C'est la façon la plus simple — et la plus sûre — d'obtenir l'atomicité. Multiplier les SaveChanges (un par écriture) casse justement cette garantie.</p>
+
+<h3>3. BeginTransaction : quand une seule transaction ne suffit plus</h3>
+<p>Il reste des cas où un seul SaveChanges ne suffit pas : tu dois enchaîner <strong>plusieurs unités de travail</strong> qui doivent pourtant réussir ou échouer ensemble. Par exemple, un SaveChanges dont tu as besoin du résultat (l'Id auto-généré d'une location) pour décider de la suite, mêlé à une commande SQL native (leçon 15), le tout devant rester atomique. C'est là qu'intervient la transaction <strong>explicite</strong> : <strong>ctx.Database.BeginTransaction()</strong>, puis <strong>Commit</strong> (valider) à la fin ou <strong>Rollback</strong> (annuler) en cas de pépin.</p>
+<pre class="pseudo">using var transaction = await ctx.Database.BeginTransactionAsync();  // ouvre une transaction explicite ; "using" la refermera toute seule
+try
+{
+    var location = new Location { JeuId = 5, MembreId = 3, DateDebut = DateTime.Now };  // prépare la location en mémoire
+    ctx.Locations.Add(location);           // note l'INSERT dans le change tracker
+    await ctx.SaveChangesAsync();          // 1er SaveChanges : exécute l'INSERT et récupère l'Id auto-généré de la location
+
+    await ctx.Database.ExecuteSqlInterpolated(          // commande SQL native (leçon 15), dans la MÊME transaction…
+        $"UPDATE Jeux SET Stock = Stock - 1 WHERE Id = {location.JeuId}");  // …décrémente le stock ; {location.JeuId} devient un paramètre sûr
+
+    await transaction.CommitAsync();       // COMMIT : les deux opérations deviennent définitives, ensemble
+}
+catch
+{
+    await transaction.RollbackAsync();     // ROLLBACK : le moindre incident annule TOUT, rien de partiel ne survit
+    throw;                                 // relance l'exception pour que l'appelant sache que la location a échoué
+}</pre>
+<p>Le <strong>using</strong> est essentiel : si tu oublies le Commit ou qu'une exception file avant, la transaction est libérée sans Commit — donc annulée par défaut. Le filet de sécurité est automatique.</p>
+
+<h3>4. Isolation, concurrence et le cas « dernier exemplaire »</h3>
+<p>Le <strong>I</strong> d'ACID devient concret dans la Ludothèque un samedi : deux membres cliquent « Louer Catane » à la même seconde, et il ne reste <strong>qu'un exemplaire</strong>. Sans précaution, les deux transactions lisent Stock = 1, décrémentent, et tu te retrouves à Stock = -1 avec deux locations pour un seul jeu. Deux parades, déjà croisées : la <strong>concurrence optimiste</strong> (leçon 19, colonne rowversion + DbUpdateConcurrencyException — on parie qu'il n'y aura pas de conflit et on vérifie au moment d'écrire) ou une écriture atomique côté serveur (UPDATE Jeux SET Stock = Stock - 1 WHERE Id = 5 AND Stock &gt; 0, puis on regarde le nombre de lignes touchées). Le <strong>niveau d'isolation</strong> se règle en argument de BeginTransaction (IsolationLevel.Serializable pour le plus strict), mais le défaut de SQL Server (READ COMMITTED) convient à l'immense majorité des cas.</p>
+
+<h3>5. Bonnes pratiques — et les cousins des autres ORM</h3>
+<p>La transaction doit rester <strong>courte</strong> : elle verrouille des lignes, et plus elle dure, plus elle bloque les autres. On n'y fait <strong>jamais</strong> d'appel réseau lent (envoi d'email, appel d'API tierce) — on commit d'abord, on notifie ensuite. En ASP.NET Core, ce bloc de logique métier vit dans un <strong>service</strong> (une classe dédiée à la logique, séparée du contrôleur), pas éparpillé dans un contrôleur. Une ligne pour ta culture : Hibernate/JPA gère cela via l'annotation <strong>@Transactional</strong> (Spring) qui ouvre et commit automatiquement autour d'une méthode, Laravel offre <strong>DB::transaction(fn =&gt; ...)</strong> qui commit/rollback tout seul, et Django a <strong>@transaction.atomic</strong> (décorateur ou bloc with). Partout, le concept ACID du Niveau 4 est le socle ; seule la syntaxe d'enrobage change.</p>
+<div class="warn"><strong>Le piège du SaveChanges multiplié.</strong> Écrire un SaveChanges après chaque ligne (Add location → Save, décrémenter stock → Save, marquer indispo → Save) crée TROIS transactions séparées : si la deuxième plante, la première est déjà validée en base, impossible à annuler. Tu obtiens une location sans décrément de stock. Groupe les changements liés, un seul SaveChanges — ou BeginTransaction si tu dois vraiment plusieurs fois.</div>
+<div class="tip">Avant de sortir l'artillerie BeginTransaction, demande-toi : « Est-ce que tout mon acte métier tient dans un seul SaveChanges ? » Neuf fois sur dix, oui — et l'atomicité est déjà là, gratuite. Réserve la transaction explicite aux vrais enchaînements multi-SaveChanges ou SaveChanges + SQL natif.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les propriétés ACID d'une transaction sont…", opts: ["Ajout, Copie, Index, Delete", "Atomicité, Cohérence, Isolation, Durabilité", "Async, Cache, Include, Data", "Add, Commit, Insert, Drop"], a: 1, exp: "Le socle vu au Niveau 4 : tout ou rien, base valide, transactions isolées, écriture gravée." },
+    { type: "qcm", q: "Louer un jeu (INSERT location + 2 UPDATE) exige une transaction parce que…", opts: ["C'est plus rapide", "Les trois écritures doivent réussir ou échouer ensemble, sinon les données sont incohérentes", "SQL Server l'impose", "LINQ ne sait pas faire d'UPDATE"], a: 1, exp: "Atomicité : une location sans décrément de stock, ou l'inverse, corrompt le catalogue." },
+    { type: "vf", q: "Un appel à SaveChanges enveloppe automatiquement toutes ses écritures dans une seule transaction atomique.", a: true, exp: "C'est LE point clé : INSERT + UPDATE + DELETE d'un même SaveChanges sont tout-ou-rien, sans code supplémentaire." },
+    { type: "qcm", q: "Si la 3e écriture d'un SaveChanges viole une contrainte, alors…", opts: ["Les 2 premières restent en base", "Les 3 sont annulées (ROLLBACK) et SaveChanges lève une exception", "Seule la 3e est ignorée", "La base est corrompue"], a: 1, exp: "Transaction implicite : atomicité gratuite, rien ne reste à moitié écrit." },
+    { type: "qcm", q: "La règle d'or pour un acte métier composé de plusieurs écritures :", opts: ["Un SaveChanges après chaque ligne", "Grouper les changements liés et faire UN seul SaveChanges", "Toujours BeginTransaction", "Désactiver le change tracker"], a: 1, exp: "Un seul SaveChanges = une seule transaction = atomicité. Le multiplier casse la garantie." },
+    { type: "qcm", q: "Quand a-t-on VRAIMENT besoin de BeginTransaction explicite ?", opts: ["Pour tout SaveChanges", "Pour enchaîner plusieurs SaveChanges (ou SaveChanges + SQL natif) qui doivent rester atomiques ensemble", "Pour une simple lecture", "Pour créer une migration"], a: 1, exp: "Un seul SaveChanges suffit d'habitude ; l'explicite couvre les enchaînements multi-unités." },
+    { type: "input", q: "Quelle méthode de ctx.Database ouvre une transaction explicite ?", a: ["BeginTransaction", "BeginTransaction()", "BeginTransactionAsync"], ph: "Nom de la méthode…", exp: "ctx.Database.BeginTransaction() (ou BeginTransactionAsync) ; puis Commit ou Rollback." },
+    { type: "qcm", q: "Après le travail, quelle méthode valide définitivement une transaction explicite ?", opts: ["Save()", "Commit()", "Flush()", "Persist()"], a: 1, exp: "Commit valide tout d'un bloc ; Rollback annule tout. Le using annule par défaut si on oublie." },
+    { type: "vf", q: "Le using devant BeginTransaction garantit qu'une transaction non commitée est annulée à la fin du bloc.", a: true, exp: "Si une exception file avant le Commit, la transaction est libérée sans validation : ROLLBACK implicite. Filet de sécurité." },
+    { type: "qcm", q: "Dans un bloc BeginTransaction, que fait-on dans le catch ?", opts: ["Commit puis throw", "Rollback (annuler tout) puis souvent throw pour propager l'erreur", "Un nouveau SaveChanges", "Rien, on ignore"], a: 1, exp: "Le moindre incident → RollbackAsync : aucune écriture partielle ne survit." },
+    { type: "qcm", q: "Deux membres louent le dernier exemplaire au même instant. Le risque :", opts: ["Aucun, SQL Server bloque tout", "Stock = -1 et deux locations pour un seul jeu (problème d'isolation/concurrence)", "Une erreur de compilation", "La base se verrouille définitivement"], a: 1, exp: "Le I d'ACID : sans précaution, les deux lisent Stock = 1 et décrémentent chacune." },
+    { type: "qcm", q: "Une parade propre au « dernier exemplaire » côté serveur :", opts: ["UPDATE Jeux SET Stock = Stock - 1 WHERE Id = 5 AND Stock &gt; 0, puis vérifier les lignes touchées", "Un Thread.Sleep(1000)", "Charger tous les jeux en mémoire", "Supprimer le jeu"], a: 0, exp: "L'UPDATE conditionnel atomique : 0 ligne touchée = plus de stock, on refuse la 2e location. Ou concurrence optimiste (leçon 19)." },
+    { type: "input", q: "Quel niveau d'isolation, le plus strict, se passe en argument de BeginTransaction pour empêcher tout entrelacement ?", a: ["Serializable", "IsolationLevel.Serializable", "serializable"], ph: "Nom du niveau…", exp: "IsolationLevel.Serializable : le plus strict, au prix du parallélisme. Le défaut READ COMMITTED suffit souvent." },
+    { type: "vf", q: "Il est recommandé d'envoyer l'email de confirmation de location À L'INTÉRIEUR de la transaction, avant le Commit.", a: false, exp: "Jamais d'appel réseau lent dans une transaction : elle verrouille des lignes. On commit d'abord, on notifie ensuite." },
+    { type: "qcm", q: "L'équivalent Laravel/Django de l'enrobage transactionnel automatique :", opts: ["DB::transaction(...) et @transaction.atomic", "paginate() et Paginator", "migrate() et makemigrations", "select_related et Include"], a: 0, exp: "DB::transaction(fn) (Laravel), @transaction.atomic (Django), @Transactional (Spring/JPA) : commit/rollback auto autour d'un bloc." }
+  ],
+  final: {
+    title: "Exercice final — Louer un jeu sans rien casser",
+    intro: `<p>Le service LocationService de la Ludothèque doit implémenter « louer le jeu n°5 par le membre n°3 » : créer la location, décrémenter le stock, marquer le jeu indisponible s'il tombe à zéro — le tout atomique. Choisis la bonne approche et prévois la concurrence.</p>`,
+    questions: [
+      { type: "qcm", q: "Si les trois écritures tiennent dans le même contexte, la façon la plus simple d'être atomique :", opts: ["Trois SaveChanges successifs", "Add + modifications puis UN seul SaveChangesAsync", "Un BeginTransaction obligatoire", "Un ExecuteSqlInterpolated par écriture"], a: 1, exp: "Un seul SaveChanges enveloppe tout dans une transaction implicite : atomicité sans code en plus." },
+      { type: "qcm", q: "Un collègue fait Add(location)+Save, puis stock--+Save, puis indispo+Save. Le danger :", opts: ["C'est parfait", "Trois transactions séparées : si la 2e plante, la location est déjà validée, non annulable", "C'est plus rapide", "SaveChanges refuse d'être appelé trois fois"], a: 1, exp: "Le piège du SaveChanges multiplié : on perd l'atomicité, écriture partielle possible." },
+      { type: "vf", q: "Si tu dois d'abord SaveChanges pour obtenir l'Id de la location, puis lancer une commande SQL native, un BeginTransaction est justifié.", a: true, exp: "Enchaînement multi-unités (SaveChanges + SQL natif) devant rester atomique : c'est le cas d'usage de la transaction explicite." },
+      { type: "input", q: "Dans le bloc BeginTransaction, quelle méthode appelles-tu dans le catch pour tout annuler ?", a: ["Rollback", "RollbackAsync", "Rollback()", "transaction.Rollback"], ph: "Nom de la méthode…", exp: "RollbackAsync annule toutes les écritures ; puis on throw généralement pour remonter l'erreur." },
+      { type: "qcm", q: "Pour empêcher deux locations simultanées du dernier exemplaire, tu recommandes…", opts: ["Un UPDATE conditionnel (Stock &gt; 0) ou la concurrence optimiste rowversion", "Un délai aléatoire", "De désactiver les transactions", "De dupliquer la ligne du jeu"], a: 0, exp: "UPDATE ... AND Stock &gt; 0 (lignes touchées = 0 → refus) ou [Timestamp] + DbUpdateConcurrencyException de la leçon 19." }
+    ],
+    solution: `<pre class="pseudo">Transactions EF Core — la recette
+1. SaveChanges = DÉJÀ une transaction atomique implicite
+   → groupe les écritures liées, fais-en UN seul
+2. BeginTransaction (using + try/Commit/catch Rollback)
+   → seulement pour plusieurs SaveChanges ou SaveChanges + SQL natif
+3. Concurrence « dernier exemplaire » :
+   UPDATE ... AND Stock &gt; 0  |  rowversion + DbUpdateConcurrencyException
+4. Transaction COURTE : jamais d'email ni d'appel réseau dedans
+5. La logique métier dans un service, pas dans le contrôleur
+
+Louer un jeu (cas simple) :
+   ctx.Locations.Add(location);
+   jeu.Stock -= 1; if (jeu.Stock == 0) jeu.EstDisponible = false;
+   await ctx.SaveChangesAsync();     ← 1 INSERT + 2 UPDATE, atomiques
+
+Ailleurs : DB::transaction (Laravel), @transaction.atomic (Django),
+           @Transactional (Spring/JPA).</pre>
+<p>Tes écritures sont désormais tout-ou-rien. Mais une transaction lente ou une requête qui explose peuvent mettre ton appli à genoux… Prochaine leçon : le problème N+1, AsNoTracking et la chasse aux requêtes obèses.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l17", title: "Le service de location atomique", level: 3,
+    statement: "Conçois par écrit la méthode LouerAsync(int jeuId, int membreId) du LocationService de la Ludothèque. Cahier des charges : créer la location, décrémenter le stock du jeu, marquer EstDisponible = false si le stock atteint 0 — le tout ATOMIQUE — et refuser proprement la location s'il ne reste aucun exemplaire, même quand deux membres cliquent en même temps. Ton analyse doit : (1) justifier si un simple SaveChanges suffit ou si un BeginTransaction est nécessaire, et pourquoi ; (2) écrire le code (ou pseudo-code) de la méthode ; (3) traiter explicitement le cas de concurrence sur le dernier exemplaire ; (4) lister ce qu'on ne doit SURTOUT PAS mettre dans la transaction.",
+    hints: [
+      "Les trois écritures partagent le même DbContext : tiennent-elles dans un seul SaveChanges ? Si oui, l'atomicité est déjà là — inutile de sortir BeginTransaction.",
+      "Concurrence : deux transactions lisent Stock = 1 et décrémentent. Comment un UPDATE conditionnel (AND Stock > 0) ou une rowversion règle-t-il le conflit ? Que renvoie l'un, que lève l'autre ?",
+      "Dans la transaction : pas d'email, pas d'appel d'API de paiement lent. Commit d'abord, notifie ensuite — pourquoi les verrous l'exigent-ils ?"
+    ],
+    solution: "1. SIMPLE SaveChanges OU BeginTransaction ?\n   Les trois écritures (INSERT location, UPDATE stock, UPDATE dispo)\n   passent par le même DbContext et le même SaveChanges. Or SaveChanges\n   est DÉJÀ une transaction atomique implicite : tout ou rien, sans code\n   en plus. Donc PAS besoin de BeginTransaction ici. On ne le sortirait\n   que si on devait, par ex., SaveChanges pour obtenir l'Id puis lancer\n   une commande SQL native devant rester atomique avec le reste.\n\n2. CODE\n   public async Task<bool> LouerAsync(int jeuId, int membreId) {\n       var jeu = await ctx.Jeux.FindAsync(jeuId);\n       if (jeu == null || jeu.Stock <= 0) return false;   // refus propre\n       ctx.Locations.Add(new Location {\n           JeuId = jeuId, MembreId = membreId, DateDebut = DateTime.Now });\n       jeu.Stock -= 1;\n       if (jeu.Stock == 0) jeu.EstDisponible = false;\n       try { await ctx.SaveChangesAsync(); return true; }\n       catch (DbUpdateConcurrencyException) { return false; } // conflit\n   }\n\n3. CONCURRENCE — DERNIER EXEMPLAIRE\n   Deux membres lisent Stock = 1 simultanément. Deux parades :\n   a) rowversion [Timestamp] sur Jeu : le 2e SaveChanges voit la ligne\n      modifiée, l'UPDATE conditionné touche 0 ligne →\n      DbUpdateConcurrencyException, attrapée → on renvoie false.\n   b) écriture atomique serveur : ExecuteSqlInterpolated(\n      $\"UPDATE Jeux SET Stock = Stock - 1 WHERE Id = {jeuId} AND Stock > 0\")\n      renvoie le nb de lignes ; 0 → plus de stock → on annule/refuse.\n   Sans l'une des deux : Stock = -1, deux locations pour un jeu.\n\n4. HORS TRANSACTION (surtout pas dedans)\n   - envoi de l'email de confirmation\n   - appel à une API de paiement ou de notification\n   - tout traitement long : la transaction verrouille des lignes, une\n     attente réseau bloquerait les autres membres. Commit d'abord,\n     effets de bord ensuite.",
+    note: "Cette méthode est le cœur métier de ton futur projet full-stack (Niveau 6) : c'est exactement ce genre de service transactionnel qu'un contrôleur ASP.NET Core appellera. Le même raisonnement se transpose mot pour mot en @Transactional (Spring/JPA), DB::transaction (Laravel) ou @transaction.atomic (Django) — ce que tu apprends ici, c'est ACID appliqué, pas une syntaxe C#." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

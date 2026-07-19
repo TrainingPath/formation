@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Le problème N+1 : select_related et prefetch_related",
+  subtitle: "401 requêtes pour afficher 200 locations : le crime parfait de l'ORM — sauf si tu sais charger d'avance.",
+  theory: `
+<h3>1. La scène du crime : 401 requêtes silencieuses</h3>
+<p>Depuis la leçon 1, il te guette ; le voici. La page « historique » de la Ludothèque affiche les 200 locations avec le titre du jeu et le pseudo du membre. Le code est innocent, presque élégant :</p>
+<pre class="pseudo">&gt;&gt;&gt; from django.db import connection, reset_queries   # connection.queries = journal ; reset_queries() = le vider
+&gt;&gt;&gt; reset_queries()                          # on remet le compteur a zero
+&gt;&gt;&gt; for loc in Location.objects.all():       # on parcourt toutes les locations
+...     print(loc.jeu.titre, loc.membre.pseudo)   # on lit le jeu ET le membre de chaque location
+Catan zelda42                                # 1re location
+Azul mario_b                                 # 2e location
+...                                          # ... et ainsi de suite
+&gt;&gt;&gt; len(connection.queries)                  # combien de requetes ont ete envoyees ?
+401        # 1 (les locations) + 200 x 2 (loc.jeu, puis loc.membre)   # une explosion de requetes !</pre>
+<p>Que s'est-il passé ? Le SELECT initial ne rapporte que les colonnes de <em>ludotheque_location</em> — dont <em>jeu_id</em> et <em>membre_id</em>, de simples entiers (leçon 8). Au premier accès à <em>loc.jeu</em>, l'objet n'est pas chargé : Django part chercher la ligne en base. Idem pour <em>loc.membre</em>. Soit <strong>1 requête pour la liste + N requêtes par relation</strong> : le problème <strong>N+1</strong>. Le pire : c'est <strong>invisible</strong>. L'ORM cache le SQL, et en développement avec 10 locations la page « marche » très bien — elle s'écroulera en production avec 10 000. Seuls <em>connection.queries</em> ou le panneau SQL de <em>django-debug-toolbar</em> (Niveau 3) vendent la mèche.</p>
+
+<h3>2. select_related : un seul SELECT avec JOIN</h3>
+<p>Pour les relations « vers le 1 » — <strong>ForeignKey</strong> et <strong>OneToOneField</strong> — la parade s'appelle <strong>select_related</strong> (« charger les objets liés en même temps ») : Django ajoute des <strong>INNER JOIN</strong> à la requête principale et <em>hydrate</em> (remplit) d'avance les objets liés.</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Location.objects.select_related('jeu', 'membre')   # precharge le jeu ET le membre en une requete
+&gt;&gt;&gt; print(qs.query)                          # afficher le SQL prevu
+SELECT location.*, jeu.*, membre.*           -- on rapatrie les colonnes des 3 tables d'un coup
+FROM ludotheque_location                     -- table principale
+INNER JOIN ludotheque_jeu ON (location.jeu_id = jeu.id)        -- jointure vers le jeu
+INNER JOIN ludotheque_membre ON (location.membre_id = membre.id)   -- jointure vers le membre
+
+&gt;&gt;&gt; reset_queries()                          # on remet le compteur a zero
+&gt;&gt;&gt; for loc in qs:                           # on parcourt les locations prechargees
+...     print(loc.jeu.titre, loc.membre.pseudo)   # déjà en mémoire !   # aucun aller-retour en base
+&gt;&gt;&gt; len(connection.queries)                  # combien de requetes cette fois ?
+1          # 401 → 1. Même page, même affichage.   # une seule requete pour tout</pre>
+<p>Les JOIN que tu écrivais à la main au Niveau 4, générés pour toi. Et une relation vers-le-1 se traverse en profondeur : <em>select_related('membre__profil')</em> joint la location, le membre <strong>et</strong> son profil (OneToOneField, leçon 11) en une seule requête.</p>
+
+<h3>3. prefetch_related : deux requêtes recollées en Python</h3>
+<p>Pour les relations « vers le N » — <strong>ManyToManyField</strong> et inverses de ForeignKey (<em>jeu.avis</em>, <em>jeu.locations</em>) — un JOIN dupliquerait les lignes : Catan classé dans trois catégories sortirait trois fois. Django choisit une autre stratégie : <strong>prefetch_related</strong> (« pré-récupérer ») exécute <strong>deux</strong> requêtes et recolle les résultats en Python.</p>
+<pre class="pseudo">&gt;&gt;&gt; jeux = Jeu.objects.prefetch_related('categories')   # precharge les categories de chaque jeu
+# Requête 1 : SELECT * FROM ludotheque_jeu               -- d'abord tous les jeux
+# Requête 2 : SELECT categorie.*, jointure.jeu_id        -- puis toutes les categories concernees
+#             FROM ludotheque_categorie                  -- via la table de jointure
+#             INNER JOIN ludotheque_jeu_categories ...    -- (lecon 10)
+#             WHERE jointure.jeu_id IN (1, 2, 3, 4, ...)  -- IN = pour tous les jeux d'un coup
+
+&gt;&gt;&gt; for jeu in jeux:                          # on parcourt les jeux preualablement charges
+...     print(jeu.titre, [c.nom for c in jeu.categories.all()])   # liste des noms de categories
+Catan ['Stratégie', 'Famille']          # 0 requête dans la boucle   # tout est deja en memoire
+&gt;&gt;&gt; len(connection.queries)                  # combien de requetes en tout ?
+2          # 2 requêtes, que la page affiche 10 ou 400 jeux   # cout constant</pre>
+<p>Même recette pour les avis d'un jeu : <em>Jeu.objects.prefetch_related('avis')</em>, voire <em>prefetch_related('avis__membre')</em> pour avoir aussi les auteurs.</p>
+
+<h3>4. Choisir — et combiner</h3>
+<p>Le choix se lit directement sur la <strong>cardinalité</strong> de la relation (combien d'objets en face : un seul, ou plusieurs), celle de ton schéma Merise du Niveau 4 :</p>
+<pre class="pseudo">Relation                       Méthode             SQL                      # regle de choix
+---------------------------    ----------------    ----------------------   # (ligne de separation)
+vers le 1 (ForeignKey, O2O)    select_related      1 requête, INNER JOIN    # un seul objet en face -> JOIN
+vers le N (M2M, FK inverse)    prefetch_related    2 requêtes, IN (...)     # plusieurs objets -> 2 requetes
+
+# Et on combine librement :
+Location.objects.select_related('jeu', 'membre') \    # JOIN pour le vers-le-1...
+                .prefetch_related('jeu__categories')   # ...et prefetch pour le vers-le-N
+# → 2 requêtes : le SELECT joint, puis le IN des catégories   # le meilleur des deux</pre>
+<p>Note la traversée <em>jeu__categories</em> : on précharge les catégories <strong>du jeu</strong> de chaque location, à travers la ForeignKey déjà jointe.</p>
+
+<h3>5. La méthode de travail : détecter, corriger, re-mesurer</h3>
+<p>Trois gestes, toujours dans cet ordre : <strong>1) détecter</strong> — panneau SQL de django-debug-toolbar ou <em>len(connection.queries)</em> autour du code suspect ; <strong>2) corriger</strong> — select_related pour le vers-le-1, prefetch_related pour le vers-le-N ; <strong>3) re-mesurer</strong> — le compte doit chuter et surtout devenir stable. Grave cette règle : <strong>le nombre de requêtes d'une page doit être constant, jamais proportionnel aux données affichées</strong>. Une ligne pour tes futurs langages : le <em>lazy loading</em> (le chargement paresseux des objets liés) cause les mêmes drames chez Hibernate/JPA (parade : JOIN FETCH, EntityGraph), chez EF Core (Include, ThenInclude) et chez Eloquent (with('jeu'), le eager loading).</p>
+<div class="warn">select_related sur une relation vers-le-N n'existe pas : <em>select_related('categories')</em> lève une erreur. Et le préchargement de prefetch_related ne bénéficie qu'à <em>.all()</em> : dans la boucle, <em>jeu.categories.filter(...)</em> repart en base à chaque tour — pour précharger un sous-ensemble filtré, il existe l'objet <em>Prefetch</em> (pour aller plus loin).</div>
+<div class="tip">Réflexe de fin de développement d'une vue : ouvre django-debug-toolbar et recharge la page avec 10, puis 50 lignes. Si le nombre de requêtes grandit avec le nombre de lignes affichées, il te manque un select_related ou un prefetch_related.</div>`,
+  exercises: [
+    { type: "qcm", q: "for loc in Location.objects.all(): print(loc.jeu.titre, loc.membre.pseudo) pour 200 locations : combien de requêtes ?", opts: ["1", "201", "401", "3"], a: 2, exp: "1 pour la liste + 2 par location (loc.jeu puis loc.membre) : 1 + 200 × 2 = 401." },
+    { type: "qcm", q: "Le problème « N+1 » doit son nom à…", opts: ["N tables + 1 index", "1 requête pour la liste + N requêtes pour les objets liés", "N+1 JOIN dans la requête", "La version N+1 de Django"], a: 1, exp: "La liste coûte 1 requête, puis chaque ligne déclenche sa propre requête vers la relation." },
+    { type: "qcm", q: "Pourquoi le N+1 passe-t-il souvent inaperçu en développement ?", opts: ["Django le corrige automatiquement", "MySQL fusionne les requêtes identiques", "Avec 10 lignes de test, 21 requêtes restent rapides : la page « marche »", "Il n'existe qu'avec PostgreSQL"], a: 2, exp: "L'ORM cache le SQL et le petit jeu de données masque la dérive — jusqu'à la production." },
+    { type: "input", q: "La méthode qui précharge une relation vers-le-1 (ForeignKey, OneToOneField) grâce à un JOIN :", a: ["select_related", "select_related()", ".select_related()"], ph: "Location.objects.…", exp: "select_related ajoute des INNER JOIN et hydrate les objets liés d'avance." },
+    { type: "qcm", q: "Location.objects.select_related('jeu', 'membre') évalué pour 200 locations : combien de requêtes ?", opts: ["401", "201", "2", "1"], a: 3, exp: "Un seul SELECT avec deux INNER JOIN : les 401 requêtes fondent en une." },
+    { type: "vf", q: "select_related fonctionne aussi pour un ManyToManyField comme jeu.categories.", a: false, exp: "select_related est réservé au vers-le-1 (FK, O2O) ; pour le vers-le-N, c'est prefetch_related." },
+    { type: "input", q: "La méthode qui précharge un ManyToMany ou un inverse de ForeignKey :", a: ["prefetch_related", "prefetch_related()", ".prefetch_related()"], ph: "Jeu.objects.…", exp: "prefetch_related : la requête principale + un IN (...) recollés en Python." },
+    { type: "qcm", q: "Jeu.objects.prefetch_related('categories') exécute…", opts: ["1 requête avec JOIN", "2 requêtes : la principale, puis un IN (…) sur les ids, recollées en Python", "1 requête par jeu", "0 requête, tout est en cache"], a: 1, exp: "C'est la stratégie prefetch : deux requêtes, quel que soit le nombre de jeux." },
+    { type: "qcm", q: "Pourquoi prefetch_related plutôt qu'un JOIN pour les relations vers-le-N ?", opts: ["MySQL ne sait pas joindre trois tables", "Les JOIN sont interdits par Django", "Un JOIN dupliquerait chaque jeu autant de fois qu'il a de catégories", "Le IN (...) est toujours plus rapide qu'un JOIN"], a: 2, exp: "Catan dans trois catégories sortirait trois fois : Django préfère deux requêtes propres." },
+    { type: "qcm", q: "Pour afficher les locations avec jeu, membre ET catégories du jeu :", opts: ["select_related('jeu', 'membre').prefetch_related('jeu__categories')", "prefetch_related('jeu', 'membre', 'categories')", "select_related sur tout", "Rien : Django optimise seul"], a: 0, exp: "On combine : JOIN pour le vers-le-1, IN pour le vers-le-N, traversé via jeu__." },
+    { type: "qcm", q: "select_related('membre__profil') est valable car…", opts: ["profil est un OneToOneField : une chaîne de relations vers-le-1 se traverse en profondeur", "profil est un ManyToMany", "select_related accepte n'importe quel champ", "les profils sont toujours en cache"], a: 0, exp: "FK et O2O s'enchaînent dans un même select_related : un JOIN de plus, toujours 1 requête." },
+    { type: "vf", q: "Le nombre de requêtes d'une page bien écrite doit rester constant quand le nombre de lignes affichées augmente.", a: true, exp: "C'est LA règle anti-N+1 : constant, jamais proportionnel aux données." },
+    { type: "qcm", q: "Pour compter les requêtes réellement parties pendant le développement :", opts: ["print(qs.query)", "sqlmigrate", "showmigrations", "len(connection.queries) ou le panneau SQL de django-debug-toolbar"], a: 3, exp: "print(qs.query) montre UNE requête prévue ; pour compter ce qui part vraiment, il faut le journal." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA de la parade au N+1 :", opts: ["JOIN FETCH ou EntityGraph", "GROUP BY", "@JoinColumn", "persist()"], a: 0, exp: "Le lazy loading de JPA cause les mêmes drames ; EF Core dit Include, Eloquent dit with()." },
+    { type: "qcm", q: "Après jeux = Jeu.objects.prefetch_related('avis'), l'appel jeu.avis.filter(note__gte=4) dans la boucle…", opts: ["Relit le cache préchargé", "Lève une exception", "Repart en base à chaque tour : le préchargement ne bénéficie qu'à .all()", "Renvoie toujours une liste vide"], a: 2, exp: "Un nouveau filtre = une nouvelle requête ; pour précharger un sous-ensemble, il existe l'objet Prefetch." }
+  ],
+  final: {
+    title: "Exercice final — La chasse aux requêtes",
+    intro: `<p>L'audit de performance de la Ludothèque commence : à toi de compter, diagnostiquer et corriger.</p>`,
+    questions: [
+      { type: "qcm", q: "Page « avis récents » : 50 avis affichés avec avis.membre.pseudo, sans optimisation. Combien de requêtes ?", opts: ["1", "2", "51", "50"], a: 2, exp: "1 pour les avis + 1 par accès avis.membre non chargé : le N+1 dans toute sa splendeur." },
+      { type: "qcm", q: "La correction la plus efficace pour cette page :", opts: ["Avis.objects.select_related('membre')", "Avis.objects.raw()", "Un index MySQL sur membre_id", "Recharger la page"], a: 0, exp: "membre est une ForeignKey (vers le 1) : un INNER JOIN et tout tient en 1 requête." },
+      { type: "qcm", q: "Pour afficher chaque jeu du catalogue avec ses catégories :", opts: ["select_related('categories')", "prefetch_related('categories')", "get_or_create()", "values_list()"], a: 1, exp: "categories est un ManyToMany (vers le N) : select_related lèverait une erreur." },
+      { type: "vf", q: "Avec prefetch_related('categories'), le nombre de requêtes reste 2, que la page affiche 10 ou 400 jeux.", a: true, exp: "La principale + le IN (...) : un coût constant, indépendant du volume." },
+      { type: "input", q: "L'outil du Niveau 3 dont le panneau SQL compte les requêtes de chaque page :", a: ["django-debug-toolbar", "debug-toolbar", "django debug toolbar"], ph: "nom de l'outil…", exp: "Le détecteur de N+1 par excellence : il liste et chronomètre chaque requête de la page." }
+    ],
+    solution: `<pre class="pseudo">N+1        : 1 requête (liste) + N requêtes (objets liés) — silencieux, mortel   # le crime parfait
+Détection  : len(connection.queries) · panneau SQL de django-debug-toolbar    # compter le reel
+Vers le 1  : select_related('jeu', 'membre')   → 1 SELECT + INNER JOIN         # FK, OneToOne
+             (FK, OneToOne ; traversée profonde : 'membre__profil')            # chaine de vers-le-1
+Vers le N  : prefetch_related('categories')    → 2 requêtes (IN + recollage)   # M2M, FK inverse
+             (M2M, FK inverse : 'avis', 'locations')                          # eviter la duplication
+Combiner   : .select_related('jeu', 'membre').prefetch_related('jeu__categories')   # les deux ensemble
+Règle d'or : nombre de requêtes CONSTANT, jamais proportionnel aux données     # le test qui ne trompe pas
+Ailleurs   : JOIN FETCH/EntityGraph (JPA) · Include (EF Core) · with() (Eloquent)   # equivalents</pre>
+<p>Ta Ludothèque tient maintenant la charge. Mais parfois, l'ORM lui-même en fait trop — ou pas assez. Leçon 19 : <strong>SQL brut et raw() quand il le faut ; values et values_list</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l18", title: "L'audit des 200 locations", level: 3,
+    statement: "La page « historique des locations » de la Ludothèque boucle sur Location.objects.all() et affiche, pour chacune des 200 locations : loc.jeu.titre, loc.membre.pseudo et la liste des catégories du jeu (loc.jeu.categories.all()). Rédige l'audit complet : 1) compte précisément les requêtes SQL exécutées par la version actuelle, relation par relation ; 2) écris le queryset corrigé ; 3) justifie chaque choix entre select_related et prefetch_related en classant chaque relation (vers le 1 / vers le N) ; 4) donne le compte final de requêtes et énonce la règle générale qui permettra de valider n'importe quelle page à l'avenir.",
+    hints: [
+      "Compte relation par relation : loc.jeu et loc.membre sont des ForeignKey non chargées (une requête par accès), loc.jeu.categories est un ManyToMany (une requête par jeu). Combien pour 200 lignes ?",
+      "Classe chaque relation : vers le 1 → select_related (JOIN) ; vers le N → prefetch_related (requête IN). Les catégories se préchargent à travers la FK déjà jointe : 'jeu__categories'.",
+      "Après correction, re-mesure avec len(connection.queries) ou debug-toolbar : le total ne doit plus dépendre du nombre de locations affichées."
+    ],
+    solution: "1) Version actuelle, pour 200 locations :\n- 1 requête : SELECT des locations ;\n- 200 requêtes : loc.jeu (une par location, l'objet Jeu n'est pas chargé) ;\n- 200 requêtes : loc.membre (même mécanisme) ;\n- 200 requêtes : loc.jeu.categories.all() (une par jeu affiché).\nTotal : 601 requêtes — proportionnel aux données : la page s'écroulera en production.\n\n2) Queryset corrigé :\nqs = (Location.objects\n        .select_related('jeu', 'membre')\n        .prefetch_related('jeu__categories'))\n\n3) Justifications :\n- jeu : ForeignKey, relation vers le 1 → select_related, un INNER JOIN suffit ;\n- membre : ForeignKey, vers le 1 → select_related, dans le même SELECT joint ;\n- jeu__categories : ManyToMany, vers le N → prefetch_related, car un JOIN\n  dupliquerait chaque location par catégorie ; Django exécute un IN (...)\n  sur les ids des jeux et recolle les catégories en Python.\n\n4) Compte final : 2 requêtes (le SELECT avec ses deux JOIN, puis le IN\ndes catégories), que la page affiche 10 ou 10 000 locations.\nRègle générale : le nombre de requêtes d'une page doit être CONSTANT,\njamais proportionnel au nombre de lignes affichées — à vérifier au\ndebug-toolbar avant de considérer une vue comme terminée.",
+    note: "Cet audit prolonge directement le panneau SQL de django-debug-toolbar découvert au Niveau 3, et les INNER JOIN que select_related écrit sont ceux que tu tapais à la main au Niveau 4. Au Niveau 6, chaque écran de liste de ton projet full-stack devra passer cet audit avant mise en production — et Hibernate, EF Core ou Eloquent t'imposeront la même discipline face à leur lazy loading." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

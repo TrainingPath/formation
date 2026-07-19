@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "La relation N-N : @ManyToMany (les catégories de jeux)",
+  subtitle: "Un jeu a plusieurs catégories, une catégorie regroupe plusieurs jeux — la table de jonction devient invisible.",
+  theory: `
+<h3>1. Le retour de la table de jonction</h3>
+<p>Une relation <strong>N-N</strong> (« plusieurs-vers-plusieurs ») relie plusieurs lignes de chaque côté : au Niveau 4, tu as appris qu'elle ne se stocke jamais directement. « Catan » est à la fois <em>stratégie</em> et <em>famille</em>, et la catégorie <em>stratégie</em> regroupe des dizaines de jeux. Merise t'a fait créer une <strong>table de jonction</strong> (aussi dite table d'association) — une table intermédiaire qui ne contient que les deux clés étrangères :</p>
+<pre class="pseudo">CREATE TABLE jeu_categorie (               -- la table de jonction (associe jeux et catégories)
+  jeu_id       BIGINT NOT NULL,            -- FK vers jeu(id)
+  categorie_id BIGINT NOT NULL,            -- FK vers categorie(id)
+  PRIMARY KEY (jeu_id, categorie_id),      -- PK COMPOSITE : le couple est unique (aucun doublon possible)
+  FOREIGN KEY (jeu_id)       REFERENCES jeu(id),        -- jeu_id doit exister dans la table jeu
+  FOREIGN KEY (categorie_id) REFERENCES categorie(id)   -- categorie_id doit exister dans la table categorie
+);                                         -- fin de la table de jonction</pre>
+<p>Côté objet, surprise : <strong>aucune troisième classe</strong>. Jeu porte une collection de Categorie, Categorie porte une collection de Jeu, et Hibernate gère la table de jonction tout seul. C'est le rôle de <strong>@ManyToMany</strong>.</p>
+
+<h3>2. Le côté propriétaire : @ManyToMany + @JoinTable</h3>
+<p>Comme en leçon 9, il faut désigner un <strong>côté propriétaire</strong> — celui qui pilote les écritures. Ici, c'est lui qui décrit la table de jonction via <strong>@JoinTable</strong> :</p>
+<pre class="pseudo">@Entity                                    // Jeu est une entité
+public class Jeu {                         // début de la classe Jeu
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée par MySQL
+  private Long id;                         // l'identifiant du jeu
+
+  @ManyToMany                              // relation N-N ; ce côté est PROPRIÉTAIRE (pas de mappedBy)
+  @JoinTable(                              // on décrit ici la table de jonction...
+    name = "jeu_categorie",                // ...son nom exact : jeu_categorie
+    joinColumns        = @JoinColumn(name = "jeu_id"),        // FK vers MOI (Jeu)
+    inverseJoinColumns = @JoinColumn(name = "categorie_id"))  // FK vers l'autre entité (Categorie)
+  private Set&lt;Categorie&gt; categories = new HashSet&lt;&gt;();  // ensemble de catégories (Set = pas de doublon)
+}                                          // fin de la classe Jeu</pre>
+<p>Retiens la logique : <strong>joinColumns</strong> = la colonne qui pointe vers l'entité où tu écris l'annotation ; <strong>inverseJoinColumns</strong> = la colonne qui pointe vers l'autre entité. Sans @JoinTable, Hibernate inventerait des noms (jeu_categories, categories_id) qui ne colleraient pas à ton schéma du Niveau 4.</p>
+
+<h3>3. Le côté inverse : mappedBy, comme d'habitude</h3>
+<pre class="pseudo">@Entity                                    // Categorie est une entité
+public class Categorie {                   // début de la classe Categorie
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)  // clé primaire auto-incrémentée
+  private Long id;                         // l'identifiant de la catégorie
+
+  @Column(nullable = false, length = 60)   // colonne nom : NOT NULL, VARCHAR(60)
+  private String nom;                      // le nom de la catégorie
+
+  @ManyToMany(mappedBy = "categories")     // côté INVERSE : miroir de l'attribut "categories" de Jeu
+  private Set&lt;Jeu&gt; jeux = new HashSet&lt;&gt;();  // ensemble des jeux de cette catégorie
+}                                          // fin de la classe Categorie</pre>
+<p>Même règle qu'en leçon 9 : <strong>mappedBy = nom de l'attribut Java du côté propriétaire</strong>, et seul le côté SANS mappedBy déclenche des INSERT/DELETE dans jeu_categorie. Modifier categorie.getJeux() sans toucher jeu.getCategories() ne change rien en base.</p>
+
+<h3>4. Set plutôt que List, et les méthodes utilitaires</h3>
+<p>Pourquoi <strong>Set&lt;Categorie&gt;</strong> et pas List ? D'abord le sens : un <em>Set</em> (ensemble) interdit les doublons, exactement comme la PK composite (jeu_id, categorie_id). Ensuite la performance : avec une List non indexée, Hibernate ne sait pas cibler UNE ligne à retirer et peut supprimer TOUTES les lignes de jonction du jeu pour les réinsérer. Avec un Set, il génère le SQL minimal :</p>
+<pre class="pseudo">Jeu catan = em.find(Jeu.class, 1L);              // charger le jeu (id 1)
+Categorie strategie = em.find(Categorie.class, 3L); // charger la catégorie (id 3)
+catan.getCategories().add(strategie);        // côté propriétaire : c'est LUI qui écrira en base
+strategie.getJeux().add(catan);              // cohérence en mémoire (côté inverse)
+tx.commit();                                 // valider →
+// → INSERT INTO jeu_categorie (jeu_id, categorie_id) VALUES (1, 3)
+
+catan.getCategories().remove(strategie);     // retirer la catégorie du jeu (côté propriétaire)
+tx.commit();                                 // valider →
+// → DELETE FROM jeu_categorie WHERE jeu_id = 1 AND categorie_id = 3</pre>
+<p>Comme en leçon 9, écris des méthodes utilitaires (addCategorie, removeCategorie) qui synchronisent les deux collections en un appel.</p>
+
+<h3>5. Cascade interdit, et l'alternative « entité de jonction »</h3>
+<p>Sur un @ManyToMany, <strong>jamais cascade = CascadeType.REMOVE</strong> : supprimer « Catan » supprimerait la catégorie <em>stratégie</em>… partagée par cinquante autres jeux. Une entité reliée en N-N n'appartient à personne. Autre limite : si la jonction doit porter des colonnes (date_ajout, pertinence…), @ManyToMany ne sait pas les mapper. La solution est de <strong>promouvoir la jonction en entité</strong> JeuCategorie avec deux @ManyToOne — exactement le motif de Location entre Membre et Jeu (leçons 8-9). Ailleurs, même idée : skip navigations en EF Core, belongsToMany + withPivot en Eloquent, ManyToManyField + through dans Django ; côté Spring Data, tes repositories manipulent ces Set sans rien changer.</p>
+<div class="warn">CascadeType.REMOVE (ou CascadeType.ALL, qui l'inclut) sur un @ManyToMany est une bombe : la suppression d'un seul jeu efface des catégories partagées par tous les autres, puis se propage potentiellement de proche en proche. Hibernate supprime déjà tout seul les lignes de jonction du jeu supprimé — c'est tout ce qu'il faut.</div>
+<div class="tip">Réflexe de conception : commence toujours par @ManyToMany simple ; dès que le client demande « et on voudrait savoir QUAND la catégorie a été ajoutée », promeus la jonction en entité. Ce basculement est fréquent en vrai projet — tu le referas au Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle annotation mappe la relation N-N entre Jeu et Categorie ?", opts: ["@OneToMany", "@ManyToMany", "@ManyToOne", "@JoinColumn"], a: 1, exp: "@ManyToMany des deux côtés : chacun porte une collection de l'autre." },
+    { type: "qcm", q: "@JoinTable sert à…", opts: ["Décrire la table de jonction et ses deux colonnes FK", "Créer un index MySQL", "Renommer l'entité", "Déclarer la clé primaire composite en Java"], a: 0, exp: "name + joinColumns + inverseJoinColumns : le pont exact vers jeu_categorie du Niveau 4." },
+    { type: "qcm", q: "Dans @JoinTable écrit dans la classe Jeu, joinColumns désigne…", opts: ["La FK vers Categorie", "Une colonne calculée", "La FK vers l'entité qui porte l'annotation (jeu_id)", "La PK de la table jeu"], a: 2, exp: "joinColumns = vers moi ; inverseJoinColumns = vers l'autre entité." },
+    { type: "qcm", q: "Toujours dans Jeu, inverseJoinColumns désigne…", opts: ["jeu_id", "categorie_id, la FK vers l'autre entité", "id de la table jeu", "Une colonne UNIQUE"], a: 1, exp: "C'est la colonne qui pointe vers Categorie, le côté « inverse » de la jonction." },
+    { type: "vf", q: "Une relation N-N exige obligatoirement une troisième entité Java pour la table de jonction.", a: false, exp: "Tant que la jonction ne porte que les deux FK, @ManyToMany la rend invisible ; on ne la promeut en entité que si elle porte des colonnes." },
+    { type: "qcm", q: "Le côté inverse (Categorie) se déclare…", opts: ["@ManyToMany sans rien", "@OneToMany(mappedBy = \"jeux\")", "@JoinTable(name = \"jeu_categorie\")", "@ManyToMany(mappedBy = \"categories\")"], a: 3, exp: "mappedBy pointe vers le nom de l'attribut Java du côté propriétaire, comme en leçon 9." },
+    { type: "input", q: "Quel attribut d'annotation désigne le côté inverse d'une relation bidirectionnelle ?", a: ["mappedBy", "mappedby", "mapped by"], ph: "un attribut d'annotation…", exp: "mappedBy = « la relation est déjà mappée par cet attribut de l'autre entité »." },
+    { type: "qcm", q: "Pourquoi préférer Set à List pour les catégories d'un jeu ?", opts: ["Set trie alphabétiquement", "List est interdite par JPA", "Pas de doublons (comme la PK composite) et SQL de retrait plus précis", "Set consomme moins de RAM"], a: 2, exp: "Le Set exprime l'unicité du couple (jeu, catégorie) ; avec une List, Hibernate peut vider et réinsérer toute la jonction." },
+    { type: "vf", q: "cascade = CascadeType.REMOVE est recommandé sur un @ManyToMany pour faire le ménage automatiquement.", a: false, exp: "JAMAIS : les entités reliées en N-N sont partagées ; on supprimerait des catégories utilisées par d'autres jeux." },
+    { type: "qcm", q: "Avec cascade REMOVE sur categories, em.remove(catan) provoquerait…", opts: ["Seulement la suppression de Catan", "La suppression des catégories de Catan, pourtant partagées par d'autres jeux", "Une erreur de compilation", "Un simple avertissement dans les logs"], a: 1, exp: "La cascade suit la relation et détruit des entités qui ne t'appartiennent pas." },
+    { type: "qcm", q: "SQL généré quand on ajoute une catégorie au Set d'un jeu géré, au commit :", opts: ["INSERT INTO jeu_categorie (jeu_id, categorie_id) VALUES (?, ?)", "UPDATE jeu SET categorie = ?", "ALTER TABLE jeu ADD COLUMN", "INSERT INTO categorie (nom) VALUES (?)"], a: 0, exp: "L'association vit dans la table de jonction : une ligne = un couple." },
+    { type: "qcm", q: "La jonction doit porter une colonne date_ajout. La bonne solution :", opts: ["@JoinTable(dateAjout = true)", "Ajouter la colonne dans jeu", "Un trigger MySQL", "Promouvoir la jonction en entité JeuCategorie avec deux @ManyToOne"], a: 3, exp: "@ManyToMany ne mappe pas de colonnes supplémentaires : on repasse au motif Location des leçons 8-9." },
+    { type: "input", q: "Combien de clés étrangères contient la table jeu_categorie ?", a: ["2", "deux", "2 fk", "deux fk"], ph: "un nombre…", exp: "jeu_id et categorie_id, qui forment ensemble la PK composite." },
+    { type: "qcm", q: "L'équivalent du @ManyToMany dans l'ORM Django :", opts: ["hasMany", "ManyToManyField", "Include", "@JoinTable"], a: 1, exp: "ManyToManyField (avec through pour la jonction enrichie) ; belongsToMany en Eloquent, skip navigations en EF Core." },
+    { type: "vf", q: "Seul le côté propriétaire (celui sans mappedBy) déclenche les INSERT/DELETE dans la table de jonction.", a: true, exp: "Modifier uniquement categorie.getJeux() ne change rien en base : même règle qu'en leçon 9." }
+  ],
+  final: {
+    title: "Exercice final — Cataloguer les jeux",
+    intro: `<p>Tu branches les catégories sur la Ludothèque : Jeu ↔ Categorie via la table jeu_categorie (jeu_id, categorie_id) conçue au Niveau 4. Vérifions chaque pièce du mapping.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mapping correct du côté propriétaire dans Jeu :", opts: ["@ManyToMany @JoinTable(name = \"jeu_categorie\", joinColumns = @JoinColumn(name = \"jeu_id\"), inverseJoinColumns = @JoinColumn(name = \"categorie_id\")) private Set&lt;Categorie&gt; categories;", "@OneToMany @JoinColumn(name = \"categorie_id\") private List&lt;Categorie&gt; categories;", "@ManyToMany(mappedBy = \"jeux\") private Set&lt;Categorie&gt; categories;", "@ManyToOne private Categorie categorie;"], a: 0, exp: "Le propriétaire décrit la table de jonction ; mappedBy irait dans Categorie." },
+      { type: "vf", q: "Dans Categorie, mappedBy = \"categories\" fait référence au nom de l'attribut Java déclaré dans Jeu.", a: true, exp: "mappedBy pointe toujours vers un nom d'attribut Java, jamais vers un nom de colonne SQL." },
+      { type: "input", q: "Quelle annotation décrit le nom de la table de jonction et ses deux FK ?", a: ["@JoinTable", "JoinTable", "jointable", "@jointable"], ph: "@…", exp: "@JoinTable(name, joinColumns, inverseJoinColumns) — sans elle, Hibernate invente des noms." },
+      { type: "qcm", q: "Tu supprimes le jeu « Catan » (sans aucun cascade). Que fait Hibernate pour jeu_categorie ?", opts: ["Rien : erreur FK garantie", "Il supprime aussi les catégories de Catan", "Il supprime les lignes de jonction de Catan, puis le jeu — les catégories survivent", "Il vide toute la table jeu_categorie"], a: 2, exp: "Le propriétaire nettoie ses propres lignes de jonction ; les catégories, partagées, restent intactes." },
+      { type: "qcm", q: "Le client veut noter la pertinence (1-5) de chaque couple jeu/catégorie. Nouvelle structure :", opts: ["@ManyToMany(pertinence = 5)", "Entité JeuCategorie : @ManyToOne Jeu, @ManyToOne Categorie, int pertinence", "Une colonne pertinence dans jeu", "Un Set&lt;Integer&gt; dans Categorie"], a: 1, exp: "La jonction porte une donnée : elle devient une entité à part entière, reliée par deux @ManyToOne." }
+    ],
+    solution: `<pre class="pseudo">// Côté propriétaire — Jeu
+@ManyToMany                                       // relation N-N, côté propriétaire (pas de mappedBy)
+@JoinTable(                                        // on décrit la table de jonction...
+  name = "jeu_categorie",                          // ...son nom
+  joinColumns        = @JoinColumn(name = "jeu_id"),        // FK vers Jeu (moi)
+  inverseJoinColumns = @JoinColumn(name = "categorie_id"))  // FK vers Categorie (l'autre)
+private Set&lt;Categorie&gt; categories = new HashSet&lt;&gt;();  // ensemble de catégories (sans doublon)
+
+// Côté inverse — Categorie
+@ManyToMany(mappedBy = "categories")               // miroir de l'attribut "categories" de Jeu
+private Set&lt;Jeu&gt; jeux = new HashSet&lt;&gt;();            // ensemble des jeux de cette catégorie
+
+// Usage : catan.getCategories().add(strategie);   // ajouter un couple (côté propriétaire)
+//         → INSERT INTO jeu_categorie (jeu_id, categorie_id) VALUES (?, ?)
+// Jamais de cascade REMOVE : les catégories sont partagées.        // règle d'or
+// Jonction avec colonnes (pertinence…) → entité JeuCategorie + 2 @ManyToOne.  // si on doit l'enrichir</pre>
+<p>Toutes les relations à collections sont en place. Demain, les deux dernières formes de mapping : le vrai 1-1 (Membre et sa carte d'abonnement) et l'objet embarqué @Embeddable — deux outils qui se ressemblent et qu'il faudra savoir départager.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l10", title: "Catégories simples ou jonction enrichie ?", level: 2,
+    statement: "La Ludothèque veut deux choses : (a) classer les jeux par catégories, et (b) plus tard, savoir quel bénévole a ajouté chaque catégorie à chaque jeu et à quelle date. Rédige d'abord le mapping @ManyToMany complet (les deux côtés, avec @JoinTable fidèle à jeu_categorie du Niveau 4). Puis rédige la version « jonction promue en entité » JeuCategorie qui répond au besoin (b). Termine par un paragraphe : quels sont les coûts de la promotion (code, requêtes) et pourquoi on ne démarre PAS directement avec l'entité de jonction ?",
+    hints: [
+      "Version (a) : qui porte @JoinTable, qui porte mappedBy ? Rappelle-toi : joinColumns = FK vers l'entité annotée.",
+      "Version (b) : JeuCategorie a besoin de sa propre @Id, de deux @ManyToOne et des colonnes date_ajout / benevole — compare avec l'entité Location.",
+      "Pour le paragraphe final : que deviennent jeu.getCategories() et les requêtes existantes quand la collection devient Set&lt;JeuCategorie&gt; ?"
+    ],
+    solution: "VERSION (a) — @ManyToMany pur :\n// Jeu (propriétaire)\n@ManyToMany\n@JoinTable(name = \"jeu_categorie\",\n  joinColumns = @JoinColumn(name = \"jeu_id\"),\n  inverseJoinColumns = @JoinColumn(name = \"categorie_id\"))\nprivate Set<Categorie> categories = new HashSet<>();\n// Categorie (inverse)\n@ManyToMany(mappedBy = \"categories\")\nprivate Set<Jeu> jeux = new HashSet<>();\n\nVERSION (b) — jonction promue :\n@Entity @Table(name = \"jeu_categorie\")\npublic class JeuCategorie {\n  @Id @GeneratedValue(strategy = GenerationType.IDENTITY)\n  private Long id;                      // PK propre, plus simple que la composite\n  @ManyToOne @JoinColumn(name = \"jeu_id\", nullable = false)\n  private Jeu jeu;\n  @ManyToOne @JoinColumn(name = \"categorie_id\", nullable = false)\n  private Categorie categorie;\n  @Column(name = \"date_ajout\", nullable = false)\n  private LocalDate dateAjout;\n  @Column(length = 40)\n  private String benevole;\n}\n// Jeu et Categorie portent alors des @OneToMany(mappedBy = ...) vers JeuCategorie.\n\nCoûts de la promotion :\n- jeu.getCategories() disparaît : il faut traverser jeu.getJeuCategories()\n  puis .getCategorie() — code et requêtes plus verbeux.\n- Une entité, un repository, des méthodes utilitaires en plus à maintenir.\nOn démarre donc en @ManyToMany simple (YAGNI) : la promotion est une\nmigration facile (la table existe déjà), l'inverse est du travail jeté.",
+    note: "Ce dilemme jonction cachée / jonction promue est un classique des revues de conception : tu le retrouveras avec through dans Django, withPivot dans Eloquent et les entités de jointure explicites d'EF Core. Au Niveau 6, ton projet full-stack tranchera ce choix pour de vrai — et la leçon 14 te montrera comment requêter proprement ces deux formes en JPQL." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

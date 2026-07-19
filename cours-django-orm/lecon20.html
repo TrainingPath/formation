@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "La couche de persistance de la Ludothèque (synthèse)",
+  subtitle: "Six modèles, sept tables, quatre relations, cinq requêtes clés et une checklist : dix-neuf leçons assemblées en une couche prête pour la production.",
+  theory: `
+<h3>1. Six modèles, sept tables : le schéma final</h3>
+<p>Le moment est venu de poser la pièce entière sur la table. La <strong>couche de persistance</strong> est la partie du programme qui enregistre et relit les données ; c'est tout ce que tu as construit depuis la leçon 3. Chaque leçon a ajouté ou raffiné un morceau de <em>models.py</em> ; voici son état final, canonique — celui que ton projet du Niveau 6 prendra pour point de départ :</p>
+<pre class="pseudo"># ludotheque/models.py — l'état final (leçons 3 à 11)   # le fichier des modeles, version finale
+from django.db import models                     # on importe models (models.Model et les champs)
+
+class Categorie(models.Model):                   # une categorie de jeu (Strategie, Famille...)
+    nom = models.CharField(max_length=50, unique=True)   # nom unique, texte court
+
+class Jeu(models.Model):                         # un jeu du catalogue
+    titre = models.CharField(max_length=120)     # titre du jeu (texte court obligatoire)
+    editeur = models.CharField(max_length=80)    # editeur du jeu
+    prix = models.DecimalField(max_digits=6, decimal_places=2)   # prix : decimal exact (jamais Float)
+    stock = models.PositiveIntegerField(default=0)   # nombre d'exemplaires, 0 par defaut
+    date_sortie = models.DateField(null=True, blank=True)   # date facultative (NULL en base + vide au formulaire)
+    disponible = models.BooleanField(default=True)   # vrai/faux, disponible par defaut
+    categories = models.ManyToManyField(Categorie, related_name='jeux')   # N-N ; strategie.jeux en sens inverse
+
+class Membre(models.Model):                      # une personne inscrite
+    pseudo = models.CharField(max_length=30, unique=True)   # pseudo unique
+    email = models.EmailField(unique=True)       # email valide et unique
+    date_inscription = models.DateField(auto_now_add=True)   # date figee a la creation
+
+class Profil(models.Model):                      # infos secondaires d'un membre (1-1)
+    membre = models.OneToOneField(Membre, on_delete=models.CASCADE,   # lien 1-1 ; profil efface avec le membre
+                                  related_name='profil')               # sens inverse : zelda.profil
+    adresse = models.CharField(max_length=200, blank=True)   # adresse facultative
+    telephone = models.CharField(max_length=20, blank=True)  # telephone facultatif
+    bio = models.TextField(blank=True)           # texte libre facultatif
+
+class Location(models.Model):                    # qui loue quoi, quand, pour combien
+    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT,   # FK vers Jeu ; PROTECT : jeu loue non supprimable
+                            related_name='locations')         # sens inverse : catan.locations
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE,   # FK vers Membre ; CASCADE : suit le membre (RGPD)
+                               related_name='locations')            # sens inverse : zelda.locations
+    date_debut = models.DateField(auto_now_add=True)   # date de debut, figee a la creation
+    date_retour = models.DateField(null=True, blank=True)   # date de retour (NULL = location en cours)
+    prix_location = models.DecimalField(max_digits=5, decimal_places=2)   # prix facture pour la location
+
+class Avis(models.Model):                        # la note et le commentaire d'un membre sur un jeu
+    jeu = models.ForeignKey(Jeu, on_delete=models.CASCADE,   # FK vers Jeu ; CASCADE : avis suit le jeu
+                            related_name='avis')             # sens inverse : catan.avis
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE,   # FK vers Membre ; CASCADE : avis suit l'auteur
+                               related_name='avis')                # sens inverse : zelda.avis
+    note = models.PositiveSmallIntegerField()    # petite note entiere positive (1 a 5)
+    commentaire = models.TextField(blank=True)   # commentaire libre facultatif
+
+# (__str__ et class Meta omis ici pour la lisibilité — ils sont dans ton projet)   # rappel : les definir partout</pre>
+<p>Côté MySQL : <strong>sept tables</strong> — ludotheque_categorie, ludotheque_jeu, ludotheque_membre, ludotheque_profil, ludotheque_location, ludotheque_avis, et la table de jointure <strong>ludotheque_jeu_categories</strong> que le ManyToManyField entretient tout seul (leçon 10). Chaque classe a suivi le même circuit : models.py → makemigrations → migrate (leçon 4).</p>
+
+<h3>2. Les quatre relations, relues d'un coup d'œil</h3>
+<p>Chaque flèche de ton schéma Merise du Niveau 4 a trouvé son champ Django — et chaque <em>on_delete</em> est une <strong>décision métier</strong> (une décision liée au fonctionnement réel de la Ludothèque), pas un réglage par défaut :</p>
+<pre class="pseudo">Relation            Champ                        Décision métier              # tableau recapitulatif
+-----------------   --------------------------   ----------------------------  # (ligne de separation)
+N-1  ForeignKey     Location.jeu    (PROTECT)    l'historique facturé est      # un jeu loue est intouchable
+                                                 intouchable → ProtectedError  # la suppression est refusee
+                    Location.membre (CASCADE)    droit à l'effacement (RGPD)   # le membre part avec ses locations
+                    Avis.jeu / Avis.membre       l'avis suit son sujet         # avis efface avec jeu ou auteur
+N-N  ManyToMany     Jeu.categories               table de jointure automatique # generee par Django
+1-1  OneToOne       Profil.membre                FK + UNIQUE : au plus un profil # unicite garantie par la base
+
+Chemins inverses (related_name, leçon 9) :                                     # comment lire dans l'autre sens
+  catan.locations · catan.avis · catan.categories · strategie.jeux            # cote Jeu / Categorie
+  zelda.locations · zelda.avis  · zelda.profil                                # cote Membre</pre>
+<p>Relis la colonne de droite : PROTECT contre CASCADE, c'est l'arbitrage de la leçon 8 — un jeu loué porte des montants facturés, un membre a le droit de disparaître avec ses données. Ce sont ces justifications, plus que la syntaxe, que le Niveau 6 te redemandera.</p>
+
+<h3>3. Les cinq requêtes clés du quotidien</h3>
+<p>Toute l'activité de la Ludothèque tient en une poignée de requêtes, chacune héritée d'une leçon précise :</p>
+<pre class="pseudo"># 1. La recherche paginée du catalogue (leçons 12, 14, 16)
+qs = (Jeu.objects                                       # on part des jeux
+        .filter(Q(titre__icontains=mot) | Q(editeur__icontains=mot),   # mot dans le titre OU l'editeur (le OU via Q)
+                disponible=True)                        # ET disponible (la virgule = AND)
+        .order_by('titre'))                             # tries par titre
+page_obj = Paginator(qs, 20).get_page(request.GET.get('page'))   # 20 par page, page lue dans l'URL
+
+# 2. Le top des jeux (leçon 15 — LEFT JOIN + GROUP BY générés)
+top = (Jeu.objects                                      # un calcul PAR jeu
+         .annotate(note_moyenne=Avg('avis__note'),      # moyenne des notes de ce jeu
+                   nb_locations=Count('locations'))      # nombre de locations de ce jeu
+         .order_by('-note_moyenne')[:10])               # 10 meilleurs (tri + slice)
+
+# 3. Le chiffre d'affaires par jeu (leçon 15 — GROUP BY par colonne)
+Location.objects.values('jeu__titre').annotate(ca=Sum('prix_location'))   # regroupe par titre, somme les prix
+
+# 4. L'historique sans N+1 (leçon 18 — 2 requêtes, constantes)
+(Location.objects                                       # on part des locations
+    .select_related('jeu', 'membre')                    # JOIN pour les relations vers-le-1
+    .prefetch_related('jeu__categories'))               # requete IN pour la relation vers-le-N
+
+# 5. L'export léger (leçon 19 — zéro objet hydraté)
+Jeu.objects.values_list('titre', 'prix')                # des tuples, aucun objet construit</pre>
+
+<h3>4. Écrire sans mentir : la location transactionnelle</h3>
+<p>La requête reine mérite sa section : <strong>louer un jeu</strong>, l'action qui a traversé tout le cours. Sa version définitive additionne trois leçons — F (14), atomic (17), select_for_update (17) :</p>
+<pre class="pseudo">from django.db import transaction                         # pour transaction.atomic
+from django.db.models import F                            # pour le decrement cote base
+
+def louer_jeu(jeu_id, membre_id):
+    with transaction.atomic():                            # tout ou rien   # ouvre la transaction
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # ligne verrouillée   # SELECT ... FOR UPDATE
+        if jeu.stock &lt; 1:                                 # plus de stock ?
+            raise ValueError('Plus aucun exemplaire disponible')  # → ROLLBACK   # lever = tout annuler
+        Jeu.objects.filter(pk=jeu_id).update(stock=F('stock') - 1)  # côté base   # decrement atomique
+        return Location.objects.create(jeu=jeu, membre_id=membre_id,   # cree la location...
+                                       prix_location=jeu.prix / 10)     # ...au dixieme du prix
+# sortie normale → COMMIT des deux écritures · exception → ROLLBACK total   # tout ou rien
+# le try/except qui prévient l'utilisateur se place AUTOUR, chez l'appelant   # jamais dans le bloc atomic</pre>
+<p>Chaque ligne répond à une catastrophe précise : le verrou empêche deux membres de rafler le dernier exemplaire, le F empêche la mise à jour perdue, l'atomic empêche l'exemplaire « disparu » entre deux écritures. Une action métier = une fonction = un atomic.</p>
+
+<h3>5. La checklist avant production</h3>
+<p>Dernier héritage du cours : la discipline. Avant de déclarer une vue terminée, la Ludothèque — et bientôt ton projet du Niveau 6 — passe cette liste :</p>
+<pre class="pseudo">□ Chaque liste affichée : select_related (vers le 1) /       # eviter le N+1...
+  prefetch_related (vers le N) — jamais de N+1               # ...selon la cardinalite
+□ Nombre de requêtes CONSTANT, vérifié au django-debug-toolbar   # pas proportionnel aux donnees
+  ou à len(connection.queries)                              # compter le reel
+□ Chaque liste longue : Paginator sur un QuerySet ORDONNÉ    # pagination sur un tri stable
+□ Chaque action métier à plusieurs écritures : transaction.atomic()   # un "et" = un atomic
+□ Chaque compteur (stock, solde) : update(F(…)), jamais lire-modifier-écrire   # calcul cote base
+□ Chaque SQL brut : %s + params, jamais de concaténation     # contre l'injection SQL
+□ Au moindre doute : print(qs.query)                        # lire le SQL genere</pre>
+<p>Et une bonne nouvelle pour la suite de ta formation : tout ce que tu viens d'assembler existe à l'identique chez Hibernate/JPA (entités, @OneToMany, JOIN FETCH), EF Core (DbContext, Include) et Eloquent (modèles, with()) — les concepts sont acquis, il ne te restera qu'une syntaxe à apprendre.</p>
+<div class="warn">Cette couche est un ensemble de DÉCISIONS, pas un gabarit à recopier aveuglément : chaque on_delete, chaque related_name, chaque unique=True découle du métier de la Ludothèque. Au Niveau 6, repars du besoin métier de TON projet — recopier ce fichier sans le repenser, c'est hériter de décisions prises pour quelqu'un d'autre.</div>
+<div class="tip">Garde sous la main le models.py final, les cinq requêtes clés et la checklist : c'est ta fiche de révision idéale pour l'examen de la leçon 21 — et le premier document que tu poseras dans le dépôt de ton projet full-stack du Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les six modèles de la Ludothèque produisent combien de tables MySQL ?", opts: ["5", "6", "7 : les six modèles + la table de jointure ludotheque_jeu_categories", "12"], a: 2, exp: "Le ManyToManyField génère et entretient sa table associative tout seul (leçon 10)." },
+    { type: "qcm", q: "Location.jeu est en on_delete=PROTECT parce que…", opts: ["C'est la valeur par défaut de Django", "Un jeu référencé par des locations porte un historique facturé : la base refuse sa suppression", "PROTECT est plus rapide que CASCADE", "MySQL l'impose pour les DecimalField"], a: 1, exp: "L'arbitrage métier de la leçon 8 : ProtectedError plutôt qu'un historique amputé." },
+    { type: "qcm", q: "Location.membre est en CASCADE parce que…", opts: ["CASCADE est obligatoire sur les membres", "Si un membre exerce son droit à l'effacement (RGPD), ses locations personnelles partent avec lui", "Les membres ne sont jamais supprimés", "Pour économiser un index"], a: 1, exp: "La suppression se propage : c'est le choix assumé pour les données personnelles." },
+    { type: "input", q: "Toutes les locations de zelda s'obtiennent par zelda.… (le related_name choisi en leçon 9) :", a: ["locations", "locations.all()", ".locations"], ph: "zelda.…", exp: "related_name='locations' sur la FK membre — et le même nom côté jeu : catan.locations." },
+    { type: "qcm", q: "catan.categories relie Jeu et Categorie via…", opts: ["Une ForeignKey classique", "Une table de jointure automatique (ManyToManyField)", "Un OneToOneField", "Une colonne JSON"], a: 1, exp: "N-N : chaque ligne de ludotheque_jeu_categories dit « ce jeu appartient à cette catégorie »." },
+    { type: "qcm", q: "Côté MySQL, Profil.membre (OneToOneField) est…", opts: ["Une simple colonne texte", "Une FOREIGN KEY assortie d'une contrainte UNIQUE", "Une deuxième clé primaire", "Un trigger"], a: 1, exp: "FK + UNIQUE : au plus un profil par membre, garanti par la base (leçon 11)." },
+    { type: "vf", q: "La table ludotheque_jeu_categories a été écrite à la main dans models.py.", a: false, exp: "Aucun modèle ne la déclare : le ManyToManyField l'a générée à la migration." },
+    { type: "qcm", q: "Le top des jeux les mieux notés s'écrit…", opts: ["Jeu.objects.annotate(note_moyenne=Avg('avis__note')).order_by('-note_moyenne')", "Jeu.objects.aggregate(Avg('avis__note'))", "Jeu.objects.order_by('avis__note')", "Un raw() est obligatoire"], a: 0, exp: "annotate = un agrégat PAR jeu (GROUP BY) ; aggregate ne rendrait qu'UN nombre pour tout le site." },
+    { type: "qcm", q: "Le chiffre d'affaires PAR JEU :", opts: ["Location.objects.aggregate(Sum('prix_location'))", "Location.objects.values('jeu__titre').annotate(ca=Sum('prix_location'))", "Jeu.objects.values('prix')", "F('prix') * F('stock')"], a: 1, exp: "values() avant annotate() = GROUP BY jeu.titre (leçon 15) — le SUM groupé de ton Niveau 4." },
+    { type: "qcm", q: "Le décrément de stock sûr en concurrence :", opts: ["jeu.stock -= 1 puis jeu.save()", "Jeu.objects.filter(pk=…).update(stock=F('stock') - 1)", "stock = 0 puis recompter la nuit", "time.sleep() entre les clics"], a: 1, exp: "SET stock = stock - 1 : MySQL lit et écrit dans la même instruction (leçon 14)." },
+    { type: "qcm", q: "Louer un jeu = décrémenter le stock ET créer la Location. L'outil qui rend l'ensemble indivisible :", opts: ["with transaction.atomic():", "try/except pass", "Deux save() très rapides", "ATOMIC_REQUESTS = False"], a: 0, exp: "Tout ou rien : COMMIT à la sortie normale, ROLLBACK sur exception (leçon 17)." },
+    { type: "input", q: "La méthode qui verrouille la ligne du jeu (SELECT … FOR UPDATE) le temps de la transaction :", a: ["select_for_update", "select_for_update()", ".select_for_update()"], ph: "Jeu.objects.…", exp: "Toujours DANS un bloc atomic : le second loueur attend son tour (leçon 17)." },
+    { type: "qcm", q: "L'historique des locations avec titre du jeu et pseudo du membre, sans N+1 :", opts: ["Location.objects.all()", "Location.objects.select_related('jeu', 'membre')", "Location.objects.prefetch_related('jeu', 'membre')", "values_list('jeu')"], a: 1, exp: "Deux relations vers-le-1 : un seul SELECT avec deux INNER JOIN (leçon 18)." },
+    { type: "vf", q: "Une page bien écrite garde un nombre de requêtes constant, quel que soit le nombre de lignes affichées.", a: true, exp: "LA règle anti-N+1, à vérifier au debug-toolbar avant toute mise en production." },
+    { type: "qcm", q: "L'export CSV (titre, prix) du catalogue complet :", opts: ["Jeu.objects.values_list('titre', 'prix')", "Jeu.objects.all() et une boucle d'objets", "Un raw() concaténé", "aggregate()"], a: 0, exp: "Des tuples légers, SELECT réduit, zéro objet hydraté (leçon 19)." }
+  ],
+  final: {
+    title: "Exercice final — La revue de persistance",
+    intro: `<p>Dernière revue de code avant de figer la couche de persistance de la Ludothèque : cinq vérifications qui traversent tout l'assemblage.</p>`,
+    questions: [
+      { type: "qcm", q: "Un bénévole tente de supprimer Catan, encore lié à 12 locations. Résultat :", opts: ["Les 12 locations disparaissent", "ProtectedError : la suppression est refusée", "jeu_id passe à NULL", "La table se verrouille"], a: 1, exp: "on_delete=PROTECT sur Location.jeu : l'historique facturé est intouchable." },
+      { type: "qcm", q: "La page catalogue affiche chaque jeu avec ses catégories. L'anti-N+1 :", opts: ["select_related('categories')", "prefetch_related('categories')", "raw()", "refresh_from_db()"], a: 1, exp: "categories est un ManyToMany (vers le N) : deux requêtes recollées en Python — select_related lèverait une erreur." },
+      { type: "input", q: "Le réflexe du cours pour voir le SQL qu'un QuerySet enverra :", a: ["print(qs.query)", "qs.query", "print(queryset.query)", ".query", "query"], ph: "dans le shell…", exp: "Le réflexe pris en leçon 2 et exigé jusqu'au bout : lis le SQL que l'ORM écrit pour toi." },
+      { type: "vf", q: "makemigrations exécute directement le SQL dans MySQL.", a: false, exp: "makemigrations écrit le PLAN (un fichier Python) ; c'est migrate qui l'exécute en SQL (leçon 4)." },
+      { type: "qcm", q: "La note moyenne de TOUS les avis du site, en un seul nombre :", opts: ["Avis.objects.aggregate(Avg('note'))", "Avis.objects.annotate(Avg('note'))", "Avis.objects.values('note')", "Count('note')"], a: 0, exp: "Un résultat pour toute la table = aggregate, qui renvoie un dict immédiatement (leçon 15)." }
+    ],
+    solution: `<pre class="pseudo">Modèles    : Categorie · Jeu · Membre · Profil · Location · Avis            # 6 classes
+             → 7 tables MySQL (dont ludotheque_jeu_categories, automatique)  # +1 table de jointure
+Relations  : FK côté N + on_delete métier (PROTECT historique / CASCADE RGPD)  # decisions metier
+             M2M (Jeu ↔ Categorie) · O2O = FK + UNIQUE (Profil)              # N-N et 1-1
+             related_name : jeu.locations, jeu.avis, membre.profil…         # chemins inverses
+Lire       : filter + lookups · Q (le OU) · F (colonne contre colonne)      # interroger
+Calculer   : aggregate (1 dict) · annotate (par objet, GROUP BY)            # les agregats
+             · values + annotate (GROUP BY par colonne)                     # grouper par colonne
+Écrire     : atomic + select_for_update + update(F('stock') - 1) + create   # ecrire sans mentir
+Servir     : Paginator (qs ordonné) · select_related / prefetch_related     # pagination + anti-N+1
+             → nombre de requêtes CONSTANT                                  # la regle d'or
+Dernier recours : raw(sql, params) · cursor · values / values_list         # SQL brut sous escorte
+Arbitre    : print(qs.query) · django-debug-toolbar                        # controler le SQL reel</pre>
+<p>La couche de persistance est complète, justifiée, optimisée — il ne reste qu'à prouver que tout est bien en place. Leçon 21 : <strong>Récapitulatif : l'ORM maîtrisé (examen)</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l20", title: "Le dossier de persistance", level: 3,
+    statement: "Un nouveau développeur rejoint la Ludothèque pour le projet full-stack du Niveau 6, et tu dois lui remettre LE document de référence de la couche de persistance. Rédige ce dossier en quatre parties. 1) Les six modèles : une phrase par modèle sur son rôle métier, et le compte exact des tables MySQL. 2) Les relations : pour chaque type (ForeignKey, ManyToMany, OneToOne), le champ concerné, ce que MySQL contient réellement, et la justification métier des on_delete (pourquoi PROTECT sur Location.jeu, pourquoi CASCADE sur Location.membre). 3) Les cinq requêtes clés — recherche paginée, top des jeux, chiffre d'affaires par jeu, louer_jeu transactionnel, historique optimisé — avec, pour chacune, le mécanisme SQL sous-jacent (LIKE, GROUP BY, HAVING, verrou, JOIN/IN). 4) La checklist de mise en production, du N+1 aux params.",
+    hints: [
+      "Structure d'abord : 6 modèles mais 7 tables (laquelle est automatique ?) ; pour chaque on_delete, formule la phrase métier qui le justifie — historique facturé d'un côté, RGPD de l'autre.",
+      "Pour chaque requête clé, cite la leçon d'origine et le SQL généré : Q+icontains → LIKE parenthésé ; annotate → LEFT JOIN + GROUP BY ; values+annotate → GROUP BY par colonne ; atomic+select_for_update+F → transaction verrouillée ; select_related/prefetch_related → JOIN puis IN.",
+      "La checklist se relit dans les warn du cours : requêtes constantes, pagination ordonnée, un « et » dans la phrase = un atomic, compteurs côté base avec F, %s + params pour tout SQL brut, print(qs.query) en arbitre."
+    ],
+    solution: "1) Les modèles (6 classes, 7 tables)\n- Categorie : le référentiel des genres (Stratégie, Famille…).\n- Jeu : le catalogue — titre, prix, stock, disponibilité.\n- Membre : la personne inscrite (pseudo et email uniques).\n- Profil : les données facultatives du membre (adresse, téléphone, bio), isolées.\n- Location : l'acte métier central — qui loue quoi, quand, pour combien.\n- Avis : la note (1-5) et le commentaire d'un membre sur un jeu.\nTables : ludotheque_categorie, _jeu, _membre, _profil, _location, _avis\n+ ludotheque_jeu_categories, générée par le ManyToManyField.\n\n2) Les relations\n- ForeignKey (côté N) : Location.jeu, Location.membre, Avis.jeu, Avis.membre\n  → colonnes jeu_id/membre_id + FOREIGN KEY + index.\n  Location.jeu en PROTECT : un jeu loué porte un historique facturé,\n  sa suppression est refusée (ProtectedError).\n  Location.membre en CASCADE : droit à l'effacement — le membre parti,\n  ses locations personnelles partent avec lui.\n- ManyToMany : Jeu.categories → table de jointure automatique\n  (paire jeu_id + categorie_id unique). Inverse : strategie.jeux.\n- OneToOne : Profil.membre → FK + contrainte UNIQUE : au plus un profil\n  par membre, garanti par la base. Inverse : zelda.profil.\n\n3) Les cinq requêtes clés\n- Recherche paginée : filter(Q(titre__icontains=mot) | Q(editeur__icontains=mot),\n  disponible=True).order_by('titre') + Paginator(qs, 20).get_page(n)\n  → WHERE (… LIKE … OR … LIKE …) AND …, puis COUNT + LIMIT/OFFSET.\n- Top des jeux : annotate(note_moyenne=Avg('avis__note')).order_by('-note_moyenne')\n  → LEFT JOIN + GROUP BY jeu.id (et HAVING si on filtre l'annotation).\n- CA par jeu : values('jeu__titre').annotate(ca=Sum('prix_location'))\n  → SELECT jeu.titre, SUM(…) GROUP BY jeu.titre.\n- louer_jeu : atomic + select_for_update + vérification qui lève\n  + update(stock=F('stock') - 1) + create → transaction verrouillée,\n  COMMIT/ROLLBACK, aucun exemplaire ne disparaît, aucun stock négatif.\n- Historique : select_related('jeu', 'membre').prefetch_related('jeu__categories')\n  → 2 requêtes (SELECT + JOIN, puis IN), constantes quel que soit le volume.\n\n4) La checklist\n□ select_related / prefetch_related sur chaque liste — requêtes CONSTANTES\n□ Paginator sur QuerySet ordonné pour toute liste longue\n□ transaction.atomic() dès que l'action s'énonce avec un « et »\n□ Compteurs via update(F(…)) — jamais lire-modifier-écrire\n□ SQL brut : %s + params, jamais de concaténation\n□ Vérification finale : print(qs.query) et le panneau SQL du debug-toolbar.",
+    note: "Ce dossier est exactement le livrable attendu au démarrage du Niveau 6 : la couche de persistance documentée AVANT les vues et les templates. Et il est transposable tel quel : remplace ForeignKey par @ManyToOne (Hibernate/JPA), navigation property (EF Core) ou belongsTo (Eloquent), et le document reste vrai — preuve que c'est la conception, pas la syntaxe, que tu viens d'acquérir." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

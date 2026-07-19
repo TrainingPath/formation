@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 29</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 29,
+  title: "Mesures DAX et publication dans Power BI",
+  subtitle: "Écrire les calculs qui donnent son intelligence au modèle, puis livrer le rapport aux autres.",
+  theory: `
+<h3>1. Qu'est-ce que le DAX ?</h3>
+<p><strong>DAX</strong> signifie <em>Data Analysis Expressions</em> : c'est le langage de formules des modèles de données Microsoft. On le retrouve à l'identique dans <strong>Power BI Desktop</strong>, dans <strong>Power Pivot</strong> pour Excel et dans Analysis Services. Il ressemble aux formules Excel — <code>SUM</code>, <code>IF</code>, <code>RELATED</code> — mais il ne travaille pas sur des cellules : il travaille sur des <strong>colonnes entières</strong> et sur un <strong>contexte</strong>.</p>
+<div class="tip">Ne pas confondre les deux langages de Power BI : <strong>M</strong> (Power Query) sert à <em>importer et nettoyer</em>, avant chargement ; <strong>DAX</strong> sert à <em>calculer</em>, après chargement, au moment où l'utilisateur clique. Règle générale : tout ce qui peut être fait en M, fais-le en M.</div>
+<h3>2. Colonne calculée ou mesure ?</h3>
+<p>C'est LA distinction fondamentale, celle qui sépare le débutant du praticien.</p>
+<pre class="pseudo">COLONNE CALCULEE (Modelisation > Nouvelle colonne)
+   - calculee ligne par ligne, a l'actualisation
+   - stockee physiquement dans le modele : elle consomme de la memoire
+   - visible dans la Vue Donnees, utilisable comme axe, filtre ou segment
+
+MESURE (Modelisation > Nouvelle mesure)
+   - calculee A LA DEMANDE, au moment de l'affichage du visuel
+   - ne stocke rien : elle est recalculee selon le contexte
+   - depend des filtres actifs : elle donne un resultat different par ligne du visuel</pre>
+<pre class="pseudo">// Colonne calculee : une valeur par ligne de la table
+Marge Ligne = Ventes[Montant] - Ventes[Cout]    // calculee pour CHAQUE vente
+
+// Mesure : un agregat qui reagit au contexte
+CA Total := SUM(Ventes[Montant])                 // somme de la colonne Montant</pre>
+<div class="warn">Règle d'or : <strong>en cas de doute, écris une mesure</strong>. Une colonne calculée n'est justifiée que si sa valeur doit exister ligne par ligne (pour servir d'axe, de segment ou de tri). Multiplier les colonnes calculées gonfle le fichier et ralentit tout.</div>
+<h3>3. Les deux contextes</h3>
+<p>Le <strong>contexte de filtre</strong> est l'ensemble des filtres actifs quand une mesure est évaluée : la ligne du visuel, les segments, le volet Filtres. Une même mesure <code>[CA Total]</code> donne 1,2 M€ dans une carte, mais 180 000 € sur la ligne « Paris » d'une matrice — parce que le contexte n'est pas le même.</p>
+<p>Le <strong>contexte de ligne</strong> existe dans une colonne calculée et dans les fonctions d'itération : « la ligne en cours de traitement ».</p>
+<h3>4. Les fonctions d'agrégation de base</h3>
+<pre class="pseudo">CA Total := SUM(Ventes[Montant])              // somme
+Nb Lignes := COUNTROWS(Ventes)                // nombre de lignes de la table
+Nb Clients := DISTINCTCOUNT(Ventes[IDClient]) // nombre de valeurs DIFFERENTES
+Panier Moyen := AVERAGE(Ventes[Montant])      // moyenne
+CA Max := MAX(Ventes[Montant])                // plus grande valeur
+Nb Ventes := COUNT(Ventes[IDVente])           // compte les valeurs non vides</pre>
+<h3>5. Les fonctions X : itérer ligne par ligne</h3>
+<p>Les fonctions suffixées par <strong>X</strong> (SUMX, AVERAGEX, MAXX, COUNTX) parcourent une table ligne par ligne, calculent une expression pour chaque ligne, puis agrègent. Indispensable quand le calcul dépend de deux colonnes.</p>
+<pre class="pseudo">// FAUX : multiplier deux sommes n'a aucun sens metier
+CA Faux := SUM(Ventes[Quantite]) * SUM(Ventes[PrixUnitaire])
+
+// JUSTE : on multiplie ligne par ligne, PUIS on additionne
+CA Reel :=
+SUMX(                                   // itere sur la table...
+    Ventes,                             // ...Ventes, ligne par ligne
+    Ventes[Quantite] * Ventes[PrixUnitaire]   // expression evaluee sur chaque ligne
+)</pre>
+<h3>6. CALCULATE : la fonction reine</h3>
+<p><strong>CALCULATE</strong> évalue une expression <em>en modifiant le contexte de filtre</em>. C'est la seule fonction DAX capable de cela, et c'est la clé de 80 % des calculs avancés.</p>
+<pre class="pseudo">CALCULATE( expression , filtre1 , filtre2 , ... )   // syntaxe generale
+
+CA Paris :=
+CALCULATE(                              // recalcule...
+    [CA Total],                         // ...la mesure CA Total...
+    Clients[Ville] = "Paris"            // ...en forcant le filtre Ville = Paris
+)
+
+CA Tous Produits :=
+CALCULATE(
+    [CA Total],
+    ALL(Produits)                       // ALL SUPPRIME les filtres sur la table Produits
+)                                       // -> donne le total general, meme dans un visuel filtre
+
+Part de Marche :=
+DIVIDE(                                 // division protegee contre le zero
+    [CA Total],                         // numerateur : le CA du contexte courant
+    CALCULATE([CA Total], ALL(Produits)),   // denominateur : le CA toutes categories
+    0                                   // valeur renvoyee si division par zero
+)</pre>
+<div class="tip">Utilise toujours <strong>DIVIDE(a, b, 0)</strong> plutôt que <code>a / b</code> : DIVIDE gère la division par zéro sans erreur ni cellule vide disgracieuse.</div>
+<h3>7. Le Time Intelligence : comparer dans le temps</h3>
+<p>Ces fonctions exigent une <strong>table de dates marquée</strong> (jour 27), sinon elles renvoient des résultats faux ou vides.</p>
+<pre class="pseudo">CA N-1 :=
+CALCULATE(
+    [CA Total],
+    SAMEPERIODLASTYEAR(Calendrier[Date])   // meme periode, l'annee precedente
+)
+
+CA Cumul Annee :=
+CALCULATE(
+    [CA Total],
+    DATESYTD(Calendrier[Date])             // YTD = Year To Date, cumul depuis le 1er janvier
+)
+
+Evolution % :=
+DIVIDE( [CA Total] - [CA N-1], [CA N-1], 0 )   // variation par rapport a N-1
+
+CA Mois Precedent :=
+CALCULATE( [CA Total], PREVIOUSMONTH(Calendrier[Date]) )   // le mois d'avant</pre>
+<h3>8. Fonctions logiques, texte et relations</h3>
+<pre class="pseudo">Statut := IF( [CA Total] > 100000, "Objectif atteint", "En retard" )   // test simple
+Niveau := SWITCH( TRUE(),               // SWITCH TRUE() remplace les IF imbriques
+    [CA Total] > 100000, "Or",
+    [CA Total] > 50000,  "Argent",
+    "Bronze"                            // valeur par defaut
+)
+Categorie Produit = RELATED(Produits[Categorie])   // colonne calculee : suit la relation *:1
+Nb Ventes Client = COUNTROWS(RELATEDTABLE(Ventes)) // colonne calculee : suit la relation 1:*
+Var Explicative :=
+VAR ca = [CA Total]                     // VAR stocke un resultat intermediaire
+VAR objectif = 100000
+RETURN DIVIDE(ca, objectif, 0)          // RETURN donne le resultat final</pre>
+<div class="tip">Les blocs <strong>VAR … RETURN</strong> rendent les mesures longues lisibles et plus rapides : chaque VAR n'est évaluée qu'une fois. Prends l'habitude de les utiliser dès que la formule dépasse trois lignes.</div>
+<h3>9. Bonnes pratiques d'écriture</h3>
+<pre class="pseudo">1. Toujours prefixer une colonne par sa table : Ventes[Montant], jamais [Montant]
+2. Toujours ecrire une mesure SANS nom de table : [CA Total]
+   -> a la lecture, on distingue instantanement colonne et mesure
+3. Nommer en clair et en francais : "CA Total", pas "Mes1"
+4. Regrouper les mesures dans une table dediee vide (table _Mesures)
+5. Formater la mesure des sa creation : Outils de mesure > Format, symbole monetaire
+6. Indenter, commenter avec //, aerer : une mesure se relit six mois plus tard</pre>
+<h3>10. Publier et partager</h3>
+<p><strong>Accueil ▸ Publier</strong> envoie le rapport vers le <strong>service Power BI</strong> (app.powerbi.com), dans un <strong>espace de travail</strong> que l'on choisit. Attention : publier et consulter son propre rapport est possible avec un compte gratuit, mais <strong>partager un rapport avec d'autres personnes exige une licence Power BI Pro</strong> (abonnement mensuel par utilisateur) ou une capacité Premium/Fabric. C'est le point qui surprend le plus en entreprise.</p>
+<pre class="pseudo">Etapes de publication
+1. Accueil > Publier > choisir l'espace de travail > OK
+2. Dans le service : le .pbix se scinde en un MODELE SEMANTIQUE (donnees + mesures)
+   et un RAPPORT (les pages de visuels)
+3. Modele semantique > Parametres > Actualisation planifiee : jusqu'a 8 fois par jour
+   (48 en capacite Premium)
+4. Sources locales (fichier Excel sur ton PC) -> installer la PASSERELLE DE DONNEES
+   (On-premises data gateway) : le pont entre le cloud et ton reseau
+5. Epingler des visuels dans un TABLEAU DE BORD, ou publier une APPLICATION
+6. Securite au niveau des lignes (RLS) : Modelisation > Gerer les roles,
+   pour qu'un commercial ne voie que sa region</pre>
+<div class="warn">Avant de publier : vérifie qu'aucune donnée confidentielle ne traîne dans une table de travail, contrôle les mesures qui divisent par zéro, et n'oublie pas que la <strong>ligne des totaux d'une matrice recalcule la mesure</strong> — un total de pourcentages n'est jamais la somme des pourcentages affichés.</div>`,
+  exercises: [
+    { type: "input", q: "Que signifie l'acronyme DAX (en anglais) ?", a: ["Data Analysis Expressions", "data analysis expressions", "Data Analysis Expression"], ph: "Data …", exp: "DAX = Data Analysis Expressions, le langage de calcul des modèles Power BI et Power Pivot." },
+    { type: "qcm", q: "Quelle est la différence essentielle entre une mesure et une colonne calculée ?", opts: ["Aucune", "La mesure est calculée à la demande selon le contexte ; la colonne est stockée ligne par ligne", "La colonne est plus rapide", "La mesure ne fonctionne qu'en Excel"], a: 1, exp: "La mesure réagit aux filtres du visuel ; la colonne est figée à l'actualisation." },
+    { type: "input", q: "Écris la mesure qui additionne la colonne Montant de la table Ventes.", a: ["SUM(Ventes[Montant])", "sum(Ventes[Montant])", "CA Total := SUM(Ventes[Montant])", "= SUM(Ventes[Montant])"], ph: "SUM(…", exp: "SUM(Ventes[Montant]) est l'agrégation de base." },
+    { type: "input", q: "Quelle fonction DAX compte le nombre de valeurs DIFFÉRENTES d'une colonne ?", a: ["DISTINCTCOUNT", "distinctcount", "DISTINCTCOUNT()"], ph: "DISTINCT…", exp: "DISTINCTCOUNT(Ventes[IDClient]) donne le nombre de clients uniques." },
+    { type: "qcm", q: "Pourquoi préférer SUMX à SUM pour un CA calculé comme Quantité × Prix ?", opts: ["SUMX est plus court", "SUMX multiplie ligne par ligne avant d'additionner", "SUM ne fonctionne pas en Power BI", "Aucune différence"], a: 1, exp: "Multiplier deux sommes globales donnerait un résultat absurde ; SUMX itère sur chaque ligne." },
+    { type: "input", q: "Quelle fonction DAX permet de modifier le contexte de filtre d'une expression ?", a: ["CALCULATE", "calculate", "CALCULATE()"], ph: "CALC…", exp: "CALCULATE est la seule fonction capable de modifier le contexte de filtre." },
+    { type: "qcm", q: "Que fait ALL(Produits) à l'intérieur d'un CALCULATE ?", opts: ["Sélectionne tous les produits d'un segment", "Supprime les filtres appliqués à la table Produits", "Trie les produits", "Supprime la table"], a: 1, exp: "ALL ignore les filtres : utile pour calculer un total général servant de dénominateur." },
+    { type: "input", q: "Quelle fonction DAX effectue une division protégée contre le zéro ?", a: ["DIVIDE", "divide", "DIVIDE()"], ph: "DIV…", exp: "DIVIDE(numérateur, dénominateur, 0) évite l'erreur de division par zéro." },
+    { type: "input", q: "Quelle fonction de Time Intelligence renvoie la même période l'année précédente ?", a: ["SAMEPERIODLASTYEAR", "sameperiodlastyear", "SAMEPERIODLASTYEAR()"], ph: "SAME…", exp: "CALCULATE([CA Total], SAMEPERIODLASTYEAR(Calendrier[Date]))." },
+    { type: "vf", q: "Les fonctions de Time Intelligence exigent une table de dates marquée comme telle.", a: true, exp: "Sans table de dates marquée, DATESYTD ou SAMEPERIODLASTYEAR renvoient des résultats faux." },
+    { type: "qcm", q: "Que calcule DATESYTD(Calendrier[Date]) ?", opts: ["Le total de l'an dernier", "Le cumul depuis le début de l'année", "La moyenne mensuelle", "Le mois précédent"], a: 1, exp: "YTD = Year To Date : cumul depuis le 1er janvier jusqu'à la date du contexte." },
+    { type: "input", q: "Quel couple de mots-clés DAX permet de stocker un résultat intermédiaire puis de renvoyer le résultat final ?", a: ["VAR RETURN", "VAR et RETURN", "var return", "VAR / RETURN", "VAR ... RETURN"], ph: "V… R…", exp: "VAR stocke, RETURN renvoie : la formule devient lisible et plus rapide." },
+    { type: "qcm", q: "Quelle fonction DAX remplace élégamment une cascade de IF imbriqués ?", opts: ["FILTER", "SWITCH(TRUE(), …)", "RELATED", "ALL"], a: 1, exp: "SWITCH(TRUE(), condition1, valeur1, …, défaut) est bien plus lisible." },
+    { type: "vf", q: "Publier un rapport suffit pour le partager avec ses collègues, sans licence particulière.", a: false, exp: "Le partage exige une licence Power BI Pro (ou une capacité Premium/Fabric) pour l'émetteur et les destinataires." },
+    { type: "input", q: "Comment appelle-t-on le composant à installer pour actualiser dans le cloud des données restées sur le réseau local ?", a: ["passerelle", "passerelle de données", "gateway", "la passerelle", "passerelle de donnees"], ph: "p…", exp: "La passerelle de données (On-premises data gateway) relie le service Power BI aux sources locales." }
+  ],
+  final: {
+    title: "Exercice final — La batterie de mesures d'un tableau de bord",
+    intro: `<p>Modèle en place : <strong>Ventes</strong> (IDVente, DateVente, IDClient, IDProduit, Quantite, PrixUnitaire, Montant, Cout), <strong>Clients</strong>, <strong>Produits</strong> et <strong>Calendrier</strong> (marquée comme table de dates). Tu dois écrire les mesures qui alimenteront les cartes KPI de ton rapport.</p>`,
+    questions: [
+      { type: "input", q: "Écris la mesure CA Total (somme de Ventes[Montant]).", a: ["CA Total = SUM(Ventes[Montant])", "SUM(Ventes[Montant])", "CA Total := SUM(Ventes[Montant])", "sum(ventes[montant])"], ph: "CA Total = …", exp: "SUM agrège la colonne dans le contexte de filtre courant." },
+      { type: "input", q: "Écris la mesure Nb Clients comptant les clients distincts de Ventes[IDClient].", a: ["DISTINCTCOUNT(Ventes[IDClient])", "Nb Clients = DISTINCTCOUNT(Ventes[IDClient])", "distinctcount(Ventes[IDClient])"], ph: "DISTINCT…", exp: "DISTINCTCOUNT ne compte chaque client qu'une fois, même s'il a 40 commandes." },
+      { type: "input", q: "Écris le corps de la mesure Marge Totale = somme ligne par ligne de (Montant - Cout), avec une fonction X.", a: ["SUMX(Ventes, Ventes[Montant] - Ventes[Cout])", "sumx(Ventes, Ventes[Montant] - Ventes[Cout])", "SUMX(Ventes,Ventes[Montant]-Ventes[Cout])"], ph: "SUMX(…", exp: "SUMX itère sur chaque vente puis additionne les marges unitaires." },
+      { type: "input", q: "Quelle fonction utiliser dans CALCULATE pour obtenir le CA de la même période l'an dernier ?", a: ["SAMEPERIODLASTYEAR", "sameperiodlastyear", "SAMEPERIODLASTYEAR(Calendrier[Date])"], ph: "SAME…", exp: "CALCULATE([CA Total], SAMEPERIODLASTYEAR(Calendrier[Date]))." },
+      { type: "qcm", q: "Pour calculer l'évolution en % entre CA Total et CA N-1, quelle écriture est la meilleure ?", opts: ["([CA Total] - [CA N-1]) / [CA N-1]", "DIVIDE([CA Total] - [CA N-1], [CA N-1], 0)", "SUM([CA Total] - [CA N-1])", "ALL([CA N-1])"], a: 1, exp: "DIVIDE gère proprement le cas où le CA N-1 est nul ou vide." }
+    ],
+    solution: `<p>La batterie complète de mesures, à placer dans une table dédiée <em>_Mesures</em> :</p>
+<pre class="pseudo">// ---------- Mesures de base ----------
+CA Total = SUM(Ventes[Montant])                    // somme du chiffre d'affaires
+Cout Total = SUM(Ventes[Cout])                     // somme des couts
+Nb Commandes = DISTINCTCOUNT(Ventes[IDVente])      // nombre de commandes distinctes
+Nb Clients = DISTINCTCOUNT(Ventes[IDClient])       // nombre de clients uniques
+Qte Vendue = SUM(Ventes[Quantite])                 // volume total
+
+// ---------- Mesures derivees ----------
+Panier Moyen = DIVIDE([CA Total], [Nb Commandes], 0)   // division protegee
+
+Marge Totale =
+SUMX(                                              // itere ligne par ligne...
+    Ventes,
+    Ventes[Montant] - Ventes[Cout]                 // ...marge de chaque vente
+)                                                  // ...puis additionne le tout
+
+Taux de Marge = DIVIDE([Marge Totale], [CA Total], 0)   // en % du CA
+
+// ---------- Comparaisons temporelles ----------
+CA N-1 =
+CALCULATE(                                         // recalcule le CA...
+    [CA Total],
+    SAMEPERIODLASTYEAR(Calendrier[Date])           // ...sur la meme periode l'an dernier
+)
+
+Evolution % = DIVIDE([CA Total] - [CA N-1], [CA N-1], 0)   // variation annuelle
+
+CA Cumul Annee =
+CALCULATE( [CA Total], DATESYTD(Calendrier[Date]) )   // cumul depuis le 1er janvier
+
+// ---------- Poids et classement ----------
+Part du Total =
+DIVIDE(
+    [CA Total],                                    // CA du contexte courant (une categorie)
+    CALCULATE([CA Total], ALL(Produits)),           // CA toutes categories confondues
+    0
+)
+
+// ---------- Indicateur qualitatif ----------
+Statut Objectif =
+VAR objectif = 100000                              // seuil fixe pour l'exemple
+VAR ecart = [CA Total] - objectif                  // ecart a l'objectif
+RETURN
+SWITCH( TRUE(),                                    // remplace des IF imbriques
+    ecart >= 0,      "Objectif atteint",
+    ecart >= -20000, "Proche de l'objectif",
+    "En retard"                                    // valeur par defaut
+)</pre>
+<p><strong>Finitions.</strong> Sélectionne chaque mesure puis <strong>Outils de mesure ▸ Format</strong> : monnaie à 0 décimale pour les CA, pourcentage à 1 décimale pour les taux. Vérifie tes résultats en posant une matrice avec Calendrier[NomMois] en lignes et toutes les mesures en valeurs : les totaux doivent être cohérents, et la ligne Total d'un pourcentage ne doit jamais être la somme des lignes.</p>
+<p><strong>Publication.</strong> <strong>Accueil ▸ Publier ▸</strong> choisir l'espace de travail. Dans le service, ouvre les <strong>Paramètres du modèle sémantique</strong> pour configurer l'<strong>actualisation planifiée</strong> ; si la source est un fichier local, installe d'abord la <strong>passerelle de données</strong>. Rappelle-toi : le partage avec des collègues suppose une licence <strong>Power BI Pro</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes mesures DAX (commentées avec //)…",
+  items: [
+  { id: "excelpro-j29", title: "Mesures de pilotage d'un magasin", level: 3,
+    statement: "Modèle : <em>Ventes</em> (IDTicket ; Date ; IDMagasin ; IDArticle ; Qte ; PrixVente ; PrixAchat), <em>Magasins</em> (IDMagasin ; Nom ; Region), <em>Articles</em> (IDArticle ; Libelle ; Rayon) et <em>Calendrier</em> marquée comme table de dates. Écris six mesures DAX commentées : (1) le CA, (2) la marge totale calculée ligne par ligne, (3) le taux de marge en %, (4) le CA du même mois l'an dernier, (5) la progression en % par rapport à l'an dernier, (6) la part du CA d'un rayon dans le CA total tous rayons confondus.",
+    hints: [
+      "Le CA n'est pas une colonne : il vaut Qte × PrixVente ligne par ligne. C'est un cas typique de SUMX, pas de SUM.",
+      "Toute mesure qui change le contexte de filtre passe par CALCULATE. Pour ignorer un filtre, ajoute ALL(table).",
+      "Utilise systématiquement DIVIDE(a, b, 0) pour les ratios, et VAR … RETURN dès que la formule dépasse trois lignes."
+    ],
+    solution: "// ============ 1. CHIFFRE D'AFFAIRES ============\n// Le CA n'existe pas comme colonne : il faut le calculer ligne par ligne\nCA Total =\nSUMX(                                   // itere sur chaque ligne de vente...\n    Ventes,\n    Ventes[Qte] * Ventes[PrixVente]     // ...calcule Qte x PrixVente...\n)                                       // ...puis additionne le tout\n// ATTENTION : SUM(Ventes[Qte]) * SUM(Ventes[PrixVente]) serait FAUX\n\n// ============ 2. MARGE TOTALE ============\nMarge Totale =\nSUMX(\n    Ventes,\n    Ventes[Qte] * (Ventes[PrixVente] - Ventes[PrixAchat])   // marge de chaque ligne\n)\n\n// ============ 3. TAUX DE MARGE ============\nTaux de Marge =\nDIVIDE(                                 // division protegee contre le zero\n    [Marge Totale],                     // numerateur\n    [CA Total],                         // denominateur\n    0                                   // valeur si le CA est nul\n)\n// Format a appliquer : Outils de mesure > Format > Pourcentage, 1 decimale\n\n// ============ 4. CA DU MEME MOIS L'AN DERNIER ============\nCA N-1 =\nCALCULATE(                              // seule fonction qui modifie le contexte de filtre\n    [CA Total],\n    SAMEPERIODLASTYEAR(Calendrier[Date])    // decale la periode d'un an en arriere\n)\n// Prerequis : Calendrier doit etre marquee via Outils de table > Marquer comme table de dates\n\n// ============ 5. PROGRESSION ANNUELLE ============\nProgression % =\nVAR caCourant = [CA Total]              // VAR : evalue une seule fois, plus lisible\nVAR caPrecedent = [CA N-1]\nRETURN\nDIVIDE( caCourant - caPrecedent, caPrecedent, 0 )   // 0 si pas d'historique\n\n// ============ 6. PART D'UN RAYON DANS LE TOTAL ============\nPart du Rayon =\nVAR caContexte = [CA Total]             // CA du rayon affiche sur la ligne du visuel\nVAR caTousRayons =\n    CALCULATE(\n        [CA Total],\n        ALL(Articles[Rayon])            // ALL supprime le filtre sur le rayon\n    )                                   // -> denominateur = CA tous rayons confondus\nRETURN\nDIVIDE( caContexte, caTousRayons, 0 )\n\nResultat attendu (matrice : Articles[Rayon] en lignes) :\n   Rayon      CA Total   Marge    Taux marge   CA N-1    Progression   Part\n   Frais      420 000    84 000      20,0 %    390 000      +7,7 %     35,0 %\n   Bazar      300 000    75 000      25,0 %    320 000      -6,3 %     25,0 %\n   Textile    480 000   144 000      30,0 %    410 000     +17,1 %     40,0 %\n   Total    1 200 000   303 000      25,3 %  1 120 000      +7,1 %    100,0 %\n// Note : la ligne Total recalcule chaque mesure dans son propre contexte.\n// Le taux de marge total (25,3 %) n'est PAS la moyenne des taux affiches.",
+    note: "Trois reflexes DAX : SUMX des qu'un calcul combine deux colonnes ligne par ligne ; CALCULATE des qu'il faut changer le contexte de filtre ; DIVIDE pour tout ratio. Prefixe les colonnes de leur table (Ventes[Qte]) et ecris les mesures sans nom de table ([CA Total]) : la relecture en devient immediate." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

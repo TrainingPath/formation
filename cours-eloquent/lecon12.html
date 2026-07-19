@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Eager loading : with() contre le problème N+1",
+  subtitle: "Une boucle innocente, cent une requêtes : le piège le plus célèbre des ORM, et son antidote.",
+  theory: `
+<h3>1. Le crime : la boucle à 101 requêtes</h3>
+<p>La page « historique des locations » affiche 100 locations avec le titre du jeu. Le code est propre, il marche… et il assassine ta base :</p>
+<pre class="pseudo">$locations = Location::all();            // 1 requête : SELECT * FROM locations
+foreach ($locations as $location) {      // pour chaque location…
+    echo $location-&gt;jeu-&gt;titre;          // …1 requête PAR location pour charger son jeu !
+}
+// SELECT * FROM locations               → 1 requête
+// SELECT * FROM jeux WHERE id = 3       → répété 100 fois (une par location)
+// TOTAL : 101 requêtes pour une seule page</pre>
+<p>C'est le <strong>problème N+1</strong> : 1 requête pour la liste, puis N requêtes pour la relation, une par ligne (analogie : au lieu de rapporter toutes les courses en un voyage, tu retournes au magasin une fois par article). La cause : le <strong>lazy loading</strong> de la leçon 8 — chaque relation n'est chargée qu'au moment où on la lit. Génial dans tinker, catastrophique dans une boucle. Active DB::listen et regarde le déluge défiler.</p>
+
+<h3>2. L'antidote : with(), l'eager loading</h3>
+<p><strong>with()</strong> annonce à Eloquent : « je vais avoir besoin de cette relation, précharge-la ». C'est l'<strong>eager loading</strong> (« chargement empressé », l'inverse du lazy loading — analogie : préparer TOUS les ingrédients avant de commencer à cuisiner, plutôt que courir au frigo à chaque étape). Deux requêtes au lieu de 101 :</p>
+<pre class="pseudo">$locations = Location::with('jeu')-&gt;get();     // eager loading : 2 requêtes, point final
+// SELECT * FROM locations
+// SELECT * FROM jeux WHERE id IN (3, 7, 12, …)   -- tous les jeux en une seule fois
+
+foreach ($locations as $location) {
+    echo $location-&gt;jeu-&gt;titre;    // le jeu est DÉJÀ en mémoire : ZÉRO requête
+}</pre>
+<p>Eloquent collecte tous les jeu_id, fait UN SEUL <strong>WHERE id IN (…)</strong>, puis recolle les jeux sur leurs locations en PHP. Le résultat métier est identique — seule la performance change. Même remède partout : JOIN FETCH / EntityGraph chez Hibernate/JPA, Include() chez EF Core, select_related / prefetch_related chez Django.</p>
+
+<h3>3. Plusieurs relations, relations imbriquées</h3>
+<pre class="pseudo">// Deux relations : 3 requêtes (locations + jeux + membres)
+Location::with(['jeu', 'membre'])-&gt;get();       // précharge jeu ET membre
+
+// Notation pointée : le jeu ET son éditeur
+Location::with('jeu.editeur')-&gt;get();           // précharge jeu, puis l'éditeur de chaque jeu
+
+// Mélange libre :
+Jeu::with(['categories', 'avis.membre'])-&gt;get();   // catégories + avis + membre de chaque avis</pre>
+<p>La <strong>notation pointée</strong> descend dans les relations de relations : 'jeu.editeur' précharge les jeux, puis leurs éditeurs — une requête par niveau, jamais une par ligne.</p>
+
+<h3>4. Contraindre et différer : with + closure, load()</h3>
+<p>On peut filtrer ce qu'on précharge, avec une <strong>closure</strong> (une mini-fonction jetable écrite sur place — analogie : une note manuscrite « et seulement ceux-là ! » collée sur la commande) :</p>
+<pre class="pseudo">// Ne précharger que les bons avis, les plus récents d'abord
+$jeux = Jeu::with(['avis' =&gt; function ($query) {   // closure qui affine le préchargement de "avis"
+    $query-&gt;where('note', '&gt;=', 4)-&gt;latest();       // seulement note >= 4, triés du plus récent
+}])-&gt;get();                                        // exécute le tout</pre>
+<p>Et si la collection est déjà chargée, <strong>load()</strong> fait l'eager loading après coup — même WHERE IN, juste plus tard :</p>
+<pre class="pseudo">$jeux = Jeu::all();            // charge tous les jeux (relation pas encore préchargée)
+if ($avecEditeur) {            // si on a besoin des éditeurs…
+    $jeux-&gt;load('editeur');     // …préchargement APRÈS coup (même WHERE IN que with)
+}</pre>
+
+<h3>5. Compter sans charger : withCount et le garde-fou</h3>
+<p>Afficher « 27 avis » n'exige pas de charger 27 modèles Avis. <strong>withCount()</strong> ajoute une sous-requête COUNT :</p>
+<pre class="pseudo">$jeux = Jeu::withCount('avis')-&gt;get();   // ajoute un COUNT sans charger les avis eux-mêmes
+echo $jeux[0]-&gt;avis_count;     // attribut ajouté : nom de la relation + _count
+
+// Le garde-fou, dans AppServiceProvider::boot() :
+Model::preventLazyLoading(! app()-&gt;isProduction());   // interdit le lazy loading hors production
+// tout accès paresseux hors production lève une exception
+// LazyLoadingViolationException : le N+1 est détecté AVANT la prod</pre>
+<p>preventLazyLoading transforme le bug de performance silencieux en erreur bruyante pendant le développement : chaque relation oubliée dans un with() explose immédiatement au lieu de ramer en production.</p>
+<div class="warn">Le N+1 est invisible en développement : avec 10 lignes de test, 11 requêtes passent inaperçues. Avec les 10 000 lignes de la production, la page s'effondre. Le code « marche » — c'est un bug de performance, pas de résultat. Compte les requêtes avec DB::listen, ou active preventLazyLoading hors production.</div>
+<div class="tip">La règle tient en une phrase : dès qu'une relation est lue DANS une boucle, il faut un with() (ou withCount) sur la requête d'origine. Relis chaque foreach de tes contrôleurs avec cette question — c'est l'audit de performance le plus rentable qui existe.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["N requêtes qui échouent", "1 requête pour la liste + 1 requête par ligne pour charger sa relation", "Une erreur de syntaxe SQL", "Un dépassement mémoire"], a: 1, exp: "1 + N : la liste, puis la relation ligne par ligne — conséquence du lazy loading en boucle." },
+    { type: "qcm", q: "200 locations affichées avec $location->jeu->titre, SANS with() : combien de requêtes ?", opts: ["1", "2", "201", "400"], a: 2, exp: "1 pour les locations + 200 pour les jeux : N+1 avec N = 200." },
+    { type: "input", q: "Quelle méthode précharge une relation pour éviter le N+1 ?", a: ["with", "with()", "->with()"], ph: "nom de la méthode…", exp: "Location::with('jeu')->get() : l'eager loading." },
+    { type: "qcm", q: "Location::with('jeu')->get() exécute…", opts: ["1 requête", "2 requêtes : les locations, puis les jeux en WHERE id IN (…)", "Une requête par location", "Un JOIN obligatoire"], a: 1, exp: "Eloquent collecte les jeu_id et charge tous les jeux d'un coup." },
+    { type: "qcm", q: "La deuxième requête générée par with('jeu') ressemble à…", opts: ["SELECT * FROM jeux WHERE id IN (3, 7, 12, …)", "SELECT * FROM jeux (toute la table)", "UPDATE jeux SET …", "Une requête par id"], a: 0, exp: "Un seul WHERE IN avec tous les ids collectés, puis recollage en PHP." },
+    { type: "vf", q: "with() change le résultat métier de la requête : on n'obtient pas les mêmes données.", a: false, exp: "Résultat strictement identique ; seuls le nombre de requêtes et la performance changent." },
+    { type: "qcm", q: "Précharger le jeu ET le membre de chaque location :", opts: ["with('jeu')->with2('membre')", "with(['jeu', 'membre'])", "loadAll()", "with('jeu+membre')"], a: 1, exp: "Un tableau de relations : 3 requêtes au total, quel que soit le nombre de lignes." },
+    { type: "input", q: "Quelle notation précharge le jeu de chaque location PUIS l'éditeur de chaque jeu ?", a: ["jeu.editeur", "'jeu.editeur'", "with('jeu.editeur')"], ph: "with('…')", exp: "La notation pointée descend d'un niveau par point : une requête par niveau." },
+    { type: "qcm", q: "Ne précharger que les avis avec note >= 4 :", opts: ["with('avis')->where('note', 4)", "with(['avis' => function ($q) { $q->where('note', '>=', 4); }])", "withCount('avis')", "Impossible, with précharge tout"], a: 1, exp: "La closure contraint la requête de préchargement de la relation." },
+    { type: "qcm", q: "load() sert à…", opts: ["Charger le modèle depuis un fichier", "Faire l'eager loading APRÈS coup, sur une collection déjà chargée", "Vider la mémoire", "Recharger la page"], a: 1, exp: "$jeux->load('editeur') : même WHERE IN que with(), juste différé — utile en conditionnel." },
+    { type: "vf", q: "withCount('avis') charge tous les modèles Avis en mémoire pour les compter.", a: false, exp: "Sous-requête COUNT côté SQL : seul le nombre voyage, dans l'attribut avis_count." },
+    { type: "input", q: "Quel attribut Jeu::withCount('avis') ajoute-t-il à chaque jeu ?", a: ["avis_count", "avis_count ", "->avis_count"], ph: "nom de l'attribut…", exp: "Nom de la relation + _count : $jeu->avis_count." },
+    { type: "qcm", q: "Model::preventLazyLoading(!app()->isProduction()) a pour effet…", opts: ["De désactiver les relations", "De lever une exception à chaque accès paresseux hors production", "D'accélérer les requêtes", "De précharger tout automatiquement"], a: 1, exp: "Le N+1 devient une erreur bruyante en dev au lieu d'un ralentissement silencieux en prod." },
+    { type: "qcm", q: "Les équivalents de with() chez l'ORM Django :", opts: ["JOIN FETCH", "Include()", "select_related et prefetch_related", "eager()"], a: 2, exp: "select_related (jointure) et prefetch_related (WHERE IN) ; Include() chez EF Core, JOIN FETCH chez JPA." },
+    { type: "qcm", q: "Page catalogue : chaque jeu avec le nom de son éditeur et son nombre d'avis. La requête idéale :", opts: ["Jeu::all() puis boucles", "Jeu::with('editeur')->withCount('avis')->get()", "Jeu::withCount('editeur')->get()", "Editeur::all()"], a: 1, exp: "with pour la relation affichée, withCount pour le simple nombre : 3 requêtes, zéro N+1." }
+  ],
+  final: {
+    title: "Exercice final — La page qui ramait",
+    intro: `<p>La page d'accueil de la Ludothèque mettait 4 secondes à s'afficher. DB::listen révèle 300 requêtes. À toi de jouer les urgentistes.</p>`,
+    questions: [
+      { type: "qcm", q: "L'historique du membre 12 : ses locations avec le titre de chaque jeu, sans N+1 :", opts: ["$membre->locations puis $location->jeu en boucle", "$membre->locations()->with('jeu')->get()", "Location::all()", "Jeu::with('locations')->find(12)"], a: 1, exp: "with('jeu') sur la requête de relation : 2 requêtes, quel que soit l'historique." },
+      { type: "vf", q: "with('jeu.editeur') précharge les jeux ET leurs éditeurs.", a: true, exp: "Notation pointée : un niveau par point, une requête par niveau." },
+      { type: "qcm", q: "Jeu::with(['editeur', 'categories'])->get() sur 500 jeux exécute…", opts: ["500 requêtes", "3 requêtes", "1 001 requêtes", "2 requêtes"], a: 1, exp: "Jeux + éditeurs + catégories : le nombre de lignes ne change rien." },
+      { type: "input", q: "La collection $jeux est déjà chargée ; quelle méthode précharge l'éditeur après coup ?", a: ["load", "load()", "->load()"], ph: "$jeux->…('editeur')", exp: "load('editeur') : l'eager loading différé sur une collection existante." },
+      { type: "qcm", q: "Dans les logs SQL, le symptôme typique d'un N+1 :", opts: ["Une requête très longue", "La même requête répétée des dizaines de fois avec un id différent", "Des erreurs de syntaxe", "Aucune requête"], a: 1, exp: "SELECT * FROM jeux WHERE id = 3, puis id = 7, puis id = 12… la signature du lazy loading en boucle." }
+    ],
+    solution: `<pre class="pseudo">N+1 : 1 requête (liste) + N requêtes (relation lue en boucle)
+    cause : lazy loading — remède : eager loading
+
+with('jeu')                 → précharge (WHERE id IN …), 2 requêtes
+with(['jeu', 'membre'])     → plusieurs relations
+with('jeu.editeur')         → notation pointée, relations imbriquées
+with(['avis' =&gt; closure])   → préchargement contraint
+$collection-&gt;load('...')    → eager loading après coup
+withCount('avis')           → avis_count, sans charger les avis
+preventLazyLoading(...)     → le garde-fou du développement
+
+Ailleurs : JOIN FETCH (JPA) · Include (EF Core) · select_related (Django)</pre>
+<p>Le chargement des relations est optimisé. Reste à filtrer et trier finement les lignes elles-mêmes : leçon 13, le query builder — where, orderBy, limit.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l12", title: "La chasse au N+1", level: 2,
+    statement: "Trois écrans de la Ludothèque rament : (1) le catalogue affiche 300 jeux avec $jeu->editeur->nom et $jeu->avis->count() dans la boucle ; (2) la fiche membre affiche ses locations avec $location->jeu->titre ; (3) le tableau de bord liste les 10 derniers avis avec $avis->jeu->titre et $avis->membre->nom. Pour chaque écran : compte le nombre de requêtes actuelles, identifie précisément la ou les lignes fautives, puis réécris la requête d'origine avec with(), withCount() ou load() et donne le nouveau nombre de requêtes.",
+    hints: [
+      "Compte 1 pour la requête de départ, puis +1 par relation lue à CHAQUE tour de boucle — $jeu->avis->count() charge tous les avis rien que pour les compter.",
+      "Quand seul le NOMBRE est affiché, withCount vaut mieux que with : rien à charger, juste un COUNT en sous-requête.",
+      "La notation with(['jeu', 'membre']) règle l'écran 3 en une fois : une requête par relation, pas par ligne."
+    ],
+    solution: "(1) Catalogue — avant : 1 (jeux) + 300 (editeur) + 300 (avis chargés\n    pour un simple count) = 601 requêtes.\n    Fautifs : $jeu->editeur->nom et $jeu->avis->count() dans la boucle.\n    Après : Jeu::with('editeur')->withCount('avis')->get();\n    → 3 requêtes (jeux, editeurs IN, sous-requête COUNT intégrée).\n    Affichage : $jeu->editeur->nom et $jeu->avis_count.\n\n(2) Fiche membre — avant : 1 (locations du membre) + N (un jeu par\n    location) = N+1 requêtes.\n    Après : $membre->locations()->with('jeu')->get();\n    → 2 requêtes, quel que soit l'historique.\n\n(3) Tableau de bord — avant : 1 (avis) + 10 (jeux) + 10 (membres)\n    = 21 requêtes.\n    Après : Avis::with(['jeu', 'membre'])->latest()->take(10)->get();\n    → 3 requêtes.\n\nBilan : 623 requêtes → 8. Règle appliquée : toute relation lue dans\nune boucle remonte en with() sur la requête d'origine ; tout simple\ncomptage devient withCount. En dev, preventLazyLoading aurait\ntransformé chacun de ces oublis en exception immédiate.",
+    note: "Le N+1 est LE bug de performance des ORM, tous langages confondus : Hibernate le corrige avec JOIN FETCH ou @EntityGraph, EF Core avec Include(), Django avec select_related/prefetch_related. Au Niveau 6, prends l'habitude d'auditer chaque page avec la barre de debug : le compteur de requêtes est ton meilleur indicateur de santé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

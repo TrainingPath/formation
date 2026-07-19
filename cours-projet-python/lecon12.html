@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Louer un jeu : transaction, stock, réservation",
+  subtitle: "Le cœur métier : deux écritures indissociables dans MySQL.",
+  theory: `
+<h3>1. Que se passe-t-il quand on loue ?</h3>
+<p>Louer un jeu, c'est <strong>deux écritures</strong> en base : créer la ligne <code>Location</code> ET diminuer <code>stock_location</code> de 1. Si l'une réussit sans l'autre, la base <em>ment</em> (un stock faux, ou une location fantôme). D'où la <strong>transaction</strong> : un groupe d'opérations traité comme un bloc <em>indivisible</em> — soit tout réussit, soit rien n'est enregistré. C'est la garantie « tout ou rien ».</p>
+
+<h3>2. transaction.atomic + select_for_update</h3>
+<pre class="pseudo">from django.db import transaction        # pour transaction.atomic (le « tout ou rien »)
+from django.utils import timezone        # pour l'heure actuelle (avec fuseau)
+
+def louer(client, jeu_id, nb_jours=7):   # service : loue le jeu jeu_id au client, pour nb_jours
+    with transaction.atomic():           # début du bloc transactionnel : tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charge le jeu ET verrouille sa ligne
+        if jeu.stock_location &lt;= 0:       # plus de stock disponible ?
+            raise StockInsuffisant(f"Plus de stock de location pour {jeu.titre}")   # refus → annule tout
+        location = Location.objects.create(   # 1re écriture : crée la location…
+            client=client, jeu=jeu,           # …pour ce client et ce jeu…
+            date_debut=timezone.now(), nb_jours=nb_jours)   # …à partir de maintenant, pour nb_jours
+        jeu.stock_location -= 1          # 2e écriture : on retire 1 au stock
+        jeu.save(update_fields=["stock_location"])   # enregistre le nouveau stock (UPDATE ciblé)
+        return location                  # succès : à la sortie du bloc, MySQL valide (commit)</pre>
+<p>À la fin du bloc, si tout s'est bien passé, MySQL <strong>valide</strong> (<em>commit</em> : les écritures deviennent définitives). Mais toute exception levée dans le bloc <code>atomic</code> déclenche un <strong>rollback</strong> (« retour arrière ») : la base revient à son état d'avant, comme si rien n'avait eu lieu. <code>select_for_update</code> pose un <strong>verrou</strong> sur la ligne du jeu jusqu'au commit : un second client doit attendre que le premier ait fini. Ainsi, deux clients qui visent le dernier exemplaire ne peuvent pas réussir tous les deux.</p>
+
+<h3>3. La course au dernier exemplaire</h3>
+<pre class="pseudo">Client A                    Client B
+SELECT ... FOR UPDATE ✔     SELECT ... FOR UPDATE (attend le verrou)
+stock = 1 → OK
+INSERT + UPDATE, COMMIT
+                            (verrou levé) relit : stock = 0
+                            → StockInsuffisant ✔</pre>
+<p>Sans verrou, les deux clients liraient en même temps « stock = 1 », chacun se croirait autorisé, et le stock finirait à -1 : c'est une <strong>situation de compétition</strong> (<em>race condition</em>), un bug où le résultat dépend de qui arrive en premier. Le verrou l'élimine. C'est la transaction MySQL vue au cours SQL, pilotée ici par Django.</p>
+
+<h3>4. La vue traduit en HTTP</h3>
+<pre class="pseudo">@login_required                          # il faut être connecté pour louer
+def louer_vue(request, jeu_id):          # vue web : traite la demande de location
+    if request.method != "POST":         # on n'accepte QUE le POST (une écriture)…
+        return redirect("catalogue")     # …tout GET est renvoyé au catalogue
+    try:                                 # on tente la location
+        services.louer(request.user, jeu_id)   # délègue au service (identité = request.user)
+        messages.success(request, "Jeu loué pour 7 jours !")   # message de succès
+    except Jeu.DoesNotExist:             # le jeu n'existe pas…
+        raise Http404                    # …renvoie une page 404
+    except StockInsuffisant as e:        # plus de stock…
+        messages.error(request, str(e))  # …affiche le message d'erreur métier
+    return redirect("mes_locations")     # Post-Redirect-Get : on redirige après le POST</pre>
+<div class="warn">La location se fait en <strong>POST</strong> (avec <code>{% csrf_token %}</code>) : un GET serait déclenché par un simple lien, un préchargement de navigateur… et le stock fondrait tout seul.</div>
+<div class="tip">La règle vit dans <code>services.louer</code> : la vue ne fait qu'identifier (session), déléguer et rediriger. L'API DRF appellera exactement la même fonction.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer un jeu implique…", opts: ["Une seule écriture", "Deux écritures : la Location + le stock", "Une lecture", "Un DELETE"], a: 1, exp: "Indissociables." },
+    { type: "qcm", q: "Le « tout ou rien » est garanti par…", opts: ["transaction.atomic()", "un if", "le template", "la pagination"], a: 0, exp: "Atomicité." },
+    { type: "qcm", q: "Une exception dans le bloc atomic…", opts: ["Laisse la moitié des écritures", "Annule tout (rollback)", "Plante MySQL", "Est ignorée"], a: 1, exp: "Rien n'est écrit." },
+    { type: "qcm", q: "select_for_update() sert à…", opts: ["Trier", "Verrouiller la ligne jusqu'au commit", "Mettre en cache", "Paginer"], a: 1, exp: "Contre la course au stock." },
+    { type: "qcm", q: "Sans verrou, deux locations simultanées du dernier exemplaire…", opts: ["Échouent toutes deux", "Réussiraient toutes deux (stock -1)", "Sont impossibles", "Sont lentes"], a: 1, exp: "Lecture du même « stock = 1 »." },
+    { type: "qcm", q: "Avec le verrou, le second client…", opts: ["Attend puis relit stock = 0 → refus", "Plante", "Passe devant", "Reçoit -1"], a: 0, exp: "Un seul obtient le jeu." },
+    { type: "qcm", q: "« Stock nul → refus » vit dans…", opts: ["La vue", "services.louer", "Le template", "urls.py"], a: 1, exp: "La décision au service." },
+    { type: "qcm", q: "Stock insuffisant → le service…", opts: ["Renvoie None", "Lève StockInsuffisant", "Renvoie -1", "Décrémente quand même"], a: 1, exp: "Exception métier." },
+    { type: "qcm", q: "La vue traduit StockInsuffisant en…", opts: ["Stack trace", "Message d'erreur + redirection", "500", "Rien"], a: 1, exp: "messages.error." },
+    { type: "qcm", q: "L'identité du loueur vient…", opts: ["De request.user (session)", "Du POST", "De l'URL", "D'un cookie maison"], a: 0, exp: "Leçon 11 : jamais de la requête." },
+    { type: "qcm", q: "La location se fait en…", opts: ["GET", "POST avec csrf_token", "PUT sans token", "DELETE"], a: 1, exp: "Une écriture = POST." },
+    { type: "vf", q: "Un GET « louer » pourrait être déclenché par un simple préchargement du navigateur.", a: true, exp: "C'est exactement le danger — d'où le POST obligatoire." },
+    { type: "qcm", q: "Après le POST réussi, la vue fait…", opts: ["render direct", "redirect (Post-Redirect-Get)", "un print", "un sleep"], a: 1, exp: "F5 ne reloue pas." },
+    { type: "qcm", q: "date_debut utilise…", opts: ["timezone.now()", "datetime.now() naïf", "une chaîne", "l'heure du client"], a: 0, exp: "Fuseaux gérés." },
+    { type: "vf", q: "L'API DRF réutilisera services.louer sans dupliquer la règle.", a: true, exp: "Une logique, deux portes." }
+  ],
+  final: {
+    title: "Exercice final — La location atomique",
+    intro: `<p>On écrit le trajet complet d'une location.</p>`,
+    questions: [
+      { type: "qcm", q: "Le bloc commence par :", opts: ["with transaction.atomic():", "try:", "commit()", "un lock Python"], a: 0, exp: "Transaction MySQL." },
+      { type: "qcm", q: "Le jeu est chargé par :", opts: ["select_for_update().get(pk=...)", "un filter simple", "l'admin", "un cache"], a: 0, exp: "Ligne verrouillée." },
+      { type: "qcm", q: "Stock nul →", opts: ["raise StockInsuffisant → rollback", "return None", "stock = 0", "commit"], a: 0, exp: "Refus + rien d'écrit." },
+      { type: "qcm", q: "Les deux écritures :", opts: ["Location.objects.create + stock_location -= 1 (save)", "deux SELECT", "un DELETE", "un seul INSERT"], a: 0, exp: "Dans le même atomic." },
+      { type: "vf", q: "À la sortie du bloc atomic sans exception, MySQL committe.", a: true, exp: "Tout est écrit, le verrou tombe." }
+    ],
+    solution: `<pre class="pseudo">def louer(client, jeu_id, nb_jours=7):   # service de location
+    with transaction.atomic():           # tout ou rien
+        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charge et verrouille le jeu
+        if jeu.stock_location &lt;= 0:       # stock épuisé ?
+            raise StockInsuffisant(f"Plus de stock de location pour {jeu.titre}")   # refus (rollback)
+        location = Location.objects.create(   # crée la location…
+            client=client, jeu=jeu,           # …client et jeu…
+            date_debut=timezone.now(), nb_jours=nb_jours)   # …dès maintenant, pour nb_jours
+        jeu.stock_location -= 1          # retire 1 au stock
+        jeu.save(update_fields=["stock_location"])   # enregistre le stock
+        return location                  # commit à la sortie du bloc</pre>
+<p>Le cœur de la Ludothèque bat. Demain : l'achat, sur l'autre stock.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service de location…",
+  items: [
+  { id: "projpython-l12", title: "Rendre un jeu", level: 3,
+    statement: "Écris services.rendre(location_id) : dans transaction.atomic, charger la location (select_for_update via son jeu si tu veux être strict), refuser si elle a déjà une date_retour (lève une exception métier DejaRendue), sinon poser date_retour = timezone.now(), ré-incrémenter stock_location du jeu et sauvegarder les deux objets.",
+    hints: [
+      "class DejaRendue(Exception): pass",
+      "location = Location.objects.select_related(\"jeu\").get(pk=location_id)",
+      "location.jeu.stock_location += 1 ; deux save(update_fields=...)"
+    ],
+    solution: "class DejaRendue(Exception):   # exception métier : la location a déjà été rendue\n    pass   # corps vide ; le nom suffit\n\ndef rendre(location_id):   # service : enregistre le retour d'une location\n    with transaction.atomic():   # tout ou rien\n        location = (Location.objects   # charge la location…\n                    .select_for_update()   # …en verrouillant sa ligne\n                    .select_related(\"jeu\")   # …et son jeu (chargé par JOIN)\n                    .get(pk=location_id))   # …par son identifiant\n        if location.date_retour is not None:   # a-t-elle déjà une date de retour ?\n            raise DejaRendue(\"Cette location a déjà été rendue\")   # oui : on refuse (rollback)\n\n        location.date_retour = timezone.now()   # sinon : on pose la date de retour (maintenant)\n        location.save(update_fields=[\"date_retour\"])   # enregistre le retour\n\n        jeu = location.jeu   # le jeu concerné\n        jeu.stock_location += 1   # le jeu revient : +1 au stock\n        jeu.save(update_fields=[\"stock_location\"])   # enregistre le nouveau stock\n        return location   # commit à la sortie du bloc",
+    note: "Le retour est le miroir de la location : mêmes garanties transactionnelles, dans l'autre sens (le stock remonte). Le double-rendu est refusé par une exception métier explicite — sans elle, rendre deux fois gonflerait le stock. Le verrou empêche deux guichets de rendre la même location au même instant." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

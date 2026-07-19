@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Authentification solide : hachage, MFA, limitation de débit",
+  subtitle: "Prouver l'identité — et résister à qui cherche à la contrefaire.",
+  theory: `
+<h3>1. Hacher, jamais chiffrer</h3>
+<p>Deux mots à ne pas confondre. <strong>Chiffrer</strong>, c'est brouiller une donnée avec une <em>clé</em> secrète, de façon <strong>réversible</strong> : avec la clé, on retrouve l'original. <strong>Hacher</strong>, c'est transformer une donnée en une empreinte de taille fixe de façon <strong>irréversible</strong> : impossible de revenir en arrière. Pour un mot de passe, on veut le hachage : ainsi on ne stocke JAMAIS le mot de passe lui-même, seulement son empreinte. Image : chiffrer, c'est un coffre-fort (on rouvre avec la clé) ; hacher, c'est passer un fruit au mixeur (on ne reconstitue jamais le fruit).</p>
+<pre class="pseudo">Chiffrer = reversible avec une cle -> si la cle fuit, tout redevient lisible.   # a EVITER pour un mot de passe
+Hacher   = a sens unique, irreversible -> on ne stocke jamais le mot de passe.  # la bonne methode
++ SALE  : un "sel" (valeur aleatoire) rend chaque hachage unique               # 2 mots de passe identiques -> empreintes differentes
++ LENT  : un hachage volontairement lent resiste au bruteforce hors ligne      # ralentit qui teste des milliards d'empreintes
+Algorithmes : argon2 (recommande), bcrypt, PBKDF2. Jamais MD5/SHA1 seuls.       # MD5/SHA1 = trop rapides et casses</pre>
+<p>Le <strong>sel</strong> (salt) est une petite valeur aléatoire ajoutée avant le hachage, différente pour chaque mot de passe : elle empêche l'attaquant d'utiliser des tables d'empreintes précalculées. Un algorithme <strong>lent</strong> (argon2, bcrypt, PBKDF2) freine le « bruteforce hors ligne » — quand un attaquant, ayant volé la base, teste des milliards de mots de passe sur sa propre machine. <strong>MD5</strong> et <strong>SHA1</strong> sont d'anciens algorithmes trop rapides et cassés : à proscrire pour des mots de passe.</p>
+<p>Le capstone hachait déjà (PBKDF2 par défaut). On peut renforcer avec argon2.</p>
+
+<h3>2. La politique de mot de passe (moderne, NIST)</h3>
+<p>Le <strong>NIST</strong> est l'institut américain de normalisation ; ses recommandations sur les mots de passe font référence. L'idée moderne : privilégier la <strong>longueur</strong> plutôt que des règles de complexité tarabiscotées.</p>
+<pre class="pseudo">✔ longueur minimale genereuse (12+)          # "longueur > complexite" : une longue phrase bat un P@ss1 court
+✔ refuser les mots de passe deja FUITES      # bloquer ceux qui trainent dans les bases piratees connues
+✘ NE PAS imposer maj + chiffre + symbole     # cette regle pousse aux "Password1!" previsibles
+✘ NE PAS forcer le changement periodique     # sans raison, mene aux variantes faibles (Password1! -> Password2!)</pre>
+
+<h3>3. La limitation de débit (rate limiting)</h3>
+<p>La <strong>limitation de débit</strong> plafonne le nombre de tentatives autorisées dans un laps de temps. Sans elle, un attaquant peut essayer des milliers de mots de passe par minute sur le formulaire de connexion (« force brute en ligne »). C'est le videur d'une boîte qui refuse celui qui se présente trop de fois d'affilée.</p>
+<pre class="pseudo"># sans limite : 10 000 essais/minute sur /connexion -> force brute possible
+@ratelimit(key="ip", rate="5/m", block=True)          # max 5 essais/minute par adresse IP, sinon on bloque
+@ratelimit(key="post:email", rate="5/m", block=True)  # ET max 5 essais/minute par compte (email) vise
+def connexion(request): ...                            # la vue de connexion, protegee par les deux limites
+# apres N echecs : ralentir, bloquer temporairement, ou demander un CAPTCHA</pre>
+<p>Un <strong>CAPTCHA</strong> est ce petit test « prouvez que vous n'êtes pas un robot » ; on l'affiche après plusieurs échecs pour freiner les scripts automatisés.</p>
+
+<h3>4. Le second facteur (MFA)</h3>
+<p>Le <strong>MFA</strong> (authentification à plusieurs facteurs) exige DEUX preuves d'identité de nature différente : quelque chose qu'on <strong>sait</strong> (le mot de passe) et quelque chose qu'on <strong>possède</strong> (un code à 6 chiffres généré par une appli <strong>TOTP</strong> comme Google Authenticator sur ton téléphone). Ainsi, un mot de passe volé ne suffit plus : il manque le second facteur.</p>
+<pre class="pseudo">MFA = quelque chose qu'on SAIT (mot de passe) + qu'on POSSEDE (appli TOTP)   # deux preuves de nature differente
+-> un mot de passe vole ou devine NE SUFFIT PLUS                             # il manque le code genere par le telephone
+Priorite : les comptes a privileges (vendeur, administrateur).              # proteger d'abord les acces les plus sensibles</pre>
+<p><strong>TOTP</strong> (Time-based One-Time Password) = un code à usage unique qui change toutes les 30 secondes, calculé à la fois par ton téléphone et par le serveur à partir d'un secret partagé au départ.</p>
+
+<h3>5. Les à-côtés qui comptent</h3>
+<pre class="pseudo">- reinitialisation de mot de passe : jeton a usage unique, expirant, par email  # un lien temporaire, jamais le mot de passe en clair
+- messages indifferencies (leçon 14) : ne pas reveler quels comptes existent    # meme reponse que le compte existe ou non
+- pas de mot de passe par defaut, pas de compte de test en production          # ces comptes oublies sont des portes ouvertes</pre>
+<div class="warn">Le hachage protège les mots de passe <em>si la base fuit</em> ; il ne fait rien contre la force brute <em>en ligne</em> (essais sur le formulaire) — c'est le rôle du rate limiting. Et ni l'un ni l'autre n'arrête un mot de passe volé par phishing — c'est le rôle du MFA. Trois couches, trois menaces différentes.</div>
+<div class="tip">Toutes les piles fournissent le socle : Django (hachers + django-axes), Spring Security (BCrypt + lockout), C# Identity (lockout intégré), Laravel (Hash + throttle). Le travail : les activer et les configurer, pas les réécrire.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un mot de passe doit être…", opts: ["Chiffré", "Haché (irréversible)", "Encodé en base64", "Stocké en clair"], a: 1, exp: "On ne le relit jamais." },
+    { type: "qcm", q: "Chiffrer un mot de passe est une erreur car…", opts: ["C'est lent", "C'est réversible : si la clé fuit, tout est lisible", "C'est illégal", "C'est trop sûr"], a: 1, exp: "Le hachage est à sens unique." },
+    { type: "qcm", q: "Un bon algorithme de hachage de mot de passe :", opts: ["MD5", "argon2 / bcrypt / PBKDF2 (salé, lent)", "SHA1 seul", "base64"], a: 1, exp: "Salé et lent." },
+    { type: "qcm", q: "« Salé » signifie…", opts: ["Chiffré", "Chaque hachage est unique (un sel par mot de passe)", "Rapide", "Public"], a: 1, exp: "Contre les tables précalculées." },
+    { type: "qcm", q: "La politique moderne (NIST) privilégie…", opts: ["La complexité imposée", "La longueur + le refus des mots de passe fuités", "Le changement mensuel", "Les symboles obligatoires"], a: 1, exp: "Longueur > complexité." },
+    { type: "qcm", q: "Imposer « majuscule + chiffre + symbole » …", opts: ["Est idéal", "Pousse aux Password1! prévisibles", "Est obligatoire", "Renforce toujours"], a: 1, exp: "Contre-productif." },
+    { type: "qcm", q: "La limitation de débit protège contre…", opts: ["Le XSS", "La force brute EN LIGNE (essais sur le formulaire)", "L'injection", "Le CSRF"], a: 1, exp: "Ralentir/bloquer après N échecs." },
+    { type: "qcm", q: "Le rate limiting s'applique idéalement…", opts: ["Par IP seulement", "Par IP ET par compte", "Par navigateur", "Jamais"], a: 1, exp: "Les deux angles." },
+    { type: "qcm", q: "Le MFA ajoute…", opts: ["Un mot de passe plus long", "Un second facteur (ce qu'on possède)", "Un cookie", "Un CAPTCHA seul"], a: 1, exp: "SAIT + POSSÈDE." },
+    { type: "qcm", q: "Le MFA rend inutile…", opts: ["Le hachage", "Un mot de passe volé (seul, il ne suffit plus)", "HTTPS", "Le rate limit"], a: 1, exp: "Deuxième barrière." },
+    { type: "qcm", q: "Priorité du MFA :", opts: ["Personne", "Les comptes à privilèges (vendeur, admin)", "Les anonymes", "Les robots"], a: 1, exp: "Impact maximal." },
+    { type: "qcm", q: "Le hachage protège les mots de passe…", opts: ["Contre la force brute en ligne", "Si la BASE fuit (attaque hors ligne)", "Contre le phishing", "Contre le CSRF"], a: 1, exp: "Une menace précise." },
+    { type: "vf", q: "Le hachage seul empêche la force brute sur le formulaire de connexion.", a: false, exp: "C'est le rôle du rate limiting." },
+    { type: "qcm", q: "La réinitialisation de mot de passe utilise…", opts: ["Un lien permanent", "Un jeton à usage unique, expirant, par email", "Le mot de passe en clair par email", "Rien"], a: 1, exp: "Jeton temporaire." },
+    { type: "qcm", q: "Hachage, rate limit et MFA…", opts: ["Font la même chose", "Couvrent trois menaces différentes (fuite, brute en ligne, vol)", "Sont redondants", "Suffisent seuls chacun"], a: 1, exp: "Défense en profondeur." }
+  ],
+  final: {
+    title: "Exercice final — Blinder la connexion",
+    intro: `<p>La page de connexion accepte des essais illimités. On la durcit.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stockage des mots de passe :", opts: ["Hachage fort (argon2/bcrypt/PBKDF2), salé", "chiffré AES", "base64", "en clair"], a: 0, exp: "Irréversible." },
+      { type: "qcm", q: "Contre la force brute en ligne :", opts: ["Rate limiting par IP et par compte", "un mot de passe plus long", "HTTPS", "un cookie"], a: 0, exp: "Ralentir/bloquer." },
+      { type: "qcm", q: "Pour les comptes admin :", opts: ["MFA (second facteur)", "un mot de passe de 6 caractères", "rien de plus", "un CAPTCHA au login"], a: 0, exp: "Un vol de mot de passe ne suffit plus." },
+      { type: "qcm", q: "La politique de mot de passe :", opts: ["Longueur 12+ et refus des mots de passe fuités", "changement hebdomadaire", "symboles imposés", "aucune"], a: 0, exp: "Approche NIST." },
+      { type: "vf", q: "Ces trois protections couvrent trois menaces distinctes.", a: true, exp: "Fuite / brute en ligne / vol." }
+    ],
+    solution: `<pre class="pseudo"># 1. Hachage fort
+PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher", ...]   # argon2 en tete = algo par defaut
+
+# 2. Politique (NIST)
+AUTH_PASSWORD_VALIDATORS = [
+  {"NAME": "...MinimumLengthValidator", "OPTIONS": {"min_length": 12}},   # longueur minimale de 12 caracteres
+  {"NAME": "...CommonPasswordValidator"},                                # refuse les mots de passe trop courants/fuites
+]
+
+# 3. Rate limiting
+@ratelimit(key="ip", rate="5/m", block=True)          # 5 essais/minute par IP
+@ratelimit(key="post:email", rate="5/m", block=True)  # ET 5 essais/minute par compte
+def connexion(request): ...                           # la vue de connexion, protegee
+
+# 4. MFA (TOTP) pour vendeur et administrateur         # second facteur sur les comptes a privileges</pre>
+<p>L'entrée est blindée. Demain : protéger la session une fois connecté.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta politique d'authentification…",
+  items: [
+  { id: "secu-l5", title: "La politique d'authentification", level: 3,
+    statement: "Rédige la politique d'authentification de la Ludothèque (12-18 lignes) : le stockage (algorithme, pourquoi hacher et pas chiffrer), la politique de mot de passe façon NIST, la stratégie de limitation de débit (seuils par IP et par compte, que faire au blocage), le périmètre du MFA, et les règles sur la réinitialisation. Pour chaque point, une ligne « contre quelle menace ».",
+    hints: [
+      "Structure : Stockage / Politique / Rate limit / MFA / Réinit — avec la menace couverte.",
+      "Rappelle : hachage = fuite de base ; rate limit = brute en ligne ; MFA = vol/phishing.",
+      "Réinit : jeton à usage unique, expirant ; messages indifférenciés (leçon 14)."
+    ],
+    solution: "POLITIQUE D'AUTHENTIFICATION — La Ludothèque\n\nSTOCKAGE\n- Mots de passe hachés en argon2 (salé, lent). Jamais chiffrés (réversible),\n  jamais MD5/SHA1. → couvre : FUITE DE LA BASE (attaque hors ligne).\n\nPOLITIQUE DE MOT DE PASSE (NIST)\n- Longueur minimale 12, phrases de passe encouragées.\n- Refus des mots de passe présents dans les listes de fuites connues.\n- Pas de complexité imposée ni d'expiration périodique arbitraire.\n  → couvre : mots de passe FAIBLES et PRÉVISIBLES.\n\nLIMITATION DE DÉBIT\n- 5 tentatives / minute par IP ET par compte.\n- Au-delà : blocage temporaire progressif (+ CAPTCHA après plusieurs cycles).\n- Journaliser chaque blocage (leçon 13). → couvre : FORCE BRUTE EN LIGNE.\n\nMFA (second facteur TOTP)\n- Obligatoire pour Vendeur et Administrateur ; optionnel puis encouragé\n  pour les clients. → couvre : mot de passe VOLÉ / PHISHING.\n\nRÉINITIALISATION\n- Jeton à usage unique, expirant (30 min), envoyé par email.\n- Message indifférencié : « si un compte existe, un email a été envoyé »\n  (ne pas révéler l'existence d'un compte, leçon 14).\n- Invalider toutes les sessions actives après changement (leçon 6).\n\nREVUE : politique réévaluée à chaque incident et une fois par an.",
+    note: "Une politique d'authentification n'est pas une liste de contraintes arbitraires : chaque règle répond à une menace précise, et les mentionner côte à côte évite les mesures « cargo cult » (l'expiration mensuelle qui rassure mais affaiblit). Le point le plus sous-estimé : invalider les sessions actives après un changement de mot de passe — sinon l'attaquant reste connecté même après que la victime a « repris le contrôle »." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "La relation 1-1 : OneToOneField (le profil du membre)",
+  subtitle: "Un membre, au plus un profil : une ForeignKey unique, qui se lit dans les deux sens sans _set.",
+  theory: `
+<h3>1. Le besoin : alléger Membre sans rien perdre</h3>
+<p>La Ludothèque veut stocker l'adresse, le téléphone et une bio de ses membres. Trois informations <strong>facultatives</strong> — beaucoup de membres ne les rempliront jamais — et potentiellement <strong>volumineuses</strong> (la bio est un texte libre). Les entasser dans <strong>Membre</strong> alourdirait un modèle central lu à chaque requête. La solution : un modèle <strong>Profil</strong> séparé, relié en <strong>un-pour-un</strong> (1-1 : à un membre correspond au plus un profil, et réciproquement) :</p>
+<pre class="pseudo">class Profil(models.Model):                          # nouveau modele : les infos secondaires d'un membre
+    membre = models.OneToOneField(Membre, on_delete=models.CASCADE,   # lien 1-1 vers Membre ; CASCADE : profil efface avec le membre
+                                  related_name="profil")               # sens inverse : zelda.profil
+    adresse = models.CharField(max_length=200, blank=True)   # adresse facultative (blank=True)
+    telephone = models.CharField(max_length=20, blank=True)  # telephone facultatif
+    bio = models.TextField(blank=True)                       # texte libre facultatif (potentiellement long)</pre>
+<p>La différence avec une ForeignKey tient en une phrase : avec une FK, un membre pourrait avoir <em>plusieurs</em> profils ; avec un <strong>OneToOneField</strong>, chaque membre a <strong>au plus un</strong> profil — et c'est la base qui le garantit, pas ta bonne volonté.</p>
+
+<h3>2. Côté MySQL : une ForeignKey + UNIQUE</h3>
+<p>Techniquement, un OneToOneField <strong>est</strong> une ForeignKey assortie d'une contrainte <strong>UNIQUE</strong> (« pas deux fois la même valeur ») sur la colonne. Le SQL généré le dit sans détour :</p>
+<pre class="pseudo">CREATE TABLE ludotheque_profil (                              -- creation de la table profil
+    id bigint AUTO_INCREMENT NOT NULL PRIMARY KEY,            -- cle primaire auto-incrementee
+    adresse varchar(200) NOT NULL,                            -- colonne adresse (vide = '')
+    telephone varchar(20) NOT NULL,                           -- colonne telephone
+    bio longtext NOT NULL,                                    -- colonne bio (texte long)
+    membre_id bigint NOT NULL UNIQUE,        ← LA différence   -- UNIQUE : un seul profil par membre
+    FOREIGN KEY (membre_id) REFERENCES ludotheque_membre (id)  -- membre_id renvoie a un membre existant
+);
+
+&gt;&gt;&gt; Profil.objects.create(membre=zelda, telephone="0470 12 34 56")   # cree le profil de zelda
+&lt;Profil: Profil de zelda42&gt;                  # objet cree avec succes
+&gt;&gt;&gt; Profil.objects.create(membre=zelda)     # un DEUXIÈME profil ?   # tentative interdite
+IntegrityError: (1062, "Duplicate entry '1' for key 'membre_id'")   # MySQL refuse : membre_id doit etre unique</pre>
+<p>La deuxième insertion pour le même membre est <strong>refusée par MySQL</strong> : c'est exactement ta contrainte UNIQUE du Niveau 4, posée par l'ORM. <em>IntegrityError</em> = erreur d'intégrité, la base protège sa cohérence.</p>
+
+<h3>3. Naviguer dans les deux sens, sans _set</h3>
+<p>Le un-pour-un se traverse comme un simple attribut, <strong>dans les deux sens</strong> — et l'inverse renvoie <strong>un objet</strong>, jamais un QuerySet :</p>
+<pre class="pseudo">&gt;&gt;&gt; profil = Profil.objects.get(membre=zelda)   # on recupere le profil de zelda
+&gt;&gt;&gt; profil.membre                  # sens direct : comme une FK   # du profil vers son membre
+&lt;Membre: zelda42&gt;                  # on obtient l'objet Membre
+
+&gt;&gt;&gt; zelda.profil                   # sens inverse : UN objet, pas un QuerySet   # du membre vers son profil
+&lt;Profil: Profil de zelda42&gt;        # un objet Profil directement
+&gt;&gt;&gt; zelda.profil.telephone         # on lit un attribut du profil
+'0470 12 34 56'                    # la valeur stockee</pre>
+<p><em>zelda.profil</em> existe ici grâce à related_name="profil" ; mais note bien la règle : sans related_name, le défaut d'un OneToOneField est <strong>le nom du modèle en minuscules, sans _set</strong> — ce serait donc… <em>membre.profil</em> aussi. Logique : côté inverse il y a au plus UN objet, le pluriel de _set n'aurait aucun sens.</p>
+
+<h3>4. Le piège : le membre sans profil</h3>
+<p>Que renvoie <em>mario.profil</em> si mario n'a jamais rempli le sien ? Pas None : une <strong>exception</strong> (un signal d'erreur).</p>
+<pre class="pseudo">&gt;&gt;&gt; mario.profil                             # mario n'a pas de profil...
+RelatedObjectDoesNotExist: Membre has no profil.   # exception : "le membre n'a pas de profil"
+# C'est une sous-classe de Profil.DoesNotExist   # on peut donc l'attraper comme Profil.DoesNotExist
+
+# Trois protections :
+try:                                        # 1) try/except   # "essaie..."
+    tel = mario.profil.telephone            # ... d'acceder au profil
+except Profil.DoesNotExist:                 # "... sinon, s'il n'existe pas :"
+    tel = ""                                # valeur de repli (chaine vide)
+
+if hasattr(mario, "profil"): ...            # 2) hasattr   # teste si l'attribut existe, sans planter
+
+profil, cree = Profil.objects.get_or_create(membre=mario)   # 3) leçon 6 !   # lit ou cree, jamais d'exception</pre>
+<p><em>get_or_create</em> est souvent la meilleure : elle lit le profil s'il existe, le crée sinon — plus jamais d'exception, plus jamais de doublon.</p>
+
+<h3>5. Le patron classique : étendre le User de Django</h3>
+<p>Ce motif Profil n'est pas une curiosité locale : c'est <strong>exactement</strong> ainsi qu'on étend le <em>User</em> de Django (le modèle d'utilisateur de l'authentification, vu au Niveau 3) avec des données applicatives, sans toucher au modèle fourni par le framework :</p>
+<pre class="pseudo">from django.contrib.auth.models import User          # on importe le modele User fourni par Django
+
+class Profil(models.Model):                          # notre modele qui "complete" User
+    user = models.OneToOneField(User, on_delete=models.CASCADE,   # lien 1-1 vers User
+                                related_name="profil")             # sens inverse : user.profil
+    # avatar, préférences, bio...                    # les champs applicatifs qu'on ajoute
+# → request.user.profil dans une vue               # dans une vue, on lit le profil de l'utilisateur connecte</pre>
+<p>Retiens la boîte à outils complète des relations : <strong>ForeignKey</strong> (N-1, leçons 8-9), <strong>ManyToManyField</strong> (N-N, leçon 10), <strong>OneToOneField</strong> (1-1, aujourd'hui). Même trio ailleurs : <strong>@OneToOne</strong> chez Hibernate/JPA, la relation 1:1 à clé partagée chez EF Core, <strong>hasOne</strong> chez Eloquent.</p>
+<div class="warn">Ne remplace jamais un OneToOneField par une ForeignKey « en te promettant » de ne créer qu'un profil par membre : un bug, un double-clic, un import de données, et te voilà avec des doublons que ton code ne sait pas gérer. La contrainte d'unicité doit vivre <strong>dans la base</strong> — c'est précisément ce que le OneToOneField garantit (UNIQUE implicite).</div>
+<div class="tip">Pour créer le profil à coup sûr, sans te demander s'il existe déjà : <em>Profil.objects.get_or_create(membre=zelda)</em> — le réflexe de la leçon 6, taillé sur mesure pour le un-pour-un.</div>`,
+  exercises: [
+    { type: "qcm", q: "La différence entre OneToOneField et ForeignKey :", opts: ["Aucune, ce sont deux alias", "Le OneToOneField interdit les valeurs NULL", "Chaque membre a AU PLUS un profil : l'unicité est garantie par la base", "Le OneToOneField ne crée pas de colonne"], a: 2, exp: "Une FK autoriserait plusieurs profils par membre ; le 1-1 pose une contrainte UNIQUE." },
+    { type: "qcm", q: "Côté MySQL, un OneToOneField est…", opts: ["Une table de jointure", "Une ForeignKey avec contrainte UNIQUE sur membre_id", "Une colonne JSON", "Deux colonnes synchronisées"], a: 1, exp: "FOREIGN KEY + UNIQUE : la définition technique exacte du un-pour-un." },
+    { type: "input", q: "L'exception levée par MySQL/Django à la deuxième insertion d'un profil pour le même membre :", a: ["IntegrityError", "integrityerror", "integrity error"], ph: "…Error", exp: "La contrainte UNIQUE sur membre_id refuse le doublon : IntegrityError (1062, Duplicate entry)." },
+    { type: "qcm", q: "Dans notre modèle, le sens inverse zelda.profil existe grâce à…", opts: ["related_name='profil' sur le OneToOneField", "Un champ profil déclaré dans Membre", "La table django_migrations", "Un import spécial"], a: 0, exp: "Le related_name nomme le chemin inverse — comme aux leçons 9 et 10." },
+    { type: "qcm", q: "Sans related_name, le sens inverse d'un OneToOneField s'appellerait…", opts: ["membre.profil_set", "membre.profil (nom du modèle en minuscules, sans _set)", "membre.get_profil()", "Il n'existerait pas"], a: 1, exp: "Au plus UN objet côté inverse : le pluriel _set n'aurait aucun sens, le défaut est le nom du modèle." },
+    { type: "vf", q: "zelda.profil renvoie un QuerySet contenant un seul élément.", a: false, exp: "L'inverse d'un OneToOneField renvoie directement UN objet Profil, pas un QuerySet." },
+    { type: "qcm", q: "Si mario n'a pas de profil, mario.profil…", opts: ["Renvoie None", "Renvoie un profil vide", "Lève RelatedObjectDoesNotExist", "Crée le profil à la volée"], a: 2, exp: "Pas de ligne correspondante → exception, pas None : le piège classique du 1-1." },
+    { type: "qcm", q: "RelatedObjectDoesNotExist est une sous-classe de…", opts: ["ValueError", "Profil.DoesNotExist", "KeyError", "IntegrityError"], a: 1, exp: "On peut donc écrire except Profil.DoesNotExist: — le même DoesNotExist que celui de get() (leçon 5)." },
+    { type: "qcm", q: "Pour tester sans exception si un membre a un profil :", opts: ["hasattr(membre, 'profil')", "membre.profil is None", "membre.has_profil", "len(membre.profil) > 0"], a: 0, exp: "hasattr absorbe l'exception ; membre.profil is None la lèverait avant même de comparer." },
+    { type: "input", q: "La méthode (leçon 6) qui lit le profil s'il existe et le crée sinon, sans jamais planter :", a: ["get_or_create", "get_or_create()", "objects.get_or_create"], ph: "Profil.objects.…", exp: "get_or_create(membre=zelda) : ni exception, ni doublon — taillée pour le 1-1." },
+    { type: "vf", q: "Remplacer le OneToOneField par une ForeignKey en se promettant de ne créer qu'un profil par membre est un choix acceptable.", a: false, exp: "La contrainte doit vivre dans la base (UNIQUE) : une promesse de code ne survit ni aux bugs ni aux imports." },
+    { type: "qcm", q: "Le patron classique pour étendre le User de Django (Niveau 3) :", opts: ["Un héritage multiple de User", "Un OneToOneField vers User dans un modèle Profil", "Une table de jointure User/Profil", "Un champ JSON dans User"], a: 1, exp: "request.user.profil : le motif exact de cette leçon, appliqué au modèle d'authentification." },
+    { type: "qcm", q: "L'équivalent Eloquent (Laravel) du OneToOneField :", opts: ["belongsToMany", "hasMany", "morphTo", "hasOne"], a: 3, exp: "hasOne côté Laravel ; @OneToOne chez Hibernate/JPA ; relation 1:1 à clé partagée chez EF Core." },
+    { type: "vf", q: "try/except Profil.DoesNotExist est une protection valable autour de membre.profil.", a: true, exp: "RelatedObjectDoesNotExist en est une sous-classe : le except l'attrape." },
+    { type: "qcm", q: "Pourquoi un modèle Profil séparé plutôt que trois colonnes de plus dans Membre ?", opts: ["MySQL limite les tables à dix colonnes", "Infos facultatives et volumineuses : on allège le modèle central et on ne crée le profil que si besoin", "Les TextField sont interdits dans Membre", "Pour éviter une migration"], a: 1, exp: "Membre est lu partout ; la bio ne sert que sur la page profil. Séparer, c'est alléger." }
+  ],
+  final: {
+    title: "Exercice final — Le trio des relations au complet",
+    intro: `<p>ForeignKey, ManyToManyField, OneToOneField : la boîte à outils est complète. Dernière vérification sur le un-pour-un avant de passer à l'art du filtre.</p>`,
+    questions: [
+      { type: "qcm", q: "Techniquement, un OneToOneField est…", opts: ["Une ForeignKey + contrainte UNIQUE sur la colonne", "Une table de jointure à deux lignes", "Un index composé", "Un champ calculé"], a: 0, exp: "C'est toute sa définition : le SQL généré montre membre_id bigint NOT NULL UNIQUE." },
+      { type: "input", q: "Le champ Django de la relation un-pour-un :", a: ["OneToOneField", "models.OneToOneField", "onetoonefield"], ph: "models.…", exp: "OneToOneField(Membre, on_delete=models.CASCADE, related_name='profil')." },
+      { type: "vf", q: "L'inverse d'un OneToOneField renvoie UN objet, pas un QuerySet.", a: true, exp: "zelda.profil est un Profil ; pas de _set, pas de .all() — il y a au plus un objet en face." },
+      { type: "qcm", q: "mario n'a pas de profil : que fait mario.profil ?", opts: ["Renvoie None", "Renvoie un Profil vide", "Crée le profil", "Lève RelatedObjectDoesNotExist (sous-classe de Profil.DoesNotExist)"], a: 3, exp: "Le piège du 1-1 : protéger par try/except, hasattr ou get_or_create." },
+      { type: "qcm", q: "La création défensive du profil de zelda :", opts: ["Profil.objects.get_or_create(membre=zelda)", "Profil.objects.create(membre=zelda) sans vérifier", "zelda.profil = Profil()", "Profil(zelda).save() deux fois"], a: 0, exp: "Existe → lu ; n'existe pas → créé. Ni IntegrityError, ni doublon." }
+    ],
+    solution: `<pre class="pseudo">OneToOneField : membre = models.OneToOneField(Membre, on_delete=models.CASCADE,   # relation 1-1
+                                              related_name="profil")            # sens inverse : zelda.profil
+Côté MySQL    : ForeignKey + UNIQUE sur membre_id                              # un seul profil par membre
+                → 2e profil pour le même membre = IntegrityError               # la base refuse le doublon
+Navigation    : profil.membre  |  zelda.profil  (UN objet, jamais de _set)     # les deux sens, sans QuerySet
+                défaut sans related_name : nom du modèle en minuscules          # membre.profil par defaut
+Piège         : membre sans profil → RelatedObjectDoesNotExist                 # pas None, une exception
+                protections : try/except · hasattr · get_or_create (leçon 6)   # trois parades
+Patron        : étendre le User de Django (Niveau 3) → request.user.profil     # cas d'usage classique
+Ailleurs      : @OneToOne (JPA) · 1:1 clé partagée (EF Core) · hasOne (Eloquent)   # equivalents</pre>
+<p>Les relations sont posées ; place à l'art d'interroger. Leçon 12 : « filter, exclude et les lookups (__gte, __icontains…) » — le WHERE dans toute sa richesse.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l11", title: "Champ, ForeignKey ou OneToOne ?", level: 2,
+    statement: "La Ludothèque t'apporte trois besoins autour du membre. A) Une bio facultative et potentiellement longue, avec adresse et téléphone, remplie par une minorité de membres. B) Un historique des adresses successives d'un membre (l'ancienne adresse doit rester consultable à chaque déménagement). C) La catégorie de jeux préférée du membre, choisie parmi les Categorie de la leçon 10. Pour chaque besoin, choisis entre : des champs ajoutés directement dans Membre, une ForeignKey (et dans quel sens !), ou un OneToOneField — et justifie en deux ou trois phrases (cardinalités, volume, caractère facultatif). Termine en écrivant le code défensif du besoin A : la création du profil de zelda42 qui ne plante jamais même lancée deux fois, puis la lecture du téléphone de mario_b qui ne plante jamais même sans profil.",
+    hints: [
+      "Pour chaque besoin, pose la question des cardinalités comme au Niveau 4 : combien d'objets en face d'UN membre — un seul au maximum, ou plusieurs au fil du temps ?",
+      "Besoin B : qui pointe vers qui ? La ForeignKey se déclare toujours du côté N (leçon 8) — c'est l'adresse qui référence son membre.",
+      "Pour le code défensif : get_or_create couvre la création répétée ; pour la lecture, try/except Profil.DoesNotExist ou hasattr (leçon du jour)."
+    ],
+    solution: "A) Bio + adresse + téléphone facultatifs → OneToOneField (le modèle Profil de la leçon).\nUn membre a au plus UN profil ; les données sont facultatives et volumineuses : on allège Membre, et la contrainte UNIQUE de la base interdit les doublons. Des champs dans Membre marcheraient, mais alourdiraient un modèle central pour une minorité d'utilisateurs.\n\nB) Historique d'adresses → ForeignKey, déclarée dans un modèle Adresse vers Membre :\nclass Adresse(models.Model):\n    membre = models.ForeignKey(Membre, on_delete=models.CASCADE, related_name='adresses')\n    libelle = models.CharField(max_length=200)\n    depuis = models.DateField(auto_now_add=True)\nUn membre a PLUSIEURS adresses au fil du temps (1-N) : ni un champ unique, ni un 1-1 ne peuvent garder l'historique. La FK vit du côté N, donc dans Adresse.\n\nC) Catégorie préférée → ForeignKey dans Membre vers Categorie :\ncategorie_preferee = models.ForeignKey(Categorie, on_delete=models.SET_NULL, null=True, blank=True, related_name='fans')\nChaque membre a au plus UNE préférence, mais une même catégorie est préférée par PLUSIEURS membres : c'est du N-1, pas du 1-1 (le OneToOne interdirait à deux membres d'aimer la Stratégie !). SET_NULL : supprimer une catégorie ne doit pas supprimer les membres.\n\nCode défensif du besoin A :\nzelda = Membre.objects.get(pseudo='zelda42')\nprofil, cree = Profil.objects.get_or_create(membre=zelda)\n# lancé deux fois : la 2e lit au lieu de créer — jamais d'IntegrityError\n\nmario = Membre.objects.get(pseudo='mario_b')\ntry:\n    tel = mario.profil.telephone\nexcept Profil.DoesNotExist:\n    tel = ''\n# ou : tel = mario.profil.telephone if hasattr(mario, 'profil') else ''",
+    note: "Ce choix entre champ, N-1, N-N et 1-1 est exactement l'exercice de cardinalités de ton Merise du Niveau 4 — l'ORM n'a fait que te donner un vocabulaire Python pour l'exprimer. Le patron Profil resservira tel quel au Niveau 6 pour étendre le User de l'authentification vue au Niveau 3. Et le jour où tu passeras à Spring ou Laravel, @OneToOne et hasOne te poseront très précisément les mêmes questions." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

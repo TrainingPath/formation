@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie",
+  subtitle: "Les bons réflexes de sécurité dès le premier compte, pas en fin de parcours.",
+  theory: `
+<h3>1. Les trois rôles</h3>
+<p>La Ludothèque a trois profils : <strong>client</strong>, <strong>vendeur</strong>, <strong>admin</strong>. On ajoute une colonne <code>role</code> sur <code>users</code> (ou le paquet spatie/laravel-permission pour un besoin plus riche).</p>
+<p>Un <strong>rôle</strong> est une étiquette attachée à un compte qui résume ce qu'il a le droit de faire : un <em>client</em> emprunte, un <em>vendeur</em> gère le catalogue, un <em>admin</em> administre tout. On stocke ce rôle dans une colonne <code>role</code> de la table <code>users</code>.</p>
+<pre class="pseudo">// migration : $t->string('role')->default('client');
+// model User : protected $fillable = ['name','email','password','role'];
+// (le mot de passe est haché par le cast 'password' => 'hashed' de Laravel)</pre>
+
+<h3>2. Le hachage du mot de passe</h3>
+<p><strong>Hacher</strong> un mot de passe, c'est le passer dans une fonction à <em>sens unique</em> qui produit une empreinte illisible : impossible de revenir au mot de passe d'origine, même en volant la base (à ne pas confondre avec <strong>chiffrer</strong>, qui est réversible avec une clé). <code>argon2id</code> et <code>bcrypt</code> sont des algorithmes de hachage conçus pour être <em>lents</em>, afin de décourager les essais en masse. Le <strong>cast</strong> <code>'password' => 'hashed'</code> demande à Laravel de hacher automatiquement le mot de passe à l'enregistrement. À la connexion, <code>Auth::attempt(…)</code> re-hache la saisie et la compare à l'empreinte stockée.</p>
+<pre class="pseudo">// config/hashing.php : 'driver' => 'argon2id'   (ou 'bcrypt' avec rounds élevés)
+$user = User::create([                 // crée un nouvel utilisateur en base
+    'email' => $data['email'],         // son adresse e-mail
+    'password' => $data['password'],   // haché automatiquement (cast 'hashed') : jamais stocké en clair
+    'role' => 'client',                // rôle par défaut : client
+]);
+// à la connexion : Auth::attempt(['email'=>..., 'password'=>...]) compare le hash</pre>
+
+<h3>3. Une politique de mot de passe</h3>
+<p>Une <strong>politique de mot de passe</strong> fixe les exigences minimales. Ici <code>Password::min(12)</code> impose 12 caractères : les recommandations modernes (le <strong>NIST</strong>, l'institut américain des standards) privilégient la <em>longueur</em> plutôt que des symboles imposés. <code>uncompromised()</code> refuse tout mot de passe déjà apparu dans une fuite connue, en le comparant (de façon anonyme) à la base <em>Have I Been Pwned</em>.</p>
+<pre class="pseudo">// App\\Providers\\AppServiceProvider::boot()
+Password::defaults(fn() => Password::min(12)->uncompromised());   // règle globale : 12 caractères min ET pas un mot de passe déjà fuité
+// min 12 (NIST privilégie la LONGUEUR) ; uncompromised = refus des fuités connus</pre>
+
+<h3>4. Durcir les cookies de session</h3>
+<p>Un <strong>cookie</strong> est un petit fichier que le navigateur conserve et renvoie à chaque visite ; le cookie de <strong>session</strong> identifie un utilisateur connecté. On le « durcit » avec trois réglages : <code>secure</code> ne le transmet qu'en <strong>HTTPS</strong> (connexion chiffrée) ; <code>http_only</code> le rend invisible au JavaScript, ce qui bloque son vol par une attaque <strong>XSS</strong> (injection de script malveillant dans la page) ; <code>same_site=lax</code> limite son envoi depuis d'autres sites, première barrière contre le <strong>CSRF</strong> (une requête piégée déclenchée à votre insu).</p>
+<pre class="pseudo"># config/session.php (via .env)
+'secure' => true,        // SESSION_SECURE_COOKIE=true : HTTPS uniquement
+'http_only' => true,     // inaccessible au JavaScript (anti-vol par XSS)
+'same_site' => 'lax',    // anti-CSRF de base</pre>
+
+<h3>5. Sécurité par conception</h3>
+<div class="warn">Au Niveau 6, la sécurité des sessions arrivait en fin de parcours. Ici, dès le premier utilisateur : hachage argon2id/bcrypt (Laravel ne stocke jamais de clair), politique NIST (min 12, <code>uncompromised</code> interroge Have I Been Pwned), cookies durcis. Sécuriser au moment où l'on crée la fonctionnalité coûte quelques lignes de config ; le faire après coup coûte un audit.</div>
+<div class="tip">Laravel fournit gratuitement l'essentiel (auth, protection CSRF, gestion de session, cast <code>hashed</code>). Notre travail : brancher les rôles, choisir un bon driver de hachage, durcir les cookies, poser la politique de mot de passe. Le « par conception » n'est pas plus de code — c'est le bon réflexe au bon moment.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le mot de passe est stocké…", opts: ["En clair", "Haché (argon2id/bcrypt)", "En base64", "Chiffré réversible"], a: 1, exp: "Jamais récupérable en clair." },
+    { type: "qcm", q: "Les trois rôles sont…", opts: ["admin, root, user", "client, vendeur, admin", "lecteur, écrivain", "aucun"], a: 1, exp: "Profils métier." },
+    { type: "qcm", q: "Le cast 'password' => 'hashed'…", opts: ["Chiffre", "Hache automatiquement le mot de passe à l'écriture", "Déploie", "Rien"], a: 1, exp: "Jamais de clair en base." },
+    { type: "qcm", q: "Auth::attempt sert à…", opts: ["Hacher", "Vérifier les identifiants à la connexion", "Chiffrer", "Générer un sel"], a: 1, exp: "Compare le hash." },
+    { type: "qcm", q: "http_only sur le cookie…", opts: ["Le rend lisible en JS", "L'empêche d'être lu par JavaScript (anti-XSS)", "Le chiffre", "L'accélère"], a: 1, exp: "Vol de session bloqué." },
+    { type: "qcm", q: "secure sur le cookie…", opts: ["Le transmet en HTTP", "Le transmet uniquement en HTTPS", "Rien", "Le supprime"], a: 1, exp: "Pas d'interception en clair." },
+    { type: "qcm", q: "same_site=lax offre…", opts: ["Une protection CSRF de base", "Rien", "Du chiffrement", "Un cache"], a: 0, exp: "Défense en profondeur." },
+    { type: "qcm", q: "La politique NIST privilégie…", opts: ["La complexité artificielle", "La longueur du mot de passe", "Le changement mensuel", "Les caractères spéciaux imposés"], a: 1, exp: "min(12)." },
+    { type: "qcm", q: "Password::...->uncompromised() refuse…", opts: ["Tout", "Les mots de passe apparaissant dans des fuites connues", "Les emails", "Les majuscules"], a: 1, exp: "Have I Been Pwned." },
+    { type: "qcm", q: "Le driver argon2id se règle dans…", opts: ["Le contrôleur", "config/hashing.php", "l'URL", "le cookie"], a: 1, exp: "Config centrale." },
+    { type: "vf", q: "Sécuriser dès la création coûte moins cher que rétrofiter.", a: true, exp: "Par conception." },
+    { type: "qcm", q: "Laravel fournit gratuitement…", opts: ["Rien", "Auth, CSRF, sessions, hachage", "Le métier", "La base"], a: 1, exp: "On branche, on durcit." },
+    { type: "qcm", q: "MD5/SHA1 pour un mot de passe :", opts: ["Recommandés", "À proscrire (trop rapides, cassés)", "Obligatoires", "Idéaux"], a: 1, exp: "argon2id/bcrypt." },
+    { type: "qcm", q: "La colonne role sert à…", opts: ["Le CSS", "Distinguer client/vendeur/admin (autorisation, leçon 10)", "Le cache", "Rien"], a: 1, exp: "Base de l'autorisation." },
+    { type: "vf", q: "Un cookie http_only ne peut pas être volé par un script XSS.", a: true, exp: "Inaccessible au JS." }
+  ],
+  final: {
+    title: "Exercice final — L'authentification durcie",
+    intro: `<p>Comptes + hachage + cookies + politique.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mot de passe :", opts: ["haché (argon2id/bcrypt, cast hashed)", "en clair", "en base64", "en MD5"], a: 0, exp: "Non réversible, lent." },
+      { type: "qcm", q: "Les cookies de session :", opts: ["secure + http_only + same_site", "aucun réglage", "lisibles en JS", "en HTTP"], a: 0, exp: "Durcis." },
+      { type: "qcm", q: "La politique de mot de passe :", opts: ["min 12 + uncompromised", "8 max", "aucune", "1 chiffre"], a: 0, exp: "NIST." },
+      { type: "qcm", q: "L'autorisation par rôle s'appuiera sur :", opts: ["la colonne role", "l'email", "le cookie brut", "rien"], a: 0, exp: "Prépare la leçon 10." },
+      { type: "vf", q: "Ces réflexes sont posés dès le premier compte, pas en fin de parcours.", a: true, exp: "Par conception." }
+    ],
+    solution: `<pre class="pseudo">// config/hashing.php : 'driver' => 'argon2id'                        // algorithme de hachage lent et robuste
+User::create(['email'=>..., 'password'=>$mdp, 'role'=>'client']); // cast hashed : mot de passe haché à l'écriture
+// AppServiceProvider::boot()
+Password::defaults(fn() => Password::min(12)->uncompromised());    // politique : 12 caractères min + refus des fuités
+# config/session.php (.env) : secure=true, http_only=true, same_site=lax   # cookies de session durcis</pre>
+<p>L'auth est durcie. Demain : l'autorisation par rôle ET par ressource (Policies, anti-IDOR).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta configuration de sécurité…",
+  items: [
+  { id: "proj6php-l9", title: "L'authentification durcie dès le premier compte", level: 2,
+    statement: "Écris la mise en place de l'auth (colonne role, cast 'hashed', driver argon2id), la politique de mot de passe (Password::defaults) et le durcissement des cookies (config/session via .env). Explique en 2-3 lignes pourquoi hacher (et pas chiffrer) et pourquoi durcir dès maintenant.",
+    hints: [
+      "cast 'password' => 'hashed' ; config/hashing.php driver argon2id ; Auth::attempt à la connexion.",
+      "Password::min(12)->uncompromised() dans AppServiceProvider::boot().",
+      "config/session.php : secure, http_only, same_site=lax."
+    ],
+    solution: "// migration : $t->string('role')->default('client');\n// app/Models/User.php\nprotected $fillable = ['name', 'email', 'password', 'role'];\nprotected function casts(): array {\n    return ['password' => 'hashed'];        // hache automatiquement a l'ecriture\n}\n\n// config/hashing.php : 'driver' => 'argon2id'  (ou 'bcrypt', rounds eleves)\n\n// inscription\n$user = User::create([\n    'email' => $data['email'],\n    'password' => $data['password'],        // cast 'hashed' -> jamais en clair\n    'role' => 'client',\n]);\n// connexion : Auth::attempt(['email' => $e, 'password' => $p]);  // compare le hash\n\n// App\\Providers\\AppServiceProvider::boot()\nPassword::defaults(fn() => Password::min(12)->uncompromised());\n\n# config/session.php (via .env)\n'secure' => env('SESSION_SECURE_COOKIE', true),   // HTTPS uniquement\n'http_only' => true,                              // inaccessible au JS (anti-XSS)\n'same_site' => 'lax',                             // anti-CSRF de base\n\n// POURQUOI HACHER (PAS CHIFFRER), POURQUOI MAINTENANT\n// Hacher = transformation a SENS UNIQUE : meme la base volee, les mots de passe\n// ne se retrouvent pas. Chiffrer serait reversible (avec la cle) -- inutile ici,\n// on n'a jamais besoin de RELIRE le mot de passe, seulement de le VERIFIER a la\n// connexion. argon2id/bcrypt sont volontairement lents pour ruiner le brute-force.\n// Et on durcit DES le premier compte : rajouter http_only/secure/hachage fort apres\n// coup, c'est un audit et une migration de tous les comptes existants.",
+    note: "La distinction hacher / chiffrer est fondamentale et souvent confondue : on ne chiffre jamais un mot de passe, on le hache — car on n'a jamais besoin de le relire, seulement de vérifier une saisie. Laravel rend cela transparent avec le cast 'hashed', mais il faut encore choisir un bon driver (argon2id), poser une politique NIST et durcir les cookies. Ces réflexes, posés dès le premier compte, incarnent le secure by design." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

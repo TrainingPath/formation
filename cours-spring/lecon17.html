@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Utilisateurs, rôles et autorisation",
+  subtitle: "Savoir qui est connecté, et n'autoriser que ce qui LE concerne.",
+  theory: `
+<h3>1. Récupérer l'utilisateur connecté</h3>
+<p>Le <strong>Principal</strong> (« la personne principale ») représente l'utilisateur authentifié de la requête. Dans un contrôleur, Spring l'injecte automatiquement :</p>
+<pre class="pseudo">@GetMapping("/api/mes-emprunts")                 // GET /api/mes-emprunts
+public List&lt;EmpruntDto&gt; mesEmprunts(Principal principal) {  // Principal = l'utilisateur connecté (fourni par Spring)
+    // principal.getName() = l'email utilisé à la connexion
+    return empruntService.empruntsDe(principal.getName());  // on ne transmet QUE son propre email
+}                                                // fin de la méthode</pre>
+<p>Le client n'envoie PAS son identité en paramètre : elle vient de l'authentification. Impossible de tricher en mettant l'id d'un autre !</p>
+<h3>2. La faille du débutant : l'IDOR</h3>
+<p><strong>IDOR</strong> (<em>Insecure Direct Object Reference</em>) = une faille où l'on accède aux données d'autrui simplement en changeant un identifiant dans l'URL.</p>
+<pre class="pseudo">❌ GET /api/membres/12/emprunts   ← et si je mets 13 ? 14 ? …
+   → je lis les emprunts de TOUT LE MONDE : faille IDOR
+   (Insecure Direct Object Reference)
+
+✅ GET /api/mes-emprunts          ← l'identité vient du Principal
+   → chacun ne voit QUE les siens</pre>
+<p>Règle : pour les données personnelles, l'identité vient de la SESSION D'AUTHENTIFICATION, jamais d'un paramètre modifiable par le client.</p>
+<h3>3. Les annotations de méthode : @PreAuthorize</h3>
+<p><code>@PreAuthorize</code> (« autoriser avant ») vérifie un droit juste avant d'exécuter une méthode. Il faut d'abord activer ce mécanisme avec <code>@EnableMethodSecurity</code>.</p>
+<pre class="pseudo">// À activer une fois :
+@Configuration                                   // classe de configuration
+@EnableMethodSecurity                            // active les annotations @PreAuthorize
+public class SecuriteConfig { ... }              // (le reste de la config de la leçon 16)
+
+// Puis, sur n'importe quelle méthode de service ou contrôleur :
+@PreAuthorize("hasRole('ADMIN')")                // n'exécute la méthode QUE si l'appelant est ADMIN
+public void supprimerLivre(Long id) { ... }      // sinon : accès refusé (403)
+
+@PreAuthorize("hasAnyRole('ADMIN', 'BIBLIOTHECAIRE')")  // ADMIN OU BIBLIOTHECAIRE
+public List&lt;Membre&gt; tousLesMembres() { ... }     // réservé à ces rôles</pre>
+<p>Défense au plus près de l'action : même si une route est mal configurée, la méthode refuse.</p>
+<h3>4. Vérification métier : « seulement le sien »</h3>
+<pre class="pseudo">public void rendre(Long empruntId, String emailDemandeur) {  // emailDemandeur vient du Principal
+    Emprunt e = repo.findById(empruntId).orElseThrow(...);   // on charge l'emprunt (ou 404)
+
+    // Le demandeur est-il le propriétaire de CET emprunt ?
+    if (!e.getMembre().getEmail().equals(emailDemandeur)) {   // compare le propriétaire au demandeur
+        throw new AccesRefuseException("Cet emprunt ne vous appartient pas");  // sinon → refus
+    }                                            // fin du if
+    e.cloturer();                                // clôture l'emprunt (date de retour…)
+    ...                                          // (enregistrement, etc.)
+}                                                // fin de la méthode
+// AccesRefuseException → 403 via le @RestControllerAdvice (leçon 13)</pre>
+<h3>5. Rôles : où les stocker ?</h3>
+<pre class="pseudo">@Entity                                          // entité persistée
+public class Membre {
+    ...                                          // (autres champs)
+    private String role = "MEMBRE";     // "MEMBRE", "BIBLIOTHECAIRE", "ADMIN"
+}                                                // fin de la classe
+// Le UserDetailsService (leçon 16) les transmet : .roles(m.getRole())
+// hasRole("ADMIN") vérifie en réalité l'autorité "ROLE_ADMIN" :
+// le préfixe ROLE_ est ajouté automatiquement — piège classique !</pre>
+<div class="warn">Ne vérifie JAMAIS les droits uniquement côté client (« le bouton Supprimer est caché ») : l'API reste appelable par curl ! Toute règle de droit DOIT être vérifiée côté serveur. L'interface cache, le serveur REFUSE.</div>
+<div class="tip">Trois niveaux de défense en autorisation : les routes (SecurityFilterChain), les méthodes (@PreAuthorize), et le métier (« est-ce le sien ? »). Les trois ensemble = défense en profondeur, comme pour la validation (leçon 12).</div>`,
+  exercises: [
+    { type: "qcm", q: "Comment obtenir l'identité de l'utilisateur connecté dans un contrôleur ?", opts: ["Dans un paramètre d'URL", "En injectant Principal (principal.getName())", "Dans le corps JSON", "Avec un cookie manuel"], a: 1, exp: "L'identité vient de l'authentification, injectée par Spring." },
+    { type: "qcm", q: "Qu'est-ce qu'une faille IDOR ?", opts: ["Un virus", "Accéder aux objets d'autrui en modifiant simplement un id dans l'URL", "Un mot de passe faible", "Une erreur 500"], a: 1, exp: "Insecure Direct Object Reference : le serveur ne vérifie pas la propriété de la ressource." },
+    { type: "qcm", q: "Pourquoi GET /api/mes-emprunts est-il plus sûr que GET /api/membres/{id}/emprunts pour un membre ?", opts: ["URL plus courte", "L'identité vient du Principal, pas d'un paramètre falsifiable", "Il est plus rapide", "Les deux se valent"], a: 1, exp: "On ne peut pas « changer l'id » de sa propre authentification." },
+    { type: "qcm", q: "Que fait @PreAuthorize(\"hasRole('ADMIN')\") ?", opts: ["Documente la méthode", "Refuse l'exécution de la méthode si l'appelant n'a pas le rôle ADMIN", "Crée un rôle", "Log l'appel"], a: 1, exp: "Contrôle d'accès au niveau méthode — actif partout où la méthode est appelée." },
+    { type: "qcm", q: "Quelle annotation faut-il activer pour que @PreAuthorize fonctionne ?", opts: ["@EnableWebMvc", "@EnableMethodSecurity sur une classe de configuration", "@PreAuthorizeEnabled", "Aucune"], a: 1, exp: "Sans elle, les @PreAuthorize sont ignorés silencieusement — piège !" },
+    { type: "qcm", q: "hasRole(\"ADMIN\") vérifie en interne l'autorité…", opts: ["ADMIN", "ROLE_ADMIN : le préfixe est ajouté automatiquement", "admin en minuscules", "ADMIN_ROLE"], a: 1, exp: "Le piège du préfixe ROLE_ : à connaître pour déboguer." },
+    { type: "qcm", q: "Un membre tente de rendre l'emprunt d'un autre (id deviné). Que doit faire le service ?", opts: ["Accepter", "Comparer le propriétaire de l'emprunt à l'email du demandeur et refuser (403)", "Renvoyer 404", "Envoyer un email"], a: 1, exp: "La vérification de propriété est une règle métier : dans le service." },
+    { type: "qcm", q: "Cacher le bouton « Supprimer » aux non-admins dans l'interface suffit-il ?", opts: ["Oui", "Non : l'API reste appelable directement (curl) — le serveur doit refuser", "Oui si le bouton est bien caché", "Seulement en HTTPS"], a: 1, exp: "L'interface améliore l'expérience ; le serveur fait la sécurité." },
+    { type: "qcm", q: "Quel statut pour AccesRefuseException via le @RestControllerAdvice ?", opts: ["401", "403 Forbidden", "404", "409"], a: 1, exp: "Identifié mais pas autorisé : 403." },
+    { type: "qcm", q: "hasAnyRole('ADMIN', 'BIBLIOTHECAIRE') autorise…", opts: ["Les deux rôles à la fois obligatoirement", "Quiconque possède AU MOINS UN des deux rôles", "Personne", "Tout le monde"], a: 1, exp: "OU logique entre les rôles listés." },
+    { type: "vf", q: "Un @PreAuthorize sur une méthode de service protège aussi les appels qui ne passent pas par un contrôleur.", a: true, exp: "La protection suit la méthode : batch, autre service… tout appel est contrôlé." },
+    { type: "qcm", q: "Où le rôle d'un membre est-il stocké dans notre projet ?", opts: ["Dans un fichier texte", "Dans la colonne role de la table membres, transmis par le UserDetailsService", "Dans l'URL", "Dans le navigateur"], a: 1, exp: "La base est la source de vérité ; Spring Security la lit à la connexion." },
+    { type: "qcm", q: "Le trio complet de la défense en profondeur pour l'autorisation :", opts: ["HTML, CSS, JS", "Routes (FilterChain) + méthodes (@PreAuthorize) + métier (propriété de la ressource)", "Login, logout, session", "GET, POST, DELETE"], a: 1, exp: "Trois niveaux : si l'un est mal configuré, les autres tiennent." },
+    { type: "qcm", q: "Un ADMIN doit-il pouvoir voir les emprunts de n'importe quel membre ?", opts: ["Jamais", "Oui, c'est un choix métier légitime : la vérification de propriété s'assouplit pour les rôles élevés", "Non, l'IDOR l'interdit", "Seulement le week-end"], a: 1, exp: "if (!estProprietaire && !estAdmin) throw... — la règle métier intègre les rôles." },
+    { type: "qcm", q: "principal.getName() renvoie quoi dans notre configuration ?", opts: ["Le prénom", "L'email de connexion (notre username)", "Le rôle", "Le hash du mot de passe"], a: 1, exp: "C'est le username fourni au UserDetailsService — chez nous, l'email." }
+  ],
+  final: {
+    title: "Exercice final — Qui a le droit de faire quoi ?",
+    intro: `<p>La matrice des droits de la bibliothèque est décidée avec la direction :</p>
+<pre class="pseudo">                         VISITEUR  MEMBRE  BIBLIOTHECAIRE  ADMIN
+Consulter le catalogue      ✅       ✅          ✅          ✅
+S'inscrire                  ✅       —           —           —
+Emprunter / rendre (soi)    ❌       ✅          ✅          ✅
+Voir tous les emprunts      ❌       ❌          ✅          ✅
+Ajouter/retirer des livres  ❌       ❌          ✅          ✅
+Gérer les comptes membres   ❌       ❌          ❌          ✅</pre>`,
+    questions: [
+      { type: "qcm", q: "« Emprunter/rendre (soi) » : quelle mécanique garantit le « (soi) » ?", opts: ["hasRole('MEMBRE')", "Le Principal fournit l'identité + le service vérifie la propriété de l'emprunt", "Le bouton caché", "L'URL secrète"], a: 1, exp: "Rôle pour le droit d'agir, vérification métier pour le périmètre." },
+      { type: "qcm", q: "« Voir tous les emprunts » se protège le mieux par…", opts: ["Rien", "@PreAuthorize(\"hasAnyRole('BIBLIOTHECAIRE','ADMIN')\") sur la méthode", "Un mot de passe partagé", "Un paramètre ?admin=true"], a: 1, exp: "Un droit lié au rôle : l'annotation de méthode est l'outil exact." },
+      { type: "qcm", q: "Un développeur ajoute ?membreId=13 à /api/mes-emprunts « pour le débogage ». Danger ?", opts: ["Aucun", "IDOR immédiat : n'importe quel membre lirait les emprunts de n'importe qui", "C'est plus rapide", "Ça casse le CSS"], a: 1, exp: "Le paramètre falsifiable réintroduit exactement la faille que le Principal éliminait." },
+      { type: "qcm", q: "« Gérer les comptes membres » (ADMIN seul) : combien de niveaux de défense idéalement ?", opts: ["Un seul suffit toujours", "Trois : route /api/admin/**, @PreAuthorize sur les méthodes, et logique métier prudente", "Zéro", "Dix"], a: 1, exp: "Défense en profondeur : une erreur de config ne suffit pas à ouvrir la porte." },
+      { type: "qcm", q: "Le bibliothécaire essaie DELETE /api/membres/12 (gestion de comptes). Réponse attendue :", opts: ["200", "403 : authentifié, mais ce droit est réservé à ADMIN", "401", "204"], a: 1, exp: "La matrice le dit : gérer les comptes = ADMIN. Bibliothécaire → Forbidden." }
+    ],
+    solution: `<pre class="pseudo">// La matrice traduite en code — extraits :
+
+// 1. Routes (SecuriteConfig) :
+.requestMatchers(HttpMethod.GET, "/api/livres/**").permitAll()   // catalogue public
+.requestMatchers(HttpMethod.POST, "/api/membres").permitAll()   // inscription publique
+.requestMatchers("/api/admin/**").hasRole("ADMIN")               // zone admin
+.anyRequest().authenticated()                                    // reste : connecté
+
+// 2. Méthodes (services) :
+@PreAuthorize("hasAnyRole('BIBLIOTHECAIRE','ADMIN')")            // droit lié au rôle
+public List&lt;EmpruntDto&gt; tousLesEmprunts() { ... }               // voir tous les emprunts
+
+@PreAuthorize("hasAnyRole('BIBLIOTHECAIRE','ADMIN')")            // idem pour ajouter un livre
+public Livre ajouterLivre(CreationLivreDto dto) { ... }
+
+// 3. Métier (le « soi ») :
+public void rendre(Long empruntId, String emailDemandeur, boolean estAdmin) {  // qui rend ?
+    Emprunt e = repo.findById(empruntId).orElseThrow(...);       // charge l'emprunt (ou 404)
+    boolean proprietaire = e.getMembre().getEmail().equals(emailDemandeur);  // est-ce le sien ?
+    if (!proprietaire && !estAdmin)                              // ni propriétaire, ni admin…
+        throw new AccesRefuseException("Cet emprunt ne vous appartient pas");  // …→ 403
+    ...                                                          // sinon : on clôture l'emprunt
+}                                                                // fin de la méthode</pre>
+<p>Une matrice de droits claire PUIS le code qui la traduit : toujours dans cet ordre. La sécurité se conçoit, elle ne se rustine pas.</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-mes-emprunts", title: "La route « mes emprunts »", level: 2,
+    statement: "Écris la méthode de contrôleur <code>GET /api/mes-emprunts</code> qui renvoie les emprunts EN COURS de l'utilisateur connecté, et la méthode de service correspondante <code>empruntsEnCoursDe(String email)</code> qui charge le membre par email (<code>findByEmail</code> → orElseThrow) puis renvoie les DTO des emprunts avec <code>dateRetour</code> null.",
+    hints: [
+      "Le contrôleur reçoit Principal principal en paramètre et passe principal.getName() au service.",
+      "Le repository a besoin de findByMembreEmailAndDateRetourIsNull (requête dérivée à travers la relation !).",
+      "Transforme en DTO dans le service avec .stream().map(EmpruntDto::depuis).toList() (leçon Java 10)."
+    ],
+    solution: "// --- CONTROLLER ---\n@GetMapping(\"/api/mes-emprunts\")\npublic List<EmpruntDto> mesEmprunts(Principal principal) {\n    // l'identité vient de l'authentification : infalsifiable\n    return empruntService.empruntsEnCoursDe(principal.getName());\n}\n\n// --- REPOSITORY ---\n// Requête dérivée qui TRAVERSE la relation : membre.email\nList<Emprunt> findByMembreEmailAndDateRetourIsNull(String email);\n\n// --- SERVICE ---\npublic List<EmpruntDto> empruntsEnCoursDe(String email) {\n    // vérifier que le membre existe (sinon 404 propre)\n    membreRepo.findByEmail(email)\n              .orElseThrow(() -> new MembreIntrouvableException(email));\n\n    return empruntRepo.findByMembreEmailAndDateRetourIsNull(email)\n                      .stream()\n                      .map(EmpruntDto::depuis)   // entités → DTO plats (leçon 11)\n                      .toList();\n}",
+    note: "findByMembreEmailAnd... : Spring Data navigue dans la relation (Emprunt.membre.email) rien qu'avec le nom. Et remarque : AUCUN id de membre dans l'URL — l'IDOR n'a même pas de porte où frapper." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

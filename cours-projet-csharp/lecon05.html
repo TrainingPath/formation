@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Le DbContext et les requêtes LINQ",
+  subtitle: "Lire et écrire dans SQL Server sans SQL manuel.",
+  theory: `
+<h3>1. Interroger en LINQ</h3>
+<p><strong>Interroger</strong> une base, c'est lui poser une question (« quels jeux sont disponibles à la location ? ») et recevoir les fiches correspondantes. <strong>LINQ</strong> (Language Integrated Query, « requêtes intégrées au langage ») permet d'écrire ces questions directement en C#, sans taper du SQL à la main. Dans les exemples, <code>_db</code> est notre DbContext (l'accès à la base) :</p>
+<pre class="pseudo">var louables = await _db.Jeux                     // on interroge la table des jeux (_db = le DbContext)
+    .Where(j =&gt; j.StockLocation &gt; 0)              // ne garder que les jeux dont le stock de location est > 0
+    .ToListAsync();                               // exécuter la requête et ramener le résultat sous forme de liste
+
+var parCategorie = await _db.Jeux                 // nouvelle interrogation de la table des jeux
+    .Where(j =&gt; j.CategorieId == id)              // ne garder que ceux d'une catégorie précise (dont le numéro vaut id)
+    .OrderBy(j =&gt; j.PrixLocation)                 // les ranger du prix de location le plus bas au plus haut
+    .ToListAsync();                               // exécuter et récupérer la liste</pre>
+<p>LINQ traduit ces expressions C# en SQL exécuté sur SQL Server : <code>Where</code> devient WHERE (filtrer), <code>OrderBy</code> devient ORDER BY (trier). La partie <code>j =&gt; j.StockLocation &gt; 0</code> est une <strong>lambda</strong> : une mini-fonction anonyme qui se lit « pour un jeu j, garde-le si son StockLocation est supérieur à 0 » — <code>j</code> représente tour à tour chaque jeu examiné. On retrouve les notions du cours SQL, mais écrites en C#.</p>
+
+<h3>2. Toujours en asynchrone</h3>
+<pre class="pseudo">ToListAsync()   FirstOrDefaultAsync()   CountAsync()   AnyAsync()</pre>
+<p>Ces quatre méthodes rapportent respectivement : une liste, le premier élément (ou rien), un nombre, et un vrai/faux (« existe-t-il au moins un… ? »). Le mot-clé <strong>async</strong> (asynchrone) signifie « sans bloquer » : pendant que la base réfléchit, le programme n'attend pas les bras croisés. Un <strong>thread</strong> est un « ouvrier » du serveur qui exécute le travail ; les méthodes <code>...Async</code> libèrent cet ouvrier pendant l'attente de la base, ce qui lui permet de servir d'autres clients. C'est essentiel à la <strong>scalabilité</strong> (la capacité de l'application à tenir la charge quand les utilisateurs se multiplient). On les fait précéder de <code>await</code>, qui veut dire « attends ici le résultat, mais laisse l'ouvrier travailler ailleurs entre-temps ».</p>
+
+<h3>3. Charger les relations : Include</h3>
+<pre class="pseudo">var jeux = await _db.Jeux                         // on interroge la table des jeux
+    .Include(j =&gt; j.Categorie)   // charge la catégorie en une requête
+    .ToListAsync();                               // exécuter et récupérer la liste (avec la catégorie de chaque jeu)</pre>
+<p><code>Include</code> demande de rapporter aussi les fiches liées (ici la catégorie de chaque jeu) dans la même requête. Sans lui, accéder à <code>jeu.Categorie</code> dans une boucle déclencherait une requête pour chaque jeu : c'est le fameux <strong>problème N+1</strong> (1 requête pour la liste + N requêtes, une par élément), qui ralentit énormément (leçon 19).</p>
+
+<h3>4. Écrire : Add, Update, Remove, SaveChanges</h3>
+<pre class="pseudo">_db.Jeux.Add(nouveauJeu);                         // marque un nouveau jeu comme "à insérer"
+jeu.PrixLocation = 4.5m;      // modification suivie automatiquement
+_db.Jeux.Remove(jeu);                             // marque un jeu comme "à supprimer"
+await _db.SaveChangesAsync(); // valide TOUT en une transaction implicite</pre>
+<p>EF Core <strong>suit les changements</strong> (change tracking) : il note tout ce qu'on modifie sur les entités déjà chargées, comme un serveur qui mémorise les ajouts à votre commande. Le <code>4.5m</code> est un nombre décimal (le suffixe <code>m</code> = <em>money</em>, il indique un <code>decimal</code>, le type exact pour l'argent). <code>SaveChangesAsync</code> envoie alors tout d'un coup les ordres INSERT/UPDATE/DELETE, dans une <strong>transaction</strong> : soit tout réussit, soit rien n'est enregistré (comme un virement bancaire qui n'est validé que s'il aboutit entièrement).</p>
+
+<h3>5. Agréger et projeter</h3>
+<pre class="pseudo">await _db.Jeux.CountAsync();                                      // compter le nombre total de jeux (calcul fait côté base)
+await _db.Jeux.AverageAsync(j =&gt; j.PrixLocation);                // calculer le prix de location moyen
+await _db.Jeux.Select(j =&gt; new { j.Id, j.Titre }).ToListAsync();  // projection</pre>
+<div class="tip"><strong>Agréger</strong>, c'est résumer plusieurs valeurs en une seule (compter, faire une moyenne). <strong>Projeter</strong> avec <code>Select</code>, c'est ne récupérer que certaines colonnes (ici l'Id et le Titre) dans un objet léger, plutôt que la fiche entière — comme photocopier seulement deux lignes d'un document. On filtre, trie et compte <strong>côté base</strong> plutôt que de tout ramener en mémoire : c'est bien plus rapide, comme en cours SQL Server.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Filtrer les jeux :", opts: [".Where(j => j.StockLocation > 0)", ".Filter()", ".Search()", ".Only()"], a: 0, exp: "Where." },
+    { type: "qcm", q: "LINQ est traduit en…", opts: ["HTML", "SQL exécuté sur SQL Server", "JSON", "CSS"], a: 1, exp: "Requête SQL." },
+    { type: "qcm", q: "Exécuter une requête liste :", opts: ["ToListAsync()", "run()", "exec()", "get()"], a: 0, exp: "ToListAsync." },
+    { type: "qcm", q: "Pourquoi les méthodes Async ?", opts: ["Par style", "Libérer le thread pendant l'attente (scalabilité)", "Chiffrer", "Trier"], a: 1, exp: "Non bloquant." },
+    { type: "qcm", q: "Charger la catégorie en une requête :", opts: [".Include(j => j.Categorie)", ".Load()", ".Eager()", ".With()"], a: 0, exp: "Include." },
+    { type: "qcm", q: "Sans Include, une boucle sur la relation cause…", opts: ["Rien", "Le problème N+1", "Une faille XSS", "Un tri"], a: 1, exp: "N+1." },
+    { type: "qcm", q: "Ajouter une entité :", opts: ["_db.Jeux.Add(jeu)", "_db.insert()", "new Jeu()", "_db.Save()"], a: 0, exp: "Add." },
+    { type: "qcm", q: "Valider les changements :", opts: ["SaveChangesAsync()", "Commit() manuel toujours", "Flush()", "rien"], a: 0, exp: "SaveChanges." },
+    { type: "qcm", q: "EF Core suit…", opts: ["Le CSS", "Les changements des entités chargées", "Les tests", "Les routes"], a: 1, exp: "Change tracking." },
+    { type: "qcm", q: "Compter :", opts: ["CountAsync()", "Length", "Size()", "Total()"], a: 0, exp: "CountAsync." },
+    { type: "vf", q: "SaveChangesAsync valide plusieurs modifications en une transaction implicite.", a: true, exp: "Atomicité par défaut." },
+    { type: "qcm", q: "Ne charger que certaines colonnes :", opts: [".Select(j => new { j.Id, j.Titre })", ".All()", ".Raw()", ".Full()"], a: 0, exp: "Projection." },
+    { type: "vf", q: "On filtre/trie côté base plutôt que tout charger en mémoire.", a: true, exp: "Efficacité." },
+    { type: "qcm", q: "4.5m signifie…", opts: ["Un double", "Un littéral decimal", "Une erreur", "Un int"], a: 1, exp: "Suffixe m = decimal." },
+    { type: "qcm", q: "FirstOrDefaultAsync renvoie…", opts: ["Une liste", "Le premier élément ou null", "Un booléen", "Le nombre"], a: 1, exp: "Un ou null." }
+  ],
+  final: {
+    title: "Exercice final — Interroger le catalogue",
+    intro: `<p>On écrit les requêtes LINQ de lecture.</p>`,
+    questions: [
+      { type: "qcm", q: "Les jeux louables :", opts: ["_db.Jeux.Where(j => j.StockLocation > 0).ToListAsync()", "_db.Jeux.All()", "SELECT manuel", "rien"], a: 0, exp: "Where + ToListAsync." },
+      { type: "qcm", q: "Charger la catégorie :", opts: [".Include(j => j.Categorie)", ".Load()", "rien", ".Eager()"], a: 0, exp: "Include." },
+      { type: "qcm", q: "Trier par prix :", opts: [".OrderBy(j => j.PrixLocation)", ".Sort()", ".By()", "rien"], a: 0, exp: "OrderBy." },
+      { type: "qcm", q: "Persister les changements :", opts: ["await _db.SaveChangesAsync()", "_db.Flush()", "rien", "Commit() manuel"], a: 0, exp: "SaveChanges." },
+      { type: "vf", q: "Les méthodes Async libèrent le thread pendant l'accès à la base.", a: true, exp: "Scalabilité." }
+    ],
+    solution: `<pre class="pseudo">var louables = await _db.Jeux              // on interroge la table des jeux
+    .Where(j =&gt; j.StockLocation &gt; 0)       // ne garder que ceux disponibles à la location
+    .Include(j =&gt; j.Categorie)             // charger aussi la catégorie de chaque jeu
+    .ToListAsync();                        // exécuter et récupérer la liste
+
+// écrire
+_db.Jeux.Add(nouveauJeu);                  // marquer un nouveau jeu "à insérer"
+await _db.SaveChangesAsync();              // valider en base (transaction implicite)</pre>
+<p>La couche données est maîtrisée. Demain : la couche service et les règles métier.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes requêtes LINQ…",
+  items: [
+  { id: "projcsharp-l5", title: "Requêtes du catalogue", level: 2,
+    statement: "Écris trois requêtes LINQ async sur _db.Jeux : (1) les jeux vendables (StockVente > 0) avec leur catégorie chargée ; (2) le nombre de jeux d'une catégorie donnée ; (3) une projection titre + prix de location des jeux louables, triés par titre.",
+    hints: [
+      "(1) .Where(j => j.StockVente > 0).Include(j => j.Categorie).ToListAsync().",
+      "(2) .CountAsync(j => j.CategorieId == id).",
+      "(3) .Where(j => j.StockLocation > 0).OrderBy(j => j.Titre).Select(j => new { j.Titre, j.PrixLocation }).ToListAsync()."
+    ],
+    solution: "// (1) jeux vendables + catégorie\nvar vendables = await _db.Jeux              // on interroge la table des jeux\n    .Where(j => j.StockVente > 0)           // ne garder que ceux disponibles a la vente\n    .Include(j => j.Categorie)              // charger aussi leur categorie\n    .ToListAsync();                         // executer et recuperer la liste\n\n// (2) nombre de jeux d'une catégorie\nvar nb = await _db.Jeux.CountAsync(j => j.CategorieId == id);   // compter cote base ceux de la categorie id\n\n// (3) projection des jeux louables\nvar louables = await _db.Jeux               // on interroge la table des jeux\n    .Where(j => j.StockLocation > 0)        // ne garder que les louables\n    .OrderBy(j => j.Titre)                  // les trier par titre (A a Z)\n    .Select(j => new { j.Titre, j.PrixLocation })   // ne ramener que titre + prix de location\n    .ToListAsync();                         // executer et recuperer la liste",
+    note: "LINQ exprime filtre, comptage et projection en C# ; EF Core les traduit en SQL efficace exécuté sur SQL Server. CountAsync compte côté base (sans tout charger), Select ne ramène que les colonnes utiles, Include précharge la relation. Tout est asynchrone pour la scalabilité de l'API." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

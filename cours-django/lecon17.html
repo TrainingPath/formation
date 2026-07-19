@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Permissions et autorisation",
+  subtitle: "Être connecté ne suffit pas toujours : qui a le droit de faire quoi ?",
+  theory: `
+<h3>1. Authentification ≠ autorisation</h3>
+<p>Deux notions à ne pas confondre. L'<strong>authentification</strong> (leçon 16) répond à « <strong>qui es-tu ?</strong> » : elle vérifie l'identité. L'<strong>autorisation</strong> répond à « <strong>qu'as-tu le droit de faire ?</strong> » : elle vérifie les permissions. Analogie : à l'aéroport, montrer sa carte d'identité, c'est l'authentification ; avoir un billet valable pour CE vol, c'est l'autorisation. Un utilisateur connecté n'a pas forcément tous les droits : il peut voir ses tâches mais pas celles des autres, un simple membre ne peut pas supprimer, etc.</p>
+
+<h3>2. Le cas le plus courant : « c'est bien à moi ? »</h3>
+<pre class="pseudo">from django.shortcuts import get_object_or_404      # récupérer un objet ou renvoyer 404
+
+@login_required                                     # 1) exiger d'être connecté
+def supprimer(request, id):
+    tache = get_object_or_404(Tache, id=id)         # 2) la tâche existe ? sinon 404
+    if tache.utilisateur != request.user:           # 3) est-ce MA tâche ? (!= veut dire "différent de")
+        return HttpResponseForbidden("Interdit")    #    sinon on renvoie une erreur 403 (interdit)
+    tache.delete()                                  # 4) c'est bien la mienne : je la supprime
+    return redirect("liste")                        # 5) retour à la liste</pre>
+<div class="tip">La règle d'or : ne fais jamais confiance à l'identifiant reçu. Même connecté, un utilisateur pourrait taper l'URL <code>/taches/42/supprimer/</code> d'une tâche qui n'est pas la sienne. On VÉRIFIE toujours <code>tache.utilisateur == request.user</code> avant d'agir.</div>
+
+<h3>3. Les codes HTTP de refus</h3>
+<pre class="pseudo">401  # non authentifié (pas connecté)     → on redirige vers la page de connexion
+403  # authentifié mais NON AUTORISÉ       → HttpResponseForbidden (interdit)
+404  # ressource introuvable (ou cachée)   → get_object_or_404</pre>
+<p><strong>401</strong> dit « connecte-toi », <strong>403</strong> dit « toi, tu n'as pas le droit ». On renvoie <code>403</code> avec <code>HttpResponseForbidden</code>. Parfois on préfère renvoyer <strong>404</strong> pour une ressource qui existe mais qu'on veut cacher (ne pas révéler son existence).</p>
+
+<h3>4. is_staff, is_superuser et les groupes</h3>
+<p>Un <strong>groupe</strong> est un ensemble d'utilisateurs à qui l'on attribue des droits communs, d'un coup — comme un rôle (« Modérateurs », « Rédacteurs »).</p>
+<pre class="pseudo">request.user.is_staff        # True si l'utilisateur a accès à l'interface d'administration
+request.user.is_superuser    # True si l'utilisateur a TOUS les droits (le super-admin)
+request.user.groups          # les groupes de l'utilisateur (ex. « Modérateurs »)</pre>
+<p>Django distingue les utilisateurs ordinaires, le <em>staff</em> (accès à l'admin, leçon 19) et les <em>superutilisateurs</em> (tous les droits). On peut aussi ranger les gens dans des <strong>groupes</strong> pour leur donner des droits communs.</p>
+
+<h3>5. Le système de permissions</h3>
+<p>Une <strong>permission</strong> est un droit précis et nommé (par exemple « supprimer une tâche »). <code>has_perm</code> vérifie si l'utilisateur possède ce droit.</p>
+<pre class="pseudo">request.user.has_perm("taches.delete_tache")   # a-t-il la permission de SUPPRIMER une Tache ?</pre>
+<p>Pour chaque modèle, Django crée automatiquement quatre permissions : <code>add</code> (ajouter), <code>change</code> (modifier), <code>delete</code> (supprimer) et <code>view</code> (voir). On peut les attribuer à un utilisateur ou à un groupe, puis les tester avec <code>has_perm(...)</code>.</p>
+
+<h3>6. Décorateurs et mixins d'autorisation</h3>
+<p>Un <strong>lambda</strong> est une mini-fonction anonyme écrite sur une ligne : <code>lambda u: u.is_staff</code> signifie « prend un utilisateur u et renvoie u.is_staff ».</p>
+<pre class="pseudo">from django.contrib.auth.decorators import login_required, permission_required, user_passes_test
+
+@permission_required("taches.delete_tache")     # exige CETTE permission pour entrer dans la vue
+def supprimer(request, id): ...                  # (corps de la vue)
+
+@user_passes_test(lambda u: u.is_staff)          # exige que le test (ici : être staff) soit vrai
+def tableau_de_bord(request): ...                # (corps de la vue)</pre>
+<div class="warn">Vérifie les droits CÔTÉ SERVEUR, dans la vue. Masquer un bouton « Supprimer » en HTML améliore l'expérience, mais n'est PAS une sécurité : n'importe qui peut appeler l'URL directement. La vraie barrière est toujours dans le code Python de la vue.</div>
+
+<h3>7. Filtrer plutôt que refuser</h3>
+<pre class="pseudo">taches = Tache.objects.filter(utilisateur=request.user)   # on ne récupère QUE les tâches de l'utilisateur</pre>
+<p>Souvent, la meilleure autorisation est un bon filtre : si la liste ne contient déjà que les tâches de l'utilisateur, il ne peut ni voir ni toucher celles des autres. Combine le filtrage (pour l'affichage) et la vérification (avant chaque action).</p>`,
+  exercises: [
+    { type: "qcm", q: "Authentification vs autorisation :", opts: ["Même chose", "Authentification = « qui es-tu ? » ; autorisation = « qu'as-tu le droit de faire ? »", "L'inverse", "Aucun rapport"], a: 1, exp: "Deux questions distinctes." },
+    { type: "qcm", q: "Un utilisateur connecté a-t-il forcément tous les droits ?", opts: ["Oui", "Non : il faut encore vérifier ce qu'il a le droit de faire", "Toujours", "Jamais aucun"], a: 1, exp: "Connecté ≠ autorisé à tout." },
+    { type: "qcm", q: "Avant de supprimer la tâche d'id reçu dans l'URL, on…", opts: ["Supprime directement", "Vérifie que tache.utilisateur == request.user", "Affiche la tâche", "Rien"], a: 1, exp: "Ne jamais faire confiance à l'id reçu." },
+    { type: "qcm", q: "Le code HTTP 403 signifie…", opts: ["Introuvable", "Authentifié mais NON AUTORISÉ (interdit)", "OK", "Redirection"], a: 1, exp: "403 = tu es connecté mais tu n'as pas le droit." },
+    { type: "qcm", q: "Le code 401 signifie plutôt…", opts: ["Interdit malgré la connexion", "NON authentifié : connecte-toi d'abord", "OK", "Erreur serveur"], a: 1, exp: "401 = pas connecté ; 403 = connecté mais pas autorisé." },
+    { type: "qcm", q: "<code>HttpResponseForbidden(...)</code> renvoie quel code ?", opts: ["200", "403", "404", "302"], a: 1, exp: "C'est le refus d'autorisation." },
+    { type: "qcm", q: "<code>get_object_or_404(Tache, id=id)</code> …", opts: ["Crée la tâche", "Renvoie la tâche ou une erreur 404 si elle n'existe pas", "Supprime", "Toujours 200"], a: 1, exp: "Pratique et sûr pour récupérer un objet." },
+    { type: "qcm", q: "<code>request.user.is_superuser</code> vaut True pour…", opts: ["Tout le monde", "Un utilisateur ayant TOUS les droits", "Un anonyme", "Personne"], a: 1, exp: "Le superutilisateur a tous les droits." },
+    { type: "qcm", q: "<code>request.user.is_staff</code> concerne…", opts: ["La vitesse", "L'accès à l'interface d'administration", "Le mot de passe", "L'URL"], a: 1, exp: "Le staff peut entrer dans l'admin." },
+    { type: "qcm", q: "Pour chaque modèle, Django crée les permissions…", opts: ["run/stop", "add / change / delete / view", "get/post", "aucune"], a: 1, exp: "Quatre permissions automatiques par modèle." },
+    { type: "qcm", q: "<code>request.user.has_perm(\"taches.delete_tache\")</code> teste…", opts: ["Le mot de passe", "Si l'utilisateur a la permission de supprimer une Tache", "L'URL", "La vitesse"], a: 1, exp: "has_perm interroge le système de permissions." },
+    { type: "qcm", q: "<code>@permission_required(\"taches.delete_tache\")</code> …", opts: ["Style la vue", "Exige cette permission pour accéder à la vue", "Crée un user", "Migre"], a: 1, exp: "Un décorateur d'autorisation." },
+    { type: "qcm", q: "Masquer un bouton « Supprimer » en HTML suffit-il à sécuriser ?", opts: ["Oui", "Non : la vérification doit se faire CÔTÉ SERVEUR, dans la vue", "Parfois", "En prod seulement"], a: 1, exp: "Le HTML n'est jamais une barrière de sécurité." },
+    { type: "vf", q: "Filtrer la liste sur request.user est souvent la forme la plus simple d'autorisation.", a: true, exp: "On ne montre que ce qui appartient à l'utilisateur." },
+    { type: "qcm", q: "Les groupes servent à…", opts: ["Styliser", "Donner des droits communs à un ensemble d'utilisateurs (ex. « Modérateurs »)", "Router", "Migrer"], a: 1, exp: "Un groupe regroupe des permissions partagées." }
+  ],
+  final: {
+    title: "Exercice final — Sécuriser la suppression",
+    intro: `<p>On protège la suppression d'une tâche :</p>
+<pre class="pseudo">from django.shortcuts import get_object_or_404, redirect        # récupérer / rediriger
+from django.http import HttpResponseForbidden                   # réponse 403 (interdit)
+from django.contrib.auth.decorators import login_required       # décorateur "connecté requis"
+
+@login_required                                     # exiger d'être connecté (sinon 401 → connexion)
+def supprimer(request, id):
+    tache = get_object_or_404(Tache, id=id)         # exister (sinon 404)
+    if tache.utilisateur != request.user:           # m'appartenir ?
+        return HttpResponseForbidden("Ce n'est pas votre tâche.")  # sinon 403
+    tache.delete()                                  # supprimer
+    return redirect("liste")                        # rediriger</pre>`,
+    questions: [
+      { type: "qcm", q: "À quoi sert <code>get_object_or_404</code> ici ?", opts: ["Créer la tâche", "Récupérer la tâche, ou renvoyer 404 si l'id n'existe pas", "La supprimer", "La styliser"], a: 1, exp: "Récupération sûre par id." },
+      { type: "qcm", q: "Que vérifie <code>tache.utilisateur != request.user</code> ?", opts: ["Le mot de passe", "Que la tâche appartient bien à l'utilisateur connecté", "L'URL", "La date"], a: 1, exp: "On refuse d'agir sur la tâche d'autrui." },
+      { type: "qcm", q: "Quel code renvoie <code>HttpResponseForbidden</code> ?", opts: ["200", "403 (interdit)", "404", "302"], a: 1, exp: "403 = autorisation refusée." },
+      { type: "qcm", q: "Sans cette vérification, un utilisateur pourrait…", opts: ["Rien", "Supprimer les tâches d'autrui en tapant l'URL directement", "Se déconnecter", "Migrer"], a: 1, exp: "L'id de l'URL ne prouve pas la propriété." },
+      { type: "vf", q: "@login_required + vérification de propriété = seul le propriétaire connecté peut supprimer.", a: true, exp: "Authentification puis autorisation." }
+    ],
+    solution: `<pre class="pseudo">@login_required                                   # 1) être connecté (401 sinon)
+def supprimer(request, id):
+    tache = get_object_or_404(Tache, id=id)       # 2) exister (404 sinon)
+    if tache.utilisateur != request.user:         # 3) m'appartenir
+        return HttpResponseForbidden("Interdit")  #    (403 sinon)
+    tache.delete()                                # 4) supprimer
+    return redirect("liste")                      # 5) rediriger
+# Trois barrières : connecté, existant, à moi. C'est le cœur
+# de l'autorisation — toujours vérifiée côté serveur.</pre>
+<p>Tes actions sont protégées. Demain : exposer les données en JSON avec une API.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code Django ici…",
+  items: [
+  { id: "dj-l17", title: "Une vue de modification sécurisée", level: 3,
+    statement: "Écris une vue <code>modifier(request, id)</code> qui : exige d'être connecté ; récupère la tâche par son id (404 si absente) ; renvoie un 403 si la tâche n'appartient pas à l'utilisateur connecté ; sinon, en POST, remplace le texte par request.POST['texte'], sauvegarde et redirige vers « liste ».",
+    hints: [
+      "@login_required au-dessus de la vue.",
+      "tache = get_object_or_404(Tache, id=id) ; if tache.utilisateur != request.user: return HttpResponseForbidden(...).",
+      "En POST : tache.texte = request.POST['texte'] ; tache.save() ; return redirect('liste')."
+    ],
+    solution: "from django.shortcuts import get_object_or_404, redirect, render\nfrom django.http import HttpResponseForbidden\nfrom django.contrib.auth.decorators import login_required\nfrom .models import Tache\n\n@login_required\ndef modifier(request, id):\n    tache = get_object_or_404(Tache, id=id)          # exister (404 sinon)\n    if tache.utilisateur != request.user:            # autorisation (403 sinon)\n        return HttpResponseForbidden(\"Interdit\")\n    if request.method == \"POST\":                     # traitement du formulaire\n        tache.texte = request.POST[\"texte\"]          # nouveau texte\n        tache.save()                                 # enregistrer\n        return redirect(\"liste\")                     # rediriger\n    return render(request, \"taches/modifier.html\", {\"tache\": tache})",
+    note: "L'ordre compte : connecté (401), existant (404), propriétaire (403), puis action. La vérification de propriété est la vraie sécurité, côté serveur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

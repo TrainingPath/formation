@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Louer un jeu : transaction et test de fonctionnalité",
+  subtitle: "Le cœur métier, écrit atomique et verrouillé — et prouvé de bout en bout.",
+  theory: `
+<h3>1. Pourquoi une transaction</h3>
+<p>Louer = deux écritures (créer la location, décrémenter le stock) qui doivent réussir <strong>ensemble ou pas du tout</strong>. Et deux clients simultanés ne doivent pas louer le dernier exemplaire tous les deux (course au stock).</p>
+<p>Une <strong>transaction</strong> est un groupe d'écritures en base traité comme un tout indivisible : soit elles réussissent <em>toutes</em>, soit aucune n'est conservée (on parle d'opération <strong>atomique</strong>, du grec « insécable »). Si une étape échoue, la base <em>annule</em> les précédentes — un <strong>rollback</strong>, « retour en arrière » — comme un virement bancaire qui, s'il ne peut créditer le destinataire, ne débite pas non plus l'émetteur. La <strong>concurrence</strong> désigne le fait que plusieurs utilisateurs agissent en même temps : sans précaution, deux clients pourraient louer le dernier exemplaire simultanément.</p>
+
+<h3>2. La transaction + le verrou</h3>
+<p>Un <strong>verrou</strong> (<em>lock</em>) réserve temporairement une ligne pour un seul utilisateur à la fois. <code>lockForUpdate()</code> génère un <code>SELECT … FOR UPDATE</code> : tant que la transaction du premier client n'est pas finie, le second attend son tour — impossible de vendre deux fois le dernier stock. <code>firstOrFail()</code> récupère la ligne ou lève une erreur si elle n'existe pas ; <code>decrement('stock_location')</code> retire 1 au stock en une seule opération sûre.</p>
+<pre class="pseudo">public function louer(User $client, int $jeuId, int $nbJours = 7): Location {   // louer un jeu pour un client, renvoie la location créée
+    return DB::transaction(function () use ($client, $jeuId, $nbJours) {   // tout ce bloc réussit ENSEMBLE ou est annulé
+        $jeu = Jeu::where('id', $jeuId)->lockForUpdate()->firstOrFail();  // SELECT ... FOR UPDATE : verrouille la ligne du jeu
+        if ($jeu->stock_location <= 0)                                    // s'il n'y a plus de stock de location…
+            throw new StockInsuffisantException("Plus de stock de location");   // …on lève l'exception (déclenche l'annulation)
+        $jeu->decrement('stock_location');                               // retire 1 au stock, de façon atomique
+        return Location::create([                                        // crée la location
+            'client_id' => $client->id, 'jeu_id' => $jeu->id,            // à qui, quel jeu
+            'date_debut' => now(), 'nb_jours' => $nbJours,               // date de début (maintenant) et durée
+        ]);
+    });
+}</pre>
+<p><code>lockForUpdate()</code> pose un verrou SQL : le second client attend la fin de la transaction du premier — pas de survente. Si l'exception est levée, <code>DB::transaction</code> annule <strong>tout</strong>.</p>
+
+<h3>3. La route protégée</h3>
+<p>La route utilise <strong>POST</strong> (et non GET) car elle <em>écrit</em> des données. Le <strong>middleware</strong> <code>'auth'</code> est un filtre placé avant le contrôleur : il n'autorise que les utilisateurs connectés. Le <strong>Post-Redirect-Get</strong> consiste à rediriger après un POST réussi, pour qu'un rafraîchissement de page ne renvoie pas le formulaire deux fois. <code>@csrf</code> insère dans le formulaire un <strong>jeton anti-CSRF</strong> — un code secret que Laravel vérifie pour s'assurer que la requête vient bien de votre site.</p>
+<pre class="pseudo">// routes/web.php
+Route::post('/louer/{jeu}', [LocationController::class, 'louer'])   // POST /louer/{jeu} -> méthode louer du contrôleur
+    ->middleware('auth');       // POST, jamais GET, pour écrire ; 'auth' = réservé aux connectés
+// contrôleur : redirige vers /mes-locations (Post-Redirect-Get)
+// @csrf dans le formulaire : Laravel vérifie le jeton automatiquement</pre>
+
+<h3>4. Le test de fonctionnalité</h3>
+<p>Ce test de fonctionnalité rejoue une vraie requête. <code>fresh()</code> relit le jeu depuis la base pour obtenir son stock à jour. <code>assertEquals(2, …)</code> vérifie que le stock est bien tombé à 2. <code>assertDatabaseCount('locations', 1)</code> vérifie qu'exactement une location a été enregistrée (et 0 quand le stock est nul : aucune « location fantôme »).</p>
+<pre class="pseudo">public function test_louer_decremente_le_stock(): void {                  // test : louer réduit bien le stock
+    $this->actingAs($this->client)->post("/louer/{$this->jeu->id}");     // un client connecté loue le jeu (POST)
+    $this->assertEquals(2, $this->jeu->fresh()->stock_location);         // le stock relu vaut 2 (3 - 1)
+    $this->assertDatabaseCount('locations', 1);                          // une location a bien été enregistrée
+}
+public function test_stock_nul_refuse_sans_location_fantome(): void {    // test : stock nul -> refus, sans rien créer
+    $this->jeu->update(['stock_location' => 0]);                         // on met le stock à 0
+    $this->actingAs($this->client)->post("/louer/{$this->jeu->id}");     // le client tente de louer
+    $this->assertDatabaseCount('locations', 0);   // rien créé
+}</pre>
+
+<h3>5. POST, jamais GET</h3>
+<div class="warn">Écrire (louer, acheter) se fait toujours en <strong>POST</strong>, jamais en GET : un GET est rejouable, indexable, préchargeable — un lien qui loue tout seul serait un désastre. Le Post-Redirect-Get évite en plus la double soumission au rafraîchissement. Laravel vérifie le jeton CSRF automatiquement sur toute requête POST/PUT/DELETE.</div>
+<div class="tip">Le test de fonctionnalité traverse toute la chaîne (HTTP -> middleware -> contrôleur -> service -> transaction -> base). Écrit avec la fonctionnalité, il tourne en CI sur un vrai MySQL : la règle métier la plus précieuse du projet est verrouillée dès sa naissance — impossible de la casser sans un job rouge.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["Une écriture", "Deux écritures atomiques (location + stock)", "Une lecture", "Rien"], a: 1, exp: "Ensemble ou pas du tout." },
+    { type: "qcm", q: "DB::transaction garantit…", opts: ["La vitesse", "Tout ou rien (rollback sur exception)", "Le CSS", "Le cache"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "lockForUpdate() pose…", opts: ["Un cache", "Un verrou SQL (SELECT FOR UPDATE)", "Un index", "Un cookie"], a: 1, exp: "Anti-course au stock." },
+    { type: "qcm", q: "Sans verrou, deux clients peuvent…", opts: ["Rien", "Louer le dernier exemplaire tous les deux", "Se déconnecter", "Chiffrer"], a: 1, exp: "Survente." },
+    { type: "qcm", q: "Si l'exception est levée…", opts: ["La location reste", "Tout est annulé (rollback)", "Le stock baisse quand même", "Rien"], a: 1, exp: "Aucune location fantôme." },
+    { type: "qcm", q: "Louer se fait en…", opts: ["GET", "POST", "PUT vers l'URL", "HEAD"], a: 1, exp: "Écrire = POST." },
+    { type: "qcm", q: "Un GET qui écrirait serait…", opts: ["Idéal", "Dangereux (rejouable, indexable, préchargé)", "Rapide", "Sûr"], a: 1, exp: "Jamais d'écriture en GET." },
+    { type: "qcm", q: "Le jeton CSRF est vérifié…", opts: ["Jamais", "Automatiquement par Laravel sur POST/PUT/DELETE", "À la main", "En prod seulement"], a: 1, exp: "@csrf dans le form." },
+    { type: "qcm", q: "Le Post-Redirect-Get évite…", opts: ["Le login", "La double soumission au rafraîchissement", "Le CSS", "Le cache"], a: 1, exp: "Redirection après POST." },
+    { type: "qcm", q: "Le test de fonctionnalité traverse…", opts: ["Le CSS seul", "HTTP -> contrôleur -> service -> transaction -> base", "Rien", "Le cache"], a: 1, exp: "Toute la chaîne." },
+    { type: "vf", q: "Le test tourne en CI sur un vrai MySQL.", a: true, exp: "Règle verrouillée." },
+    { type: "qcm", q: "$jeu->fresh() dans le test…", opts: ["Chiffre", "Relit le jeu depuis la base (stock à jour)", "Ralentit", "Déploie"], a: 1, exp: "Vérifier l'effet." },
+    { type: "qcm", q: "Sur stock nul, le test vérifie…", opts: ["Rien", "assertDatabaseCount('locations', 0)", "Un 200", "Le CSS"], a: 1, exp: "Pas de fantôme." },
+    { type: "qcm", q: "decrement('stock_location')…", opts: ["Chiffre", "Décrémente le stock atomiquement", "Supprime le jeu", "Rien"], a: 1, exp: "Une écriture." },
+    { type: "vf", q: "La règle métier la plus précieuse est verrouillée dès sa naissance par son test.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Louer, atomique et prouvé",
+    intro: `<p>Transaction + verrou + POST + test de fonctionnalité.</p>`,
+    questions: [
+      { type: "qcm", q: "L'atomicité vient de :", opts: ["DB::transaction", "un try/catch", "la chance", "un cache"], a: 0, exp: "Tout ou rien." },
+      { type: "qcm", q: "La course au stock est bloquée par :", opts: ["lockForUpdate() (FOR UPDATE)", "plus de RAM", "un index", "rien"], a: 0, exp: "Second client en attente." },
+      { type: "qcm", q: "L'écriture se fait en :", opts: ["POST (+ redirect)", "GET", "HEAD", "OPTIONS"], a: 0, exp: "Jamais en GET." },
+      { type: "qcm", q: "La preuve : le test vérifie :", opts: ["stock -1, et 0 location sur stock nul", "le CSS", "le port", "rien"], a: 0, exp: "Toute la chaîne." },
+      { type: "vf", q: "Sur stock nul, aucune location fantôme n'est créée.", a: true, exp: "Rollback." }
+    ],
+    solution: `<pre class="pseudo">public function louer(User $c, int $id, int $n = 7): Location {          // louer un jeu (client, id du jeu, nb jours)
+  return DB::transaction(function () use ($c, $id, $n) {                 // atomique : tout ou rien
+    $jeu = Jeu::where('id', $id)->lockForUpdate()->firstOrFail();        // verrouille la ligne (anti-survente)
+    if ($jeu->stock_location <= 0) throw new StockInsuffisantException(...);   // plus de stock -> exception (rollback)
+    $jeu->decrement('stock_location');                                  // -1 au stock
+    return Location::create(['client_id'=>$c->id,'jeu_id'=>$jeu->id,'nb_jours'=>$n]);   // enregistre la location
+  });
+}
+// Route::post('/louer/{jeu}')->middleware('auth');                      // écriture en POST, réservée aux connectés
+// test : post -> stock -1 ; stock 0 -> assertDatabaseCount('locations', 0)   // vérifie l'effet et l'absence de fantôme</pre>
+<p>Louer est verrouillé. Demain : acheter — prix figé et couverture (PHPUnit).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta transaction de location et son test…",
+  items: [
+  { id: "proj6php-l11", title: "Louer : transaction verrouillée + test de fonctionnalité", level: 3,
+    statement: "Écris le service louer (DB::transaction, lockForUpdate, contrôle de stock, decrement), la route POST protégée, et deux tests de fonctionnalité (décrément OK ; stock nul -> aucune location). Explique en 3-4 lignes le rôle du verrou et pourquoi POST et pas GET.",
+    hints: [
+      "DB::transaction(fn() => ...) ; Jeu::where('id',$id)->lockForUpdate()->firstOrFail().",
+      "Route::post(...)->middleware('auth') ; @csrf dans le formulaire.",
+      "Tests : $jeu->fresh()->stock_location ; assertDatabaseCount('locations', ...)."
+    ],
+    solution: "// app/Services/JeuService.php\npublic function louer(User $client, int $jeuId, int $nbJours = 7): Location {   // louer un jeu pour un client\n    return DB::transaction(function () use ($client, $jeuId, $nbJours) {   // tout ou rien (atomique)\n        $jeu = Jeu::where('id', $jeuId)->lockForUpdate()->firstOrFail();   // verrouille la ligne (anti-survente)\n        if ($jeu->stock_location <= 0)                                    // plus de stock de location ?\n            throw new StockInsuffisantException(\"Plus de stock de location\");   // -> exception (annule tout)\n        $jeu->decrement('stock_location');                               // retire 1 au stock (atomique)\n        return Location::create([                                        // enregistre la location\n            'client_id' => $client->id, 'jeu_id' => $jeu->id,            // client + jeu\n            'date_debut' => now(), 'nb_jours' => $nbJours,               // debut = maintenant, duree\n        ]);\n    });\n}\n\n// routes/web.php\nRoute::post('/louer/{jeu}', [LocationController::class, 'louer'])->middleware('auth');   // POST reserve aux connectes\n\n// tests/Feature/LouerTest.php\npublic function test_louer_decremente(): void {                          // louer reduit le stock\n    $this->actingAs($this->client)->post(\"/louer/{$this->jeu->id}\");     // le client loue (POST)\n    $this->assertEquals(2, $this->jeu->fresh()->stock_location);         // stock relu = 2\n    $this->assertDatabaseCount('locations', 1);                          // 1 location creee\n}\npublic function test_stock_nul_refuse_sans_fantome(): void {             // stock nul -> refus sans creation\n    $this->jeu->update(['stock_location' => 0]);                         // stock a 0\n    $this->actingAs($this->client)->post(\"/louer/{$this->jeu->id}\");     // tentative de location\n    $this->assertDatabaseCount('locations', 0);                          // aucune location fantome\n}\n\n// LE VERROU ET LE CHOIX DE POST\n// Verrou : deux clients qui louent le DERNIER exemplaire en meme temps liraient\n// tous deux stock=1 et creeraient DEUX locations (survente). lockForUpdate() force\n// le second a attendre la fin de la transaction du premier : il relit stock=0 et\n// se voit refuser. Correct sous charge.\n// POST et pas GET : un GET est rejouable, prefetche par le navigateur, indexe par\n// les moteurs -- un lien qui loue tout seul serait un desastre. Ecrire = POST,\n// suivi d'une redirection (Post-Redirect-Get) pour eviter la double soumission.",
+    note: "La transaction verrouillée est le même patron qu'au Niveau 6, mais ici elle naît avec son test de fonctionnalité qui la prouve sur un vrai MySQL, en CI, à chaque commit. C'est la différence décisive : au Niveau 6 on espérait que la concurrence était gérée ; au Niveau 8 on le vérifie mécaniquement. lockForUpdate convient à un stock disputé ; le principe reste : la correction sous charge n'est jamais laissée au hasard." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Secrets et configuration par environnement (profils Spring)",
+  subtitle: "Rien de sensible dans le dépôt ni dans l'image — et un scan qui le prouve.",
+  theory: `
+<h3>1. La config lit l'environnement</h3>
+<p>Un <strong>secret</strong> est une donnée sensible qui ne doit jamais être vue (mot de passe de base de données, clé d'accès). L'<strong>environnement</strong> est l'ensemble des réglages fournis au programme au moment où il démarre, en dehors du code — via des <strong>variables d'environnement</strong>, des étiquettes du système que le programme lit à l'exécution. « En dur » signifie écrit noir sur blanc dans le code ; on l'évite pour un secret. La syntaxe <code>\${NOM}</code> dit « va chercher la valeur dans la variable d'environnement NOM ».</p>
+<pre class="pseudo"># application.yml — AUCUN secret en dur
+spring:                                          # racine de la configuration Spring
+  datasource:                                    # reglages de la source de donnees (la base)
+    url: \${SPRING_DATASOURCE_URL}                # adresse de la base : LUE dans l'environnement, pas ecrite ici
+    username: \${SPRING_DATASOURCE_USERNAME}      # identifiant : idem, fourni par l'environnement
+    password: \${SPRING_DATASOURCE_PASSWORD}      # mot de passe : idem, jamais en dur dans le fichier
+  jpa: { hibernate: { ddl-auto: validate } }     # jpa : verifie que la base correspond aux entites, sans la modifier (validate)</pre>
+<p>Le code ne contient que des <em>références</em> aux secrets, jamais leur valeur. La même image tourne en dev, staging, prod — seul l'environnement change.</p>
+
+<h3>2. Les profils Spring</h3>
+<pre class="pseudo">application.yml           # commun (structure, valeurs non sensibles)
+application-dev.yml       # dev (logs verbeux, etc.)
+application-prod.yml      # prod (durci) — SANS secret en dur
+# activation : SPRING_PROFILES_ACTIVE=prod</pre>
+
+<h3>3. Rien de sensible dans Git ni l'image</h3>
+<pre class="pseudo">.gitignore     : *.env, application-local.yml, *.p12, *.key
+.dockerignore  : idem — l'image ne doit PAS embarquer de secret
+# les secrets arrivent par variables d'environnement au démarrage du conteneur</pre>
+
+<h3>4. Le scan de secrets dans la CI</h3>
+<p>La <strong>CI</strong> (intégration continue) est le robot qui vérifie chaque envoi de code. On y ajoute un <em>job</em> (une tâche automatique) qui lance <strong>gitleaks</strong>, un outil qui fouille le dépôt à la recherche de secrets oubliés. Un <strong>commit</strong> est une version enregistrée du code ; l'<strong>historique Git</strong> conserve tous les commits passés — d'où la nécessité de tout scanner, pas seulement le dernier.</p>
+<pre class="pseudo"># ci.yml — job securite
+  securite:                                      # nom du job (la tache) de securite
+    steps:                                       # la liste des etapes a executer
+      - uses: actions/checkout@v4                # etape 1 : recuperer le code du depot
+        with: { fetch-depth: 0 }              # tout l'historique
+      - run: gitleaks detect --source . --redact --exit-code 1   # etape 2 : gitleaks cherche des secrets ; --exit-code 1 = job ROUGE si trouve</pre>
+<p><code>gitleaks</code> parcourt le code ET l'historique : un mot de passe commité (même supprimé depuis) rend le job <strong>rouge</strong>.</p>
+
+<h3>5. La procédure de rotation</h3>
+<pre class="pseudo">Un secret a fuité (commit, log, capture) ? Il est COMPROMIS, point.
+1. RÉVOQUER l'ancien (le désactiver côté fournisseur)
+2. RÉGÉNÉRER un nouveau
+3. REPOSER dans le coffre / les variables d'environnement
+4. VÉRIFIER que tout fonctionne
+5. AUDITER : qui a pu le voir, sur quelle période ?</pre>
+<div class="warn">Un secret dans l'historique Git n'est PAS effacé par un simple commit de suppression : il reste dans les commits passés, clonables par quiconque. La seule réponse sûre est la <strong>rotation</strong> (révoquer + régénérer), pas la réécriture d'historique. D'où <code>fetch-depth: 0</code> : gitleaks scanne tout le passé.</div>
+<div class="tip"><strong>Fin de semaine 2.</strong> L'application est complète, testée ET sécurisée : entrées validées, auth durcie, autorisation anti-IDOR, transactions verrouillées, rendu échappé, secrets hors du code et scannés. On n'a jamais eu à « rattraper » la sécurité — elle a poussé avec le code.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les secrets dans application.yml sont…", opts: ["En dur", "Des références à l'environnement (\${...})", "Chiffrés dans le code", "Absents de la config"], a: 1, exp: "Jamais de valeur en dur." },
+    { type: "qcm", q: "La même image en dev/prod change par…", opts: ["Un rebuild", "L'environnement (variables)", "Le code", "Le CSS"], a: 1, exp: "Config externalisée." },
+    { type: "qcm", q: "Les profils Spring servent à…", opts: ["Compiler", "Séparer les configs dev/prod", "Chiffrer", "Déployer"], a: 1, exp: "application-{profil}.yml." },
+    { type: "qcm", q: "L'image Docker doit…", opts: ["Contenir les secrets", "NE PAS embarquer de secret", "Chiffrer le code", "Ignorer .dockerignore"], a: 1, exp: "Secrets par l'environnement." },
+    { type: "qcm", q: "gitleaks scanne…", opts: ["Le CSS", "Le code ET l'historique Git", "La RAM", "Le réseau"], a: 1, exp: "fetch-depth: 0." },
+    { type: "qcm", q: "Un mot de passe commité puis supprimé…", opts: ["Est effacé", "Reste dans l'historique (compromis)", "Est chiffré", "Disparaît"], a: 1, exp: "Clonable dans les vieux commits." },
+    { type: "qcm", q: "La seule réponse sûre à une fuite :", opts: ["Réécrire l'historique", "La rotation (révoquer + régénérer)", "Ignorer", "Chiffrer après coup"], a: 1, exp: "Le secret est compromis." },
+    { type: "qcm", q: "La rotation commence par…", opts: ["Régénérer", "Révoquer l'ancien", "Auditer", "Reposer"], a: 1, exp: "Désactiver d'abord." },
+    { type: "qcm", q: "gitleaks rouge signifie…", opts: ["Tout va bien", "Un secret détecté -> merge bloqué", "Un déploiement", "Un cache"], a: 1, exp: "Barrière." },
+    { type: "qcm", q: ".gitignore contient…", opts: ["Le code", "*.env, *.key, application-local.yml", "Rien", "Les tests"], a: 1, exp: "Fichiers sensibles hors Git." },
+    { type: "vf", q: "Écrire la rotation avant d'en avoir besoin est un bon réflexe.", a: true, exp: "Prêt le jour J." },
+    { type: "qcm", q: "SPRING_PROFILES_ACTIVE=prod…", opts: ["Compile", "Active application-prod.yml", "Chiffre", "Déploie"], a: 1, exp: "Sélection du profil." },
+    { type: "qcm", q: "fetch-depth: 0 permet à gitleaks…", opts: ["D'aller plus vite", "De scanner tout l'historique", "De déployer", "De chiffrer"], a: 1, exp: "Pas juste le dernier commit." },
+    { type: "qcm", q: "En fin de semaine 2, l'app est…", opts: ["À sécuriser plus tard", "Complète, testée ET sécurisée", "Sans tests", "En prod"], a: 1, exp: "Sécurité intégrée." },
+    { type: "vf", q: "On n'a jamais eu à « rattraper » la sécurité.", a: true, exp: "Elle a poussé avec le code." }
+  ],
+  final: {
+    title: "Exercice final — Secrets dehors, scannés",
+    intro: `<p>Config par environnement + gitleaks + rotation.</p>`,
+    questions: [
+      { type: "qcm", q: "Les secrets vivent :", opts: ["dans l'environnement (hors Git/image)", "dans le code", "dans l'image", "dans le README"], a: 0, exp: "Références seulement." },
+      { type: "qcm", q: "gitleaks scanne :", opts: ["le code et tout l'historique", "le dernier commit seul", "le CSS", "rien"], a: 0, exp: "fetch-depth: 0." },
+      { type: "qcm", q: "Un secret commité est :", opts: ["compromis (à faire tourner)", "effaçable par un commit", "sûr", "chiffré"], a: 0, exp: "Rotation obligatoire." },
+      { type: "qcm", q: "La rotation :", opts: ["révoquer + régénérer + reposer + vérifier + auditer", "réécrire l'historique", "ignorer", "chiffrer"], a: 0, exp: "5 étapes." },
+      { type: "vf", q: "Fin de semaine 2 : l'app est complète, testée et sécurisée.", a: true, exp: "Sécurité intégrée." }
+    ],
+    solution: `<pre class="pseudo"># application.yml : datasource lit \${SPRING_DATASOURCE_*} (aucun secret en dur)
+# profils : application-dev.yml / application-prod.yml
+# .gitignore + .dockerignore : *.env, *.key, application-local.yml
+
+# ci.yml job securite :
+  - uses: actions/checkout@v4          # recupere le code du depot
+    with: { fetch-depth: 0 }           # avec TOUT l'historique (indispensable pour gitleaks)
+  - run: gitleaks detect --source . --redact --exit-code 1   # scanne les secrets ; job rouge si un secret est trouve
+
+# Rotation : révoquer -> régénérer -> reposer -> vérifier -> auditer</pre>
+<p>Semaine 2 bouclée : app sécurisée par conception. Demain : recherche, pagination et qualité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta config par environnement et ton scan…",
+  items: [
+  { id: "proj6java-l14", title: "Secrets externalisés, scannés, et la rotation", level: 2,
+    statement: "Écris l'application.yml sans secret (références à l'environnement), les .gitignore/.dockerignore adaptés, le job gitleaks (fetch-depth: 0), et la procédure de rotation en 5 étapes. Explique en 3-4 lignes pourquoi un commit de suppression ne suffit pas et pourquoi la même image doit tourner partout.",
+    hints: [
+      "application.yml : \${SPRING_DATASOURCE_PASSWORD} ; profils dev/prod séparés.",
+      "gitleaks a besoin de fetch-depth: 0 pour scanner l'historique complet.",
+      "Rotation : révoquer -> régénérer -> reposer -> vérifier -> auditer."
+    ],
+    solution: "# application.yml (aucun secret en dur)\nspring:\n  datasource:\n    url: ${SPRING_DATASOURCE_URL}\n    username: ${SPRING_DATASOURCE_USERNAME}\n    password: ${SPRING_DATASOURCE_PASSWORD}\n  jpa: { hibernate: { ddl-auto: validate } }\n# profils : application-dev.yml (verbeux) / application-prod.yml (durci)\n# activation : SPRING_PROFILES_ACTIVE=prod\n\n# .gitignore\n*.env\napplication-local.yml\n*.key\n*.p12\n# .dockerignore : idem -> l'image n'embarque JAMAIS de secret\n\n# ci.yml — job securite\n  securite:\n    steps:\n      - uses: actions/checkout@v4\n        with: { fetch-depth: 0 }         # tout l'historique, pas juste HEAD\n      - run: gitleaks detect --source . --redact --exit-code 1\n\n# PROCEDURE DE ROTATION (un secret a fuite)\n1. REVOQUER l'ancien secret cote fournisseur (il devient inutilisable)\n2. REGENERER un nouveau secret\n3. REPOSER dans le coffre / les variables d'environnement (jamais dans le code)\n4. VERIFIER que l'application fonctionne avec le nouveau\n5. AUDITER : depuis quand exposé, qui a pu le lire, quels acces surveiller\n\n# POURQUOI UN COMMIT DE SUPPRESSION NE SUFFIT PAS\n# Git garde TOUT l'historique : un secret ajoute au commit A puis 'supprime' au\n# commit B reste lisible dans A par quiconque clone le depot. Le retirer du code\n# actuel ne le retire pas du passe. Comme on ne peut pas garantir que personne\n# ne l'a deja copie, il est DEFINITIVEMENT compromis -> rotation, pas nettoyage.\n#\n# POURQUOI LA MEME IMAGE PARTOUT\n# Une image qui embarquerait la config de prod ne pourrait pas servir en dev, et\n# obligerait a reconstruire par environnement (donc a tester autre chose que ce\n# qu'on livre). En externalisant la config, le MEME artefact scanne et teste va\n# de la CI a la prod : ce qu'on a valide est exactement ce qui tourne.",
+    note: "L'externalisation des secrets et leur scan automatique ferment l'une des fuites les plus fréquentes et les plus coûteuses (clé d'API commitée, mot de passe de base dans un fichier de config). La leçon-clé sur la rotation est contre-intuitive : face à une fuite, le réflexe naïf est de « nettoyer » l'historique, mais seul révoquer-régénérer met vraiment à l'abri. Ce principe — un secret exposé est compromis pour toujours — vaut pour toute la carrière, bien au-delà de ce projet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

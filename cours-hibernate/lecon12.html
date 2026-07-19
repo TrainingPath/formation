@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Lazy ou eager ? Le chargement des relations",
+  subtitle: "Charger un jeu, est-ce charger ses catégories, ses avis, ses locations ? La réponse décide de la performance de toute ton appli.",
+  theory: `
+<h3>1. La question à un million de requêtes</h3>
+<p>Tes entités de la Ludothèque forment maintenant un <strong>graphe</strong> (un réseau d'objets reliés) : Jeu → categories, Jeu → avis, Membre → carte, Membre → locations → jeu… Quand tu appelles em.find(Jeu.class, 42L), Hibernate doit-il charger <strong>tout le graphe</strong> ? Pour afficher une simple liste de titres, ce serait ruineux. Ne rien charger du tout ? Alors jeu.getAvis() rendrait quoi ? JPA tranche avec deux stratégies de <strong>fetch</strong> (chargement) par relation : <strong>EAGER</strong> (« avide » : charger tout de suite, avec l'entité) et <strong>LAZY</strong> (« paresseux » : différer jusqu'au premier accès réel).</p>
+
+<h3>2. Les défauts JPA : à apprendre par cœur</h3>
+<p>Chaque annotation de relation a un défaut, choisi selon une logique simple : côté « un seul objet », JPA ose charger ; côté « collection potentiellement énorme », il diffère.</p>
+<pre class="pseudo">@ManyToOne    → EAGER par défaut   (un seul objet : l'éditeur du jeu)
+@OneToOne     → EAGER par défaut   (un seul objet : la carte du membre)
+@OneToMany    → LAZY  par défaut   (une collection : les avis du jeu)
+@ManyToMany   → LAZY  par défaut   (une collection : les catégories)</pre>
+<p>Et on peut forcer chaque relation explicitement :</p>
+<pre class="pseudo">@ManyToOne(fetch = FetchType.LAZY)     // recommandé : on désamorce l'EAGER par défaut
+@JoinColumn(name = "editeur_id")       // la colonne FK vers l'éditeur
+private Editeur editeur;               // référence vers l'éditeur (chargée à la demande)
+
+@OneToMany(mappedBy = "jeu")           // déjà LAZY par défaut : on l'écrit juste pour la clarté
+private List&lt;Avis&gt; avis = new ArrayList&lt;&gt;();  // la liste des avis (initialisée vide)</pre>
+
+<h3>3. Le proxy : l'objet fantôme de Hibernate</h3>
+<p>Comment Hibernate peut-il rendre un jeu SANS avoir chargé ses avis, tout en gardant jeu.getAvis() fonctionnel ? Grâce aux <strong>proxys</strong> : pour une relation LAZY, il place un objet-façade (une sous-classe générée à la volée — voilà pourquoi tes entités ne doivent pas être final, leçon 3) qui ne contient que l'id. Le SQL ne part qu'au premier accès réel :</p>
+<pre class="pseudo">Jeu jeu = em.find(Jeu.class, 42L);   // charger le jeu
+// → SELECT ... FROM jeu WHERE id = 42          (les avis ? pas touchés)
+
+List&lt;Avis&gt; avis = jeu.getAvis();     // toujours rien : la liste est un proxy (une façade vide)
+int n = avis.size();                  // PREMIER ACCÈS RÉEL → déclenche la requête :
+// → SELECT ... FROM avis WHERE jeu_id = 42     (initialisation du proxy)</pre>
+<p>C'est le chargement à la demande : on ne paie que ce qu'on consomme — à condition que l'EntityManager soit encore là pour exécuter la requête.</p>
+
+<h3>4. LazyInitializationException : l'erreur culte</h3>
+<p>Le proxy a besoin de son EntityManager pour s'initialiser. Si tu touches une relation LAZY <strong>après em.close()</strong> (entité détachée, leçon 7), Hibernate ne peut plus requêter :</p>
+<pre class="pseudo">Jeu jeu;                               // on déclare la variable hors du bloc
+EntityManager em = emf.createEntityManager();  // ouvrir un EntityManager
+jeu = em.find(Jeu.class, 42L);        // OK, jeu est géré (surveillé)
+em.close();                            // le contexte disparaît... jeu devient DÉTACHÉ
+
+jeu.getAvis().size();                  // BOOM : accès LAZY sur une entité détachée
+// org.hibernate.LazyInitializationException :
+// could not initialize proxy - no Session</pre>
+<p>Tu la rencontreras typiquement dans la couche web du Niveau 6 : le contrôleur charge le jeu, ferme le contexte, puis la vue tente d'afficher les avis. Les mauvais réflexes : tout passer en EAGER (on charge tout, tout le temps, pour tout le monde) ou rouvrir une session dans la vue. Le bon réflexe : charger <strong>dans</strong> l'unité de travail tout ce dont on aura besoin.</p>
+
+<h3>5. La stratégie recommandée : tout LAZY, chargement explicite</h3>
+<p>La règle des praticiens : <strong>toutes les relations en LAZY</strong> — y compris les @ManyToOne et @OneToOne, dont il faut désamorcer l'EAGER par défaut — puis charger explicitement ce que chaque cas d'usage demande. EAGER est un choix global et irréversible (impossible de le désactiver requête par requête), LAZY est un défaut prudent qu'on peut toujours contourner ponctuellement. L'outil roi pour ce chargement ciblé s'appelle <strong>JOIN FETCH</strong> : patience, il arrive leçon 18 avec le problème N+1. Ailleurs, même débat : Include en EF Core, with() en Eloquent, select_related/prefetch_related en Django — et Spring Data hérite exactement des défauts JPA dans tes repositories.</p>
+<div class="warn">Ne « répare » JAMAIS une LazyInitializationException en passant la relation en EAGER : tu déplaces le coût sur TOUTES les requêtes de l'application pour soigner UN écran. La vraie cause est une unité de travail mal délimitée — charge la relation avant de fermer l'EntityManager, ou utilise JOIN FETCH (leçon 18).</div>
+<div class="tip">Prends l'habitude d'écrire fetch = FetchType.LAZY sur chaque @ManyToOne et @OneToOne dès la création de l'entité, puis vérifie avec show_sql (leçon 2) : un find(Jeu) doit produire UN seul SELECT. Chaque SELECT surprise dans les logs est une relation EAGER oubliée.</div>`,
+  exercises: [
+    { type: "qcm", q: "FetchType.LAZY signifie que la relation est chargée…", opts: ["Jamais", "Au premier accès réel (getAvis().size(), itération…)", "Au démarrage de l'application", "À chaque commit"], a: 1, exp: "Le chargement est différé jusqu'à l'utilisation effective — c'est le proxy qui déclenche le SELECT." },
+    { type: "qcm", q: "Le défaut JPA pour @ManyToOne et @OneToOne :", opts: ["LAZY", "AUTO", "EAGER", "NONE"], a: 2, exp: "Côté « un seul objet », JPA ose charger immédiatement. C'est précisément ce défaut qu'on recommande de désamorcer." },
+    { type: "qcm", q: "Le défaut JPA pour @OneToMany et @ManyToMany :", opts: ["LAZY", "EAGER", "IMMEDIATE", "Cela dépend de MySQL"], a: 0, exp: "Une collection peut être énorme : JPA diffère prudemment son chargement." },
+    { type: "vf", q: "Avec une relation LAZY, em.find(Jeu.class, 42L) exécute quand même le SELECT des avis « au cas où ».", a: false, exp: "Un seul SELECT sur jeu ; les avis attendent un accès réel — c'est tout le principe." },
+    { type: "input", q: "Quelle valeur de FetchType diffère le chargement d'une relation ?", a: ["LAZY", "lazy", "FetchType.LAZY", "fetchtype.lazy"], ph: "FetchType.…", exp: "fetch = FetchType.LAZY ; l'autre valeur est EAGER." },
+    { type: "qcm", q: "Pour désamorcer l'EAGER par défaut d'un @ManyToOne, on écrit…", opts: ["@ManyToOne(fetch = FetchType.LAZY)", "@ManyToOne(lazy = true)", "@LazyLoading", "@ManyToOne(eager = false)"], a: 0, exp: "L'attribut fetch de l'annotation de relation porte la stratégie." },
+    { type: "qcm", q: "Le proxy Hibernate d'une relation LAZY est…", opts: ["Un fichier de cache sur disque", "Une table temporaire MySQL", "Un thread séparé", "Un objet-façade (sous-classe générée) qui ne connaît que l'id et charge au premier accès"], a: 3, exp: "Voilà pourquoi les entités ne doivent pas être final (leçon 3) : Hibernate doit pouvoir les sous-classer." },
+    { type: "qcm", q: "LazyInitializationException se produit quand…", opts: ["La base est éteinte", "On touche une relation LAZY après la fermeture de l'EntityManager", "Deux transactions se croisent", "Une entité n'a pas de constructeur"], a: 1, exp: "L'entité est détachée (leçon 7) : le proxy n'a plus de contexte pour exécuter son SELECT." },
+    { type: "vf", q: "Passer la relation en EAGER est la correction recommandée d'une LazyInitializationException.", a: false, exp: "C'est le mauvais réflexe : on pénalise toutes les requêtes de l'appli pour un seul écran. On charge explicitement dans l'unité de travail." },
+    { type: "qcm", q: "La stratégie recommandée par les praticiens :", opts: ["Tout EAGER pour éviter les exceptions", "Alterner EAGER/LAZY au hasard", "Tout LAZY, puis chargement explicite selon le cas d'usage", "EAGER en développement, LAZY en production"], a: 2, exp: "LAZY est un défaut prudent contournable requête par requête ; EAGER est global et irréversible." },
+    { type: "qcm", q: "Pourquoi EAGER est-il qualifié d'« irréversible » ?", opts: ["On ne peut plus recompiler l'entité", "Impossible de le désactiver ponctuellement pour une requête donnée", "MySQL le grave dans le schéma", "Il verrouille la table"], a: 1, exp: "Une relation EAGER est chargée PARTOUT ; une relation LAZY peut être chargée à la demande là où il faut." },
+    { type: "input", q: "Quel mot-clé JPQL, vu en détail leçon 18, charge une relation LAZY en une seule requête avec son entité ?", a: ["JOIN FETCH", "join fetch", "fetch join", "FETCH JOIN"], ph: "deux mots…", exp: "JOIN FETCH : l'arme absolue contre le problème N+1, teaser de la leçon 18." },
+    { type: "qcm", q: "jeu.getAvis() sur une relation LAZY (EntityManager ouvert) retourne…", opts: ["null tant que rien n'est chargé", "Une copie détachée", "Un proxy de collection ; le SELECT part au premier accès réel (size, itération)", "Une exception immédiate"], a: 2, exp: "Obtenir la référence ne coûte rien ; c'est l'usage qui déclenche le SQL." },
+    { type: "vf", q: "Un find(Jeu) qui déclenche trois SELECT dans show_sql révèle probablement des relations EAGER (ou des accès lazy immédiats).", a: true, exp: "Le réflexe show_sql de la leçon 2 : un find = un SELECT attendu ; le reste se diagnostique." },
+    { type: "qcm", q: "Les équivalents du chargement ciblé ailleurs : Include, with(), select_related appartiennent à…", opts: ["EF Core, Eloquent, Django ORM", "Git, Maven, Docker", "JUnit, Mockito, AssertJ", "HTML, CSS, JS"], a: 0, exp: "Le débat lazy/eager existe dans toutes les piles — mêmes concepts, autres noms." }
+  ],
+  final: {
+    title: "Exercice final — Autopsie d'une page qui plante",
+    intro: `<p>La future page web « fiche jeu » du Niveau 6 : un contrôleur charge le jeu 42, ferme l'EntityManager, puis la vue affiche titre, éditeur et liste des avis. En production : LazyInitializationException. Diagnostique.</p>`,
+    questions: [
+      { type: "qcm", q: "La ligne qui explose est l'affichage des avis dans la vue. Pourquoi ?", opts: ["La table avis est vide", "@OneToMany avis est LAZY et l'EntityManager est déjà fermé : le proxy ne peut plus requêter", "MySQL a rejeté la connexion", "Le jeu 42 n'existe pas"], a: 1, exp: "Entité détachée + proxy non initialisé = l'exception culte." },
+      { type: "vf", q: "L'affichage de l'éditeur (@ManyToOne resté par défaut) fonctionne, lui, car EAGER l'a chargé avec le jeu.", a: true, exp: "Le défaut EAGER du @ManyToOne l'a chargé pendant le find — c'est d'ailleurs un SELECT de plus à surveiller." },
+      { type: "qcm", q: "La correction PROPRE :", opts: ["Passer avis en EAGER dans l'entité", "Rouvrir un EntityManager dans la vue", "Supprimer les avis du site", "Charger les avis avant em.close() — idéalement via JOIN FETCH (leçon 18)"], a: 3, exp: "On délimite l'unité de travail pour couvrir le besoin de l'écran, sans pénaliser le reste de l'appli." },
+      { type: "input", q: "Quel réglage de la leçon 2 permet de compter les SELECT réellement exécutés pendant le find ?", a: ["show_sql", "show-sql", "showsql", "hibernate.show_sql"], ph: "propriété Hibernate…", exp: "show_sql : le compteur de vérité — un find(Jeu) sain produit un seul SELECT." },
+      { type: "qcm", q: "Pour éviter ce genre de surprise dès la conception, l'équipe décide…", opts: ["De mettre fetch = FetchType.LAZY sur tous les @ManyToOne/@OneToOne et de charger explicitement par cas d'usage", "De tout passer en EAGER", "De ne plus utiliser de relations", "De désactiver les exceptions Hibernate"], a: 0, exp: "La stratégie recommandée : tout LAZY, chargement explicite — JOIN FETCH arrive leçon 18." }
+    ],
+    solution: `<pre class="pseudo">Diagnostic :
+  find(Jeu, 42) → SELECT jeu (+ SELECT editeur : EAGER par défaut du @ManyToOne)  // déjà 2 SELECT !
+  em.close()    → jeu devient DÉTACHÉ (leçon 7)                                    // plus de contexte
+  vue : jeu.getAvis().size() → proxy LAZY sans contexte                            // il tente de requêter...
+        → LazyInitializationException : could not initialize proxy - no Session    // ...et échoue
+
+Correction propre (dans l'unité de travail) :
+  Jeu jeu = em.find(Jeu.class, 42L);     // charger le jeu
+  jeu.getAvis().size();          // initialise la collection AVANT close
+  em.close();                    // (version élégante : JOIN FETCH, leçon 18)
+
+Prévention :
+  @ManyToOne(fetch = FetchType.LAZY)   // sur editeur, carte, etc.
+  → tout LAZY + chargement explicite + show_sql pour compter les SELECT</pre>
+<p>Tu sais maintenant QUAND les données arrivent. Prochaine étape : aller les chercher finement, car find ne connaît que la clé primaire. Demain, tu écris tes premières vraies requêtes — en JPQL, le SQL qui parle objets.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l12", title: "La politique de chargement de la Ludothèque", level: 2,
+    statement: "Rédige la « politique de chargement » officielle de la couche de persistance de la Ludothèque. Pour chacune des relations existantes — Location→Jeu (@ManyToOne), Location→Membre (@ManyToOne), Jeu→avis (@OneToMany), Jeu→categories (@ManyToMany), Membre→carte (@OneToOne) — indique la stratégie retenue (avec l'annotation exacte) et justifie. Puis décris deux écrans types (la liste des jeux du catalogue ; la fiche détaillée d'un jeu avec avis et catégories) et explique pour chacun quelles données doivent être chargées, à quel moment, et ce qui se passerait avec la mauvaise stratégie.",
+    hints: [
+      "Rappelle-toi les défauts : @ManyToOne/@OneToOne = EAGER (à désamorcer ?), @OneToMany/@ManyToMany = LAZY (à conserver ?).",
+      "Écran liste : 200 jeux affichés par titre. Que coûterait un @ManyToOne editeur resté EAGER ? Et des avis EAGER ?",
+      "Écran fiche : il FAUT les avis et les catégories. LAZY ne veut pas dire « jamais » — où et quand doivent-ils être chargés par rapport à em.close() ?"
+    ],
+    solution: "POLITIQUE : tout LAZY, chargement explicite par cas d'usage.\n\nLocation → Jeu     : @ManyToOne(fetch = FetchType.LAZY)  // désamorce l'EAGER\nLocation → Membre  : @ManyToOne(fetch = FetchType.LAZY)  // idem\nJeu → avis         : @OneToMany(mappedBy = \"jeu\")        // LAZY par défaut, on garde\nJeu → categories   : @ManyToMany + @JoinTable            // LAZY par défaut, on garde\nMembre → carte     : @OneToOne(fetch = FetchType.LAZY)   // désamorce l'EAGER\n\nÉcran 1 — liste du catalogue (200 jeux) :\n  Besoin : id + titre + prix. Un seul SELECT sur jeu.\n  Mauvaise stratégie : avis en EAGER = 200 collections chargées\n  pour des données jamais affichées ; editeur EAGER = jointures ou\n  SELECT supplémentaires partout. La liste devient la page la plus lente du site.\n\nÉcran 2 — fiche détaillée du jeu 42 :\n  Besoin : jeu + avis + categories.\n  Chargement DANS l'unité de travail, avant em.close() :\n  initialiser jeu.getAvis() et jeu.getCategories()\n  (demain en JPQL, puis proprement en JOIN FETCH leçon 18).\n  Mauvaise stratégie : tout LAZY sans chargement explicite +\n  close avant la vue = LazyInitializationException garantie.\n\nRègle d'or : la stratégie est fixée par l'ÉCRAN (le cas d'usage),\npas par l'entité — donc défaut prudent LAZY + chargement ciblé.",
+    note: "Cette politique écrite noir sur blanc est exactement ce qu'on te demandera de défendre en revue de code au Niveau 6 — et c'est le socle de la leçon 18 sur le problème N+1, où tu verras combien coûte VRAIMENT chaque SELECT paresseux dans une boucle. Spring Data (open-in-view), EF Core (Include) et Django (select_related) posent tous la même question : qui décide du chargement, l'entité ou l'écran ?" }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

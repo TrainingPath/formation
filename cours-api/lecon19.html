@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Idempotence, cache et limites de débit",
+  subtitle: "Trois finitions séparent une API qui marche d'une API qui tient : rejouer sans risque, ne pas renvoyer deux fois la même chose, savoir dire stop.",
+  theory: `
+<h3>0. Les mots de base, une bonne fois</h3>
+<p>Avant d'entrer dans le vif, posons le vocabulaire qui va revenir sans arrêt — au cas où tu débarques. Une <strong>API</strong> (<em>Application Programming Interface</em>, « interface de programmation ») est la porte d'entrée qu'un logiciel offre pour qu'un autre logiciel lui parle : au lieu de cliquer dans un écran, un programme envoie un message et reçoit une réponse. <strong>REST</strong> est un style de conception d'API très répandu qui s'appuie sur le protocole du web. <strong>HTTP</strong> (<em>HyperText Transfer Protocol</em>) est justement ce protocole : les règles de langage que le navigateur et le serveur utilisent pour se comprendre.</p>
+<p>Dans ce dialogue, il y a toujours deux rôles : le <strong>client</strong> (celui qui demande — ton navigateur, une appli mobile, un autre serveur) et le <strong>serveur</strong> (celui qui détient les données et répond). Le client envoie une <strong>requête</strong> (une demande) et le serveur renvoie une <strong>réponse</strong>. Une requête vise une <strong>ressource</strong> (une « chose » manipulée par l'API : un jeu, un membre, une location) désignée par une <strong>URL</strong> (l'adresse, par ex. <code>/jeux/5</code>) ; on appelle <strong>endpoint</strong> (« point de terminaison ») une de ces adresses que le serveur sait traiter.</p>
+<p>Chaque requête porte une <strong>méthode</strong> HTTP qui dit l'intention : <code>GET</code> pour lire, <code>POST</code> pour créer, <code>PUT</code> pour remplacer, <code>PATCH</code> pour modifier partiellement, <code>DELETE</code> pour supprimer. La réponse porte un <strong>code de statut</strong> (un nombre à trois chiffres qui résume le résultat : 200 = OK, 404 = pas trouvé, etc.) et des <strong>en-têtes</strong> (en anglais <em>headers</em> : des lignes de « métadonnées », c'est-à-dire des infos <em>sur</em> le message plutôt que le message lui-même). Le corps de la réponse est souvent du <strong>JSON</strong> (<em>JavaScript Object Notation</em>), un format texte simple pour représenter des données. Garde ces mots en tête : tout le reste de la leçon les réutilise.</p>
+
+<h3>1. Idempotence : refaire sans refaire</h3>
+<p>Une requête est <strong>idempotente</strong> si la rejouer à l'identique laisse le serveur dans <strong>le même état</strong> que le premier appel. Le mot fait peur mais l'idée est simple : appuyer une fois ou dix fois sur le même bouton donne le même résultat final. Analogie : appuyer sur le bouton « appeler l'ascenseur » — le presser trois fois ne fait pas venir trois ascenseurs, l'état (ascenseur appelé) est le même. Passe les méthodes de la leçon 4 à ce crible :</p>
+<pre class="pseudo">GET     SÛRE (ne modifie rien) et idempotente          # lecture pure : relire ne change rien
+PUT     idempotente : remplacer deux fois par le même corps = même état   # écraser avec la même valeur redonne le même état
+DELETE  idempotente : supprimer deux fois = toujours supprimé             # une fois supprimé, ça reste supprimé
+        (le 2e appel peut répondre 404 — l'ÉTAT, lui, n'a pas rebougé)     # 404 = pas trouvé, mais l'état final est identique
+PATCH   pas garantie (dépend de l'opération : « disponible: false » oui,  # PATCH = modif partielle ; fixer un champ à une valeur est idempotent
+        « incrémenter le compteur » non)                                  # mais « +1 » répété donne +2, +3… : PAS idempotent
+POST    NI sûre NI idempotente : deux POST /locations = DEUX locations     # POST crée : chaque appel fabrique une nouvelle ressource</pre>
+<p>Retiens la nuance : idempotent ne veut pas dire « même réponse », mais « même <strong>état serveur</strong> » après coup. « Sûre » (en anglais <em>safe</em>) est encore plus fort : la méthode ne modifie <em>rien</em> — c'est le cas de <code>GET</code>. Toute méthode sûre est aussi idempotente (lire ne change jamais l'état), mais l'inverse n'est pas vrai : <code>DELETE</code> est idempotente sans être sûre.</p>
+
+<h3>2. Le timeout maudit (et l'Idempotency-Key)</h3>
+<p>Pourquoi c'est vital ? Parce que les réseaux échouent. Un <strong>timeout</strong> (« délai dépassé ») arrive quand le client attend la réponse trop longtemps et abandonne, sans savoir si le serveur a reçu ou non sa requête :</p>
+<pre class="pseudo">POST /locations   { "jeu": 5 }          # le client demande de créer une location pour le jeu n°5 (corps en JSON)
+… le réseau coupe : TIMEOUT. La location a-t-elle été créée ? MYSTÈRE.   # aucune réponse reçue : impossible de savoir
+→ réessayer aveuglément = risquer DEUX locations (et deux facturations)   # si la 1re avait réussi, un 2e POST fait un doublon
+
+La parade : POST /locations                                              # on renvoie la requête…
+            Idempotency-Key: 7f3e02c1-9a4b-4e8d-b5f6-1c2d3e4f5a6b        # …avec un en-tête portant une clé unique tirée au hasard
+→ le client génère une clé unique par opération ; si le serveur           # cette clé identifie L'OPÉRATION, pas juste la requête
+  revoit la MÊME clé, il REJOUE la première réponse au lieu de recréer     # même clé déjà vue → le serveur renvoie l'ancien résultat, sans doublon</pre>
+<p>Un <strong>en-tête</strong> comme <code>Idempotency-Key</code> est une ligne d'information ajoutée à la requête (ici : une clé unique, souvent un <strong>UUID</strong>, un long identifiant tiré au hasard quasi impossible à retomber deux fois dessus). Les méthodes idempotentes (GET, PUT, DELETE), elles, se réessaient sans angoisse après un timeout : c'est tout l'intérêt de la classification. Pour un POST, soit le serveur accepte une <code>Idempotency-Key</code> (le mécanisme des API de paiement), soit on ne réessaie pas automatiquement.</p>
+
+<h3>3. Le cache : Cache-Control et ETag</h3>
+<p>Le <strong>cache</strong> est une copie temporaire d'une réponse, gardée près du client pour éviter de redemander la même chose au serveur (comme garder un ticket de caisse plutôt que retourner en magasin le redemander). Le catalogue de la Ludothèque est lu mille fois plus qu'il ne change. Deux outils, promis depuis la leçon 5 :</p>
+<pre class="pseudo">GET /jeux/5                              # le client lit la fiche du jeu n°5
+← 200 OK                                 # réponse : 200 = tout va bien
+← Cache-Control: max-age=300     (garde ta copie 5 min : ne redemande pas)   # en-tête cache : réutilise la réponse pendant 300 s (=5 min)
+← ETag: "a9f4c2"                 (empreinte de CETTE version de la ressource)  # en-tête ETag : une « signature » de la version actuelle
+
+5 minutes plus tard, le client revalide :                                # la copie a expiré : on vérifie si elle est encore bonne
+GET /jeux/5                              # on redemande la même fiche…
+If-None-Match: "a9f4c2"                  # …en disant « seulement si l'ETag a changé depuis a9f4c2 »
+← 304 Not Modified               (pas de corps : ta copie est encore bonne)   # 304 = rien n'a changé, garde ta copie (réponse sans JSON)
+
+GET /membres/12                  ← données personnelles                        # lecture d'un profil : info sensible
+← Cache-Control: no-store        (personne ne garde ça en cache)               # no-store = interdit de mettre en cache, nulle part</pre>
+<p><code>Cache-Control</code> dit <em>combien de temps</em> garder ; l'<strong>ETag</strong> (pour <em>Entity Tag</em>) permet de revalider à moindre coût : si l'empreinte n'a pas changé, le serveur répond un 304 minuscule au lieu de renvoyer tout le JSON. La <strong>revalidation</strong>, c'est demander « ma copie est-elle encore à jour ? » via l'en-tête <code>If-None-Match</code> (« si ça ne correspond à aucune de ces empreintes »). Bande passante économisée, latence réduite — et <code>no-store</code> protège ce qui ne doit jamais traîner dans un cache.</p>
+
+<h3>4. 429 : savoir dire stop</h3>
+<p>Un script qui boucle, un scraper agressif, un attaquant qui teste des mots de passe sur <code>/auth/login</code> : sans limite, ils s'invitent à volonté. Le <strong>rate limiting</strong> (« limitation de débit », aussi appelé <em>throttling</em>) compte les requêtes par consommateur (le <strong>token</strong> — un jeton d'identification prouvant qui appelle —, une <strong>API key</strong> — une clé d'accès attribuée à une application —, sinon l'<strong>IP</strong> — l'adresse réseau de l'appelant) et coupe au-delà du quota :</p>
+<pre class="pseudo">GET /jeux        (la 1001e fois dans l'heure)   # au-delà du quota autorisé sur cette heure
+← 429 Too Many Requests                          # 429 = « trop de requêtes, ralentis »
+← Retry-After: 60                (réessaie dans 60 secondes)   # en-tête indiquant combien de temps attendre avant de retenter
+← X-RateLimit-Limit: 1000                        # quota total accordé sur la fenêtre (1000 requêtes)
+← X-RateLimit-Remaining: 0                       # requêtes restantes avant blocage : 0, d'où le 429
+
+/auth/login : quota SERRÉ (ex. 5/minute) — chaque essai raté    # login très limité : 5 tentatives par minute
+est peut-être un mot de passe testé par un attaquant.           # un quota serré ruine une attaque par force brute</pre>
+<p>Le 429 n'est pas une panne : c'est une consigne. Un client bien élevé lit <code>Retry-After</code>, attend, puis réessaie — la leçon 20 l'implémentera. (Les en-têtes commençant par <code>X-</code>, comme <code>X-RateLimit-Limit</code>, sont des en-têtes « maison » ajoutés par l'API pour informer le client de l'état de son quota.)</p>
+
+<h3>5. Trois réglages, trois lignes</h3>
+<p>Voici comment ces politiques se configurent concrètement dans un framework serveur (ici Django REST Framework, en Python). Ne t'inquiète pas de tout comprendre : l'idée est de voir que quelques lignes de configuration suffisent.</p>
+<pre class="pseudo"># Django REST Framework — settings.py                            # fichier de configuration du projet
+REST_FRAMEWORK = {                                                # dictionnaire des réglages de l'API
+  "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.UserRateThrottle",   # limite de débit pour les utilisateurs connectés
+                               "rest_framework.throttling.AnonRateThrottle"],  # limite de débit pour les visiteurs anonymes
+  "DEFAULT_THROTTLE_RATES": { "user": "1000/hour", "anon": "100/hour" },       # les quotas : 1000/h si connecté, 100/h si anonyme
+}                                                                # fin du bloc de configuration
+# ETag / Cache-Control : décorateur condition() ou middleware dédié   # côté cache : un outil intégré pose ces en-têtes automatiquement
+# Spring : Bucket4j (débit) · Laravel : middleware throttle            # équivalents dans d'autres frameworks (Java, PHP)
+# ASP.NET Core : middleware RateLimiter · caches HTTP intégrés partout # équivalent en C# ; la mécanique existe partout</pre>
+<p>Comme toujours, la mécanique est fournie ; ta valeur ajoutée est la <strong>politique</strong> : quels endpoints cacher et combien de temps, quels quotas pour qui, quel POST mérite une Idempotency-Key.</p>
+<div class="warn">Le retry aveugle d'un POST est le bug le plus coûteux des intégrations : doubles commandes, doubles paiements, doubles locations. Soit la méthode est idempotente, soit une <code>Idempotency-Key</code> la rend rejouable — sinon, on ne réessaie <strong>pas</strong>.</div>
+<div class="tip">Commence simple : <code>max-age</code> court + ETag sur les GET très lus (le catalogue), <code>no-store</code> sur le personnel, un quota global par token et un quota serré sur <code>/auth/login</code>. Quatre lignes de politique couvrent 90 % des besoins.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une requête idempotente est une requête qui…", opts: ["Renvoie toujours 200", "Rejouée à l'identique, laisse le serveur dans le même état", "Ne nécessite pas d'authentification", "S'exécute plus vite la deuxième fois"], a: 1, exp: "Le critère porte sur l'ÉTAT serveur après coup, pas sur la réponse." },
+    { type: "qcm", q: "Le trio de méthodes idempotentes :", opts: ["GET, POST, PATCH", "POST, PUT, DELETE", "GET, PUT, DELETE", "Toutes les méthodes"], a: 2, exp: "POST ne l'est jamais ; PATCH dépend de l'opération." },
+    { type: "qcm", q: "POST /locations envoyé deux fois sans précaution :", opts: ["Le serveur ignore le second", "Deux locations sont créées", "409 automatique", "Le premier est annulé"], a: 1, exp: "POST n'est pas idempotent : chaque appel crée une ressource." },
+    { type: "qcm", q: "Le 2e DELETE /jeux/5 renvoie 404. L'idempotence est-elle violée ?", opts: ["Oui : la réponse a changé", "Non : l'état serveur est identique (le jeu reste supprimé)", "Oui : il fallait renvoyer 204", "DELETE n'est pas idempotente"], a: 1, exp: "Idempotent = même état, pas forcément même réponse." },
+    { type: "qcm", q: "Une méthode « sûre » (safe) est une méthode qui…", opts: ["Ne modifie rien sur le serveur, comme GET", "Est chiffrée", "Répond en moins d'une seconde", "Exige un token"], a: 0, exp: "Sûre = lecture pure ; toute méthode sûre est aussi idempotente." },
+    { type: "qcm", q: "L'en-tête Idempotency-Key sert à…", opts: ["Chiffrer le corps", "Rendre un POST rejouable : même clé → le serveur rejoue la première réponse", "Accélérer le DNS", "Remplacer le token"], a: 1, exp: "La parade au timeout maudit — le mécanisme des API de paiement." },
+    { type: "qcm", q: "Un ETag est…", opts: ["Un identifiant de session", "Une empreinte de la version actuelle de la ressource", "Un tag HTML", "Le nom du serveur"], a: 1, exp: "Si la ressource change, l'empreinte change — c'est la clé de la revalidation." },
+    { type: "qcm", q: "Le client envoie If-None-Match: \"a9f4c2\" et la ressource n'a pas changé. Le serveur répond…", opts: ["200 avec le JSON complet", "404", "304 Not Modified, sans corps", "429"], a: 2, exp: "La promesse de la leçon 5 tenue : « ta copie est encore bonne », zéro octet de JSON." },
+    { type: "qcm", q: "Le Cache-Control adapté à GET /membres/12 (données personnelles) :", opts: ["max-age=86400", "no-store", "public", "immutable"], a: 1, exp: "Le personnel ne doit traîner dans aucun cache." },
+    { type: "qcm", q: "Pourquoi un quota très serré sur POST /auth/login ?", opts: ["Pour économiser la base", "Le login est gratuit", "Chaque essai raté est peut-être un mot de passe testé : freiner le brute force", "Pour forcer l'usage des cookies"], a: 2, exp: "5/minute suffit à un humain et ruine un attaquant — complété dans le cours Sécurité applicative." },
+    { type: "vf", q: "PATCH est toujours idempotente, comme PUT.", a: false, exp: "« disponible: false » rejoué = même état ; « incrémenter » rejoué = état différent. Ça dépend de l'opération." },
+    { type: "vf", q: "Après un 429, un client bien élevé attend la durée indiquée par Retry-After avant de réessayer.", a: true, exp: "Le 429 est une consigne, pas une panne — la leçon 20 code ce comportement." },
+    { type: "input", q: "Le code de statut « trop de requêtes, ralentis » :", a: ["429"], ph: "Un code…", exp: "429 Too Many Requests, accompagné de Retry-After." },
+    { type: "input", q: "L'en-tête de réponse qui porte l'empreinte de version de la ressource :", a: ["ETag", "etag", "Etag"], ph: "Nom de l'en-tête…", exp: "ETag: \"a9f4c2\" — revalidé ensuite via If-None-Match." },
+    { type: "input", q: "La méthode idempotente qui REMPLACE entièrement une ressource :", a: ["PUT", "put", "Put"], ph: "MÉTHODE", exp: "Remplacer deux fois par le même corps = même état : PUT est idempotente." }
+  ],
+  final: {
+    title: "Exercice final — La Ludothèque sous charge",
+    intro: `<p>Un article de presse cite la Ludothèque : le trafic est multiplié par cinquante. Fais tenir l'API.</p>`,
+    questions: [
+      { type: "qcm", q: "GET /jeux est martelé et le catalogue change deux fois par jour. La bonne finition :", opts: ["Supprimer l'endpoint", "Cache-Control: max-age + ETag pour la revalidation", "Exiger un token sur le catalogue", "Passer en POST"], a: 1, exp: "Très lu, peu modifié : le cas d'école du cache HTTP." },
+      { type: "qcm", q: "Un client revalide avec If-None-Match et rien n'a changé. La réponse la plus économique :", opts: ["200 avec tout le JSON", "304 sans corps", "204", "410"], a: 1, exp: "Quelques en-têtes au lieu du catalogue entier : c'est ça, l'économie du 304." },
+      { type: "qcm", q: "Un script partenaire bogué appelle l'API en boucle infinie. L'API répond…", opts: ["500", "429 + Retry-After, grâce au throttling par API key", "200 pour ne pas vexer", "En coupant le serveur"], a: 1, exp: "Le quota par consommateur protège tous les autres clients du bruit d'un seul." },
+      { type: "vf", q: "Un GET /jeux qui expire en timeout peut être réessayé immédiatement sans risque.", a: true, exp: "GET est sûre et idempotente : le retry est gratuit — contrairement au POST." },
+      { type: "input", q: "L'en-tête de REQUÊTE portant l'empreinte pour demander « du neuf, seulement s'il y en a » :", a: ["If-None-Match", "if-none-match"], ph: "Nom de l'en-tête…", exp: "If-None-Match: \"a9f4c2\" → 304 si l'ETag n'a pas bougé." }
+    ],
+    solution: `<pre class="pseudo">Idempotence : GET · PUT · DELETE rejouables (PATCH : selon l'opération)   # ces trois se réessaient sans risque ; PATCH « ça dépend »
+  POST jamais → timeout = mystère → Idempotency-Key, sinon pas de retry   # POST non idempotent : clé unique, ou aucun retry auto
+Cache : Cache-Control: max-age=300 (catalogue) · no-store (personnel)     # garder 5 min ce qui est public ; ne rien garder du privé
+  ETag: "a9f4c2" → If-None-Match → 304 Not Modified (sans corps)          # revalidation légère : 304 si l'empreinte n'a pas bougé
+Débit : 429 Too Many Requests + Retry-After: 60                           # au-delà du quota : 429 + délai d'attente conseillé
+  X-RateLimit-Limit / -Remaining · quota SERRÉ sur /auth/login            # en-têtes de quota ; login très limité contre le brute force
+DRF : DEFAULT_THROTTLE_RATES + condition()                                # côté serveur : réglage des quotas + cache conditionnel
+  (Bucket4j · middleware throttle · RateLimiter ASP.NET)                  # équivalents dans Java, PHP/Laravel, C#/ASP.NET</pre>
+<p>Ton API encaisse la charge et les réseaux capricieux. Il ne reste qu'à changer de chaise : à la prochaine leçon, tu deviens le CLIENT de ta propre API.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l19", title: "La politique de robustesse", level: 3,
+    statement: "Rédige la politique « cache et débit » de l'API Ludothèque v1, endpoint par endpoint. Pour GET /jeux, GET /jeux/5, GET /membres/12, POST /locations et POST /auth/login : décide des en-têtes de cache (max-age ? ETag ? no-store ?), de la limite de débit (généreuse, normale ou stricte — avec un chiffre), et si la requête peut être réessayée après un timeout (et à quelle condition). Termine par la règle générale de retry que devront suivre tous les clients officiels.",
+    hints: [
+      "Le catalogue est public et très lu ; le profil d'un membre est personnel ; le login est la cible favorite du brute force.",
+      "POST /locations n'est pas idempotent : quelle précaution le rend rejouable malgré tout ?",
+      "La règle de retry combine trois ingrédients : idempotence de la méthode, Retry-After, et attente croissante entre les essais."
+    ],
+    solution: "POLITIQUE CACHE ET DÉBIT — API Ludothèque v1\n\nGET /jeux (catalogue public, très lu, change ~2 fois/jour)\n  Cache : Cache-Control: max-age=300 + ETag → revalidation If-None-Match → 304\n  Débit : généreux — 1000/heure par token, 100/heure en anonyme\n  Retry après timeout : OUI, immédiat (méthode sûre et idempotente)\n\nGET /jeux/5 (fiche d'un jeu)\n  Cache : identique au catalogue (max-age=300 + ETag)\n  Débit : généreux (même quota global)\n  Retry : OUI\n\nGET /membres/12 (données personnelles)\n  Cache : Cache-Control: no-store — rien ne reste dans un cache partagé ou local\n  Débit : normal — couvert par le quota global du token\n  Retry : OUI (GET reste idempotent, même sur du personnel)\n\nPOST /locations (création, argent en jeu)\n  Cache : aucun (POST ne se cache pas)\n  Débit : normal — le quota global suffit, un humain ne loue pas 1000 fois/heure\n  Retry : SEULEMENT si le client a envoyé une Idempotency-Key (clé unique par\n  opération, mémorisée par le serveur qui rejoue la première réponse).\n  Sans clé : pas de retry automatique — on affiche « vérifie tes locations ».\n\nPOST /auth/login (cible du brute force)\n  Cache : aucun, et no-store sur la réponse (elle contient le token !)\n  Débit : STRICT — 5/minute par IP et par email visé, 429 + Retry-After: 60\n  Retry : NON automatique (un humain re-clique, un script doit attendre)\n\nRÈGLE GÉNÉRALE DE RETRY (clients officiels)\n1. On ne réessaie que l'idempotent (GET/PUT/DELETE) ou un POST à Idempotency-Key.\n2. Sur 429, on attend EXACTEMENT Retry-After avant tout nouvel essai.\n3. Sur 5xx/timeout : au plus 3 essais, attente croissante (1 s, 2 s, 4 s), puis on renonce et on informe l'utilisateur.",
+    note: "Cette page de politique vaut de l'or en production : c'est elle qu'on relit pendant un incident. Côté DRF, tout se règle dans DEFAULT_THROTTLE_RATES et un ScopedRateThrottle serré sur le login (Bucket4j, throttle ou RateLimiter ailleurs). La leçon 20 code le versant client de la règle de retry, et le cours Sécurité applicative reviendra sur le brute force et le stockage du token." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

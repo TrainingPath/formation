@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "La couche service et les règles métier (deux stocks)",
+  subtitle: "Centraliser les décisions : tarifs, disponibilité, refus — une seule fois, dans les services.",
+  theory: `
+<h3>1. Le service décide</h3>
+<p>Le <strong>service</strong> est la couche qui contient la <strong>logique métier</strong>, c'est-à-dire les <em>règles de gestion</em> propres au domaine de l'application : « peut-on louer ce jeu ? », « quel tarif appliquer ? », « faut-il refuser cette action ? ». « Métier » ne veut pas dire « emploi » : en informatique, c'est l'ensemble des règles qui décrivent <em>comment fonctionne l'activité</em> qu'on modélise (ici, une ludothèque). Le service ne fait ni SQL (c'est le rôle du DAO) ni affichage (c'est le rôle de l'UI). Il reçoit des struct, applique les règles, et renvoie une <strong>décision</strong>. C'est le <em>cerveau</em> de l'application.</p>
+
+<h3>2. Des fonctions pures, faciles à tester</h3>
+<p>Une <strong>fonction pure</strong> est une fonction dont le résultat ne dépend que de ses <em>arguments</em> (ce qu'on lui donne entre parenthèses) : mêmes entrées → même sortie, sans effet caché, sans toucher à l'écran ni à la base. Le petit <code>const</code> devant <code>const Jeu *j</code> signifie « je promets de seulement <em>lire</em> ce jeu, pas de le modifier ». La flèche <code>j-&gt;stock_location</code> se lit « le champ <code>stock_location</code> du jeu pointé par <code>j</code> » (c'est la façon d'accéder à un champ à travers un pointeur).</p>
+<pre class="pseudo">/* services.c */                          // fichier de la couche métier
+int service_peut_louer(const Jeu *j) {    // renvoie 1 (vrai) si le jeu peut être loué, 0 (faux) sinon
+    return j-&gt;stock_location &gt; 0;         // règle unique : il reste au moins un exemplaire à louer
+}
+
+double service_tarif(const Jeu *j, int jours) {   // calcule le prix total d'une location de "jours" jours
+    double total = j-&gt;prix_location * jours;       // tarif de base : prix par jour × nombre de jours
+    if (jours &gt;= 3) total *= 0.9;          // -10 % dès 3 jours (remise fidélité : *= 0.9 enlève 10 %)
+    return total;                          // renvoie le montant total à payer
+}</pre>
+<p>Ces fonctions ne dépendent ni de MySQL ni de l'écran : on peut les tester en une ligne (leçon 18). Renvoyer <code>1</code> ou <code>0</code> est la façon C d'exprimer un <strong>booléen</strong> (vrai/faux), car le C n'a pas de vrai type « oui/non » d'origine. C'est tout l'intérêt de sortir le métier des vues : on peut vérifier le cerveau sans allumer ni la base ni l'écran.</p>
+
+<h3>3. Deux stocks, deux règles</h3>
+<p>Louer regarde <code>stock_location</code> ; acheter regarde <code>stock_vente</code>. Ce sont deux compteurs indépendants : vendre le dernier exemplaire à la vente ne doit pas empêcher de louer un exemplaire du stock de location.</p>
+<div class="warn">La règle « stock nul → refus » doit exister <strong>une seule fois</strong>. Si l'UI et une future API la recodent chacune de leur côté, un jour l'une refusera et l'autre acceptera : les données deviennent incohérentes. On parle de <em>source unique de vérité</em>.</div>
+
+<h3>4. Le service orchestre le DAO</h3>
+<p><strong>Orchestrer</strong>, c'est <em>coordonner</em> les étapes dans le bon ordre, comme un chef d'orchestre. Le service vérifie d'abord l'<strong>autorisation</strong> (l'utilisateur a-t-il le droit ?) et la <strong>validation</strong> (les données sont-elles correctes ?), puis <strong>délègue</strong> l'écriture au DAO. <code>Code</code> est ici un type de <em>code retour</em> (souvent un <code>enum</code>) qui dit comment ça s'est passé : <code>ERR_SAISIE</code> signale une entrée invalide.</p>
+<pre class="pseudo">Code service_reappro(const Utilisateur *u, MYSQL *c, int jeu_id, int n) {   // réapprovisionne le stock d'un jeu
+    if (!peut_gerer_stock(u)) return ERR_SAISIE;   // autorisation : cet utilisateur a-t-il le droit ? (le ! = « non »)
+    if (n &lt;= 0)              return ERR_SAISIE;    // validation : la quantité ajoutée doit être positive
+    return dao_ajouter_stock(c, jeu_id, n);        // délégation : c'est le DAO qui écrit réellement en base
+}</pre>
+<div class="tip">Le service vérifie (autorisation, validation), <strong>décide</strong>, puis délègue l'écriture au DAO. C'est le cœur de l'application : chaque règle du domaine vit ici, et nulle part ailleurs.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le service contient…", opts: ["le SQL", "la logique métier (règles, décisions)", "l'affichage", "le Makefile"], a: 1, exp: "Il décide." },
+    { type: "qcm", q: "Le service fait-il du SQL ?", opts: ["Oui", "Non : il délègue au DAO", "Parfois", "Toujours"], a: 1, exp: "Le DAO parle à la base." },
+    { type: "qcm", q: "Pourquoi des fonctions de service « pures » ?", opts: ["Pour la vitesse", "Pour les tester sans base ni écran", "Par obligation", "Sans raison"], a: 1, exp: "Testables en une ligne." },
+    { type: "qcm", q: "Louer regarde…", opts: ["stock_vente", "stock_location", "les deux", "aucun"], a: 1, exp: "Le stock de location." },
+    { type: "qcm", q: "Acheter regarde…", opts: ["stock_location", "stock_vente", "les deux", "le prix seulement"], a: 1, exp: "Le stock de vente." },
+    { type: "qcm", q: "La règle « stock nul → refus » doit exister…", opts: ["dans chaque couche", "une seule fois, dans le service", "dans l'UI et l'API", "nulle part"], a: 1, exp: "Sinon incohérences." },
+    { type: "qcm", q: "service_tarif applique la remise…", opts: ["toujours", "dès 3 jours (-10 %)", "jamais", "au hasard"], a: 1, exp: "if (jours >= 3) total *= 0.9;." },
+    { type: "qcm", q: "Le service reçoit et renvoie plutôt…", opts: ["du SQL brut", "des struct et des codes de décision", "des row MySQL", "du HTML"], a: 1, exp: "Il manipule le domaine." },
+    { type: "qcm", q: "Vendre le dernier exemplaire de vente…", opts: ["bloque la location", "n'affecte pas le stock de location (indépendant)", "supprime le jeu", "double le prix"], a: 1, exp: "Deux compteurs séparés." },
+    { type: "qcm", q: "Avant d'écrire, le service vérifie…", opts: ["rien", "autorisation et validation, puis délègue", "seulement la vitesse", "le Makefile"], a: 1, exp: "Contrôles puis délégation." },
+    { type: "vf", q: "Recoder la règle de stock dans l'UI est une bonne idée.", a: false, exp: "Faux : duplication = incohérence potentielle." },
+    { type: "qcm", q: "service_peut_louer renvoie…", opts: ["un tarif", "1 ou 0 selon le stock", "un Jeu", "void"], a: 1, exp: "Une décision booléenne." },
+    { type: "qcm", q: "Qui appelle le service ?", opts: ["le DAO", "l'UI (et de futurs modules)", "MySQL", "le Makefile"], a: 1, exp: "Les interfaces délèguent au service." },
+    { type: "qcm", q: "Le service délègue l'écriture à…", opts: ["l'UI", "au DAO", "au Makefile", "à personne"], a: 1, exp: "dao_ajouter_stock, etc." },
+    { type: "qcm", q: "L'avantage d'un métier centralisé :", opts: ["plus de fichiers", "une seule source de vérité pour les règles", "moins de tests", "plus de SQL"], a: 1, exp: "Cohérence et maintenabilité." }
+  ],
+  final: {
+    title: "Exercice final — Où placer la règle ?",
+    intro: `<p>Un développeur écrit, dans la fonction d'affichage du catalogue :</p>
+<pre class="pseudo">void afficher_jeu(const Jeu *j) {         // fonction d'AFFICHAGE (couche UI)
+    double total = j->prix_location * 3;  // BUG : le calcul du tarif est du MÉTIER, pas de l'affichage
+    if (3 >= 3) total *= 0.9;             // BUG : règle de remise dupliquée depuis le service
+    printf("%s : loc 3j = %.2f\\n", j->nom, total);   // affiche le nom et le total calculé sur place
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel est le défaut d'architecture ?", opts: ["Aucun", "Le calcul du tarif (métier) est dans l'UI, dupliqué depuis le service", "printf est lent", "Le nom est trop long"], a: 1, exp: "La règle de tarif doit venir du service." },
+      { type: "qcm", q: "La bonne correction :", opts: ["copier la formule partout", "appeler service_tarif(j, 3) depuis l'UI", "supprimer l'affichage", "mettre le calcul dans le DAO"], a: 1, exp: "L'UI délègue le calcul au service." },
+      { type: "qcm", q: "Pourquoi c'est important ?", opts: ["Esthétique", "Le jour où la remise change, un seul endroit à modifier", "Vitesse", "Rien"], a: 1, exp: "Une source de vérité." },
+      { type: "qcm", q: "Le rôle correct de afficher_jeu :", opts: ["calculer", "afficher des valeurs fournies (déléguées au service)", "faire du SQL", "valider"], a: 1, exp: "L'UI présente, ne décide pas." },
+      { type: "vf", q: "Si l'API et l'UI calculent le tarif différemment, un client peut être mal facturé.", a: true, exp: "C'est exactement le risque de la duplication." }
+    ],
+    solution: `<pre class="pseudo">/* services.c : la règle, une seule fois */   // le métier vit ici, à un seul endroit
+double service_tarif(const Jeu *j, int jours) {   // calcule le tarif total (source unique de vérité)
+    double total = j-&gt;prix_location * jours;       // prix par jour × nombre de jours
+    if (jours &gt;= 3) total *= 0.9;                  // -10 % dès 3 jours
+    return total;                                 // renvoie le montant à payer
+}
+
+/* ui.c : l'affichage délègue */              // l'UI ne calcule rien, elle demande au service
+void afficher_jeu(const Jeu *j) {             // affiche un jeu
+    printf("%s : loc 3j = %.2f\\n", j-&gt;nom, service_tarif(j, 3));   // délègue le calcul du tarif au service
+}</pre>
+<p>Le calcul vit dans le service ; l'UI l'appelle. Une règle, un endroit. Demain : valider les entrées et gérer les erreurs proprement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l07", title: "La règle d'achat", level: 2,
+    statement: "Écris service_peut_acheter(const Jeu *j) (renvoie 1 si stock_vente > 0) et service_prix_final(const Jeu *j, int quantite) qui renvoie prix_achat × quantité (sans remise). Fonctions pures, sans SQL ni printf.",
+    hints: [
+      "return j->stock_vente > 0; pour la disponibilité.",
+      "Le prix final est prix_achat * quantite (un double).",
+      "Aucune dépendance à MySQL : ces fonctions se testent seules."
+    ],
+    solution: "#include \"modele.h\"\n\nint service_peut_acheter(const Jeu *j) {\n    return j->stock_vente > 0;\n}\n\ndouble service_prix_final(const Jeu *j, int quantite) {\n    return j->prix_achat * quantite;\n}",
+    note: "Deux fonctions pures : elles ne touchent ni la base ni l'écran, donc se testent instantanément (leçon 18). La règle d'achat regarde stock_vente, distinct de stock_location." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

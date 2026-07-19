@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie",
+  subtitle: "Les trois profils — avec les bons réflexes de sécurité dès le premier compte.",
+  theory: `
+<h3>1. Sécuriser AU MOMENT de créer</h3>
+<p>Au Niveau 6, la sécurité des sessions arrivait en fin de parcours. Ici, dès le premier utilisateur : <strong>hachage</strong> <strong>argon2</strong>, politique de mot de passe, cookies durcis. <strong>Hacher</strong> un mot de passe, c'est le transformer par un calcul <em>à sens unique</em> : on peut vérifier qu'un mot de passe correspond, mais jamais le retrouver — contrairement au <em>chiffrement</em>, réversible. <strong>argon2</strong> est l'algorithme de hachage recommandé aujourd'hui, volontairement lent pour décourager les attaques par force brute. Un <strong>cookie</strong> est un petit jeton que le navigateur renvoie à chaque visite pour prouver « c'est bien moi » (la session). Une ligne au bon moment vaut mieux qu'un audit après coup.</p>
+
+<h3>2. Les trois rôles (groupes), semés par migration</h3>
+<pre class="pseudo">ROLE_CLIENT, ROLE_VENDEUR, ROLE_ADMIN = "Client", "Vendeur", "Administrateur"   # noms des 3 roles, ranges dans 3 constantes
+
+# migration de données : RunPython   # une migration qui execute du code Python (pas seulement du schema)
+def creer_roles(apps, schema_editor):   # fonction appelee par la migration
+    Group = apps.get_model("auth", "Group")   # recupere le modele Group tel qu'il existe a cette etape
+    for nom in (ROLE_CLIENT, ROLE_VENDEUR, ROLE_ADMIN):   # pour chacun des 3 roles…
+        Group.objects.get_or_create(name=nom)   # idempotent : cree le groupe s'il manque, sinon ne fait rien</pre>
+<p>Les rôles arrivent <strong>par migration</strong> : toute base (dev, CI, prod) les a d'office. <code>get_or_create</code> est dit <strong>idempotent</strong> — le rejouer ne crée jamais de doublon, il ne fait rien si le rôle existe déjà.</p>
+
+<h3>3. Le durcissement, dans settings.py</h3>
+<pre class="pseudo">PASSWORD_HASHERS = ["django.contrib.auth.hashers.Argon2PasswordHasher", ...]   # argon2 en tete : algorithme de hachage recommande
+AUTH_PASSWORD_VALIDATORS = [   # regles imposees aux mots de passe
+    {"NAME": "...MinimumLengthValidator", "OPTIONS": {"min_length": 12}},   # au moins 12 caracteres
+    {"NAME": "...CommonPasswordValidator"},        # refuse les mots de passe fuités
+]   # fin de la liste des validateurs
+SESSION_COOKIE_HTTPONLY = True                     # anti-XSS : le JavaScript ne peut PAS lire le cookie
+SESSION_COOKIE_SECURE = True                       # HTTPS seulement : le cookie ne part jamais en clair
+SESSION_COOKIE_SAMESITE = "Lax"                    # anti-CSRF : le cookie n'est pas envoye depuis un autre site
+SESSION_COOKIE_AGE = 60 * 60 * 8                   # duree de vie de la session : 8 heures (en secondes)</pre>
+
+<h3>4. Inscription et connexion</h3>
+<pre class="pseudo">def inscrire(email, mdp):   # cree un nouveau compte client
+    if User.objects.filter(username=email).exists():   # un compte a-t-il deja cet email ?…
+        raise ValueError("Un compte existe déjà")     # (message indifférencié à l'UI)
+    u = User.objects.create_user(username=email, email=email, password=mdp)  # cree l'utilisateur ; le mot de passe est HACHÉ
+    u.groups.add(Group.objects.get(name=ROLE_CLIENT))  # lui donner le role Client : moindre privilège
+    return u   # renvoyer le compte cree
+
+# connexion : authenticate + login ; message d'échec VAGUE (anti-énumération)   # ne jamais reveler si l'email existe</pre>
+
+<h3>5. Tester la sécurité aussi</h3>
+<pre class="pseudo">def test_inscription_hache_le_mot_de_passe(self):   # verifie que le mot de passe n'est pas stocke en clair
+    u = services.inscrire("c@ludo.fr", "MotDePasse12!")   # cree un compte de test
+    self.assertNotEqual(u.password, "MotDePasse12!")   # jamais en clair : la colonne differe du mot de passe brut
+    self.assertTrue(u.check_password("MotDePasse12!"))   # mais il reste verifiable via le hachage</pre>
+<div class="warn">Le message d'échec de connexion reste indifférencié (« identifiants invalides ») : distinguer « email inconnu » de « mauvais mot de passe » offrirait gratuitement la liste des comptes valides (énumération, cours Sécurité l.14). La sécurité par conception, c'est aussi ces micro-décisions posées d'emblée.</div>
+<div class="tip">Le nouvel inscrit reçoit le rôle le moins privilégié (Client) ; vendeur et admin s'attribuent ensuite. Moindre privilège dès la création — un compte ne gagne des droits que sur décision explicite.</div>`,
+  exercises: [
+    { type: "qcm", q: "Au Niveau 8, la sécurité des comptes arrive…", opts: ["En fin de parcours", "Dès le premier utilisateur", "Jamais", "En prod"], a: 1, exp: "Par conception." },
+    { type: "qcm", q: "Un mot de passe est…", opts: ["Chiffré", "Haché (argon2), irréversible", "Encodé base64", "En clair"], a: 1, exp: "On ne le relit jamais." },
+    { type: "qcm", q: "Les rôles sont portés par…", opts: ["Une colonne texte maison", "Les groupes de django.contrib.auth", "Un cookie", "Le CSS"], a: 1, exp: "Group." },
+    { type: "qcm", q: "Les rôles arrivent…", opts: ["À la main", "Par migration de données (get_or_create idempotent)", "En prod seulement", "Jamais"], a: 1, exp: "Toute base les a." },
+    { type: "qcm", q: "La politique NIST privilégie…", opts: ["La complexité imposée", "La longueur + le refus des mots de passe fuités", "Le changement mensuel", "Les symboles"], a: 1, exp: "CommonPasswordValidator." },
+    { type: "qcm", q: "SESSION_COOKIE_HTTPONLY protège de…", opts: ["Le CSRF", "Le vol de cookie par XSS", "L'injection", "La force brute"], a: 1, exp: "JS ne lit pas le cookie." },
+    { type: "qcm", q: "SESSION_COOKIE_SECURE fait que le cookie…", opts: ["Part partout", "Ne part que sur HTTPS", "Est chiffré côté client", "Ne meurt jamais"], a: 1, exp: "Anti-interception." },
+    { type: "qcm", q: "create_user stocke…", opts: ["Le mot de passe en clair", "Un hachage", "Un cookie", "Rien"], a: 1, exp: "Jamais de clair." },
+    { type: "qcm", q: "Le rôle par défaut d'un inscrit :", opts: ["Client (moindre privilège)", "Administrateur", "Vendeur", "Aucun"], a: 0, exp: "Droits sur décision." },
+    { type: "qcm", q: "Le message d'échec de connexion :", opts: ["« Email inconnu »", "« Identifiants invalides » (indifférencié)", "« Mauvais mot de passe »", "La stack"], a: 1, exp: "Anti-énumération." },
+    { type: "vf", q: "On teste aussi la sécurité (ex. le mot de passe n'est pas en clair).", a: true, exp: "check_password + assertNotEqual." },
+    { type: "qcm", q: "get_or_create rend le seed…", opts: ["Lent", "Idempotent (rejouable sans doublon)", "Dangereux", "Unique à la prod"], a: 1, exp: "Créé une fois." },
+    { type: "qcm", q: "Distinguer « email inconnu » de « mauvais mdp »…", opts: ["Est ergonomique donc bon", "Offre la liste des comptes valides (énumération)", "Chiffre", "Est sans risque"], a: 1, exp: "Fuite." },
+    { type: "qcm", q: "SESSION_COOKIE_SAMESITE sert contre…", opts: ["Le XSS", "Le CSRF", "L'injection", "La force brute"], a: 1, exp: "Barrière cross-site." },
+    { type: "vf", q: "Sécuriser au moment de créer coûte une ligne ; le faire après coûte un audit.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Comptes durcis dès le départ",
+    intro: `<p>On met en place rôles et authentification sûre.</p>`,
+    questions: [
+      { type: "qcm", q: "Le hachage :", opts: ["argon2 (PASSWORD_HASHERS)", "chiffrement AES", "base64", "clair"], a: 0, exp: "Irréversible." },
+      { type: "qcm", q: "Les cookies de session :", opts: ["HttpOnly + Secure + SameSite + expiration", "un timeout de 10 ans", "rien", "publics"], a: 0, exp: "Durcis." },
+      { type: "qcm", q: "Les rôles :", opts: ["Groupes semés par migration idempotente", "à la main en prod", "un cookie", "le CSS"], a: 0, exp: "Toute base les a." },
+      { type: "qcm", q: "Le message d'échec :", opts: ["« Identifiants invalides » (unique)", "distinguer les cas", "le SQL", "la trace"], a: 0, exp: "Anti-énumération." },
+      { type: "vf", q: "Le nouvel inscrit reçoit le rôle le moins privilégié.", a: true, exp: "Moindre privilège." }
+    ],
+    solution: `<pre class="pseudo"># settings.py
+PASSWORD_HASHERS = ["...Argon2PasswordHasher", ...]   # argon2 : hachage a sens unique, lent
+AUTH_PASSWORD_VALIDATORS = [{"NAME":"...MinimumLengthValidator","OPTIONS":{"min_length":12}},   # au moins 12 caracteres…
+                            {"NAME":"...CommonPasswordValidator"}]   # …et pas un mot de passe deja fuite
+SESSION_COOKIE_HTTPONLY = True; SESSION_COOKIE_SECURE = True   # cookie illisible par JS + HTTPS seulement
+SESSION_COOKIE_SAMESITE = "Lax"; SESSION_COOKIE_AGE = 60*60*8   # anti-CSRF + expiration a 8 h
+
+def inscrire(email, mdp):   # cree un compte client
+    u = User.objects.create_user(username=email, email=email, password=mdp)   # mot de passe HACHÉ automatiquement
+    u.groups.add(Group.objects.get(name="Client"))   # role Client : moindre privilege
+    return u   # renvoyer le compte</pre>
+<p>Les comptes sont sûrs dès le premier. Demain : l'autorisation, anti-IDOR.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta config de sécurité et ton inscription…",
+  items: [
+  { id: "proj6py-l9", title: "L'inscription durcie + son test de sécurité", level: 3,
+    statement: "Écris services.inscrire(email, mdp) (refus si email pris, création via create_user, ajout au groupe Client) et son test de SÉCURITÉ : le mot de passe n'est pas stocké en clair, check_password fonctionne, et le compte est bien dans le groupe Client (pas plus). Ajoute les 4 lignes settings de durcissement. Explique pourquoi tester « pas en clair » est un test de sécurité qui compte.",
+    hints: [
+      "assertNotEqual(u.password, mdp) : la colonne ne contient pas le mot de passe brut.",
+      "assertTrue(u.check_password(mdp)) : mais il reste vérifiable (hachage).",
+      "u.groups.filter(name='Administrateur').exists() -> False (moindre privilège)."
+    ],
+    solution: "# services.py\ndef inscrire(email, mdp):   # cree un nouveau compte client\n    if User.objects.filter(username=email).exists():   # email deja pris ?…\n        raise ValueError(\"Un compte existe déjà avec cet email\")   # …refuser\n    u = User.objects.create_user(username=email, email=email, password=mdp)   # creer ; mot de passe HACHÉ\n    u.groups.add(Group.objects.get(name=\"Client\"))   # role Client (moindre privilege)\n    return u   # renvoyer le compte\n\n# settings.py — durcissement (4 lignes clés)\nPASSWORD_HASHERS = [\"django.contrib.auth.hashers.Argon2PasswordHasher\", ...]   # argon2 en tete\nSESSION_COOKIE_HTTPONLY = True   # cookie illisible par le JavaScript (anti-XSS)\nSESSION_COOKIE_SECURE = True   # cookie envoye uniquement sur HTTPS\nSESSION_COOKIE_SAMESITE = \"Lax\"   # cookie non envoye depuis un autre site (anti-CSRF)\n\n# tests.py — un vrai test de SÉCURITÉ\nclass InscriptionTests(TestCase):   # tests de l'inscription\n    def setUp(self):   # preparer les groupes avant chaque test\n        Group.objects.get_or_create(name=\"Client\")   # le role Client doit exister\n        Group.objects.get_or_create(name=\"Administrateur\")   # et le role Administrateur (pour le test negatif)\n\n    def test_mot_de_passe_jamais_en_clair(self):   # le mot de passe ne doit pas etre stocke en clair\n        u = services.inscrire(\"c@ludo.fr\", \"MotDePasse12!\")   # creer un compte\n        self.assertNotEqual(u.password, \"MotDePasse12!\")  # pas stocké en clair\n        self.assertTrue(u.check_password(\"MotDePasse12!\")) # mais vérifiable (haché)\n\n    def test_moindre_privilege(self):   # un inscrit ne doit avoir que le role Client\n        u = services.inscrire(\"c@ludo.fr\", \"MotDePasse12!\")   # creer un compte\n        self.assertTrue(u.groups.filter(name=\"Client\").exists())   # il est bien Client…\n        self.assertFalse(u.groups.filter(name=\"Administrateur\").exists())   # …et surtout pas Administrateur\n\n# Pourquoi ce test compte :\n# « Le mot de passe n'est pas en clair » est LA garantie qui protège tous les\n# comptes si la base fuit un jour. Le tester en CI empêche une régression\n# catastrophique — par exemple quelqu'un qui, par erreur, stockerait le mot\n# de passe dans un champ à côté « pour déboguer ». La sécurité devient une\n# propriété vérifiée à chaque commit, pas une intention.",
+    note: "Tester « pas en clair » peut sembler évident — c'est justement pourquoi personne ne le teste, et pourquoi les fuites de mots de passe en clair existent encore. En CI, ce test devient un garde-fou permanent contre la régression la plus coûteuse qui soit. Le test de moindre privilège complète : un inscrit ne doit JAMAIS naître administrateur, même par accident de code." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

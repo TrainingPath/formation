@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Volumes : faire survivre les données",
+  subtitle: "Le conteneur est jetable, les locations et achats de la Ludothèque ne le sont pas.",
+  theory: `
+<h3>1. Le problème (constaté en leçon 7)</h3>
+<p>Rappel du mur n°2 : la couche d'écriture d'un conteneur meurt avec lui. Or les données MySQL de la Ludothèque — clients, locations, achats — doivent <strong>survivre</strong> à toute recréation de conteneur (c'est ce qu'on appelle la <strong>persistance</strong> : rester après l'extinction). La solution : sortir les données du conteneur et les ranger dans un <strong>volume</strong> — un espace de stockage géré par Docker, indépendant de la vie des conteneurs.</p>
+
+<h3>2. Les volumes nommés</h3>
+<p>Un <strong>volume nommé</strong> est un coffre de données auquel on donne un nom et que Docker range dans un endroit qu'il gère lui-même. On le crée une fois, puis on le <strong>monte</strong> (on le branche) dans un conteneur à un chemin précis avec l'option <code>-v</code>.</p>
+<pre class="pseudo">docker volume create donnees-mysql        # crée un volume nommé 'donnees-mysql' (un coffre de données géré par Docker)
+docker volume ls                          # liste tous les volumes existants sur la machine
+docker volume inspect donnees-mysql       # détaille le volume, dont le 'Mountpoint' : l'endroit exact où Docker le stocke
+
+docker run -d --name bdd \\               # lance un conteneur MySQL nommé 'bdd', en arrière-plan
+    -v donnees-mysql:/var/lib/mysql \\    # -v = monter : branche le volume 'donnees-mysql' sur le dossier /var/lib/mysql du conteneur
+    -e MYSQL_ROOT_PASSWORD=secret mysql:8.4   # -e : mot de passe root exigé par l'image mysql:8.4</pre>
+<p><code>/var/lib/mysql</code> est le dossier où MySQL écrit ses bases de données : en le montant sur le volume, tout ce que MySQL y range vit désormais <strong>hors</strong> du conteneur, dans le volume.</p>
+
+<h3>3. La preuve de survie</h3>
+<p>La meilleure façon de comprendre : détruire le conteneur et vérifier que les données sont toujours là.</p>
+<pre class="pseudo">docker exec bdd mysql -psecret -e "CREATE DATABASE ludotheque"   # crée une base 'ludotheque' (-p = mot de passe, -e = exécuter une requête SQL)
+docker rm -f bdd                        # on DÉTRUIT complètement le conteneur (-f force)
+docker run -d --name bdd2 -v donnees-mysql:/var/lib/mysql ... mysql:8.4   # un conteneur NEUF (bdd2), branché sur LE MÊME volume
+docker exec bdd2 mysql -psecret -e "SHOW DATABASES"   # on liste les bases : 'ludotheque' est toujours là ✔ (les données ont survécu)</pre>
+
+<h3>4. Volumes nommés vs bind mounts</h3>
+<p>Deux façons de monter des données, à ne pas confondre. Le <strong>volume nommé</strong> est géré par Docker (endroit caché, portable). Le <strong>bind mount</strong> relie un dossier précis de TA machine (l'hôte) à un dossier du conteneur — pratique en développement, mais dépendant de ta machine.</p>
+<pre class="pseudo">-v donnees-mysql:/var/lib/mysql          # VOLUME NOMMÉ : géré par Docker, portable
+                                          #   -> idéal pour les données de PRODUCTION
+-v ./init:/docker-entrypoint-initdb.d    # BIND MOUNT : un dossier RÉEL de l'hôte (ici ./init) monté dans le conteneur
+                                          #   -> idéal pour fichiers de dev, scripts, code (leçon 14)</pre>
+<p>Le volume nommé est portable et géré par Docker ; le bind mount expose un chemin précis de ta machine (donc dépendant de l'hôte).</p>
+
+<h3>5. Gérer le stock de volumes</h3>
+<p>Les volumes s'accumulent aussi. Mais attention : supprimer un volume détruit des DONNÉES, pas juste un processus.</p>
+<pre class="pseudo">docker volume ls                     # liste les volumes
+docker volume rm donnees-mysql       # supprime un volume précis ; Docker REFUSE si un conteneur l'utilise encore (protection)
+docker volume prune                  # supprime d'un coup tous les volumes ORPHELINS (non utilisés) -> DANGER : ce sont des données</pre>
+<div class="warn"><code>docker volume prune</code> et <code>rm</code> détruisent des <strong>données</strong>, pas des processus. Avant tout nettoyage : sauvegarder (mysqldump) — un volume supprimé ne revient pas.</div>
+<div class="tip">Règle d'architecture : conteneur = <strong>compute jetable</strong>, volume = <strong>état précieux</strong>. Toute la suite du cours (Compose, prod) repose sur cette séparation.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans volume, les données écrites par MySQL en conteneur…", opts: ["Survivent", "Meurent avec le conteneur", "Vont dans l'image", "Vont sur Docker Hub"], a: 1, exp: "Constat de la leçon 7." },
+    { type: "qcm", q: "Créer un volume nommé :", opts: ["docker volume create donnees-mysql", "docker create volume", "mkdir volume", "docker run -v"], a: 0, exp: "Puis -v pour le monter." },
+    { type: "qcm", q: "-v donnees-mysql:/var/lib/mysql signifie…", opts: ["Volume nommé monté sur le dossier de données MySQL", "Copie unique", "Un réseau", "Un port"], a: 0, exp: "volume:chemin-conteneur." },
+    { type: "qcm", q: "/var/lib/mysql est…", opts: ["Le dossier où MySQL stocke ses bases", "Un log", "Le code de l'app", "Un cache"], a: 0, exp: "C'est LUI qu'il faut persister." },
+    { type: "qcm", q: "Après rm du conteneur puis run avec le même volume…", opts: ["Les données sont perdues", "Les bases sont toujours là", "Le volume est vide", "Erreur"], a: 1, exp: "La preuve de survie." },
+    { type: "vf", q: "Un volume nommé appartient à un conteneur précis.", a: false, exp: "Indépendant : montable par n'importe quel conteneur." },
+    { type: "qcm", q: "Un bind mount (-v ./dossier:/chemin)…", opts: ["Est géré par Docker", "Expose un dossier précis de l'hôte", "Est plus sûr en prod", "N'existe pas"], a: 1, exp: "Dépendant de la machine." },
+    { type: "qcm", q: "Pour les données de production, on préfère…", opts: ["Le volume nommé", "Le bind mount", "La couche d'écriture", "Un zip"], a: 0, exp: "Portable, géré par Docker." },
+    { type: "qcm", q: "Pour du code de dev monté à chaud, on utilisera…", opts: ["Un bind mount (leçon 14)", "Un volume nommé", "Une image", "Un tag"], a: 0, exp: "Le dossier local visible dedans." },
+    { type: "qcm", q: "Voir où Docker stocke un volume :", opts: ["docker volume inspect", "docker ps", "ls -la", "docker logs"], a: 0, exp: "Mountpoint dans la sortie." },
+    { type: "qcm", q: "docker volume rm échoue si…", opts: ["Le volume est vide", "Un conteneur l'utilise encore", "Il est trop gros", "Jamais"], a: 1, exp: "Protection minimale." },
+    { type: "qcm", q: "docker volume prune supprime…", opts: ["Tous les volumes", "Les volumes orphelins (non utilisés)", "Les images", "Les logs"], a: 1, exp: "Donc potentiellement des données." },
+    { type: "vf", q: "Avant un prune de volumes, on sauvegarde (mysqldump).", a: true, exp: "Un volume supprimé ne revient pas." },
+    { type: "qcm", q: "La règle d'architecture de la leçon :", opts: ["Conteneur = état, volume = compute", "Conteneur = compute jetable, volume = état précieux", "Tout dans le conteneur", "Tout dans l'image"], a: 1, exp: "La séparation fondatrice." },
+    { type: "vf", q: "On peut monter le même volume nommé dans un nouveau conteneur pour récupérer les données.", a: true, exp: "C'est exactement le scénario de migration/mise à jour." }
+  ],
+  final: {
+    title: "Exercice final — La preuve de survie",
+    intro: `<p>On démontre la persistance de bout en bout.</p>`,
+    questions: [
+      { type: "qcm", q: "Créer le volume :", opts: ["docker volume create donnees-mysql", "docker volume new", "mkdir", "docker -v"], a: 0, exp: "Nommé, géré par Docker." },
+      { type: "qcm", q: "Le montage MySQL :", opts: ["-v donnees-mysql:/var/lib/mysql", "-v /var/lib/mysql:donnees-mysql", "-p 3306", "-e VOLUME"], a: 0, exp: "volume:chemin." },
+      { type: "qcm", q: "La preuve consiste à :", opts: ["Créer une base, détruire le conteneur, relancer avec le volume, revoir la base", "regarder les logs", "croire la doc", "un ping"], a: 0, exp: "Expérience complète." },
+      { type: "qcm", q: "Détruire le conteneur sans détruire les données :", opts: ["docker rm -f bdd (le volume survit)", "docker volume rm", "docker rmi", "impossible"], a: 0, exp: "rm ≠ volume rm." },
+      { type: "vf", q: "Le nouveau conteneur retrouve la base ludotheque.", a: true, exp: "Le volume porte l'état." }
+    ],
+    solution: `<pre class="pseudo">$ docker volume create donnees-mysql                # crée le coffre de données géré par Docker
+$ docker run -d --name bdd -e MYSQL_ROOT_PASSWORD=secret \\   # lance MySQL en arrière-plan avec son mot de passe root...
+    -v donnees-mysql:/var/lib/mysql mysql:8.4        # ...et branche le volume sur le dossier de données de MySQL
+$ docker exec bdd mysql -psecret -e "CREATE DATABASE ludotheque"   # crée une base : elle est écrite dans le volume
+
+$ docker rm -f bdd                       # conteneur détruit (mais le volume, lui, reste intact)
+$ docker run -d --name bdd2 -e MYSQL_ROOT_PASSWORD=secret \\   # nouveau conteneur MySQL (bdd2)...
+    -v donnees-mysql:/var/lib/mysql mysql:8.4        # ...branché sur LE MÊME volume qu'avant
+$ docker exec bdd2 mysql -psecret -e "SHOW DATABASES"   # on liste les bases du nouveau conteneur...
+ludotheque                               # ✔ la base est toujours là : les données ont survécu au conteneur</pre>
+<p>L'état est sauvé. Demain : que l'app et sa base se parlent enfin.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta stratégie de volumes…",
+  items: [
+  { id: "docker-l8", title: "Sauvegarder un volume", level: 3,
+    statement: "Écris la procédure commentée de sauvegarde/restauration des données MySQL de la Ludothèque : 1) un dump logique via docker exec (mysqldump > fichier daté sur l'hôte), 2) la restauration dans un volume NEUF (nouveau volume + nouveau conteneur + mysql < dump), 3) deux lignes sur pourquoi le dump logique est préférable à la copie brute du volume à chaud.",
+    hints: [
+      "docker exec bdd mysqldump -psecret ludotheque > sauvegarde-$(date +%F).sql",
+      "Restauration : docker exec -i bdd-neuf mysql -psecret ludotheque < sauvegarde-....sql",
+      "Copier /var/lib/mysql pendant que MySQL écrit = fichiers incohérents."
+    ],
+    solution: "# 1. SAUVEGARDE — dump logique, daté, stocké sur l'hôte\ndocker exec bdd mysqldump -uroot -psecret --databases ludotheque \\\n    > sauvegarde-$(date +%F).sql\n\n# 2. RESTAURATION dans un volume neuf\ndocker volume create donnees-mysql-v2\ndocker run -d --name bdd-neuf \\\n    -e MYSQL_ROOT_PASSWORD=secret \\\n    -v donnees-mysql-v2:/var/lib/mysql mysql:8.4\n#   (attendre que MySQL soit prêt — healthcheck, leçon 13)\ndocker exec -i bdd-neuf mysql -uroot -psecret \\\n    < sauvegarde-2026-07-07.sql\ndocker exec bdd-neuf mysql -psecret -e \"SHOW TABLES IN ludotheque\"\n\n# 3. Pourquoi le dump plutôt que copier le volume à chaud ?\n# - mysqldump produit un état COHÉRENT (transactionnel) ;\n#   copier /var/lib/mysql pendant que MySQL écrit capture des fichiers\n#   à moitié modifiés -> base potentiellement corrompue.\n# - le .sql est lisible, versionnable, restaurable vers une autre\n#   version de MySQL — le volume brut ne l'est pas.",
+    note: "docker exec -i (sans -t) permet de rediriger un fichier dans la commande du conteneur — le duo exec/redirections vient tout droit du cours Linux. En production réelle, ce dump serait planifié (cron) et testé par des restaurations régulières : une sauvegarde jamais restaurée n'est qu'un espoir." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

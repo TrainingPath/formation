@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Configuration : variables d'environnement et secrets",
+  subtitle: "L'image contient le code, l'environnement contient la config.",
+  theory: `
+<h3>1. La règle d'or</h3>
+<p>Une règle qui structure tout le reste. L'<strong>image</strong> contient ce qui ne change jamais (le code, les dépendances) ; l'<strong>environnement</strong> contient ce qui change d'une machine à l'autre (la configuration, les <strong>secrets</strong> comme les mots de passe). Un <strong>secret</strong> est une information sensible qui ne doit jamais être publiée ni partagée.</p>
+<pre class="pseudo">IMAGE         = code + dépendances     (identique partout, publiable)          # le contenu figé et reproductible : on peut le partager
+ENVIRONNEMENT = config + secrets       (différent par machine, JAMAIS publié)  # les réglages qui varient : restent privés, hors de l'image</pre>
+<p>La même image <code>ludotheque:0.1</code> tourne en dev, test et prod : seule la configuration change. C'est le prolongement direct du <code>os.environ</code> du capstone (Python lit la config depuis l'environnement).</p>
+
+<h3>2. Trois façons de passer des variables</h3>
+<p>Une <strong>variable d'environnement</strong> est un couple clé=valeur fourni au programme au démarrage. Trois manières de les donner à un conteneur :</p>
+<pre class="pseudo">-e DB_HOST=bdd                    # UNE variable à la fois (pratique mais s'accumule vite si nombreuses)
+--env-file .env.docker            # tout un FICHIER de lignes clé=valeur d'un coup (la méthode propre)
+ENV DJANGO_DEBUG=0                # une valeur PAR DÉFAUT écrite dans le Dockerfile (jamais un secret : elle serait figée dans l'image !)</pre>
+
+<h3>3. Le fichier d'environnement</h3>
+<p>Le fichier <code>.env.docker</code> regroupe toutes les variables. Il ne doit JAMAIS être ni commité dans Git, ni copié dans l'image (rappel leçon 6 : il figure dans <code>.gitignore</code> ET <code>.dockerignore</code>).</p>
+<pre class="pseudo"># .env.docker — JAMAIS commité dans Git, JAMAIS copié dans l'image
+DJANGO_SECRET_KEY=cle-longue-aleatoire   # clé secrète de Django (signature des sessions...) : sensible
+DJANGO_DEBUG=0                           # mode debug désactivé (0) : jamais 1 en production
+DB_HOST=bdd                              # nom DNS du conteneur MySQL (leçon 9)
+DB_PASSWORD=secret                       # mot de passe de la base : un secret
+
+$ docker run -d --env-file .env.docker ... ludotheque:0.1   # charge TOUTES les variables du fichier d'un seul coup
+$ docker exec ludo env | grep DB_        # 'env' liste les variables vues par le processus ; grep filtre celles qui commencent par DB_</pre>
+
+<h3>4. Où un secret NE va PAS</h3>
+<p>Récapitulatif des mauvais endroits. <code>ARG</code> est une variable de construction (disponible seulement au build) — mais elle reste tout de même dans l'historique de l'image, donc pas sûre pour un secret.</p>
+<pre class="pseudo">✘ ENV DB_PASSWORD=... dans le Dockerfile   # figé dans l'image, visible par 'docker history' -> secret grillé
+✘ ARG utilisé pour un secret               # ARG reste aussi dans l'historique de l'image -> pas sûr
+✘ .env copié par COPY . .                  # sans .dockerignore, le secret entre dans une couche (leçon 6)
+✘ la ligne de commande partagée            # 'docker run -e MOT_DE_PASSE=...' reste dans l'historique du shell + 'docker inspect'
+✔ --env-file (fichier hors Git)            # la bonne méthode ; en prod, un vrai gestionnaire de secrets (vault...)</pre>
+
+<h3>5. Vérité effective : docker inspect</h3>
+<p>Quand on doute (« mais je l'ai définie, cette variable ! »), <code>inspect</code> montre ce que Docker a RÉELLEMENT injecté.</p>
+<pre class="pseudo">docker inspect ludo --format '{{range .Config.Env}}{{println .}}{{end}}'   # affiche la liste EXACTE des variables injectées dans le conteneur ludo</pre>
+<p><code>inspect</code> montre l'environnement <strong>réellement</strong> injecté — l'outil de la dispute « mais je l'ai définie, cette variable ! ».</p>
+<div class="warn"><code>docker inspect</code> révèle les variables en clair à quiconque a accès au démon Docker. Les vrais secrets de production passent par un gestionnaire dédié (Docker secrets en Swarm, vault…) ; à notre échelle, un <code>.env</code> à permissions restreintes (<code>chmod 600</code>, lisible par son seul propriétaire) sur le serveur est le minimum vital.</div>
+<div class="tip">Un doute sur une config ? Toujours la chaîne : <code>.env.docker</code> (ce que tu crois) → <code>docker inspect</code> (ce que Docker a injecté) → <code>docker exec ludo env</code> (ce que le processus voit).</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle d'or :", opts: ["Image = config, env = code", "Image = code, environnement = config", "Tout dans l'image", "Tout dans Git"], a: 1, exp: "La même image partout." },
+    { type: "qcm", q: "La même image en dev et en prod diffère par…", opts: ["Son tag", "Son environnement (--env-file différent)", "Son code", "Sa taille"], a: 1, exp: "C'est le but." },
+    { type: "qcm", q: "Passer beaucoup de variables proprement :", opts: ["Dix -e à la suite", "--env-file .env.docker", "Les coder en dur", "Un COPY"], a: 1, exp: "Un fichier clé=valeur." },
+    { type: "qcm", q: ".env.docker doit être…", opts: ["Commité pour l'équipe", "Hors Git ET hors image", "Dans l'image", "Sur Docker Hub"], a: 1, exp: ".gitignore + .dockerignore." },
+    { type: "qcm", q: "ENV dans le Dockerfile convient pour…", opts: ["Les mots de passe", "Des défauts NON secrets (ex. DEBUG=0)", "La SECRET_KEY", "Rien"], a: 1, exp: "Figé dans l'image = public." },
+    { type: "qcm", q: "Un secret via ENV dans le Dockerfile est visible par…", opts: ["Personne", "docker history / inspect de l'image", "Le CSS", "MySQL"], a: 1, exp: "Figé pour toujours." },
+    { type: "vf", q: "ARG est une façon sûre de passer un secret au build.", a: false, exp: "Il reste dans l'historique de l'image." },
+    { type: "qcm", q: "Vérifier ce que le processus voit :", opts: ["docker exec ludo env", "cat Dockerfile", "docker ps", "echo $DB_HOST sur l'hôte"], a: 0, exp: "Dans le conteneur." },
+    { type: "qcm", q: "Vérifier ce que Docker a injecté :", opts: ["docker inspect (Config.Env)", "docker logs", "docker images", "git log"], a: 0, exp: "La vérité effective." },
+    { type: "qcm", q: "« J'ai défini la variable mais l'app ne la voit pas » — la chaîne de diagnostic :", opts: [".env.docker → inspect → exec env", "reboot", "rebuild", "changer d'image"], a: 0, exp: "Croire → injecté → vu." },
+    { type: "qcm", q: "docker inspect expose les variables…", opts: ["Chiffrées", "En clair, à qui a accès au démon", "Jamais", "Hachées"], a: 1, exp: "D'où les gestionnaires de secrets en prod." },
+    { type: "qcm", q: "Le minimum vital pour .env sur un serveur :", opts: ["chmod 600 (lisible par son seul propriétaire)", "chmod 777", "le commiter", "l'imprimer"], a: 0, exp: "Permissions du cours Linux." },
+    { type: "vf", q: "La ligne de commande docker run -e DB_PASSWORD=... reste dans l'historique du shell.", a: true, exp: "Une raison de plus pour --env-file." },
+    { type: "qcm", q: "Cette leçon prolonge quelle habitude du capstone ?", opts: ["Les tests", "settings.py lit os.environ (config hors code)", "Les templates", "L'ORM"], a: 1, exp: "Même philosophie, étage infrastructure." },
+    { type: "qcm", q: "Une image qui exige un secret pour BUILDER est…", opts: ["Normale", "Un signal de conception à revoir (le secret appartient au run)", "Plus rapide", "Sécurisée"], a: 1, exp: "Build reproductible sans secrets." }
+  ],
+  final: {
+    title: "Exercice final — La config rangée",
+    intro: `<p>On nettoie la configuration de la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "Le lancement propre :", opts: ["docker run -d --env-file .env.docker ... ludotheque:0.1", "dix -e", "ENV dans le Dockerfile", "config en dur"], a: 0, exp: "Un fichier, hors Git." },
+      { type: "qcm", q: ".env.docker est protégé par :", opts: [".gitignore + .dockerignore (+ chmod 600 en prod)", "rien", "un mot de passe", "un zip"], a: 0, exp: "Trois barrières." },
+      { type: "qcm", q: "DJANGO_DEBUG=0 par défaut peut vivre :", opts: ["En ENV du Dockerfile (non secret)", "jamais nulle part", "en secret vault", "dans le code"], a: 0, exp: "Un défaut sain, surchargeable." },
+      { type: "qcm", q: "Prouver qu'aucun secret n'est dans l'image :", opts: ["docker history + run --rm image env", "croire le stagiaire", "docker ps", "ping"], a: 0, exp: "Vérification leçon 6 + 10." },
+      { type: "vf", q: "La même image sert en dev et en prod avec deux --env-file.", a: true, exp: "La règle d'or, appliquée." }
+    ],
+    solution: `<pre class="pseudo"># .env.docker (hors Git, hors image, chmod 600 en prod)   # le fichier des variables : jamais commité, jamais dans l'image
+DJANGO_SECRET_KEY=cle-longue-aleatoire   # clé secrète Django (sensible)
+DJANGO_DEBUG=0                           # debug OFF (obligatoire en prod)
+DB_HOST=bdd                              # nom DNS du conteneur MySQL
+DB_PASSWORD=secret                       # mot de passe de la base (secret)
+
+$ docker run -d --name ludo --network reseau-ludo -p 8000:8000 \\   # lance l'app sur le réseau, port publié
+    --env-file .env.docker ludotheque:0.1        # charge toute la config depuis le fichier (aucun secret sur la ligne de commande)
+
+$ docker exec ludo env | grep -E "DB_|DJANGO_"    # vérifie ce que le PROCESSUS voit réellement (variables DB_ et DJANGO_)
+$ docker history ludotheque:0.1                   # vérifie l'image : aucun secret figé dans ses couches</pre>
+<p>La config est rangée et sûre. Demain : le MySQL officiel du projet.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta gestion de configuration…",
+  items: [
+  { id: "docker-l10", title: "Deux environnements, une image", level: 3,
+    statement: "Écris les deux fichiers .env.dev et .env.prod de la Ludothèque (mêmes clés, valeurs adaptées : DEBUG, hôtes, mots de passe différents) et les deux commandes docker run correspondantes utilisant LA MÊME image. Ajoute la checklist de 4 points qui garantit qu'aucun secret ne fuite (Git, image, shell, permissions).",
+    hints: [
+      "Mêmes clés dans les deux fichiers : seule la VALEUR change (DEBUG=1 en dev).",
+      "Les deux run ne diffèrent que par --env-file et éventuellement -p.",
+      "Checklist : .gitignore, .dockerignore, pas de -e en ligne de commande, chmod 600."
+    ],
+    solution: "# .env.dev\nDJANGO_SECRET_KEY=cle-de-dev-simple\nDJANGO_DEBUG=1\nDB_HOST=bdd\nDB_PASSWORD=motdepasse-dev\n\n# .env.prod  (sur le serveur uniquement, chmod 600)\nDJANGO_SECRET_KEY=cle-longue-aleatoire-generee\nDJANGO_DEBUG=0\nDB_HOST=bdd\nDB_PASSWORD=mot-de-passe-fort-different\n\n# Dev :\ndocker run -d --name ludo --network reseau-ludo -p 8000:8000 \\\n    --env-file .env.dev ludotheque:0.1\n\n# Prod (MÊME image, autre environnement) :\ndocker run -d --name ludo --network reseau-ludo -p 8000:8000 \\\n    --env-file .env.prod ludotheque:0.1\n\n# Checklist anti-fuite :\n# 1. .gitignore contient .env*        -> jamais dans l'historique Git\n# 2. .dockerignore contient .env*     -> jamais dans une couche d'image\n# 3. aucun secret en -e sur la ligne de commande -> pas d'historique shell\n# 4. chmod 600 .env.prod sur le serveur -> lisible par le seul propriétaire",
+    note: "Mêmes clés, valeurs différentes : l'application ne sait même pas dans quel environnement elle tourne, elle lit juste son environnement — exactement le settings.py du capstone. Si un jour dev et prod divergent en COMPORTEMENT, le suspect n° 1 est une variable qui diffère : diff <(sort .env.dev) <(sort .env.prod) répond en une commande." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

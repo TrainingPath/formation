@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Gestion mémoire du projet (listes dynamiques, valgrind)",
+  subtitle: "Charger un catalogue de taille variable sans fuite : allouer, posséder, libérer.",
+  theory: `
+<h3>1. Un catalogue de taille inconnue</h3>
+<p>On ne sait pas à l'avance combien de jeux la base contient. On ne peut donc pas réserver un tableau de taille fixe. On l'<strong>alloue dynamiquement</strong> : on demande au système, pendant l'exécution, exactement la quantité de mémoire nécessaire, une fois le nombre de lignes connu. C'est comme réserver, au restaurant, le nombre exact de couverts après avoir compté les invités.</p>
+<pre class="pseudo">Jeu *jeu_charger_tous(MYSQL *c, int *n) {                        // renvoie un tableau de Jeu ; écrit le nombre lu dans *n
+    mysql_query(c, "SELECT id,nom,prix_location,stock_location FROM jeu");   // demande toutes les lignes de la table jeu
+    MYSQL_RES *res = mysql_store_result(c);                      // récupère en mémoire le résultat complet de la requête
+    if (!res) return NULL;                                       // si la récupération a échoué, renvoyer "rien" (NULL)
+    int total = (int)mysql_num_rows(res);                        // compte le nombre de lignes rapportées
+    Jeu *tab = malloc(total * sizeof(Jeu));                      // réserve de quoi stocker "total" structures Jeu
+    if (!tab) { mysql_free_result(res); return NULL; }           // si la réservation échoue : libérer le résultat et sortir
+    /* ... remplir tab ligne par ligne ... */                   // (recopier chaque ligne SQL dans tab[i])
+    mysql_free_result(res);                                      // le résultat MySQL n'est plus utile : on le libère
+    *n = total;                                                  // on communique le nombre d'éléments à l'appelant
+    return tab;              // l'appelant devra free(tab)       // on rend le tableau ; sa libération incombe à l'appelant
+}</pre>
+<p>Décryptons. <code>malloc</code> (<em>memory allocate</em>) réserve un bloc de mémoire et renvoie son adresse (un <strong>pointeur</strong>). <code>sizeof(Jeu)</code> donne la taille d'une fiche Jeu, donc <code>total * sizeof(Jeu)</code> réserve la place pour <code>total</code> fiches. <code>NULL</code> est le pointeur « vide », qui ne désigne rien : on le renvoie en cas d'échec. <code>MYSQL_RES</code> est le résultat d'une requête, et <code>mysql_num_rows</code> compte ses lignes. On vérifie toujours qu'un <code>malloc</code> n'a pas renvoyé <code>NULL</code> (la mémoire peut manquer).</p>
+
+<h3>2. La règle de propriété</h3>
+<div class="warn">Qui alloue ? Qui libère ? On le décide et on le <strong>documente</strong>. La <strong>propriété</strong> d'un bloc mémoire, c'est la responsabilité de le rendre. Ici, la fonction alloue et l'<strong>appelant</strong> (celui qui appelle la fonction) libère. Un commentaire clair (« l'appelant doit free ») évite les <strong>fuites</strong> (mémoire jamais rendue, qui s'accumule) et les <strong>doubles libérations</strong> (libérer deux fois le même bloc, qui plante).</div>
+
+<h3>3. Libérer, même sur les chemins d'erreur</h3>
+<p><code>free</code> rend au système la mémoire réservée par <code>malloc</code>. Il faut le faire sur <strong>tous</strong> les chemins de sortie, y compris les <code>return</code> d'erreur.</p>
+<pre class="pseudo">Jeu *tab = jeu_charger_tous(c, &amp;n);   // appelle la fonction ; tab pointe le tableau alloué, n reçoit le nombre de jeux
+if (!tab) return;                     // si NULL (échec du chargement), on arrête là
+/* ... utiliser tab ... */            // (parcourir / afficher tab[i])
+free(tab);                            // rendre la mémoire au système : indispensable pour éviter une fuite
+tab = NULL;                           // neutraliser le pointeur après libération (évite un usage accidentel du bloc rendu)</pre>
+<p>On libère à la fin, et aussi dans chaque <code>return</code> intermédiaire. Une fuite dans une branche d'erreur est aussi réelle qu'ailleurs. Mettre <code>tab = NULL</code> après <code>free</code> empêche d'utiliser par erreur une adresse qui n'est plus valide.</p>
+
+<h3>4. Traquer avec valgrind et le sanitizer</h3>
+<p><code>gcc</code> est le <strong>compilateur</strong> qui traduit le C en programme exécutable. Deux outils repèrent les bugs mémoire : le <strong>sanitizer</strong> (option <code>-fsanitize=address</code>, qui instrumente le programme pour signaler l'erreur exacte) et <strong>valgrind</strong> (un programme qui fait tourner le vôtre sous surveillance et liste les fuites). Ces lignes sont des commandes de terminal (préfixées ici par <code>#</code> en commentaire).</p>
+<pre class="pseudo">gcc -g -fsanitize=address app.c ... -o app   # compile avec le "sanitizer" : pointe l'erreur mémoire exacte
+valgrind --leak-check=full ./app             # analyse les fuites ; « definitely lost: 0 bytes » = objectif atteint</pre>
+<div class="tip">Objectif : <strong>zéro fuite</strong>, zéro accès invalide. On teste régulièrement, pas seulement à la fin. Chaque <code>malloc</code> a son <code>free</code>, chaque <code>MYSQL_RES</code> son <code>mysql_free_result</code> : deux ressources à discipliner.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi allouer le catalogue dynamiquement ?", opts: ["c'est plus joli", "sa taille (nombre de jeux) n'est pas connue à l'avance", "obligatoire", "pour la vitesse"], a: 1, exp: "malloc à la bonne taille." },
+    { type: "qcm", q: "Comment connaître le nombre de lignes d'un résultat ?", opts: ["strlen", "mysql_num_rows(res)", "sizeof", "atoi"], a: 1, exp: "Puis on alloue en conséquence." },
+    { type: "qcm", q: "La règle de propriété répond à…", opts: ["qui affiche ?", "qui alloue et qui libère ?", "quel prix ?", "quel rôle ?"], a: 1, exp: "On la documente clairement." },
+    { type: "qcm", q: "Ici, qui libère le tableau renvoyé ?", opts: ["la fonction", "l'appelant", "personne", "MySQL"], a: 1, exp: "Documenté : l'appelant fait free." },
+    { type: "qcm", q: "Après malloc, on vérifie…", opts: ["rien", "que le pointeur n'est pas NULL", "la vitesse", "le rôle"], a: 1, exp: "L'allocation peut échouer." },
+    { type: "qcm", q: "Faut-il libérer sur les chemins d'erreur ?", opts: ["non", "oui : une fuite dans une branche d'erreur reste une fuite", "seulement à la fin", "jamais"], a: 1, exp: "Chaque return doit être propre." },
+    { type: "qcm", q: "Après free(tab), bonne pratique :", opts: ["free encore", "tab = NULL;", "malloc(tab)", "afficher tab"], a: 1, exp: "Neutraliser le pointeur." },
+    { type: "qcm", q: "Quel outil pointe l'erreur mémoire exacte à l'exécution ?", opts: ["make", "-fsanitize=address (ou valgrind)", "gcc -o", "un éditeur"], a: 1, exp: "Instrumentation mémoire." },
+    { type: "qcm", q: "L'objectif de valgrind est…", opts: ["accélérer", "zéro fuite (definitely lost: 0)", "compiler", "trier"], a: 1, exp: "Aucune fuite ni accès invalide." },
+    { type: "qcm", q: "Un MYSQL_RES doit être libéré par…", opts: ["free(res)", "mysql_free_result(res)", "delete", "rien"], a: 1, exp: "Ressource base à discipliner." },
+    { type: "vf", q: "Une fuite mémoire dans une branche d'erreur n'est pas grave.", a: false, exp: "Faux : c'est une fuite comme une autre." },
+    { type: "qcm", q: "On teste la mémoire…", opts: ["seulement à la fin du projet", "régulièrement pendant le développement", "jamais", "une seule fois"], a: 1, exp: "Tôt et souvent." },
+    { type: "qcm", q: "Deux ressources à discipliner ici :", opts: ["le prix et le stock", "chaque malloc (free) et chaque MYSQL_RES (mysql_free_result)", "le rôle et le login", "rien"], a: 1, exp: "Mémoire C et résultat MySQL." },
+    { type: "qcm", q: "Documenter « l'appelant doit free » évite…", opts: ["les injections", "fuites et doubles libérations", "les transactions", "les rôles"], a: 1, exp: "Contrat de propriété clair." },
+    { type: "qcm", q: "malloc(total * sizeof(Jeu)) réserve…", opts: ["total octets", "de quoi stocker total structures Jeu", "une ligne", "rien"], a: 1, exp: "Taille × nombre d'éléments." }
+  ],
+  final: {
+    title: "Exercice final — Trouver les fuites",
+    intro: `<p>Ce chargement fuit. Analyse :</p>
+<pre class="pseudo">Jeu *charger(MYSQL *c, int *n) {                    // charge les jeux ; version qui FUIT
+    mysql_query(c, "SELECT id,nom FROM jeu");       // envoie la requête (sans tester son échec)
+    MYSQL_RES *res = mysql_store_result(c);         // récupère le résultat (sans tester s'il est NULL)
+    int total = mysql_num_rows(res);                // compte les lignes (danger si res vaut NULL)
+    Jeu *tab = malloc(total * sizeof(Jeu));         // réserve le tableau (sans vérifier que malloc a réussi)
+    for (int i = 0; i &lt; total; i++) { /* remplir */ }   // remplit chaque case
+    *n = total;                                     // communique le nombre de jeux
+    return tab;                                     // FUITE : res n'a jamais été libéré (mysql_free_result manque)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Fuite n°1 — le MYSQL_RES :", opts: ["aucune", "res n'est jamais libéré : mysql_free_result manque", "il faut free(res)", "rien"], a: 1, exp: "Fuite à chaque appel." },
+      { type: "qcm", q: "Manque n°2 — après malloc :", opts: ["rien", "vérifier tab != NULL", "un printf", "un COMMIT"], a: 1, exp: "L'allocation peut échouer." },
+      { type: "qcm", q: "Qui doit libérer le tableau renvoyé ?", opts: ["la fonction (impossible ici)", "l'appelant, à documenter", "personne", "MySQL"], a: 1, exp: "Contrat de propriété." },
+      { type: "qcm", q: "Si mysql_store_result échoue (res NULL) :", opts: ["on continue", "on renvoie NULL avant de déréférencer res", "on plante", "on ignore"], a: 1, exp: "Tester res avant usage." },
+      { type: "qcm", q: "Quel outil confirmerait l'absence de fuite ?", opts: ["make", "valgrind --leak-check=full", "gcc -o", "un éditeur"], a: 1, exp: "Vérification mémoire." }
+    ],
+    solution: `<pre class="pseudo">Jeu *charger(MYSQL *c, int *n) {                              // version corrigée, sans fuite
+    if (mysql_query(c, "SELECT id,nom FROM jeu")) return NULL;   // envoie la requête ; si elle échoue, sortir tout de suite
+    MYSQL_RES *res = mysql_store_result(c);                   // récupère le résultat
+    if (!res) return NULL;                                    // si résultat NULL : sortir avant de l'utiliser
+
+    int total = (int)mysql_num_rows(res);                     // compte les lignes
+    Jeu *tab = malloc(total * sizeof(Jeu));                   // réserve le tableau
+    if (!tab) { mysql_free_result(res); return NULL; }   // libérer même ici : échec malloc → libérer le résultat puis sortir
+
+    for (int i = 0; i &lt; total; i++) { /* remplir tab[i] */ }  // remplit chaque case du tableau
+
+    mysql_free_result(res);      // libérer le résultat MySQL (il n'est plus utile)
+    *n = total;                  // communique le nombre d'éléments
+    return tab;                  // l'appelant fera free(tab) : propriété transmise
+}</pre>
+<p>Résultat libéré, allocation vérifiée, propriété documentée. <code>valgrind</code> ne signalera aucune fuite. Demain : un mini-harnais de tests.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l17", title: "Charger et libérer proprement", level: 3,
+    statement: "Écris un extrait de main qui appelle Jeu *jeu_charger_tous(MYSQL *c, int *n), vérifie le retour, affiche le nombre de jeux, puis libère la mémoire et neutralise le pointeur. Ajoute en commentaire la commande de test mémoire.",
+    hints: [
+      "int n; Jeu *tab = jeu_charger_tous(c, &n); if (!tab) ...",
+      "Après usage : free(tab); tab = NULL;",
+      "Commande : valgrind --leak-check=full ./app"
+    ],
+    solution: "int n = 0;                              // recevra le nombre de jeux charges\nJeu *tab = jeu_charger_tous(c, &n);     // appelle la fonction ; tab pointe le tableau, n est rempli\nif (tab == NULL) {                      // si le chargement a echoue…\n    printf(\"Chargement impossible\\n\");  // …afficher un message d'erreur\n} else {                                // sinon (succes)…\n    printf(\"%d jeux charges\\n\", n);      // afficher le nombre de jeux\n    // ... utiliser tab[i] ...            // (parcourir le tableau)\n    free(tab);        // l'appelant libere (contrat) : rend la memoire\n    tab = NULL;       // neutraliser : evite un usage apres liberation\n}\n// Test memoire : gcc -g -fsanitize=address ... -o app ; ./app\n//           ou : valgrind --leak-check=full ./app",
+    note: "L'appelant respecte le contrat : il libère ce que la fonction a alloué, puis neutralise le pointeur. Vérifié au sanitizer/valgrind, ce code ne fuit pas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "Les migrations : dotnet ef migrations add / database update",
+  subtitle: "Ta base de données mérite un historique aussi propre que ton code.",
+  theory: `
+<h3>1. Pourquoi versionner le schéma ?</h3>
+<p>Tes entités <strong>Jeu</strong>, <strong>Membre</strong>, <strong>Location</strong> et <strong>Avis</strong> sont du code C# : elles vivent dans Git, elles évoluent. Mais la base SQL Server, elle, ne se met pas à jour toute seule. Au Niveau 4, tu écrivais des scripts <em>ALTER TABLE</em> à la main : ça marche pour toi, seul, une fois. En équipe, c'est le chaos — qui a exécuté quel script, dans quel ordre, sur quelle machine ? Et sur le serveur de production ?</p>
+<p>Les <strong>migrations</strong> résolvent exactement ce problème : chaque changement de schéma devient un <strong>fichier C# versionné</strong>, généré automatiquement à partir de tes entités, rejouable dans l'ordre sur n'importe quelle base. C'est l'équivalent des commits Git, mais pour le schéma — pense à un carnet de recettes où chaque page ajoute ou modifie un ingrédient, et que n'importe qui peut refaire dans l'ordre.</p>
+<pre class="pseudo">Sans migrations : ALTER TABLE envoyés par mail, exécutés « je crois »…
+Avec migrations : InitialCreate ── AjoutColonneDuree ── AjoutTableAvis
+                  chaque étape = un fichier C#, daté, dans Git,
+                  applicable sur la base de N'IMPORTE QUEL collègue.</pre>
+
+<h3>2. L'outillage : dotnet-ef et le package Design</h3>
+<p>Deux installations, une seule fois. D'abord l'<strong>outil en ligne de commande</strong> (global sur ta machine), ensuite le package <strong>Microsoft.EntityFrameworkCore.Design</strong> dans le projet : c'est lui qui permet à l'outil d'inspecter ton <em>LudothequeContext</em> pour générer le code des migrations.</p>
+<pre class="pseudo">dotnet tool install --global dotnet-ef                       # installe l'outil "dotnet ef" pour toute la machine (une fois)
+dotnet add package Microsoft.EntityFrameworkCore.Design      # ajoute au projet le package qui laisse l'outil lire ton contexte
+
+dotnet ef --version    → vérifie que tout répond              # affiche la version : si ça répond, l'outillage est prêt</pre>
+<p>Sans le package Design, toute commande <em>dotnet ef</em> échoue avec un message explicite. C'est l'oubli classique de la première fois — maintenant tu es prévenu.</p>
+
+<h3>3. La première migration : InitialCreate</h3>
+<p>Ton contexte expose <em>DbSet&lt;Jeu&gt; Jeux</em>, <em>DbSet&lt;Membre&gt; Membres</em>, <em>DbSet&lt;Location&gt; Locations</em> et <em>DbSet&lt;Avis&gt; Avis</em>. Demande à EF Core de photographier tout ça :</p>
+<pre class="pseudo">dotnet ef migrations add InitialCreate                        # crée une migration nommée "InitialCreate" à partir de tes entités
+
+→ dossier Migrations/                                         # EF crée (ou complète) le dossier Migrations dans le projet
+   20260710093012_InitialCreate.cs      ← la migration        # fichier daté : le code qui créera les tables
+   LudothequeContextModelSnapshot.cs    ← l'état complet du modèle   # photo de l'état actuel du modèle, pour comparer plus tard</pre>
+<p>Le fichier de migration contient deux méthodes : <strong>Up()</strong> décrit comment appliquer le changement (ici, créer les quatre tables), <strong>Down()</strong> décrit comment l'annuler (les supprimer) — comme un mode d'emploi de montage et son mode d'emploi de démontage. Extrait réel :</p>
+<pre class="pseudo">protected override void Up(MigrationBuilder migrationBuilder)          // Up() : ce qu'il faut faire pour APPLIQUER la migration
+{
+    migrationBuilder.CreateTable(                                     // demande la création d'une table…
+        name: "Jeux",                                                // …nommée "Jeux"
+        columns: table =&gt; new                                        // on décrit les colonnes de la table
+        {
+            Id = table.Column&lt;int&gt;(type: "int", nullable: false)     // colonne Id, type SQL int, non nulle
+                .Annotation("SqlServer:Identity", "1, 1"),           // auto-incrémentée : IDENTITY(1,1), SQL Server gère les numéros
+            Nom = table.Column&lt;string&gt;(type: "nvarchar(max)", nullable: false),   // colonne Nom, texte, non nulle
+            Prix = table.Column&lt;decimal&gt;(type: "decimal(18,2)", nullable: false)  // colonne Prix, decimal(18,2), non nulle
+        },
+        constraints: table =&gt; table.PrimaryKey("PK_Jeux", x =&gt; x.Id));   // contrainte : clé primaire nommée PK_Jeux, portée par Id
+    // … Membres, Locations, Avis                                     // les autres tables suivent selon le même schéma
+}</pre>
+<p>Rien n'a encore touché SQL Server : une migration ajoutée n'est que du code C# en attente. Le <em>snapshot</em> (la « photo » du modèle), lui, sert de mémoire : à la prochaine migration, EF Core comparera tes entités avec lui pour ne générer que la <strong>différence</strong>.</p>
+
+<h3>4. Appliquer : database update et __EFMigrationsHistory</h3>
+<p>Pour transformer le code en tables réelles :</p>
+<pre class="pseudo">dotnet ef database update                                     # exécute réellement les migrations en attente sur la base
+
+→ crée la base si besoin (chaîne de connexion du contexte)    # si la base Ludotheque n'existe pas, EF la crée d'abord
+→ exécute Up() de chaque migration EN ATTENTE, dans l'ordre   # applique les changements un par un, du plus ancien au plus récent
+→ note chaque migration appliquée dans __EFMigrationsHistory  # inscrit chaque migration passée dans la table-journal</pre>
+<p>La table <strong>__EFMigrationsHistory</strong> est le journal de bord : une ligne par migration appliquée (son identifiant et la version d'EF Core). C'est grâce à elle que relancer <em>database update</em> dix fois est sans danger : EF Core saute tout ce qui est déjà noté. Ouvre-la dans SSMS après ton premier update — tu verras ta ligne <em>InitialCreate</em>.</p>
+
+<h3>5. Faire évoluer le schéma… et gérer la prod</h3>
+<p>La Ludothèque grandit : on veut afficher la durée moyenne d'une partie. Tu ajoutes la propriété dans l'entité, puis tu répètes le duo de commandes :</p>
+<pre class="pseudo">public class Jeu                              // notre entité Jeu, à laquelle on ajoute une propriété
+{
+    public int Id { get; set; }              // clé primaire
+    public string Nom { get; set; }          // nom du jeu
+    public decimal Prix { get; set; }        // prix du jeu
+    public int DureeMinutes { get; set; }   // ← nouveau   // nouvelle propriété : durée d'une partie en minutes
+}
+
+dotnet ef migrations add AjoutDureeJeu   → Up() = AddColumn, Down() = DropColumn   # génère la migration : ajout de colonne / suppression de colonne
+dotnet ef database update                → ALTER TABLE Jeux ADD DureeMinutes int   # applique : SQL Server ajoute réellement la colonne</pre>
+<p>Trois commandes complètent ta boîte à outils. <strong>dotnet ef migrations remove</strong> supprime proprement la dernière migration <em>si elle n'a pas encore été appliquée</em> (jamais à la main : le snapshot doit rester cohérent). <strong>dotnet ef database update NomMigration</strong> ramène la base à une migration précise, en exécutant les Down() nécessaires. Et pour la production, où tu n'exécutes pas <em>dotnet ef</em> toi-même, <strong>dotnet ef migrations script</strong> génère le script SQL complet à faire relire au DBA avant déploiement.</p>
+<p>Ce mécanisme est universel : Java l'obtient via Flyway ou Liquibase (souvent couplés à Hibernate), Laravel avec <em>php artisan migrate</em>, Django avec <em>python manage.py migrate</em> — mêmes idées, mêmes journaux de migrations.</p>
+<div class="warn">Ne modifie <strong>jamais</strong> une migration déjà appliquée quelque part (chez un collègue, en prod) : la base et l'historique seraient désynchronisés, et __EFMigrationsHistory ne rejouera pas un fichier qu'elle croit déjà passé. Un schéma à corriger = une <strong>nouvelle</strong> migration par-dessus.</div>
+<div class="tip">Prends le réflexe du duo : chaque changement d'entité → <em>migrations add NomParlant</em> → relire le Up() généré → <em>database update</em>. Une migration au nom clair (AjoutDureeJeu, pas Migration7) se relit comme un message de commit.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le problème que résolvent les migrations :", opts: ["Accélérer les requêtes SQL", "Compresser la base de données", "Versionner et rejouer les changements de schéma de façon fiable", "Sauvegarder les données des tables"], a: 2, exp: "Chaque changement de schéma devient un fichier C# versionné et rejouable — l'équivalent d'un commit pour la base." },
+    { type: "qcm", q: "La commande qui installe l'outil en ligne de commande :", opts: ["dotnet tool install --global dotnet-ef", "dotnet ef install", "dotnet add tool ef-core", "npm install dotnet-ef"], a: 0, exp: "C'est un outil global .NET ; le package Design, lui, s'ajoute au projet." },
+    { type: "qcm", q: "Le package NuGet indispensable dans le projet pour que dotnet ef fonctionne :", opts: ["Microsoft.EntityFrameworkCore.SqlServer", "Microsoft.EntityFrameworkCore.Design", "Microsoft.AspNetCore.Mvc", "System.Data.SqlClient"], a: 1, exp: "Design permet à l'outil d'inspecter ton LudothequeContext. SqlServer est le provider, nécessaire aussi mais vu en leçon 2." },
+    { type: "qcm", q: "dotnet ef migrations add InitialCreate produit…", opts: ["Directement les tables dans SQL Server", "Un fichier C# avec Up() et Down(), plus le snapshot du modèle", "Un script .sql dans le projet", "Une sauvegarde de la base"], a: 1, exp: "Rien ne touche la base à ce stade : la migration n'est que du code en attente." },
+    { type: "input", q: "La commande complète qui applique les migrations en attente sur la base :", a: ["dotnet ef database update", "database update"], ph: "dotnet ef …", exp: "Elle exécute les Up() des migrations en attente, dans l'ordre, puis les note dans __EFMigrationsHistory." },
+    { type: "qcm", q: "Dans un fichier de migration, la méthode Down() sert à…", opts: ["Télécharger la base", "Trier les données par ordre décroissant", "Compacter le snapshot", "Annuler le changement décrit par Up()"], a: 3, exp: "CreateTable dans Up() ↔ DropTable dans Down() : chaque migration sait se défaire." },
+    { type: "vf", q: "Après dotnet ef migrations add, les tables existent déjà dans SQL Server.", a: false, exp: "add ne génère que du code C#. C'est database update qui exécute réellement le SQL." },
+    { type: "input", q: "La table qui journalise les migrations déjà appliquées sur une base :", a: ["__EFMigrationsHistory", "EFMigrationsHistory"], ph: "__…", exp: "Une ligne par migration appliquée : c'est elle qui rend database update rejouable sans danger." },
+    { type: "qcm", q: "Tu relances dotnet ef database update alors que tout est déjà appliqué. Résultat :", opts: ["Rien : EF Core saute les migrations notées dans l'historique", "Erreur : tables déjà existantes", "Les tables sont recréées vides", "Les Down() sont exécutés"], a: 0, exp: "__EFMigrationsHistory fait foi : seules les migrations absentes du journal sont exécutées." },
+    { type: "qcm", q: "Tu ajoutes DureeMinutes à l'entité Jeu. La bonne suite d'actions :", opts: ["Modifier la migration InitialCreate pour y ajouter la colonne", "Écrire un ALTER TABLE à la main dans SSMS", "migrations add AjoutDureeJeu puis database update", "Supprimer la base et relancer database update"], a: 2, exp: "Une nouvelle migration par changement : EF Core compare tes entités au snapshot et génère l'AddColumn." },
+    { type: "qcm", q: "Le rôle du fichier LudothequeContextModelSnapshot.cs :", opts: ["Sauvegarder les données des tables", "Mémoriser l'état du modèle pour ne générer que la différence à la prochaine migration", "Accélérer les requêtes LINQ", "Stocker la chaîne de connexion"], a: 1, exp: "C'est la mémoire d'EF Core : entités actuelles − snapshot = contenu de la prochaine migration." },
+    { type: "qcm", q: "dotnet ef migrations remove…", opts: ["Supprime une table de la base", "Vide __EFMigrationsHistory", "Supprime toutes les migrations du projet", "Retire proprement la dernière migration non appliquée"], a: 3, exp: "Elle remet aussi le snapshot en cohérence — c'est pour ça qu'on ne supprime jamais le fichier à la main." },
+    { type: "vf", q: "Modifier le code d'une migration déjà appliquée en production est une pratique acceptable si on est prudent.", a: false, exp: "L'historique croirait la migration déjà passée et ne rejouerait rien : base et code désynchronisés. On corrige avec une NOUVELLE migration." },
+    { type: "qcm", q: "Pour déployer en production sans exécuter dotnet ef sur le serveur, on utilise…", opts: ["dotnet ef migrations script pour générer le SQL à faire relire au DBA", "un export CSV de __EFMigrationsHistory", "dotnet ef database drop puis update", "une copie du dossier Migrations sur le serveur"], a: 0, exp: "Le script SQL généré se relit, se valide et s'exécute avec les outils SQL Server classiques du Niveau 4." },
+    { type: "vf", q: "Le principe des migrations est propre à EF Core : il n'existe pas d'équivalent chez Hibernate, Laravel ou Django.", a: false, exp: "Flyway/Liquibase côté Java, php artisan migrate côté Laravel, manage.py migrate côté Django : le concept est universel." }
+  ],
+  final: {
+    title: "Exercice final — Le cycle complet d'une migration",
+    intro: `<p>La Ludothèque veut noter les jeux : on ajoute une propriété <em>Note</em> (int) à l'entité <strong>Avis</strong>. Déroule mentalement tout le cycle, du code C# jusqu'à SQL Server.</p>`,
+    questions: [
+      { type: "qcm", q: "Étape 1 : après avoir ajouté la propriété Note dans Avis.cs, la toute première commande est…", opts: ["dotnet ef database update", "dotnet ef migrations add AjoutNoteAvis", "dotnet ef migrations script", "dotnet build"], a: 1, exp: "D'abord générer la migration ; l'application sur la base vient ensuite." },
+      { type: "qcm", q: "Le Up() généré contiendra probablement…", opts: ["migrationBuilder.AddColumn pour Note sur la table Avis", "migrationBuilder.CreateTable pour Avis", "un DELETE des avis existants", "un ALTER DATABASE"], a: 0, exp: "EF Core compare le modèle au snapshot : seule la différence — une colonne — est générée." },
+      { type: "vf", q: "Tant que database update n'a pas tourné, la colonne Note n'existe pas dans SQL Server.", a: true, exp: "migrations add = code en attente ; database update = exécution réelle du SQL." },
+      { type: "qcm", q: "Après database update, on retrouve la trace de AjoutNoteAvis…", opts: ["dans la table __EFMigrationsHistory", "dans le fichier appsettings.json", "dans la table Avis elle-même", "nulle part, EF Core ne garde pas de trace"], a: 0, exp: "Une ligne de plus dans le journal : la migration ne sera plus jamais rejouée sur cette base." },
+      { type: "qcm", q: "Tu te rends compte d'une erreur AVANT d'avoir appliqué la migration. Le bon geste :", opts: ["Supprimer le fichier .cs à la main", "Éditer directement le snapshot", "dotnet ef migrations remove, corriger l'entité, régénérer", "dotnet ef database drop"], a: 2, exp: "remove retire la migration ET remet le snapshot en cohérence — la suppression manuelle casserait ce duo." }
+    ],
+    solution: `<pre class="pseudo">Le cycle d'un changement de schéma :
+1. Modifier l'entité C#        → Avis.Note (int)
+2. dotnet ef migrations add AjoutNoteAvis
+      → fichier Up()/Down() + snapshot mis à jour (rien en base)
+3. Relire le Up() généré       → AddColumn("Note", "Avis", int)
+4. dotnet ef database update   → ALTER TABLE Avis ADD Note int
+      → ligne ajoutée dans __EFMigrationsHistory
+Erreur avant application ?     → dotnet ef migrations remove
+Déploiement en production ?    → dotnet ef migrations script (relu par le DBA)
+Migration déjà appliquée ?     → on n'y touche PLUS : nouvelle migration.</pre>
+<p>Le schéma vit, la base suit, tout est versionné. Prochaine leçon : on remplit enfin ces tables — <strong>Add</strong>, <strong>SaveChanges</strong>, <strong>Find</strong> et <strong>First</strong> entrent en scène.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l4", title: "Le voyage d'une colonne", level: 1,
+    statement: "La Ludothèque veut que chaque avis porte une note sur 5 : on ajoute la propriété Note (int) à l'entité Avis. Déroule PAR ÉCRIT le cycle complet de ce changement, du fichier C# jusqu'à la colonne visible dans SQL Server : chaque commande tapée, ce qu'elle génère ou exécute exactement, ce qui change (ou pas) dans le projet et dans la base à chaque étape, et le rôle joué par le snapshot et par __EFMigrationsHistory. Termine en indiquant ce que tu ferais différemment si cette base était celle de production.",
+    hints: [
+      "Il y a deux commandes au cœur du cycle : l'une génère du code, l'autre exécute du SQL. À chaque étape, demande-toi : la base a-t-elle déjà bougé ?",
+      "Le snapshot intervient AVANT la génération (pour calculer la différence) ; __EFMigrationsHistory intervient APRÈS l'application (pour journaliser).",
+      "Pour la production : tu n'exécutes pas dotnet ef sur le serveur. Quelle commande produit un script SQL relisible par un DBA ?"
+    ],
+    solution: "Étape 1 — Le code C#\nJ'ajoute public int Note { get; set; } dans Avis.cs. À ce stade : rien n'a changé ni dans Migrations/ ni dans SQL Server ; le modèle C# est simplement en avance sur la base.\n\nÉtape 2 — dotnet ef migrations add AjoutNoteAvis\nL'outil (dotnet-ef + package Design) charge LudothequeContext, compare le modèle actuel au snapshot (LudothequeContextModelSnapshot.cs) et ne trouve qu'une différence : la propriété Note. Il génère 20260710_AjoutNoteAvis.cs avec Up() → AddColumn Note (int, NOT NULL, défaut 0) sur la table Avis, et Down() → DropColumn. Le snapshot est mis à jour. La base, elle, n'a toujours pas bougé.\n\nÉtape 3 — Relecture\nJe relis le Up() généré : type int correct, table Avis correcte. C'est le moment de corriger via dotnet ef migrations remove si besoin, jamais en éditant le fichier après application.\n\nÉtape 4 — dotnet ef database update\nEF Core lit __EFMigrationsHistory, voit que AjoutNoteAvis n'y figure pas, exécute son Up() → ALTER TABLE Avis ADD Note int NOT NULL DEFAULT 0, puis insère une ligne AjoutNoteAvis dans __EFMigrationsHistory. Dans SSMS : la colonne existe, le journal en garde la trace, et relancer update ne fera plus rien.\n\nEn production\nJe ne lance pas dotnet ef sur le serveur : dotnet ef migrations script génère le SQL complet (ou idempotent), relu et validé par le DBA, puis exécuté par le processus de déploiement — exactement le rôle de Flyway côté Java ou de php artisan migrate côté Laravel.",
+    note: "Ce cycle relie trois de tes cours : le code C# (ASP.NET Core), le SQL réellement exécuté (SQL Server, Niveau 4) et le versionnage (Git) — une migration se relit comme un commit. Dans ton projet full-stack, ce sera le réflexe quotidien : toute évolution d'entité passe par ce couloir, jamais par un ALTER TABLE improvisé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

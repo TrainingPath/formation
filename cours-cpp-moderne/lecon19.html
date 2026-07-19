@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Lire et écrire des fichiers (fstream)",
+  subtitle: "La persistance en C++ : les mêmes << et >> que la console, appliqués aux fichiers.",
+  theory: `
+<h3>1. Écrire dans un fichier (ofstream)</h3>
+<p><strong>Persister</strong> des données, c'est les enregistrer sur le disque pour les retrouver après la fin du programme. Un <strong>flux de fichier</strong> est un « tuyau » vers un fichier. Un <code>std::ofstream</code> (<em>output file stream</em>) est un flux d'<strong>écriture</strong> : on y envoie du texte avec le même opérateur <code>&lt;&lt;</code> que <code>std::cout</code>.</p>
+<pre class="pseudo">#include &lt;fstream&gt;                        // pour les flux de fichiers : ofstream (écrire) et ifstream (lire)
+
+std::ofstream f("catalogue.txt");         // ouvre (ou crée) le fichier "catalogue.txt" en ÉCRITURE ; f est le flux
+if (!f) { std::cerr &lt;&lt; "Ouverture impossible\\n"; return 1; }  // si l'ouverture a échoué, on prévient (std::cerr = sortie d'erreur) et on quitte
+f &lt;&lt; "Catan;44.90;3\\n";                  // on écrit une ligne dans le fichier avec &lt;&lt;, exactement comme avec std::cout
+f &lt;&lt; "Uno;12.50;10\\n";                   // on écrit une deuxième ligne
+// f se ferme automatiquement à la fin du bloc (RAII) : rien à fermer à la main</pre>
+<p>Un <code>std::ofstream</code> écrit dans un fichier avec le même opérateur <code>&lt;&lt;</code> que <code>std::cout</code>. On teste toujours l'ouverture (<code>if (!f)</code>) car le fichier peut être inaccessible (droits, disque plein…).</p>
+
+<h3>2. Lire un fichier ligne par ligne (ifstream)</h3>
+<pre class="pseudo">std::ifstream f("catalogue.txt");         // ouvre "catalogue.txt" en LECTURE (ifstream = input file stream)
+if (!f) return 1;                         // si l'ouverture échoue, on quitte avec un code d'erreur
+std::string ligne;                        // une variable texte pour recevoir chaque ligne lue
+while (std::getline(f, ligne)) {          // getline lit UNE ligne du fichier ; renvoie le flux, faux à la fin du fichier → la boucle s'arrête
+    std::cout &lt;&lt; ligne &lt;&lt; "\\n";           // on affiche la ligne lue à l'écran, suivie d'un retour à la ligne
+}</pre>
+<p><code>std::ifstream</code> lit un fichier. <code>std::getline(f, ligne)</code> renvoie le flux, testable comme un booléen : la boucle s'arrête toute seule à la fin du fichier.</p>
+
+<h3>3. Lire des champs séparés</h3>
+<pre class="pseudo">#include &lt;sstream&gt;                        // pour std::istringstream (traiter une chaîne comme un flux)
+std::istringstream flux(ligne);           // transforme la chaîne "Catan;44.90;3" en un flux qu'on peut découper
+std::string nom, prixTxt;                 // deux variables texte pour recevoir les champs
+std::getline(flux, nom, ';');             // lit jusqu'au séparateur ';' → nom = "Catan"
+std::getline(flux, prixTxt, ';');         // lit le champ suivant jusqu'au ';' → prixTxt = "44.90" (toujours du texte)
+double prix = std::stod(prixTxt);         // std::stod convertit le TEXTE "44.90" en NOMBRE double (string to double)</pre>
+<p>Un <code>std::istringstream</code> traite une chaîne comme un flux : très pratique pour découper une ligne CSV selon un séparateur.</p>
+
+<h3>4. Le RAII ferme tout seul</h3>
+<div class="warn">Contrairement au C (<code>fopen</code>/<code>fclose</code>), on n'appelle <strong>pas</strong> de <code>close()</code> manuel : le destructeur de <code>ofstream</code>/<code>ifstream</code> ferme le fichier automatiquement en fin de portée (RAII, leçon 10). On peut appeler <code>f.close()</code> pour fermer plus tôt si vraiment besoin.</div>
+
+<h3>5. Le schéma général</h3>
+<pre class="pseudo">ouvrir (ofstream/ifstream) → vérifier (if (!f)) → lire/écrire → (fermeture automatique)   // les 4 étapes de tout accès fichier</pre>
+<div class="tip">Les flux de fichiers réutilisent tout ce que tu connais de <code>cout</code>/<code>cin</code> : <code>&lt;&lt;</code>, <code>&gt;&gt;</code>, <code>getline</code>. C'est la même abstraction, appliquée à un fichier au lieu de la console.</div>
+
+<h3>6. Sérialiser un objet : binaire vs texte</h3>
+<p>Le CSV texte reste lisible et portable. Pour écrire un objet <strong>entier</strong> en octets — la <strong>sérialisation</strong> —, on ouvre le flux en mode <strong>binaire</strong> et on utilise <code>write</code> / <code>read</code> :</p>
+<pre class="pseudo">struct Jeu { char nom[32]; double prix; int stock; };    // type "trivial" (POD) : que des champs simples, aucune mémoire allouée à part
+
+Jeu j = {"Catan", 44.90, 3};                             // on crée un Jeu à sauvegarder
+std::ofstream f("jeux.dat", std::ios::binary);           // ouvre en mode BINAIRE (std::ios::binary) : on écrit des octets bruts
+f.write(reinterpret_cast&lt;const char*&gt;(&amp;j), sizeof j);    // write copie sizeof j octets depuis l'adresse de j → SÉRIALISE l'objet
+
+Jeu lu;                                                   // un Jeu vide pour recevoir les données relues
+std::ifstream g("jeux.dat", std::ios::binary);           // ouvre le même fichier en LECTURE binaire
+g.read(reinterpret_cast&lt;char*&gt;(&amp;lu), sizeof lu);         // read remplit lu avec les octets du fichier → DÉSÉRIALISE l'objet</pre>
+<div class="warn">Deux limites majeures : (1) cela ne marche que pour un type <strong>trivialement copiable</strong> (POD). Une struct contenant un <code>std::string</code> ou un <code>std::vector</code> tient en réalité des <strong>pointeurs</strong> vers de la mémoire allouée : en écrire les octets sauvegarderait des adresses, pas le contenu — il faut alors sérialiser <strong>champ par champ</strong> (écrire la longueur puis les caractères). (2) Comme en C, le binaire n'est <strong>pas portable</strong> (endianness, padding).</div>
+<div class="tip">La bibliothèque standard C++ n'a pas de JSON : pour un format lisible et interopérable, on ajoute une bibliothèque (par ex. <strong>nlohmann/json</strong>) ou un cadre de sérialisation. Le texte (CSV/JSON) reste le choix par défaut ; le binaire est réservé aux données locales, homogènes et performantes.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quel type écrit dans un fichier ?", opts: ["std::ifstream", "std::ofstream", "std::fstream seul", "FILE*"], a: 1, exp: "ofstream = output file stream." },
+    { type: "qcm", q: "Quel type lit un fichier ?", opts: ["std::ofstream", "std::ifstream", "std::ostream", "FILE*"], a: 1, exp: "ifstream = input file stream." },
+    { type: "qcm", q: "Comment écrit-on dans un ofstream ?", opts: ["fprintf", "avec << (comme cout)", "write()", "put()"], a: 1, exp: "Le même opérateur que cout." },
+    { type: "qcm", q: "Comment vérifier qu'un fichier s'est ouvert ?", opts: ["f.open()", "if (!f) { ... }", "f == NULL", "f.error"], a: 1, exp: "Le flux se teste comme booléen." },
+    { type: "qcm", q: "Comment lire ligne par ligne ?", opts: ["f >> ligne", "while (std::getline(f, ligne))", "f.readline()", "getc"], a: 1, exp: "getline sur le flux fichier." },
+    { type: "qcm", q: "Faut-il appeler close() manuellement ?", opts: ["oui obligatoire", "non : le RAII ferme à la fin de portée", "toujours deux fois", "jamais possible"], a: 1, exp: "Fermeture automatique." },
+    { type: "qcm", q: "À quoi sert std::istringstream ?", opts: ["ouvrir un fichier", "traiter une chaîne comme un flux (découper une ligne)", "trier", "afficher"], a: 1, exp: "Parser une ligne CSV." },
+    { type: "qcm", q: "std::getline(flux, champ, ';') fait…", opts: ["lire tout", "lire jusqu'au séparateur ';'", "écrire", "compter"], a: 1, exp: "Découpage par séparateur." },
+    { type: "qcm", q: "std::stod convertit…", opts: ["un double en string", "une string en double", "un int", "un fichier"], a: 1, exp: "string to double." },
+    { type: "qcm", q: "Quel en-tête pour les flux de fichiers ?", opts: ["<iostream>", "<fstream>", "<file>", "<stdio.h>"], a: 1, exp: "#include <fstream>." },
+    { type: "vf", q: "Les flux de fichiers réutilisent <<, >> et getline comme cout/cin.", a: true, exp: "Même abstraction." },
+    { type: "qcm", q: "while (std::getline(f, ligne)) s'arrête…", opts: ["jamais", "à la fin du fichier", "au 1er espace", "à la 10e ligne"], a: 1, exp: "Le flux devient faux à la fin." },
+    { type: "qcm", q: "std::cerr sert à…", opts: ["lire", "écrire les messages d'erreur (sortie d'erreur)", "ouvrir un fichier", "trier"], a: 1, exp: "Séparé de cout." },
+    { type: "qcm", q: "Le schéma correct :", opts: ["fermer → ouvrir", "ouvrir → vérifier → lire/écrire → fermeture auto", "écrire sans ouvrir", "lire d'abord"], a: 1, exp: "Ordre logique." },
+    { type: "qcm", q: "Le mode écriture d'un ofstream par défaut…", opts: ["ajoute", "écrase le fichier", "lit", "ne fait rien"], a: 1, exp: "Comme \"w\" en C (std::ios::app pour ajouter)." },
+    { type: "qcm", q: "Pour sérialiser un objet en octets, on ouvre le flux avec…", opts: ["std::ios::app", "std::ios::binary, puis f.write(...)", "getline", "stod"], a: 1, exp: "Mode binaire + write/read sur les octets de l'objet." },
+    { type: "qcm", q: "L'écriture binaire par write/read ne marche que pour…", opts: ["n'importe quel objet", "un type trivialement copiable (POD)", "les seules chaînes", "les vecteurs"], a: 1, exp: "Un POD n'a pas de mémoire allouée à part : ses octets se copient tels quels." },
+    { type: "qcm", q: "Une struct contenant un std::string ne peut PAS être dumpée en octets car…", opts: ["c'est trop lent", "le std::string tient un pointeur : on sauvegarderait une adresse, pas le texte", "c'est interdit par le compilateur", "std::string est vide"], a: 1, exp: "Il faut sérialiser champ par champ (longueur + caractères)." },
+    { type: "vf", q: "La bibliothèque standard C++ fournit un support JSON natif.", a: false, exp: "Faux : pas de JSON standard — on ajoute une bibliothèque comme nlohmann/json." }
+  ],
+  final: {
+    title: "Exercice final — Sauver puis relire",
+    intro: `<p>On écrit puis on relit. Analyse :</p>
+<pre class="pseudo">std::ifstream f("jeu.txt");     // ERREUR : ifstream = LECTURE (on ne peut pas écrire dedans)
+f &lt;&lt; "Catan;44.90\\n";          // ERREUR : on tente d'écrire dans un flux de lecture
+std::ofstream g("jeu.txt");     // ERREUR : ofstream = ÉCRITURE (on ne peut pas lire dedans)
+std::string ligne;              // variable pour recevoir une ligne
+std::getline(g, ligne);         // ERREUR : on tente de lire depuis un flux d'écriture</pre>`,
+    questions: [
+      { type: "qcm", q: "Erreur n°1 — écrire dans un <code>ifstream</code> :", opts: ["correct", "ifstream = lecture : pour écrire, il faut un ofstream", "il faut close", "rien"], a: 1, exp: "Mauvais type de flux." },
+      { type: "qcm", q: "Erreur n°2 — lire dans un <code>ofstream</code> :", opts: ["correct", "ofstream = écriture : pour lire, il faut un ifstream", "il faut fstream", "rien"], a: 1, exp: "Inversé." },
+      { type: "qcm", q: "Que manque-t-il après chaque ouverture ?", opts: ["rien", "un test if (!f)", "un close obligatoire", "un printf"], a: 1, exp: "Vérifier l'ouverture." },
+      { type: "qcm", q: "Faut-il fermer les flux à la main ?", opts: ["oui", "non : RAII", "toujours", "jamais possible"], a: 1, exp: "Fermeture automatique." },
+      { type: "qcm", q: "Ordre correct :", opts: ["lire puis écrire", "d'abord ofstream (écrire), puis ifstream (relire)", "deux ifstream", "fstream unique en lecture"], a: 1, exp: "Écrire, puis relire." }
+    ],
+    solution: `<pre class="pseudo">#include &lt;fstream&gt;                       // pour ofstream (écrire) et ifstream (lire)
+#include &lt;iostream&gt;                      // pour std::cout (afficher)
+#include &lt;string&gt;                        // pour std::string (le texte)
+
+int main() {                             // point d'entrée du programme
+    {   // bloc d'écriture
+        std::ofstream f("jeu.txt");      // ouvre en ÉCRITURE (le bon type de flux)
+        if (!f) return 1;                // vérifie l'ouverture ; échec → on quitte
+        f &lt;&lt; "Catan;44.90\\n";           // écrit une ligne dans le fichier
+    }   // fin du bloc : f est fermé automatiquement ici (RAII)
+    {   // bloc de lecture
+        std::ifstream g("jeu.txt");      // ouvre en LECTURE (le bon type de flux)
+        if (!g) return 1;                // vérifie l'ouverture
+        std::string ligne;               // variable pour recevoir la ligne
+        if (std::getline(g, ligne))      // lit une ligne ; le if réussit si la lecture a marché
+            std::cout &lt;&lt; ligne &lt;&lt; "\\n";  // affiche la ligne relue
+    }   // fin du bloc : g fermé automatiquement (RAII)
+    return 0;                            // 0 = fin sans erreur
+}</pre>
+<p>Le bon flux pour chaque sens (<code>ofstream</code> puis <code>ifstream</code>), un test après ouverture, et la fermeture automatique par RAII. Demain : le projet guidé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "cppm-l19", title: "Enregistrer le catalogue", level: 3,
+    statement: "Écris une fonction void sauver(const std::vector<Jeu>& cat, const std::string& fichier) qui écrit chaque jeu « nom;prix » dans le fichier avec un std::ofstream. Vérifie l'ouverture. Suppose Jeu avec nom() const et prix() const.",
+    hints: [
+      "std::ofstream f(fichier); if (!f) return;",
+      "for (const auto& j : cat) f << j.nom() << ';' << j.prix() << '\\n';",
+      "Pas de close : le RAII s'en charge."
+    ],
+    solution: "#include <fstream>                            // pour std::ofstream (ecrire dans un fichier)\n#include <vector>                             // pour std::vector (le catalogue)\n#include <string>                             // pour std::string (nom de fichier et textes)\n\nvoid sauver(const std::vector<Jeu>& cat, const std::string& fichier) {  // cat et fichier en const& : pas de copie\n    std::ofstream f(fichier);                 // ouvre le fichier en ecriture\n    if (!f) return;                           // ouverture echouee : on abandonne\n    for (const auto& j : cat)                 // parcourt chaque jeu sans copie\n        f << j.nom() << ';' << j.prix() << '\\n';  // ecrit \"nom;prix\" puis un retour a la ligne\n    // f ferme automatiquement a la fin de la fonction (RAII)\n}",
+    note: "L'ofstream écrit avec << comme cout. On vérifie l'ouverture, on parcourt le catalogue en const& (pas de copie), et le fichier se ferme tout seul à la fin de la fonction. Aucun fclose à gérer, contrairement au C." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

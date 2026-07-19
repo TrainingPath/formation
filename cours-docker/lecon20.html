@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Déployer la Ludothèque conteneurisée en production",
+  subtitle: "Le serveur n'a besoin que de Docker, d'un YAML et d'un .env.",
+  theory: `
+<h3>1. Ce que le serveur reçoit</h3>
+<p>Moment de vérité : la mise en <strong>production</strong> (« prod », l'environnement réel qui sert les vrais utilisateurs). Le serveur ne reçoit que deux fichiers — l'image, elle, vient du registre. Rappel : <code>chmod 600</code> rend le fichier lisible par son seul propriétaire.</p>
+<pre class="pseudo">serveur-prod/
+├── compose.yaml      # image: tonuser/ludotheque:1.0.0  (PAS de build: — on tire l'image du registre)
+└── .env.prod         # les secrets de prod : chmod 600 (accès restreint), hors Git</pre>
+<p>Ni code source, ni Python, ni gunicorn à installer : l'image du registre contient tout. Compare avec la leçon 20 du capstone (le déploiement « à la main ») — la moitié des étapes a disparu.</p>
+
+<h3>2. La première mise en ligne</h3>
+<p>La séquence complète du premier déploiement : tirer, démarrer, migrer, vérifier.</p>
+<pre class="pseudo">$ docker compose --env-file .env.prod pull     # télécharge les images référencées (--env-file : charge les secrets de prod)
+$ docker compose --env-file .env.prod up -d    # crée et démarre tous les services en arrière-plan
+$ docker compose exec app python manage.py migrate   # applique les migrations : crée/actualise le schéma de la base
+$ docker compose ps                            # vérifie que tous les services sont 'healthy'
+$ curl -I https://ludotheque.example.com/catalogue/  # teste l'accès public réel : réponse HTTP 200 attendue ✔</pre>
+
+<h3>3. La mise à jour vers 1.0.1</h3>
+<p>Mettre à jour = changer le numéro de version dans le YAML, tirer, relancer. Grâce à l'idempotence de Compose (leçon 12), seul le service modifié est recréé.</p>
+<pre class="pseudo"># compose.yaml : image: tonuser/ludotheque:1.0.1    # on change juste le tag de version
+$ docker compose pull && docker compose up -d       # tire la nouvelle image, puis relance : Compose recrée ce qui a changé
+# Compose ne recrée QUE app ; bdd et son volume ne bougent pas   # la base et ses données restent intactes (opération chirurgicale)
+$ docker compose exec app python manage.py migrate  # applique les migrations SI la nouvelle version en apporte</pre>
+
+<h3>4. Le retour arrière</h3>
+<p>Si la nouvelle version pose problème, on revient à la précédente en repointant l'ancien tag — toujours présent au registre. Un seul piège : les migrations de base déjà appliquées.</p>
+<pre class="pseudo"># la 1.0.1 se passe mal :
+# compose.yaml : image: tonuser/ludotheque:1.0.0   # on remet le tag de l'ancienne version, qui existe toujours
+$ docker compose up -d               # relance : retour à l'ancienne image en moins de 2 minutes
+# ⚠ si la 1.0.1 a MIGRÉ le schéma, revenir au code NE SUFFIT PAS :        # le code redevient l'ancien, mais la base a déjà changé...
+#   les migrations doivent être réversibles ou le retour préparé à l'avance   # ...d'où l'importance de migrations réversibles</pre>
+
+<h3>5. La check-list de production</h3>
+<p>Le récapitulatif de tout le cours, réuni en une liste vérifiable. Chaque point renvoie à une leçon.</p>
+<pre class="pseudo">✔ image versionnée tirée du registre (jamais 'build:' en prod)   # leçon 17 : un artefact figé, pas une construction sur place
+✔ .env.prod : chmod 600, hors Git, DEBUG=0                       # leçon 10 : secrets protégés, debug désactivé
+✔ healthchecks + depends_on: service_healthy                     # leçon 13 : démarrage fiable (prêt, pas juste démarré)
+✔ restart: unless-stopped partout                                # leçon 13/19 : relance après crash et reboot
+✔ mem_limit / cpus mesurés                                       # leçon 19 : ressources bornées, mesurées d'abord
+✔ logging: max-size / max-file                                   # leçon 18 : rotation des logs (le disque ne déborde pas)
+✔ MySQL non publié ; un seul point d'entrée (proxy 443)          # leçon 9 : surface d'attaque minimale
+✔ sauvegardes du volume planifiées ET testées                    # leçon 8 : une sauvegarde jamais restaurée ne vaut rien
+✔ tag Git = tag d'image (v1.0.1 ↔ 1.0.1)                          # leçon 17 : traçabilité totale code <-> image</pre>
+<div class="warn">Le point le plus oublié : la <strong>sauvegarde restaurée</strong>. Un dump jamais restauré n'est qu'un espoir — planifier une restauration de test (leçon 8) fait partie du déploiement, pas de l'après.</div>
+<div class="tip">Regarde le chemin parcouru : leçon 1, l'app dépendait de ta machine ; aujourd'hui, <code>pull + up -d</code> la déploie n'importe où. Le cours CI/CD automatisera ce que tes mains viennent d'apprendre.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le serveur de production a besoin de…", opts: ["Python, gunicorn, le code", "Docker + compose.yaml + .env.prod", "Un IDE", "Le dépôt Git complet"], a: 1, exp: "L'image contient le reste." },
+    { type: "qcm", q: "En production, le service app référence…", opts: ["build: .", "image: tonuser/ludotheque:1.0.0", "un bind mount", "latest"], a: 1, exp: "Artefact du registre." },
+    { type: "vf", q: "Le serveur de prod construit l'image lui-même.", a: false, exp: "Il tire un artefact déjà construit et testé." },
+    { type: "qcm", q: "L'ordre de la première mise en ligne :", opts: ["pull → up -d → migrate → vérifier", "migrate → pull", "up sans pull", "curl d'abord"], a: 0, exp: "La séquence complète." },
+    { type: "qcm", q: "Les migrations en prod s'exécutent par…", opts: ["compose exec app python manage.py migrate", "un CREATE TABLE manuel", "l'image mysql", "le proxy"], a: 0, exp: "Les mêmes qu'en dev, depuis la leçon 3 du capstone." },
+    { type: "qcm", q: "La mise à jour vers 1.0.1 :", opts: ["Changer le tag dans compose, pull, up -d", "Tout réinstaller", "rebuild sur le serveur", "rsync du code"], a: 0, exp: "Compose ne recrée que ce qui change." },
+    { type: "qcm", q: "Pendant la mise à jour de app, bdd et son volume…", opts: ["Sont recréés", "Ne bougent pas", "Sont sauvegardés automatiquement", "Sont supprimés"], a: 1, exp: "up -d est chirurgical." },
+    { type: "qcm", q: "Le retour arrière :", opts: ["Impossible", "Repointer l'ancien tag et up -d (< 2 min)", "Restaurer tout le serveur", "Un rebuild"], a: 1, exp: "L'immuabilité paie." },
+    { type: "qcm", q: "Le piège du retour arrière :", opts: ["L'image manque", "Un schéma déjà migré par la nouvelle version", "Le DNS", "Les logs"], a: 1, exp: "Code ≠ schéma : préparer la réversibilité." },
+    { type: "qcm", q: "En prod, MySQL est…", opts: ["Publié pour le débogage", "Non publié ; seul le proxy (443) est exposé", "Sur une autre machine forcément", "En latest"], a: 1, exp: "Leçon 9 appliquée jusqu'au bout." },
+    { type: "qcm", q: "DEBUG en production :", opts: ["1", "0 (via .env.prod)", "peu importe", "true"], a: 1, exp: "Rappel du capstone." },
+    { type: "vf", q: "Une sauvegarde jamais restaurée est une sauvegarde fiable.", a: false, exp: "Un espoir, pas une garantie : tester la restauration." },
+    { type: "qcm", q: "tag Git v1.0.1 ↔ image 1.0.1 garantit…", opts: ["Rien", "Qu'on retrouve le commit exact du code qui tourne", "La vitesse", "La taille"], a: 1, exp: "Traçabilité complète." },
+    { type: "qcm", q: "Par rapport au déploiement « à la main » du capstone, celui-ci…", opts: ["Est plus long", "Supprime l'installation de l'environnement sur le serveur", "Est identique", "Exige plus d'outils"], a: 1, exp: "pull + up -d." },
+    { type: "vf", q: "Le prochain cours (CI/CD) automatisera build, tests, push et déploiement.", a: true, exp: "La suite logique." }
+  ],
+  final: {
+    title: "Exercice final — La mise en production",
+    intro: `<p>On déploie la Ludothèque conteneurisée, puis on la met à jour.</p>`,
+    questions: [
+      { type: "qcm", q: "Sur le serveur, on dépose :", opts: ["compose.yaml + .env.prod (chmod 600)", "tout le dépôt Git", "le Dockerfile", "les sources Python"], a: 0, exp: "Deux fichiers." },
+      { type: "qcm", q: "La mise en ligne :", opts: ["compose pull → up -d → exec migrate → ps/curl", "docker run à la main", "un installateur", "ftp"], a: 0, exp: "Reproductible." },
+      { type: "qcm", q: "La 1.0.1 arrive :", opts: ["Tag changé dans compose → pull → up -d → migrate", "rebuild serveur", "rsync", "rien"], a: 0, exp: "Chirurgical." },
+      { type: "qcm", q: "Elle se passe mal :", opts: ["Retour au tag 1.0.0 + up -d", "panique", "rm -v", "restaurer le serveur entier"], a: 0, exp: "Moins de 2 minutes." },
+      { type: "vf", q: "Les données (volume) ont traversé mise à jour et retour arrière intactes.", a: true, exp: "Compute jetable, état précieux." }
+    ],
+    solution: `<pre class="pseudo"># Mise en ligne
+$ docker compose --env-file .env.prod pull      # tire les images du registre (avec les secrets de prod)
+$ docker compose --env-file .env.prod up -d     # démarre tous les services en arrière-plan
+$ docker compose exec app python manage.py migrate   # applique le schéma à la base
+$ docker compose ps && curl -I https://ludotheque.example.com/   # vérifie santé + accès public
+
+# Mise à jour 1.0.1 : image: ...:1.0.1 → pull → up -d → migrate   # on change le tag, on tire, on relance, on migre
+# Retour arrière   : image: ...:1.0.0 → up -d                     # on repointe l'ancien tag et on relance (< 2 min)
+
+# Les locations et achats vivent dans le volume : intacts à travers tout.   # les données survivent à mise à jour ET retour arrière</pre>
+<p>La Ludothèque conteneurisée est en production. Demain : l'examen final du cours.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta procédure de production…",
+  items: [
+  { id: "docker-l20", title: "Le compose de production final", level: 3,
+    statement: "Écris le compose.yaml de production COMPLET de la Ludothèque en assemblant tout le cours : app (image versionnée du registre, env_file, healthcheck /sante/, depends_on healthy, restart, limites, logging, read_only/cap_drop), bdd (mysql épinglé, volume, healthcheck mysqladmin, restart, limites, logging, non publié), et le volume. Commente chaque bloc avec le numéro de la leçon qui l'a introduit.",
+    hints: [
+      "Chaque ligne importante mérite « # leçon N ».",
+      "app n'a pas de ports: si un proxy est devant — sinon ports: [\"8000:8000\"].",
+      "N'oublie ni logging: ni les options de sécurité de la leçon 16."
+    ],
+    solution: "services:\n  app:\n    image: tonuser/ludotheque:1.0.0      # l.17 : artefact versionné, pas de build\n    env_file: .env.prod                   # l.10 : config hors Git, chmod 600\n    ports:\n      - \"8000:8000\"                     # l.9 : seule publication (ou proxy devant)\n    restart: unless-stopped               # l.13/19\n    mem_limit: 512m                       # l.19 : mesuré puis borné\n    cpus: \"1.0\"\n    read_only: true                       # l.16 : durcissement\n    tmpfs: [/tmp]\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    logging:                              # l.18 : rotation\n      driver: json-file\n      options: { max-size: \"10m\", max-file: \"3\" }\n    healthcheck:                          # l.13 : la vue /sante/\n      test: [\"CMD-SHELL\", \"curl -fs http://localhost:8000/sante/ || exit 1\"]\n      interval: 30s\n      timeout: 5s\n      retries: 3\n      start_period: 15s\n    depends_on:\n      bdd:\n        condition: service_healthy        # l.13 : prêt, pas juste démarré\n\n  bdd:\n    image: mysql:8.4                      # l.4 : épinglée\n    environment:\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}   # l.12 : interpolation\n      MYSQL_DATABASE: ludotheque\n      MYSQL_USER: ludo_app                # l.11 : jamais root pour l'app\n      MYSQL_PASSWORD: ${MYSQL_PASSWORD}\n    volumes:\n      - donnees-mysql:/var/lib/mysql      # l.8 : l'état hors conteneur\n    restart: unless-stopped\n    mem_limit: 1g                         # l.19\n    cpus: \"2.0\"\n    logging:\n      driver: json-file\n      options: { max-size: \"10m\", max-file: \"3\" }\n    healthcheck:\n      test: [\"CMD\", \"mysqladmin\", \"ping\", \"-h\", \"localhost\"]\n      interval: 5s\n      timeout: 3s\n      retries: 10\n      start_period: 30s\n    # PAS de ports: -> l.9 : invisible de l'extérieur\n\nvolumes:\n  donnees-mysql:                          # l.8/12",
+    note: "Ce fichier EST le résumé du cours : chaque ligne a été motivée par un problème rencontré (données perdues, base injoignable, démarrage flou, voisin gourmand, disque plein…). Un YAML de production ne se recopie pas d'un blog — il se comprend ligne à ligne, et tu peux désormais justifier chacune." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

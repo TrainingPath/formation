@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le squelette ASP.NET Core dans Docker Compose",
+  subtitle: "Aucune installation sur la machine : l'app et sa base naissent en conteneurs.",
+  theory: `
+<h3>1. Un projet ASP.NET Core minimal</h3>
+<p><strong>ASP.NET Core</strong> est le cadre de travail (« framework ») de Microsoft pour créer des applications web en C# — un ensemble d'outils prêts à l'emploi, comme une cuisine déjà équipée où l'on n'a plus qu'à cuisiner. On crée le projet avec la commande <code>dotnet new mvc</code> (« mvc » est une façon d'organiser le code, expliquée plus bas) et on lui ajoute trois briques : <strong>EF Core</strong> (Entity Framework Core, l'outil qui traduit le code C# en ordres pour la base de données, pour éviter d'écrire soi-même le langage des bases), le <strong>provider MySQL</strong> nommé <em>Pomelo</em> (le « pilote » qui apprend à EF Core à parler précisément à MySQL, comme un adaptateur de prise), et les <strong>Health Checks</strong> (un bilan de santé automatique). Point clé : on ne lance rien sur le poste ; tout est construit et exécuté dans un <strong>conteneur</strong> (la « boîte » autonome vue à la leçon 1).</p>
+<pre class="pseudo">// Program.cs (minimal)
+var builder = WebApplication.CreateBuilder(args);          // crée le "chef d'orchestre" qui assemble l'app (args = arguments de lancement)
+builder.Services.AddControllersWithViews();                // active le modèle MVC : des contrôleurs + des vues (pages HTML)
+builder.Services.AddDbContext&lt;LudothequeContext&gt;(o =>      // déclare l'accès à la base via EF Core (LudothequeContext = notre pont vers la base)
+    o.UseMySql(builder.Configuration.GetConnectionString("Default"),   // parler à MySQL avec la chaîne de connexion nommée "Default"
+               ServerVersion.AutoDetect(...)));            // EF détecte tout seul la version exacte de MySQL
+builder.Services.AddHealthChecks();                        // ajoute le mécanisme de "bilan de santé" de l'app
+var app = builder.Build();                                 // construit concrètement l'application à partir de la config ci-dessus
+app.MapControllers();                                      // branche les URLs entrantes sur les contrôleurs
+app.MapHealthChecks("/health");                            // publie l'adresse /health qui répond "Healthy" si tout va bien
+app.Run();                                                 // démarre l'app et attend les requêtes (l'exécution s'arrête ici, en écoute)</pre>
+<p>Ce fichier <code>Program.cs</code> est le <strong>point d'entrée</strong> : l'endroit précis où le programme démarre. On y prépare l'app (le <code>builder</code>, littéralement le « constructeur »), on liste les services dont elle a besoin (MVC, base de données, health checks), puis on la construit (<code>Build</code>) et on la démarre (<code>Run</code>). <strong>MVC</strong> (Modèle-Vue-Contrôleur) répartit le code en trois rôles : le <em>Contrôleur</em> reçoit la demande, le <em>Modèle</em> porte les données, la <em>Vue</em> fabrique la page affichée.</p>
+
+<h3>2. Le Docker Compose de développement</h3>
+<p>Le fichier <code>compose.yaml</code> décrit, en langage <strong>YAML</strong> (un format texte structuré par l'indentation, lisible à l'œil nu), les conteneurs à lancer et leurs réglages. Ici deux <strong>services</strong> (deux conteneurs) : <code>app</code> (notre application) et <code>bdd</code> (la base MySQL). Chaque ligne est expliquée à droite.</p>
+<pre class="pseudo">services:                                    # la liste des conteneurs à démarrer
+  app:                                       # 1er conteneur : notre application
+    build: .                                 # construire l'image depuis le Dockerfile du dossier courant (".")
+    ports: ["8080:8080"]                     # relier le port 8080 de la machine au port 8080 du conteneur
+    environment:                             # variables d'environnement passées à l'app
+      ASPNETCORE_URLS: http://+:8080         # dire à l'app d'écouter les requêtes sur le port 8080
+      ConnectionStrings__Default: "Server=bdd;Database=ludotheque;User=ludo_app;Password=\${DB_PASSWORD}"   # où/comment joindre la base ("bdd" = le service ci-dessous)
+    depends_on:                              # dépendances de démarrage
+      bdd: { condition: service_healthy }    # ne démarrer l'app QUE lorsque la base est déclarée "en bonne santé"
+  bdd:                                        # 2e conteneur : la base de données MySQL
+    image: mysql:8.4                          # image officielle MySQL 8.4 (rien à construire, on la télécharge)
+    environment:                              # réglages initiaux de la base
+      MYSQL_DATABASE: ludotheque              # créer au démarrage une base nommée "ludotheque"
+      MYSQL_USER: ludo_app                    # créer un utilisateur applicatif
+      MYSQL_PASSWORD: \${DB_PASSWORD}          # son mot de passe, injecté depuis l'extérieur (jamais écrit en dur)
+      MYSQL_ROOT_PASSWORD: \${DB_ROOT_PASSWORD}   # mot de passe du super-administrateur "root"
+    volumes: ["donnees-mysql:/var/lib/mysql"]  # ranger les fichiers de la base dans un volume qui survit aux redémarrages
+    healthcheck:                              # comment vérifier que la base est vraiment prête
+      test: ["CMD","mysqladmin","ping","-h","localhost"]   # test : "mysqladmin ping" ne répond que quand MySQL accepte les connexions
+      interval: 5s                            # refaire le test toutes les 5 secondes
+      retries: 10                             # après 10 échecs d'affilée, déclarer la base malade
+volumes: { donnees-mysql: {} }                # déclarer officiellement le volume nommé utilisé plus haut</pre>
+
+<h3>3. La configuration lit l'environnement</h3>
+<p>Une <strong>variable d'environnement</strong> est un réglage fourni par le système au moment du lancement, en dehors du code — pratique pour changer un mot de passe ou une adresse sans recompiler. .NET sait transformer certains noms de variables en réglages hiérarchiques grâce au double tiret bas <code>__</code>.</p>
+<pre class="pseudo"># La double underscore mappe la hiérarchie de configuration :
+#   ConnectionStrings__Default  ->  Configuration["ConnectionStrings:Default"]
+# Server=bdd : le nom du service, résolu par le DNS interne — jamais d'IP en dur</pre>
+<p>Le <strong>DNS interne</strong> est l'annuaire du réseau Docker : il traduit un nom lisible (<code>bdd</code>) en adresse technique, exactement comme un carnet de contacts traduit « Maman » en numéro de téléphone. On n'écrit donc jamais d'adresse IP « en dur » (figée dans le code).</p>
+
+<h3>4. Démarrer et vérifier</h3>
+<p>On lance tout d'un coup avec <code>docker compose up</code>, puis on <strong>vérifie</strong> — un développeur ne se fie jamais à « ça a l'air de marcher », il exige une preuve. <code>curl</code> est un petit outil qui interroge une adresse web depuis le terminal (la fenêtre où l'on tape des commandes).</p>
+<pre class="pseudo">$ docker compose up -d                # construit et démarre app + bdd en arrière-plan (-d = "detached", rend la main)
+$ docker compose logs -f app          # suit en direct les messages de l'app : "Now listening on: http://[::]:8080"
+$ curl localhost:8080/health -> Healthy   # interroge /health ; la réponse "Healthy" prouve que l'app tourne</pre>
+
+<h3>5. Pourquoi le healthcheck</h3>
+<p>Un <strong>healthcheck</strong> (« vérification de santé ») est un petit test répété automatiquement pour savoir si un conteneur est réellement opérationnel, et pas seulement allumé.</p>
+<div class="warn">MySQL « démarré » n'est pas MySQL « prêt » : le conteneur répond avant que la base accepte les connexions. Sans <code>condition: service_healthy</code>, l'app tente de se connecter trop tôt et les migrations plantent. Le healthcheck + <code>depends_on</code> font attendre l'app que <code>mysqladmin ping</code> réussisse.</div>
+<div class="tip">Résultat : <code>docker compose up</code> et tout le monde a exactement le même environnement (même SDK .NET, même MySQL 8.4). Fini « ça marche sur mon poste » — le poste n'exécute plus rien, c'est le conteneur qui travaille (cours Docker). Health Checks fournit <code>/health</code> sans code à écrire.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le projet ASP.NET, on le lance…", opts: ["Sur le poste", "Dans un conteneur (docker compose up)", "En prod direct", "Jamais"], a: 1, exp: "Aucune installation locale." },
+    { type: "qcm", q: "Le provider MySQL utilisé est…", opts: ["Rien", "Pomelo (UseMySql)", "SQLite", "SQL Server"], a: 1, exp: "EF Core + MySQL." },
+    { type: "qcm", q: "L'app trouve MySQL via…", opts: ["Une IP en dur", "Server=bdd (DNS Compose)", "localhost", "Un fichier hosts"], a: 1, exp: "Réseau interne Compose." },
+    { type: "qcm", q: "condition: service_healthy garantit…", opts: ["Que le conteneur existe", "Que MySQL est PRÊT (pas juste démarré)", "Le CSS", "Rien"], a: 1, exp: "mysqladmin ping." },
+    { type: "qcm", q: "Le volume donnees-mysql sert à…", opts: ["Le code", "Persister les données de la base", "Les logs", "Le cache"], a: 1, exp: "Sinon tout est perdu au down." },
+    { type: "qcm", q: "ConnectionStrings__Default (double underscore) mappe…", opts: ["Rien", "Configuration[\"ConnectionStrings:Default\"]", "Un fichier", "Le CSS"], a: 1, exp: "Hiérarchie de config par env." },
+    { type: "qcm", q: "On vérifie que l'app tourne avec…", opts: ["Un ping DNS", "curl /health -> Healthy", "Un reboot", "Rien"], a: 1, exp: "Health Checks." },
+    { type: "qcm", q: "MySQL 'démarré' vs 'prêt' :", opts: ["C'est pareil", "Le conteneur répond avant d'accepter les connexions", "Prêt d'abord", "Sans importance"], a: 1, exp: "D'où le healthcheck." },
+    { type: "qcm", q: "ASPNETCORE_URLS: http://+:8080 …", opts: ["Chiffre", "Configure l'app pour écouter sur 8080", "Déploie", "Rien"], a: 1, exp: "Écoute conteneur." },
+    { type: "qcm", q: "/health est fourni par…", opts: ["Un contrôleur écrit à la main", "Health Checks (MapHealthChecks)", "MySQL", "Docker"], a: 1, exp: "AddHealthChecks." },
+    { type: "vf", q: "Grâce au conteneur, tous les développeurs ont le même environnement.", a: true, exp: "Reproductibilité (cours Docker)." },
+    { type: "qcm", q: "Le provider est ajouté…", opts: ["En prod", "Comme paquet NuGet (Pomelo.EntityFrameworkCore.MySql)", "Manuellement sur le serveur", "Jamais"], a: 1, exp: "Géré par NuGet." },
+    { type: "qcm", q: "AddDbContext enregistre…", opts: ["Le CSS", "Le DbContext dans le conteneur de DI", "Un cache", "Le rôle"], a: 1, exp: "Injecté ensuite." },
+    { type: "qcm", q: "Le poste du développeur exécute désormais…", opts: ["Le SDK .NET et MySQL", "Docker (les conteneurs font le travail)", "Rien", "Un IDE seul"], a: 1, exp: "Environnement conteneurisé." },
+    { type: "vf", q: "Aucune adresse IP de la base n'est écrite en dur.", a: true, exp: "Le nom de service suffit." }
+  ],
+  final: {
+    title: "Exercice final — Le squelette qui tourne en conteneurs",
+    intro: `<p>App + base, en conteneurs, vérifiés.</p>`,
+    questions: [
+      { type: "qcm", q: "compose.yaml définit :", opts: ["app (build .) + bdd (mysql, healthcheck, volume)", "l'app seule", "la base seule", "rien"], a: 0, exp: "Deux services." },
+      { type: "qcm", q: "L'app attend la base grâce à :", opts: ["depends_on + condition: service_healthy", "un sleep", "la chance", "un cron"], a: 0, exp: "Prête, pas juste démarrée." },
+      { type: "qcm", q: "La connexion à MySQL utilise :", opts: ["Server=bdd (DNS interne)", "une IP", "localhost", "un tunnel"], a: 0, exp: "Réseau Compose." },
+      { type: "qcm", q: "On valide le démarrage par :", opts: ["curl /health = Healthy", "un screenshot", "l'absence d'erreur visuelle", "rien"], a: 0, exp: "Preuve vérifiable." },
+      { type: "vf", q: "La config de la base vient de l'environnement, pas du code.", a: true, exp: "ConnectionStrings__Default." }
+    ],
+    solution: `<pre class="pseudo"># compose.yaml : app + bdd (healthcheck, volume)
+# ConnectionStrings__Default fourni par l'environnement (Server=bdd)
+# Program.cs : AddHealthChecks() ; app.MapHealthChecks("/health")
+
+$ docker compose up -d
+$ curl localhost:8080/health   -> Healthy</pre>
+<p>Le squelette tourne en conteneurs. Demain : Git propre et la première CI (dotnet).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton compose et ta config…",
+  items: [
+  { id: "proj6cs-l2", title: "Le Compose de développement commenté", level: 2,
+    statement: "Écris le compose.yaml de dev (services app et bdd) et l'extrait Program.cs (DbContext + Health Checks), en commentant : le healthcheck (pourquoi 'prêt' ≠ 'démarré'), le volume (persistance), l'injection de la config par l'environnement (double underscore), et la résolution du nom 'bdd'. Termine par la commande qui prouve que l'app répond.",
+    hints: [
+      "app : build ., environment (ASPNETCORE_URLS, ConnectionStrings__Default), depends_on service_healthy.",
+      "bdd : mysql:8.4, environment, volume nommé, healthcheck mysqladmin ping.",
+      "Preuve : curl localhost:8080/health -> Healthy."
+    ],
+    solution: "# compose.yaml (developpement)\nservices:\n  app:\n    build: .\n    ports: [\"8080:8080\"]\n    environment:\n      ASPNETCORE_URLS: http://+:8080\n      ConnectionStrings__Default: \"Server=bdd;Database=ludotheque;User=ludo_app;Password=${DB_PASSWORD}\"\n    depends_on:\n      bdd: { condition: service_healthy }   # attend que MySQL soit PRET\n  bdd:\n    image: mysql:8.4\n    environment:\n      MYSQL_DATABASE: ludotheque\n      MYSQL_USER: ludo_app\n      MYSQL_PASSWORD: ${DB_PASSWORD}          # injecte, jamais en dur\n      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}\n    volumes: [\"donnees-mysql:/var/lib/mysql\"] # persiste les donnees\n    healthcheck:\n      test: [\"CMD\",\"mysqladmin\",\"ping\",\"-h\",\"localhost\"]\n      interval: 5s\n      retries: 10\nvolumes: { donnees-mysql: {} }\n\n// Program.cs\nbuilder.Services.AddDbContext<LudothequeContext>(o =>\n    o.UseMySql(builder.Configuration.GetConnectionString(\"Default\"),\n               ServerVersion.AutoDetect(builder.Configuration.GetConnectionString(\"Default\"))));\nbuilder.Services.AddHealthChecks();\napp.MapHealthChecks(\"/health\");\n\n# POURQUOI\n# - healthcheck : MySQL repond avant d'accepter les connexions ; sans lui, l'app\n#   (et EF au demarrage) se connecte trop tot et plante.\n# - volume : sans lui, 'docker compose down' effacerait toutes les donnees.\n# - double underscore : ConnectionStrings__Default -> ConnectionStrings:Default,\n#   la meme image tourne partout, seule la config d'environnement change.\n# - 'bdd' : le DNS interne du reseau Compose resout le nom de service (pas d'IP).\n\n# Preuve : docker compose up -d && curl localhost:8080/health -> Healthy",
+    note: "Ce compose est le socle de tout le cours : à partir d'ici, plus rien ne s'installe sur le poste. Le mappage par double underscore (ConnectionStrings__Default) est la façon standard d'injecter une config hiérarchique via l'environnement en .NET — elle permet de garder la même image partout. Le healthcheck est le détail que tout le monde oublie et qui provoque les « ça plante un boot sur deux » : dépendre de l'état 'healthy' rend le démarrage déterministe." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

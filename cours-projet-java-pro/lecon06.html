@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "La couche service et les règles métier, sous CI",
+  subtitle: "Les décisions du métier, isolées et testées en millisecondes (Mockito).",
+  theory: `
+<h3>1. Pourquoi une couche service</h3>
+<p>Les entités portent l'état, les repositories l'accès aux données. Les <strong>décisions</strong> (peut-on louer ? quel tarif ?) vivent dans une couche <code>@Service</code> : testable isolément, réutilisable par l'API et le frontend, indépendante de la base.</p>
+<p>Une <strong>couche</strong> est un étage de l'application aux responsabilités bien délimitées, comme les rayons d'un magasin : on sait où trouver quoi. <code>@Service</code> est l'étiquette qui range une classe dans l'étage des décisions métier. Y isoler les règles les rend faciles à tester (sans la base) et partageables par l'API et le frontend.</p>
+
+<h3>2. Une exception métier explicite</h3>
+<pre class="pseudo">public class StockInsuffisantException extends RuntimeException {   // notre erreur metier ; "extends" = herite du modele d'erreur Java
+    public StockInsuffisantException(String message) { super(message); }   // constructeur : transmet le message au parent (super)
+}</pre>
+<p>Une <strong>exception</strong> est un signal d'alerte qu'un code lance lorsqu'il rencontre une situation anormale ; il interrompt le cours normal jusqu'à ce que quelqu'un le rattrape. Ici on crée notre propre exception au nom parlant, plutôt qu'un <code>IllegalStateException</code> anonyme : l'intention se lit, et le <code>@RestControllerAdvice</code> (leçon 8) la traduira en code d'erreur HTTP 409.</p>
+
+<h3>3. Le service</h3>
+<pre class="pseudo">@Service                                                        // etiquette : classe qui porte les decisions metier (couche service)
+public class JeuService {
+    private final JeuRepository repo;                           // le repository dont le service a besoin (final = fixe une fois pour toutes)
+    public JeuService(JeuRepository repo) { this.repo = repo; } // injection : Spring fournit le repository via le constructeur
+
+    public void verifierStockLocation(Jeu jeu) {                // regle : refuser la location s'il n'y a plus de stock
+        if (jeu.getStockLocation() <= 0)                       // si le stock location est nul ou negatif...
+            throw new StockInsuffisantException("Plus de stock pour " + jeu.getTitre());   // ...on leve (declenche) l'erreur metier
+    }
+    public BigDecimal prixLocation(Jeu jeu, int nbJours) {      // calcule le prix pour une duree donnee
+        BigDecimal base = jeu.getPrixLocation();               // tarif de base du jeu
+        return nbJours <= 7 ? base                             // jusqu'a 7 jours : prix de base (? : = "si...alors...sinon")
+             : base.add(BigDecimal.valueOf(nbJours - 7).multiply(new BigDecimal("0.50")));   // au-dela : +0,50 par jour supplementaire
+    }
+}</pre>
+<p><strong>L'injection par constructeur</strong> consiste à recevoir ses dépendances de l'extérieur (Spring les « injecte ») au lieu de les fabriquer soi-même avec <code>new</code>. Avantage décisif : en test, on peut injecter une fausse version. Le mot <code>final</code> garantit que cette dépendance, une fois reçue, ne changera plus. L'opérateur <code>? :</code> (ternaire) est un « si… alors… sinon » condensé sur une seule ligne.</p>
+
+<h3>4. Le test unitaire rapide (Mockito)</h3>
+<pre class="pseudo">@ExtendWith(MockitoExtension.class)                            // active Mockito, l'outil qui fabrique de faux objets pour les tests
+class JeuServiceTest {
+    @Mock JeuRepository repo;                                  // faux repository (une doublure : ne touche pas la base)
+    @InjectMocks JeuService service;                           // le service a tester, avec la doublure injectee dedans
+
+    @Test void tarifProlongation() {                           // scenario : verifier le calcul de prolongation
+        Jeu j = new Jeu(); j.setPrixLocation(new BigDecimal("5.00"));   // un jeu a 5,00 de base
+        assertThat(service.prixLocation(j, 10)).isEqualByComparingTo("6.50");   // 10 jours -> 5 + 3x0,50 = 6,50 (compareTo, pas equals)
+    }
+    @Test void refuseSiStockNul() {                            // scenario : verifier le refus quand stock = 0
+        Jeu j = new Jeu(); j.setStockLocation(0);             // un jeu sans stock location
+        assertThatThrownBy(() -> service.verifierStockLocation(j))   // on execute la methode et on capture l'erreur (() -> = mini-fonction)
+            .isInstanceOf(StockInsuffisantException.class);   // on EXIGE que ce soit bien notre exception metier
+    }
+}</pre>
+<p>Un <strong>mock</strong> (« doublure ») est un faux objet qui imite un vrai composant le temps du test, comme une doublure au cinéma ; <strong>Mockito</strong> est l'outil qui les fabrique. Ici le repository est mocké : aucune base, aucun démarrage de Spring. Ces tests tournent donc en <strong>millisecondes</strong>.</p>
+
+<h3>5. Comparer des BigDecimal</h3>
+<div class="warn">Piège classique : <code>new BigDecimal("6.50").equals(new BigDecimal("6.5"))</code> est <strong>faux</strong> (les échelles diffèrent). Toujours comparer avec <code>compareTo</code> — ou, en test, <code>isEqualByComparingTo</code>. Pour l'argent, on ne prend jamais de raccourci.</div>
+<div class="tip">Des tests unitaires en millisecondes, c'est la condition d'une CI < 10 min (cours CI/CD) : plus le projet grossit, plus il est vital que la majorité des tests soient rapides et sans base. On garde les tests d'intégration (avec MySQL) pour ce qui l'exige vraiment (leçon 11).</div>`,
+  exercises: [
+    { type: "qcm", q: "Les décisions métier vivent dans…", opts: ["Les entités", "Une couche @Service", "Le contrôleur", "La base"], a: 1, exp: "Testable, réutilisable." },
+    { type: "qcm", q: "StockInsuffisantException est…", opts: ["Générique", "Une exception métier nommée", "Un test", "Un bean"], a: 1, exp: "L'intention se lit." },
+    { type: "qcm", q: "Le repository est fourni au service par…", opts: ["Un new", "L'injection par constructeur", "Une variable globale", "Le hasard"], a: 1, exp: "Testable (on injecte un mock)." },
+    { type: "qcm", q: "Le test du service utilise…", opts: ["Un vrai MySQL", "Un @Mock du repository (Mockito)", "La prod", "Rien"], a: 1, exp: "Sans base, en ms." },
+    { type: "qcm", q: "Ces tests tournent en…", opts: ["Minutes", "Millisecondes", "Heures", "Jamais"], a: 1, exp: "Pas de démarrage Spring." },
+    { type: "qcm", q: "On compare deux BigDecimal avec…", opts: ["equals", "compareTo / isEqualByComparingTo", "==", "hashCode"], a: 1, exp: "equals tient compte de l'échelle." },
+    { type: "qcm", q: "new BigDecimal('6.50').equals('6.5') est…", opts: ["Vrai", "Faux (échelles différentes)", "Une erreur", "Nul"], a: 1, exp: "D'où compareTo." },
+    { type: "qcm", q: "@InjectMocks sert à…", opts: ["Démarrer Spring", "Injecter les mocks dans le service testé", "Chiffrer", "Déployer"], a: 1, exp: "Isolation du test." },
+    { type: "qcm", q: "prixLocation(jeu, 10) avec base 5 € =", opts: ["5,00 €", "6,50 €", "10 €", "0 €"], a: 1, exp: "5 + 3×0,50." },
+    { type: "qcm", q: "assertThatThrownBy vérifie…", opts: ["Une valeur", "Qu'une exception est bien levée", "Le CSS", "La base"], a: 1, exp: "Test du chemin d'erreur." },
+    { type: "vf", q: "La majorité des tests doivent être rapides pour garder la CI < 10 min.", a: true, exp: "Vitesse = adoption." },
+    { type: "qcm", q: "La couche service dépend de la base ?", opts: ["Oui, directement", "Non — elle passe par le repository (mockable)", "Toujours", "Jamais de repository"], a: 1, exp: "Découplage." },
+    { type: "qcm", q: "Réutiliser prixLocation depuis l'API ET le frontend est possible car…", opts: ["C'est dans le contrôleur", "C'est dans le service (couche partagée)", "C'est en SQL", "Par magie"], a: 1, exp: "Une couche métier centrale." },
+    { type: "qcm", q: "Un test unitaire de service ne démarre pas…", opts: ["La JVM", "Le contexte Spring complet", "Rien", "Mockito"], a: 1, exp: "D'où sa rapidité." },
+    { type: "vf", q: "Nommer l'exception (StockInsuffisant) aide la traduction HTTP ultérieure.", a: true, exp: "409 en leçon 8." }
+  ],
+  final: {
+    title: "Exercice final — Le métier isolé et testé",
+    intro: `<p>Service + exception métier + tests rapides.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service reçoit le repository par :", opts: ["injection par constructeur", "un new interne", "une globale", "un setter public"], a: 0, exp: "Mockable." },
+      { type: "qcm", q: "Le test du service :", opts: ["mocke le repository (aucune base)", "démarre MySQL", "va en prod", "n'existe pas"], a: 0, exp: "Millisecondes." },
+      { type: "qcm", q: "On compare des BigDecimal avec :", opts: ["compareTo / isEqualByComparingTo", "equals", "==", "toString"], a: 0, exp: "Échelle ignorée." },
+      { type: "qcm", q: "L'erreur métier est :", opts: ["une exception nommée (StockInsuffisant)", "un code de retour -1", "un null", "un print"], a: 0, exp: "Intention explicite." },
+      { type: "vf", q: "Des tests unitaires rapides gardent le pipeline véloce.", a: true, exp: "< 10 min." }
+    ],
+    solution: `<pre class="pseudo">@Service class JeuService {                                    // couche des decisions metier
+  private final JeuRepository repo;                            // dependance vers la base
+  JeuService(JeuRepository repo){ this.repo = repo; }          // injection par constructeur
+  void verifierStockLocation(Jeu j){                           // regle de disponibilite
+    if (j.getStockLocation() <= 0) throw new StockInsuffisantException(...);   // stock nul -> erreur metier
+  }
+  BigDecimal prixLocation(Jeu j, int n){ ... base.add(...0.50...) ; }   // calcul du tarif (BigDecimal = exact)
+}
+// @Mock repo ; @InjectMocks service ; tests en ms             // doublure + injection : tests rapides, sans base
+assertThat(service.prixLocation(j,10)).isEqualByComparingTo("6.50");   // on compare l'argent avec compareTo</pre>
+<p>Le métier est isolé et testé. Demain : l'API REST et le job de tests avec MySQL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service et ses tests…",
+  items: [
+  { id: "proj6java-l6", title: "Le service métier et ses tests Mockito", level: 2,
+    statement: "Écris JeuService (injection par constructeur du repository, verifierStockLocation qui lève StockInsuffisantException, prixLocation en BigDecimal), l'exception métier, et deux tests Mockito rapides (le tarif de prolongation et le refus sur stock nul). Explique en 2-3 lignes pourquoi ces tests n'ont pas besoin de base et pourquoi c'est vital pour la CI.",
+    hints: [
+      "Injection par constructeur -> on injecte un @Mock JeuRepository en test.",
+      "prixLocation : nbJours <= 7 ? base : base.add(...(nbJours-7)*0.50).",
+      "Comparer les BigDecimal avec isEqualByComparingTo, jamais equals."
+    ],
+    solution: "public class StockInsuffisantException extends RuntimeException {   // erreur metier ; herite (extends) du modele d'erreur Java\n    public StockInsuffisantException(String message) { super(message); }   // transmet le message au parent (super)\n}\n\n@Service\npublic class JeuService {                                        // couche des decisions metier\n    private final JeuRepository repo;                            // dependance vers la base (final = fixee une fois)\n    public JeuService(JeuRepository repo) { this.repo = repo; }  // injection par constructeur (Spring fournit le repo)\n\n    public void verifierStockLocation(Jeu jeu) {                 // regle : refuser s'il n'y a plus de stock\n        if (jeu.getStockLocation() <= 0)                        // stock location nul ou negatif ?\n            throw new StockInsuffisantException(\"Plus de stock pour \" + jeu.getTitre());   // alors on leve l'erreur metier\n    }\n    public BigDecimal prixLocation(Jeu jeu, int nbJours) {       // calcule le prix selon la duree\n        BigDecimal base = jeu.getPrixLocation();                // tarif de base\n        return nbJours <= 7 ? base                              // <= 7 jours : prix de base (? : = si/alors/sinon)\n             : base.add(BigDecimal.valueOf(nbJours - 7).multiply(new BigDecimal(\"0.50\")));   // sinon +0,50 par jour supplementaire\n    }\n}\n\n@ExtendWith(MockitoExtension.class)                             // active Mockito (fabrique de faux objets)\nclass JeuServiceTest {\n    @Mock JeuRepository repo;                                   // doublure du repository (aucune base)\n    @InjectMocks JeuService service;                            // service teste, doublure injectee dedans\n\n    @Test void tarifProlongation() {                            // scenario : le tarif de prolongation\n        Jeu j = new Jeu(); j.setPrixLocation(new BigDecimal(\"5.00\"));   // jeu a 5,00 de base\n        assertThat(service.prixLocation(j, 10)).isEqualByComparingTo(\"6.50\");   // 10 jours -> 6,50 (compareTo)\n    }\n    @Test void refuseSiStockNul() {                             // scenario : le refus sur stock nul\n        Jeu j = new Jeu(); j.setStockLocation(0);              // jeu sans stock location\n        assertThatThrownBy(() -> service.verifierStockLocation(j))   // execute et capture l'erreur (() -> = mini-fonction)\n            .isInstanceOf(StockInsuffisantException.class);    // on EXIGE notre exception metier\n    }\n}\n\n// POURQUOI SANS BASE, ET POURQUOI C'EST VITAL\n// verifierStockLocation et prixLocation sont du Java pur : ils ne touchent pas\n// la base. En mockant le repository, le test ne demarre ni Spring ni MySQL et\n// s'execute en millisecondes. Comme ces tests unitaires sont la MAJORITE, la CI\n// reste sous 10 min meme quand le projet grossit -- condition de son adoption.\n// On reserve les tests d'integration (lents, avec MySQL) au strict necessaire.",
+    note: "La séparation service / repository est ce qui rend le métier testable sans infrastructure. Le piège BigDecimal.equals mérite d'être connu par cœur : comparer de l'argent avec equals est un bug silencieux classique en Java. Isoler les décisions dans un service, c'est aussi ce qui permettra à l'API (demain) et au frontend (leçon 13) de partager exactement la même logique sans la dupliquer." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

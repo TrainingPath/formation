@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Stratégies : rollback, migrations, zéro interruption",
+  subtitle: "Tout automatiser, y compris le retour arrière — surtout le retour arrière.",
+  theory: `
+<h3>1. Le rollback applicatif : trivial grâce à l'immuabilité</h3>
+<p>Un <strong>rollback</strong> (« retour arrière ») consiste à <strong>revenir à la version précédente</strong> quand la nouvelle pose problème. Comme les tags d'images sont <strong>immuables</strong> (jamais modifiés, leçon 15), l'ancienne image existe toujours au registre : il suffit de la redéployer.</p>
+<pre class="pseudo"># la v1.1.0 se comporte mal en prod :
+# sur le serveur (ou via un workflow_dispatch dédié) :   # workflow_dispatch = déclenchement manuel d'un workflow (leçon 9)
+echo VERSION=1.0.0 > .env.version                        # on redésigne la version précédente dans le fichier lu par compose
+docker compose pull && docker compose up -d              # télécharger la 1.0.0 et relancer → < 5 minutes
+# l'image 1.0.0 existe TOUJOURS au registre (tags immuables)   # rien n'a écrasé l'ancienne : le retour est immédiat</pre>
+
+<h3>2. Le vrai problème : le schéma</h3>
+<p>Le code recule en 5 minutes. Mais si la v1.1.0 a <strong>migré la base</strong> (modifié le <strong>schéma</strong> — la structure des tables et colonnes), le code v1.0.0 tourne maintenant sur un schéma v1.1.0. La règle qui sauve : la <strong>compatibilité N-1</strong> (« N moins un » : la version actuelle N doit rester compatible avec la précédente, N-1).</p>
+
+<h3>3. La règle N-1</h3>
+<pre class="pseudo">Le schéma déployé par la version N doit rester LISIBLE par le code N-1 :   # le code de la version d'avant doit encore fonctionner sur le nouveau schéma
+✔ ajouter une colonne NULLABLE, une table, un index      # "nullable" = qui accepte l'absence de valeur ; l'ancien code l'ignore sans planter
+✘ renommer / supprimer une colonne que N-1 utilise encore   # l'ancien code chercherait une colonne disparue → il casse
+
+Une rupture se fait en DEUX versions :                    # on étale un changement risqué sur deux versions successives
+v1.1 : nouvelle colonne + le code écrit dans l'ancienne ET la nouvelle   # phase 1 : on double, sans rien casser
+v1.2 : bascule complète, puis suppression de l'ancienne   # phase 2 : on ne garde que la nouvelle, quand plus personne n'utilise l'ancienne
+→ à tout moment, reculer d'UNE version ne casse rien       # le rollback reste toujours sûr</pre>
+
+<h3>4. Vers le zéro interruption (les notions)</h3>
+<pre class="pseudo">Pendant compose up -d, l'ancien conteneur s'arrête avant que le
+nouveau soit prêt : quelques secondes d'indisponibilité.   # une courte coupure de service pendant le remplacement
+Pistes (par ordre de coût) :
+1. accepter les ~5 s (honnête pour beaucoup de projets)    # la solution la plus simple : assumer une micro-coupure
+2. deux répliques + proxy : l'une se met à jour pendant que l'autre sert   # "réplique" = copie de l'app ; "proxy" = aiguilleur de trafic devant elles
+3. blue-green : deux environnements complets, on bascule le trafic   # deux copies entières ; on passe de l'une à l'autre d'un coup
+→ orchestrateurs (Kubernetes...) : au-delà de ce cours, mêmes principes   # "orchestrateur" = outil qui gère beaucoup de conteneurs automatiquement</pre>
+
+<h3>5. La fenêtre de déploiement</h3>
+<pre class="pseudo">on déploie quand quelqu'un peut REGARDER (matin, début d'après-midi)   # la "fenêtre de déploiement" = le moment choisi pour livrer
+jamais vendredi 17 h — le rollback aussi a besoin d'un humain réveillé   # si ça casse, il faut quelqu'un pour réagir
+après chaque déploiement : 30 min de surveillance (/sante/, logs, erreurs)   # on garde un œil ouvert un moment après la livraison</pre>
+<div class="warn">Un rollback ne « répare » pas : il <strong>rachète du temps</strong> pour diagnostiquer au calme. Le bug de la v1.1.0 existe toujours — il attend son fix par le circuit normal (PR, CI, v1.1.1). Rollback puis oubli = le même incident dans deux semaines.</div>
+<div class="tip">Teste ton rollback <strong>avant</strong> d'en avoir besoin : un exercice à froid sur staging (déployer v1.1.0, reculer vers v1.0.0, vérifier) transforme la procédure de crise en routine — comme la restauration de sauvegarde du cours Docker.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le rollback applicatif consiste à…", opts: ["Rebuild en urgence", "Redéployer le tag précédent (image toujours au registre)", "Restaurer le serveur", "Éteindre"], a: 1, exp: "< 5 min grâce à l'immuabilité." },
+    { type: "qcm", q: "Il est trivial grâce…", opts: ["À la chance", "Aux tags d'images immuables (Docker l.17)", "Au cache", "Aux logs"], a: 1, exp: "1.0.0 existe toujours." },
+    { type: "qcm", q: "Le vrai problème du retour arrière :", opts: ["Le code", "Le schéma déjà migré par la nouvelle version", "Le DNS", "Les secrets"], a: 1, exp: "Code N-1 sur schéma N." },
+    { type: "qcm", q: "La règle N-1 :", opts: ["Ne jamais migrer", "Le schéma de N reste lisible par le code N-1", "Deux bases", "Un backup par heure"], a: 1, exp: "Reculer d'une version ne casse rien." },
+    { type: "qcm", q: "Compatible N-1 :", opts: ["Renommer une colonne", "Ajouter une colonne NULLABLE / une table / un index", "Supprimer une table utilisée", "Changer un type"], a: 1, exp: "L'addition est sûre." },
+    { type: "qcm", q: "Renommer une colonne se fait…", opts: ["D'un coup", "En deux versions (ajout + double écriture, puis bascule + suppression)", "Jamais", "En SQL direct en prod"], a: 1, exp: "La rupture étalée." },
+    { type: "qcm", q: "Pendant compose up -d, l'indisponibilité vient de…", opts: ["MySQL", "L'ancien conteneur s'arrête avant que le nouveau soit prêt", "Le DNS", "GitHub"], a: 1, exp: "Quelques secondes." },
+    { type: "qcm", q: "La première « piste » honnête pour beaucoup de projets :", opts: ["Kubernetes obligatoire", "Accepter ~5 s d'interruption", "Ne plus déployer", "Blue-green direct"], a: 1, exp: "Le coût/bénéfice d'abord." },
+    { type: "qcm", q: "Blue-green signifie…", opts: ["Deux environnements complets, bascule du trafic", "Deux couleurs de logs", "Un thème CSS", "Un test"], a: 0, exp: "La piste la plus coûteuse ici." },
+    { type: "qcm", q: "On déploie…", opts: ["Vendredi 17 h", "Quand quelqu'un peut surveiller (matin/début d'après-midi)", "La nuit sans surveillance", "Au hasard"], a: 1, exp: "Le rollback a besoin d'un humain réveillé." },
+    { type: "qcm", q: "Après un déploiement :", opts: ["On passe à autre chose", "30 min de surveillance (/sante/, logs, erreurs)", "Un email", "Un tag de plus"], a: 1, exp: "Le déploiement finit là." },
+    { type: "vf", q: "Un rollback répare le bug.", a: false, exp: "Il rachète du temps ; le fix suit le circuit normal (v1.1.1)." },
+    { type: "qcm", q: "Rollback puis oubli =", opts: ["Une victoire", "Le même incident dans deux semaines", "Un gain de temps", "Rien"], a: 1, exp: "Le fix reste dû." },
+    { type: "qcm", q: "Le rollback se teste…", opts: ["En prod pendant l'incident", "À froid, sur staging, avant d'en avoir besoin", "Jamais", "Une fois par an en prod"], a: 1, exp: "Crise → routine." },
+    { type: "vf", q: "La règle N-1 découple le rollback du code de celui du schéma.", a: true, exp: "Le but exact de la règle." }
+  ],
+  final: {
+    title: "Exercice final — Le plan de retour",
+    intro: `<p>La v1.1.0 dérape en production. On applique le plan, dans l'ordre.</p>`,
+    questions: [
+      { type: "qcm", q: "Action immédiate :", opts: ["Rollback : VERSION=1.0.0, pull, up -d", "déboguer en prod", "supprimer la base", "paniquer"], a: 0, exp: "Racheter du temps d'abord." },
+      { type: "qcm", q: "Ça fonctionne car :", opts: ["La migration v1.1.0 était compatible N-1 et l'image 1.0.0 existe", "on a de la chance", "MySQL pardonne", "le DNS"], a: 0, exp: "Les deux conditions préparées." },
+      { type: "qcm", q: "Ensuite :", opts: ["Diagnostiquer au calme, fixer par PR, livrer v1.1.1", "oublier", "désactiver la CI", "blâmer"], a: 0, exp: "Le circuit normal reprend." },
+      { type: "qcm", q: "Le renommage de colonne prévu en v1.2 :", opts: ["Se fera en deux versions (double écriture puis bascule)", "d'un coup", "en SQL direct", "jamais"], a: 0, exp: "La règle N-1 continue." },
+      { type: "vf", q: "Le prochain exercice de rollback à froid est déjà planifié sur staging.", a: true, exp: "La routine anti-crise." }
+    ],
+    solution: `<pre class="pseudo"># 1. Racheter du temps (< 5 min)
+echo VERSION=1.0.0 > .env.version              # on redésigne la version précédente
+docker compose pull && docker compose up -d    # on récupère l'image 1.0.0 et on relance
+curl -fs .../sante/                            # on vérifie : 200 = la 1.0.0 sert à nouveau
+
+# 2. Le schéma v1.1.0 reste en place : compatible N-1 (colonne nullable)   # l'ancien code tourne sans souci
+# 3. Diagnostic au calme → fix → PR → CI → merge → staging → tag v1.1.1     # le correctif suit le circuit normal
+# 4. Post-mortem : pourquoi la recette staging n'a-t-elle rien vu ?         # on améliore le système pour éviter la récidive</pre>
+<p>Le retour arrière est une routine, pas une crise. Demain : le pipeline complet, assemblé et documenté.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton plan de migration N-1…",
+  items: [
+  { id: "cicd-l19", title: "Renommer sans casser", level: 3,
+    statement: "La colonne Location.nb_jours doit devenir duree_jours (cohérence de nommage). Écris le plan en deux versions respectant la règle N-1 : pour v1.2.0 (migration d'ajout, code en double écriture, backfill) et v1.3.0 (bascule des lectures, suppression), avec pour chaque étape la migration Django concernée et la preuve qu'un rollback vers la version précédente reste sûr à tout moment.",
+    hints: [
+      "v1.2.0 : AddField duree_jours (null=True), le code écrit les DEUX champs, une migration de données recopie l'existant.",
+      "Rollback v1.2.0 → v1.1.x : sûr, l'ancien code lit toujours nb_jours (intact).",
+      "v1.3.0 : le code ne lit plus que duree_jours ; RemoveField nb_jours en DERNIER."
+    ],
+    solution: "PLAN — renommer nb_jours → duree_jours sans jamais casser N-1\n\n== v1.2.0 (l'addition) ==\n1. Migration 0007 : AddField Location.duree_jours (PositiveInteger, null=True)\n   → additive, compatible N-1 ✔\n2. Migration 0008 (données) : RunPython qui recopie nb_jours → duree_jours\n   pour toutes les lignes existantes (backfill).\n3. Code v1.2.0 : ÉCRIT les deux champs à chaque création/modification,\n   LIT encore nb_jours (source de vérité inchangée).\n\nRollback v1.2.0 → v1.1.x : SÛR.\nLe code v1.1.x ignore duree_jours (colonne en plus, nullable) et\ncontinue de lire/écrire nb_jours, jamais touché. Aucune donnée perdue.\n\n== v1.3.0 (la bascule) ==\n4. Code v1.3.0 : LIT duree_jours (les deux champs sont synchrones depuis\n   v1.2.0), écrit encore les deux pendant une version de sécurité.\n\nRollback v1.3.0 → v1.2.0 : SÛR.\nv1.2.0 lit nb_jours, toujours écrit par v1.3.0. Synchrone.\n\n== v1.4.0 (le nettoyage) ==\n5. Code : n'écrit plus nb_jours.\n6. Migration 0009 : RemoveField nb_jours — SEULEMENT maintenant,\n   quand plus aucune version déployable ne le lit.\n\nRollback v1.4.0 → v1.3.0 : sûr (v1.3.0 lit duree_jours).\nSeul un retour de DEUX versions serait interdit — d'où la règle :\non ne saute jamais une version en arrière.",
+    note: "Trois versions pour renommer une colonne peut sembler lourd — c'est le prix d'un système où le rollback est TOUJOURS possible, et il se paie en petites PR de routine plutôt qu'en nuit blanche. Remarque la symétrie : chaque étape ne retire une chose que lorsque plus personne ne s'en sert — le principe des dépréciations, appliqué au schéma." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

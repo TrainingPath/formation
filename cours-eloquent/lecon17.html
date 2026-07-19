@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les transactions : DB::transaction",
+  subtitle: "Louer un jeu = deux écritures. Toutes les deux, ou aucune : l'atomicité du Niveau 4 en une closure.",
+  theory: `
+<h3>1. Le problème : louer un jeu en deux écritures</h3>
+<p>Louer « Catan » au membre 12, c'est DEUX écritures inséparables : créer la ligne de location ET décrémenter le stock. Que se passe-t-il si le serveur plante entre les deux ?</p>
+<pre class="pseudo">Location::create([...]);      // ① la location existe en base…
+// 💥 crash ici (panne, exception, coupure réseau)
+$jeu-&gt;decrement('stock');     // ② …mais cette 2e écriture n'a jamais eu lieu</pre>
+<p>Résultat : une location fantôme et un stock faux — la Ludothèque croit avoir un exemplaire de plus qu'en réalité. C'est exactement le problème que le Niveau 4 nommait <strong>atomicité</strong>, le A de ACID : un groupe d'écritures doit réussir EN BLOC ou être annulé EN BLOC. Une <strong>transaction</strong> est justement ce « bloc tout-ou-rien » (analogie : un virement bancaire — le débit chez l'un et le crédit chez l'autre se font ensemble ou pas du tout ; jamais l'argent qui disparaît d'un compte sans arriver dans l'autre).</p>
+
+<h3>2. DB::transaction : le bloc tout-ou-rien</h3>
+<p><strong>DB</strong> est une <em>façade</em> : un raccourci fourni par Laravel pour appeler un service (ici la base de données) sans rien instancier soi-même (analogie : le standard téléphonique — tu demandes « la base », on te passe la ligne). La méthode <strong>DB::transaction</strong> reçoit une <em>closure</em> — une fonction anonyme, c'est-à-dire un bloc de code qu'on écrit sur place et qu'on confie à Laravel pour qu'il l'exécute (analogie : une recette qu'on remet à quelqu'un pour qu'il la suive du début à la fin).</p>
+<pre class="pseudo">use Illuminate\\Support\\Facades\\DB;   // rend la façade DB utilisable dans ce fichier
+
+DB::transaction(function () use ($jeu, $membre) {   // ouvre le bloc atomique ; use = fait entrer les variables externes
+    Location::create([              // 1re écriture : INSERT INTO locations (…)
+        'jeu_id'        =&gt; $jeu-&gt;id,      // colonne jeu_id = id du jeu loué
+        'membre_id'     =&gt; $membre-&gt;id,   // colonne membre_id = id du membre
+        'date_location' =&gt; now(),         // colonne date_location = aujourd'hui
+    ]);                              // fin du create
+    $jeu-&gt;decrement('stock');        // 2e écriture : UPDATE jeux SET stock = stock - 1
+});                                 // ferme le bloc : c'est ici que se joue COMMIT ou ROLLBACK
+// Fin du bloc sans erreur   → COMMIT   (les deux écritures sont validées définitivement)
+// Exception N'IMPORTE OÙ    → ROLLBACK (tout est annulé, comme si rien n'avait eu lieu)</pre>
+<p><strong>COMMIT</strong> veut dire « valider définitivement » et <strong>ROLLBACK</strong> « tout annuler et revenir en arrière ». La closure entière devient atomique : Eloquent ouvre la transaction MySQL, exécute, puis décide COMMIT ou ROLLBACK selon qu'une exception surgit ou non. La valeur retournée par la closure est retournée par DB::transaction. Au passage, <strong>decrement('stock')</strong> génère un UPDATE jeux SET stock = stock - 1 : le calcul se fait côté MySQL, pas en PHP (son miroir est increment).</p>
+
+<h3>3. La version manuelle : beginTransaction, commit, rollBack</h3>
+<p>Pour un contrôle fin (ou pour comprendre ce que fait la closure), la version explicite existe. <strong>try / catch</strong> est le mécanisme PHP de gestion d'erreurs : on <em>essaie</em> (try) un bloc, et si une erreur (exception) est lancée, on l'<em>attrape</em> (catch) pour réagir.</p>
+<pre class="pseudo">DB::beginTransaction();          // BEGIN : ouvre manuellement la transaction
+try {                            // on tente les écritures
+    Location::create([...]);     // 1re écriture
+    $jeu-&gt;decrement('stock');    // 2e écriture
+    DB::commit();                // tout s'est bien passé → COMMIT (on valide)
+} catch (Throwable $e) {         // une erreur a surgi (Throwable = n'importe quelle erreur)
+    DB::rollBack();              // → ROLLBACK : on annule tout
+    throw $e;                    // on relance l'erreur : l'appelant doit savoir que ça a échoué
+}                                // fin du try/catch</pre>
+<p>C'est exactement le BEGIN / COMMIT / ROLLBACK du cours MySQL. En pratique, DB::transaction couvre 95 % des besoins avec moins de cérémonie — et sans risque d'oublier le rollBack.</p>
+
+<h3>4. La course au dernier exemplaire : lockForUpdate</h3>
+<p>Il reste 1 exemplaire de Catan. Deux membres cliquent « Louer » à la même seconde : les deux requêtes lisent stock = 1, les deux valident… stock final : -1. La transaction seule ne suffit pas, il faut <strong>verrouiller la ligne</strong> pendant la vérification. Un <strong>verrou</strong> réserve la ligne pour une seule transaction à la fois (analogie : poser un panneau « occupé » sur la porte des toilettes — les autres attendent dehors jusqu'à ce que tu sortes).</p>
+<pre class="pseudo">DB::transaction(function () use ($jeuId, $membre) {   // bloc atomique
+    $jeu = Jeu::where('id', $jeuId)-&gt;lockForUpdate()-&gt;first();   // lit le jeu ET pose le verrou
+    // SELECT … FOR UPDATE : la ligne du jeu est verrouillée jusqu'au COMMIT
+    if ($jeu-&gt;stock &lt; 1) {                             // reste-t-il au moins un exemplaire ?
+        throw new RuntimeException('Plus aucun exemplaire disponible.');   // non → on lève une exception (déclenche le ROLLBACK)
+    }
+    Location::create(['jeu_id' =&gt; $jeu-&gt;id, 'membre_id' =&gt; $membre-&gt;id,   // écriture 1 : la location
+                      'date_location' =&gt; now()]);
+    $jeu-&gt;decrement('stock');                          // écriture 2 : stock - 1
+});                                                    // COMMIT → le verrou est libéré ici</pre>
+<p>Le deuxième client ATTEND que le premier ait commité, relit stock = 0, et reçoit l'exception : plus jamais de stock négatif. C'est le SELECT … FOR UPDATE du cours MySQL ; sharedLock() en est la variante « lecture partagée » (plusieurs peuvent lire, personne ne peut modifier).</p>
+
+<h3>5. Deadlocks, retries et bonnes pratiques</h3>
+<p>Quand deux transactions se verrouillent mutuellement et s'attendent l'une l'autre sans fin, on parle de <strong>deadlock</strong> (étreinte fatale ; analogie : deux personnes dans un couloir étroit qui se décalent du même côté indéfiniment). MySQL en détecte une et la tue. DB::transaction sait <strong>rejouer automatiquement</strong> la victime :</p>
+<pre class="pseudo">DB::transaction(function () {   // le bloc atomique habituel
+    // …écritures…               // (create, update, decrement…)
+}, 3);    // 2e argument : jusqu'à 3 tentatives si un deadlock survient</pre>
+<p>Règles d'hygiène : une transaction doit être <strong>courte</strong> (uniquement les écritures liées), et ne JAMAIS contenir d'appel lent ou externe — envoi de mail, appel d'API HTTP — car les verrous restent posés pendant toute sa durée. Le mail de confirmation part APRÈS le commit. <em>Ailleurs : @Transactional chez Spring/JPA, transaction.atomic chez Django, BeginTransaction chez EF Core.</em></p>
+<div class="warn">Le piège qui annule tout l'intérêt : attraper l'exception À L'INTÉRIEUR de la closure. Si ton try/catch avale l'erreur dedans, DB::transaction ne voit jamais l'échec… et COMMITE le travail à moitié fait. Laisse l'exception sortir de la closure (ou relance-la) : c'est ELLE qui déclenche le rollback.</div>
+<div class="tip">Teste ton rollback volontairement : dans tinker, lance une transaction qui crée une location puis jette une exception, et vérifie que la table est intacte. Trente secondes qui te donnent une confiance définitive dans le mécanisme — et le réflexe de l'exiger partout où deux écritures vont ensemble.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer un jeu sans transaction, avec un crash entre les deux écritures, produit…", opts: ["Rien de grave", "Une location enregistrée SANS décrément de stock : données incohérentes", "Un rollback automatique", "Une erreur de syntaxe"], a: 1, exp: "La location fantôme : exactement l'incohérence que l'atomicité doit empêcher." },
+    { type: "qcm", q: "L'atomicité, c'est la lettre A de…", opts: ["AJAX", "ACID, vu au Niveau 4 : un groupe d'écritures réussit en bloc ou est annulé en bloc", "API", "ASCII"], a: 1, exp: "Atomicité, Cohérence, Isolation, Durabilité : la transaction est l'outil du A." },
+    { type: "qcm", q: "Dans DB::transaction(closure), le COMMIT a lieu…", opts: ["Avant la closure", "À la fin de la closure si aucune exception n'a surgi", "À chaque ligne", "Jamais automatiquement"], a: 1, exp: "Fin sans erreur → COMMIT ; exception → ROLLBACK. Rien à écrire soi-même." },
+    { type: "qcm", q: "Ce qui déclenche le ROLLBACK dans DB::transaction :", opts: ["Un return", "Une exception qui s'échappe de la closure", "Un commentaire", "Un sleep()"], a: 1, exp: "L'exception est le signal d'échec : elle doit SORTIR de la closure pour être vue." },
+    { type: "vf", q: "Attraper l'exception à l'intérieur de la closure, sans la relancer, provoque quand même le rollback.", a: false, exp: "Exception avalée = DB::transaction croit au succès = COMMIT du travail à moitié fait. Le piège n°1." },
+    { type: "input", q: "Quelle méthode Eloquent génère UPDATE jeux SET stock = stock - 1 côté MySQL ?", a: ["decrement", "decrement()", "->decrement()"], ph: "$jeu->…('stock')", exp: "decrement('stock') (et son miroir increment) : le calcul se fait en SQL, pas en PHP." },
+    { type: "qcm", q: "La version manuelle d'une transaction utilise…", opts: ["DB::beginTransaction, DB::commit, DB::rollBack", "DB::start, DB::end", "begin(), finish()", "Elle n'existe pas"], a: 0, exp: "Le BEGIN/COMMIT/ROLLBACK du cours MySQL, habillé en façade DB." },
+    { type: "qcm", q: "Deux membres louent le DERNIER exemplaire à la même seconde, transaction mais SANS verrou :", opts: ["Impossible", "Les deux lisent stock = 1, les deux valident : stock final -1", "MySQL refuse le deuxième", "Le site plante"], a: 1, exp: "La transaction ne bloque pas la LECTURE simultanée : il faut verrouiller la ligne lue." },
+    { type: "input", q: "Quelle méthode pose un verrou SELECT … FOR UPDATE sur les lignes lues ?", a: ["lockForUpdate", "lockForUpdate()", "->lockForUpdate()"], ph: "nom de la méthode…", exp: "Jeu::where(...)->lockForUpdate()->first() : la ligne est bloquée jusqu'au COMMIT." },
+    { type: "qcm", q: "Avec lockForUpdate, le deuxième client concurrent…", opts: ["Reçoit une erreur immédiate", "Attend le COMMIT du premier, relit stock = 0 et reçoit l'exception métier", "Passe devant", "Crée un doublon"], a: 1, exp: "Le verrou sérialise l'accès à la ligne : plus jamais de stock négatif." },
+    { type: "qcm", q: "DB::transaction(closure, 3) signifie…", opts: ["3 transactions imbriquées", "Rejouer la transaction jusqu'à 3 fois en cas de deadlock", "3 secondes de timeout", "3 connexions"], a: 1, exp: "Le retry automatique : MySQL tue une victime de deadlock, Laravel retente pour toi." },
+    { type: "vf", q: "Envoyer le mail de confirmation À L'INTÉRIEUR de la transaction est une bonne pratique.", a: false, exp: "Appel lent = verrous tenus longtemps (et un mail parti malgré un rollback éventuel). Le mail part APRÈS le commit." },
+    { type: "qcm", q: "Une transaction bien conçue contient…", opts: ["Toute la logique de la page", "Uniquement les écritures liées, la plus courte possible", "Des appels d'API externes", "Des sleep() de sécurité"], a: 1, exp: "Courte et focalisée : les verrous durent le temps de la transaction." },
+    { type: "qcm", q: "L'équivalent de DB::transaction chez Django :", opts: ["transaction.atomic", "@Transactional", "BeginTransaction", "sync()"], a: 0, exp: "transaction.atomic (Django), @Transactional (Spring/JPA), BeginTransaction (EF Core) : le tout-ou-rien est universel." },
+    { type: "qcm", q: "La valeur retournée par la closure de DB::transaction…", opts: ["Est perdue", "Est retournée par DB::transaction lui-même", "Devient le nombre de lignes", "Provoque une erreur"], a: 1, exp: "$location = DB::transaction(function () { …; return $location; }); — pratique pour renvoyer l'objet créé." }
+  ],
+  final: {
+    title: "Exercice final — Le guichet de location blindé",
+    intro: `<p>Le guichet de la Ludothèque part en production : locations simultanées, dernier exemplaire convoité, pannes possibles. Vérifie que ton tout-ou-rien est vraiment tout-ou-rien.</p>`,
+    questions: [
+      { type: "qcm", q: "Le squelette correct pour louer (créer la location + décrémenter le stock) :", opts: ["Deux écritures l'une après l'autre", "DB::transaction(function () use (...) { Location::create([...]); $jeu->decrement('stock'); });", "Un seul create", "Un cron de réparation"], a: 1, exp: "Les deux écritures dans UNE closure : COMMIT ensemble ou ROLLBACK ensemble." },
+      { type: "vf", q: "Si decrement('stock') échoue, la Location::create exécutée juste avant dans la même transaction est annulée.", a: true, exp: "C'est toute la promesse : l'exception fait rollbacker TOUT le bloc, y compris ce qui avait réussi." },
+      { type: "qcm", q: "Pour empêcher deux locations simultanées du dernier exemplaire :", opts: ["Un if ($jeu->stock > 0) sans verrou", "lockForUpdate() sur la lecture du jeu, PUIS vérification du stock, dans la transaction", "Un sleep(1)", "Prier"], a: 1, exp: "Verrouiller la ligne AVANT de vérifier : le concurrent attend et relit la vraie valeur." },
+      { type: "input", q: "Quelle façade et méthode lancent le bloc atomique en une closure ? (format : Façade::méthode)", a: ["DB::transaction", "DB::transaction()", "db::transaction"], ph: "Façade::méthode…", exp: "DB::transaction(function () { … }) — avec use Illuminate\\Support\\Facades\\DB." },
+      { type: "qcm", q: "Où placer l'envoi du mail de confirmation de location ?", opts: ["Au début de la transaction", "Au milieu, entre les deux écritures", "APRÈS le commit, hors transaction", "Dans le rollback"], a: 2, exp: "Hors transaction : pas de verrous tenus pendant un appel lent, pas de mail pour une location rollbackée." }
+    ],
+    solution: `<pre class="pseudo">DB::transaction(function () { …écritures… });
+    fin sans exception → COMMIT · exception qui SORT → ROLLBACK
+    (closure, 3)       → retries automatiques sur deadlock
+Manuel : beginTransaction / commit / rollBack (+ throw dans le catch)
+
+CONCURRENCE : lockForUpdate() = SELECT … FOR UPDATE
+    verrouiller → vérifier le stock → écrire → COMMIT libère
+
+HYGIÈNE : transaction courte · pas de mail/API dedans ·
+          jamais de try/catch qui avale l'exception DANS la closure
+
+Ailleurs : @Transactional (Spring) · transaction.atomic (Django) ·
+           BeginTransaction (EF Core)</pre>
+<p>Tes données sont désormais cohérentes même dans la tempête. Prochaine étape : les rendre agréables à manipuler — dates Carbon, vrais booléens, attributs calculés. Leçon 18 : casts, accesseurs et mutateurs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l17", title: "Le retour de jeu, scénario blindé", level: 3,
+    statement: "Écris le scénario complet du RETOUR d'un jeu à la Ludothèque : poser date_retour sur la location, ré-incrémenter le stock du jeu, et créer une ligne de pénalité si le retour dépasse 14 jours (montant : 0,50 € par jour de retard). Rédige le code de la transaction, liste les points de défaillance possibles (crash entre deux écritures, double clic sur « Rendre », location déjà rendue), explique où poser un verrou et pourquoi, et précise ce qui doit rester HORS de la transaction.",
+    hints: [
+      "Compte les écritures : update de la location, update du stock, éventuel insert de pénalité — combien doivent être atomiques ensemble ?",
+      "Le double clic : deux requêtes de retour sur la MÊME location. Que vérifier après un lockForUpdate sur la location (indice : whereNull ou test de date_retour) ?",
+      "Le calcul du retard utilise les dates : diffInDays entre date_location et aujourd'hui — et le mail de confirmation n'a rien à faire dans le bloc."
+    ],
+    solution: "DB::transaction(function () use ($locationId) {\n    // ① verrouiller LA LOCATION : neutralise le double clic\n    $location = Location::where('id', $locationId)\n        ->lockForUpdate()->first();\n\n    // ② idempotence : déjà rendue ? on refuse proprement\n    if ($location->date_retour !== null) {\n        throw new RuntimeException('Location déjà clôturée.');\n    }\n\n    // ③ les trois écritures atomiques\n    $location->date_retour = now();\n    $location->save();\n\n    $location->jeu()->increment('stock');\n\n    $jours = $location->date_location->diffInDays(now());\n    if ($jours > 14) {\n        Penalite::create([\n            'location_id' => $location->id,\n            'montant'     => ($jours - 14) * 0.50,\n        ]);\n    }\n}, 3);   // retry sur deadlock\n// ④ HORS transaction : le mail de confirmation, après le commit\n\nPoints de défaillance couverts :\n- crash entre save() et increment() → ROLLBACK : la location reste\n  ouverte, le stock intact, on peut rejouer sans dégât ;\n- double clic → le 2e appel attend le verrou, relit date_retour\n  non nulle, reçoit l'exception : ni double stock ni double pénalité ;\n- pénalité créée mais update raté → impossible : même bloc atomique.\n\nLe verrou porte sur la LOCATION (la ressource disputée ici), pas sur\nle jeu : increment() est déjà atomique côté MySQL. Hors transaction :\nmail, notification, log applicatif — tout ce qui est lent ou\nirréversible.",
+    note: "Ce trio verrou → vérification → écritures est le patron de toutes les opérations de guichet : réserver une place, débiter un panier, pointer un badge. Tu le réécrirais à l'identique avec @Transactional et un verrou pessimiste chez Spring, ou transaction.atomic + select_for_update chez Django. Au Niveau 6, la location et le retour seront les deux endpoints les plus sensibles de ton API — cette page est leur plan de construction." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

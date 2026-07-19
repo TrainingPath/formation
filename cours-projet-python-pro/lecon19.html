@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Déploiement automatisé : staging, production, santé",
+  subtitle: "Le serveur se met à jour tout seul — et on le vérifie.",
+  theory: `
+<h3>1. La vue de santé</h3>
+<pre class="pseudo">from django.db import connection   # acces bas niveau a la base de donnees
+def sante(request):   # vue de « sante » (health check) : l'app repond-elle vraiment ?
+    try:   # tenter une operation minimale
+        with connection.cursor() as c: c.execute("SELECT 1")   # demander a la base une requete triviale
+        return JsonResponse({"statut": "ok"})   # la base a repondu -> 200 OK
+    except Exception:   # une erreur (base injoignable)…
+        return JsonResponse({"statut": "ko"}, status=503)   # …-> 503 Service Unavailable
+# path("sante/", views.sante) — traverse jusqu'à la base</pre>
+<p>Une <strong>vue de santé</strong> (« health check ») est une petite page que des robots interrogent régulièrement pour savoir si l'application <em>vit vraiment</em>. Plutôt que de répondre « ok » sans rien vérifier, elle exécute <code>SELECT 1</code> — la plus simple des requêtes — via un <strong>curseur</strong> (l'objet qui envoie des ordres à la base). Si la base répond, on renvoie <code>200</code> ; sinon <code>503</code> (« service indisponible »). Le contrôle traverse ainsi toute la chaîne, jusqu'à la base.</p>
+
+<h3>2. Le job de déploiement (SSH)</h3>
+<pre class="pseudo">  deployer-production:   # job de deploiement en production
+    needs: publier   # ne demarre qu'apres la publication de l'image
+    environment: production                # approbation humaine requise
+    steps:   # ses etapes
+      - run: echo "${'$'}{{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # ecrire la cle SSH dans un fichier (lisible par le seul proprietaire)
+      - run: |   # commande multi-lignes : se connecter en SSH et deployer
+          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '
+            cd /srv/ludotheque &&
+            echo "VERSION=${'$'}{GITHUB_REF_NAME#v}" > .env.version &&
+            docker compose pull &&
+            docker compose up -d &&
+            docker compose exec -T app python manage.py migrate'
+      - run: sleep 10 && curl -fs https://ludotheque.example.com/sante/   # attendre puis verifier la sante (echoue si != 2xx)</pre>
+<p>Le serveur ne fait que <code>pull</code>, <code>up -d</code>, <code>migrate</code> — ce que tu ferais à la main, exécuté par un robot avec une clé qui ne sait <strong>que</strong> déployer.</p>
+
+<h3>3. Deux environnements</h3>
+<pre class="pseudo">merge sur main → deployer-staging (automatique) → recette
+tag v1.0.0     → publier → ⏸ approbation → deployer-production
+# staging reçoit tout, tout de suite ; la prod exige un tag ET un clic humain.</pre>
+
+<h3>4. Vérifier — sinon ce n'est pas déployé</h3>
+<pre class="pseudo">curl -fs .../sante/     # -f échoue si != 2xx → le job devient rouge
+# un déploiement raté n'est pas silencieux : l'équipe est notifiée.</pre>
+
+<h3>5. Le serveur n'a besoin que de peu</h3>
+<pre class="pseudo">serveur/  compose.yaml (image: ghcr.io/...:${'$'}{VERSION})  +  .env.prod (chmod 600)
+# ni Python, ni le code source : l'image du registre contient tout.</pre>
+<div class="warn"><code>exec -T</code> : sans terminal (le pipeline n'en a pas). Et <code>StrictHostKeyChecking=accept-new</code> accepte la clé du serveur au premier contact mais refuse tout changement ultérieur (anti-« man in the middle »). La clé SSH appartient à un utilisateur <code>deploy</code> qui ne peut que lancer compose — pas root.</div>
+<div class="tip">De <code>git push origin v1.0.0</code> au site à jour et vérifié : zéro connexion manuelle au serveur. Le déploiement rejoue au robot le geste du cours Docker (pull, up, migrate), avec la vérification /sante/ qui transforme « c'est parti » en « c'est en ligne et ça répond ».</div>`,
+  exercises: [
+    { type: "qcm", q: "La vue /sante/ vérifie…", opts: ["Le CSS", "Que la base répond (SELECT 1) → 200 ou 503", "Le hachage", "Le registre"], a: 1, exp: "Traverse jusqu'à la base." },
+    { type: "qcm", q: "Le job de déploiement dépend de…", opts: ["Rien", "needs: publier (image au registre d'abord)", "needs: tests", "main"], a: 1, exp: "L'ordre." },
+    { type: "qcm", q: "Sur le serveur, le job fait…", opts: ["Un rebuild complet", "pull, up -d, migrate", "rm -rf", "git clone"], a: 1, exp: "Le geste Docker, robotisé." },
+    { type: "qcm", q: "La clé SSH appartient à…", opts: ["root", "un utilisateur deploy limité à compose", "l'admin GitHub", "tout le monde"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "exec -T évite…", opts: ["Les secrets", "« the input device is not a TTY » (pas de terminal)", "Les conflits", "Le cache"], a: 1, exp: "Le piège classique." },
+    { type: "qcm", q: "StrictHostKeyChecking=accept-new…", opts: ["Accepte tout, toujours", "Accepte la clé au 1er contact, refuse tout changement", "Refuse tout", "Désactive SSH"], a: 1, exp: "Anti-MITM." },
+    { type: "qcm", q: "Staging se déploie…", opts: ["Sur approbation", "Automatiquement au merge sur main", "Sur tag", "Jamais"], a: 1, exp: "Répétition générale." },
+    { type: "qcm", q: "La production se déploie…", opts: ["À chaque commit", "Sur tag, APRÈS approbation humaine", "Jamais", "La nuit"], a: 1, exp: "environment production." },
+    { type: "qcm", q: "curl -fs /sante/ …", opts: ["Ignore l'échec", "Échoue si != 2xx → job rouge", "Chiffre", "Accélère"], a: 1, exp: "Déployé = vérifié." },
+    { type: "vf", q: "Un déploiement raté par le pipeline passe inaperçu.", a: false, exp: "Job rouge + notification." },
+    { type: "qcm", q: "Le serveur a besoin de…", opts: ["Python + code source", "Docker + compose.yaml + .env.prod (l'image vient du registre)", "Un IDE", "Le dépôt complet"], a: 1, exp: "pull + up -d." },
+    { type: "qcm", q: "La version déployée change en…", opts: ["Rebuild serveur", "Changeant .env.version (lu par le compose) + pull/up", "Éditant l'image", "Reboot"], a: 1, exp: "image: ...:${VERSION}." },
+    { type: "qcm", q: "De git push origin v1.0.0 au site à jour :", opts: ["Une soirée", "Zéro connexion manuelle au serveur", "Un admin la nuit", "Un ftp"], a: 1, exp: "Automatisé." },
+    { type: "qcm", q: "La vérification finale transforme…", opts: ["Rien", "« c'est parti » en « c'est en ligne et ça répond »", "Le CSS", "Le hachage"], a: 1, exp: "curl /sante/." },
+    { type: "vf", q: "Le déploiement rejoue au robot le geste du cours Docker (pull, up, migrate).", a: true, exp: "Automatisation." }
+  ],
+  final: {
+    title: "Exercice final — Le serveur qui se met à jour seul",
+    intro: `<p>Le tag poussé, l'image publiée, et le serveur suit — tout seul.</p>`,
+    questions: [
+      { type: "qcm", q: "La vue de santé :", opts: ["SELECT 1 → 200 / 503", "un ping", "le CSS", "rien"], a: 0, exp: "Base incluse." },
+      { type: "qcm", q: "Le job dépend de :", opts: ["needs: publier", "rien", "needs: tests", "main"], a: 0, exp: "Image d'abord." },
+      { type: "qcm", q: "Sur le serveur :", opts: ["pull → up -d → migrate", "rebuild", "rsync du code", "réinstallation"], a: 0, exp: "Le geste Docker." },
+      { type: "qcm", q: "La preuve du succès :", opts: ["curl -fs /sante/ en 200", "l'absence d'erreur ssh", "un sentiment", "les logs du lendemain"], a: 0, exp: "Vérifié." },
+      { type: "vf", q: "La prod exige un tag ET une approbation ; staging se met à jour au merge.", a: true, exp: "Deux environnements." }
+    ],
+    solution: `<pre class="pseudo">def sante(request):   # vue de sante : la base repond-elle ?
+    try:   # tenter une requete minimale
+        with connection.cursor() as c: c.execute("SELECT 1")   # SELECT 1 via un curseur
+        return JsonResponse({"statut": "ok"})   # ok -> 200
+    except Exception:   # base injoignable…
+        return JsonResponse({"statut": "ko"}, status=503)   # …-> 503
+
+  deployer-production:   # job de deploiement prod
+    needs: publier   # apres la publication de l'image
+    environment: production        # approbation requise
+    steps:   # ses etapes
+      - run: echo "${'$'}{{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # ecrire la cle SSH (proprietaire seul)
+      - run: ssh -i cle deploy@... 'cd /srv/ludotheque && docker compose pull &&   # se connecter et deployer…
+             docker compose up -d && docker compose exec -T app python manage.py migrate'   # …up + migrations
+      - run: sleep 10 && curl -fs https://ludotheque.example.com/sante/   # verifier la sante (rouge si echec)</pre>
+<p>Le site suit les tags, tout seul. Demain : observer, sauvegarder, protéger, revenir.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton déploiement et sa vérification…",
+  items: [
+  { id: "proj6py-l19", title: "Le déploiement à deux environnements", level: 3,
+    statement: "Écris la vue /sante/ (avec son test), le job deployer-staging (auto au merge sur main) et deployer-production (sur tag, avec approbation), et la vérification curl avec retries (pas un sleep aveugle). Explique pourquoi staging reçoit tout automatiquement mais la prod exige un tag ET une approbation.",
+    hints: [
+      "if: github.ref == 'refs/heads/main' pour staging.",
+      "environment: production avec required reviewers pour l'approbation.",
+      "Retry : for i in seq 1 12; curl && break; sleep 5 (patient, pas aveugle)."
+    ],
+    solution: "# catalogue/views.py + test\ndef sante(request):   # vue de sante (health check)\n    try:   # tenter une requete minimale\n        with connection.cursor() as c: c.execute(\"SELECT 1\")   # SELECT 1 via un curseur\n        return JsonResponse({\"statut\": \"ok\"})   # base OK -> 200\n    except Exception:   # base injoignable…\n        return JsonResponse({\"statut\": \"ko\"}, status=503)   # …-> 503\n\nclass SanteTests(TestCase):   # tests de la vue de sante\n    def test_sante_ok(self):   # /sante/ doit repondre 200 et statut ok\n        r = self.client.get(\"/sante/\")   # appeler la vue\n        self.assertEqual(r.status_code, 200)   # code 200 attendu\n        self.assertEqual(r.json()[\"statut\"], \"ok\")   # le JSON contient statut = ok\n\n# ci.yml — staging au merge\n  deployer-staging:   # job de deploiement en staging\n    if: github.ref == 'refs/heads/main'   # seulement pour les commits de main\n    environment: staging   # environnement de recette\n    needs: [tests, qualite, securite, image]   # apres les verifications et l'image\n    steps: [ ...ssh staging.ludotheque... pull/up/migrate... ]   # (memes etapes SSH que la prod)\n\n# release.yml — production sur tag + approbation\n  deployer-production:   # job de deploiement en production\n    needs: publier   # apres la publication de l'image versionnee\n    environment: production          # required reviewers -> approbation humaine\n    steps:   # ses etapes\n      - run: echo \"${{ secrets.SSH_PRIVATE_KEY }}\" > cle && chmod 600 cle   # ecrire la cle SSH (proprietaire seul)\n      - run: |   # commande multi-lignes : SSH + deploiement\n          ssh -i cle -o StrictHostKeyChecking=accept-new deploy@ludotheque.example.com '\n            cd /srv/ludotheque && echo \"VERSION=${GITHUB_REF_NAME#v}\" > .env.version &&\n            docker compose pull && docker compose up -d &&\n            docker compose exec -T app python manage.py migrate'\n      - name: Vérifier la santé (patient, pas aveugle)   # etape de verification\n        run: |   # commande multi-lignes\n          for i in $(seq 1 12); do   # jusqu'a 12 tentatives…\n            curl -fs https://ludotheque.example.com/sante/ && exit 0   # sante OK -> succes\n            sleep 5   # sinon attendre 5 s et reessayer\n          done   # fin de la boucle\n          exit 1        # rouge seulement après ~60 s d'échecs répétés\n\n# Pourquoi cette asymétrie staging/prod :\n# Staging est la scène de RÉPÉTITION : il reçoit chaque merge automatiquement,\n# pour que les surprises s'y produisent AVANT les clients. La production, elle,\n# touche de vrais utilisateurs et de vraies données : elle exige une DÉCISION\n# (un tag = « cette version est prête ») ET une APPROBATION (« déployons\n# maintenant, quelqu'un surveille »). L'automatisation exécute ; l'humain\n# décide du moment.",
+    note: "Le retry patient (boucle curl) plutôt qu'un sleep aveugle évite le faux positif qui ruine la confiance dans le pipeline : l'app met parfois quelques secondes de plus à répondre (migration, démarrage des workers). L'asymétrie staging/production incarne le principe : automatiser tout ce qui peut l'être, réserver à l'humain les seules VRAIES décisions — le moment de livrer aux clients." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

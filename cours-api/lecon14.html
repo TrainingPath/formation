@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Documenter : OpenAPI et Swagger",
+  subtitle: "« C'est quoi le format de POST /locations ? » — la bonne réponse n'est pas « demande à Kevin ».",
+  theory: `
+<h3>1. Le contrat mérite d'être écrit</h3>
+<p>Depuis treize leçons, nous concevons un contrat : endpoints, méthodes, codes, enveloppes d'erreur, versions. (Rappel : un <strong>endpoint</strong> est un point d'accès = une URL + une méthode HTTP.) Mais où vit-il ? Dans la tête du back, un wiki daté, trois messages Slack ? L'équipe front, l'app mobile et les partenaires ont besoin d'une <strong>source de vérité</strong> : un document unique qui fait autorité. <strong>OpenAPI</strong> est le format standard pour l'écrire : un document <strong>YAML</strong> (un format texte de configuration, lisible par l'humain, où l'imbrication se marque par l'indentation) — ou JSON — que les <em>machines</em> savent lire, pour générer une doc navigable, des clients, des tests. <strong>Swagger</strong> est l'ancien nom de la spécification, resté accroché à son outillage (Swagger UI notamment).</p>
+<pre class="pseudo">Le document OpenAPI décrit :
+  les chemins et méthodes     GET /jeux, POST /locations…            # les endpoints exposés par l'API
+  les paramètres              ?page, ?categorie, l'id dans le chemin # ce que le client peut fournir
+  les schémas des corps       à quoi ressemble un Jeu, un Avis       # la forme des objets échangés
+  les réponses possibles      200, 201, 404, 422… et leurs corps     # tous les résultats prévus
+  l'authentification          Bearer JWT (leçons 15-16)              # comment prouver son identité</pre>
+
+<h3>2. À quoi ça ressemble</h3>
+<p>Un extrait du document de la Ludothèque, pour le détail d'un jeu :</p>
+<pre class="pseudo">openapi: 3.0.3                            # version de la spécification OpenAPI utilisée
+info:                                     # bloc d'informations générales sur l'API
+  title: API Ludothèque                   # le nom de l'API
+  version: 1.0.0                          # la version de l'API (écho de la leçon 13)
+paths:                                    # liste des endpoints (chemins) exposés
+  /jeux/{id}:                             # un chemin avec un paramètre {id} variable
+    get:                                  # opération GET (lecture) sur ce chemin
+      summary: Détail d'un jeu            # résumé court affiché dans la doc
+      parameters:                         # les paramètres attendus par l'opération
+        - name: id                        # un paramètre nommé "id"
+          in: path                        # situé DANS le chemin de l'URL (pas après le ?)
+          required: true                  # obligatoire : impossible d'appeler sans lui
+          schema: { type: integer }       # sa valeur doit être un entier
+      responses:                          # les réponses possibles de cet endpoint
+        "200":                            # cas succès : code 200
+          description: Le jeu demandé     # ce que contient la réponse 200
+        "404":                            # cas erreur : jeu introuvable
+          description: Jeu introuvable (enveloppe d'erreur, leçon 12)   # renvoie l'enveloppe d'erreur commune</pre>
+<p>Lisible par un humain, exploitable par un programme : c'est toute l'idée. Remarque <code>info.version</code> — la leçon 13 en écho — et la liste <em>explicite</em> des réponses possibles : documenter les erreurs fait partie du contrat.</p>
+
+<h3>3. Les schémas réutilisables : components</h3>
+<p>Un <strong>schéma</strong> décrit la forme d'un objet : ses champs et le type de chacun. Le même objet <code>Jeu</code> apparaît dans GET /jeux/5, dans les <code>results</code> de GET /jeux, dans la réponse du POST… On ne le décrit qu'<strong>une fois</strong> :</p>
+<pre class="pseudo">components:                               # section des éléments réutilisables
+  schemas:                                # les schémas (formes d'objets) définis une fois pour toutes
+    Jeu:                                  # définition de l'objet "Jeu"
+      type: object                        # c'est un objet (un ensemble de paires clé/valeur)
+      properties:                         # la liste de ses champs
+        id:            { type: integer }  # champ id : un entier
+        titre:         { type: string }   # champ titre : une chaîne de texte
+        prix_location: { type: number }   # champ prix_location : un nombre
+        disponible:    { type: boolean }  # champ disponible : un booléen (vrai/faux)
+      required: [titre, prix_location]    # champs obligatoires : titre et prix_location
+
+partout ailleurs :   $ref: "#/components/schemas/Jeu"   # $ref = "réutilise ici le schéma Jeu défini plus haut"</pre>
+<p>Le <code>$ref</code> (pour <em>reference</em>, « référence ») pointe vers la définition unique : fini les copies qui divergent. Types, champs requis, formats — tout ce que ton serializer valide (leçon 12) se retrouve écrit ici, noir sur blanc.</p>
+
+<h3>4. Swagger UI : la doc qui s'essaie</h3>
+<pre class="pseudo">GET /api/docs/  →  une page web générée depuis le document :          # l'URL qui sert la doc interactive
+  · chaque endpoint déplié : paramètres, schémas, codes, exemples      # tout le contrat, lisible en un coup d'œil
+  · bouton « Try it out » : envoyer une VRAIE requête depuis la doc     # tester l'API sans quitter la page
+  · bouton « Authorize » : coller son token Bearer une fois pour toutes # s'identifier pour les essais</pre>
+<p><strong>Swagger UI</strong> transforme le YAML en documentation interactive. Un <strong>token</strong> est un jeton d'identité (un code secret prouvant qui tu es) et <strong>Bearer</strong> est la façon standard de le présenter dans une requête — on y reviendra aux leçons 15-16. Le développeur front explore les endpoints, essaie un GET /jeux, lit l'enveloppe d'erreur — sans ouvrir Postman ni déranger personne. C'est souvent le premier contact d'un partenaire avec ton API : soigne les <code>summary</code>, les descriptions et les exemples comme tu soignes ton code.</p>
+
+<h3>5. Générée depuis le code, jamais à la main</h3>
+<p>Deux approches. <strong>Spec-first</strong> (« la spec d'abord ») : on écrit le YAML, puis on code en s'y conformant. <strong>Code-first</strong> (« le code d'abord ») : le document est <em>généré</em> depuis le code — le choix le plus courant, car la doc ne peut plus mentir :</p>
+<pre class="pseudo"># Django — drf-spectacular                                            # l'outil qui génère la doc côté Django
+REST_FRAMEWORK = {                                                    # réglages globaux de Django REST Framework
+  "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",       # classe qui construit le schéma automatiquement
+}
+# urls.py :                                                           # dans le fichier des routes, on branche deux URLs :
+/api/schema/   → le document OpenAPI (YAML), généré des serializers et vues   # sert le YAML brut du contrat
+/api/docs/     → Swagger UI branché dessus                            # sert la page interactive
+
+# Spring : springdoc-openapi · Laravel : Scribe / L5-Swagger         # équivalents dans d'autres écosystèmes
+# ASP.NET Core : Swashbuckle (inclus dans les templates)             # équivalent côté C#</pre>
+<p>Les serializers DRF (types, champs requis, validations) deviennent les schémas ; les routes deviennent les <code>paths</code>. Chaque déploiement régénère la doc : elle est synchrone par construction. Cerise : le même document sait générer des <strong>SDK clients</strong> (un SDK, <em>Software Development Kit</em>, est une bibliothèque toute prête pour appeler l'API : TypeScript pour le front, Python pour un partenaire) — la leçon 20 y reviendra.</p>
+<div class="warn">La doc écrite à la main dans un wiki est un mensonge en sursis : au troisième sprint, elle diverge du code — et une doc <strong>fausse</strong> est pire que pas de doc, car on lui fait confiance. Génère-la depuis le code, ou fais valider la spec en <strong>CI</strong> (l'<em>intégration continue</em> : les vérifications automatiques lancées à chaque changement de code) à chaque changement.</div>
+<div class="tip">Mets <code>/api/docs/</code> en ligne dès le premier endpoint : Swagger UI devient le terrain de jeu commun du back, du front et des testeurs — et le « Try it out » remplace la moitié des allers-retours Slack.</div>`,
+  exercises: [
+    { type: "qcm", q: "OpenAPI est…", opts: ["Un framework serveur", "Un format standard de description d'API, en YAML ou JSON", "Un client REST graphique", "Un protocole remplaçant HTTP"], a: 1, exp: "Le contrat machine-lisible : endpoints, paramètres, schémas, réponses, auth." },
+    { type: "qcm", q: "Swagger UI est…", opts: ["L'ancien nom de HTTP", "Une base de données", "Une interface web interactive générée depuis le document OpenAPI", "Un éditeur de texte"], a: 2, exp: "La doc navigable, avec « Try it out » et « Authorize »." },
+    { type: "qcm", q: "La relation entre Swagger et OpenAPI :", opts: ["Deux standards concurrents", "Swagger est l'ancien nom de la spécification, resté à l'outillage", "Swagger est la version payante", "Aucun rapport"], a: 1, exp: "La spec s'appelle OpenAPI depuis la v3 ; l'écosystème d'outils a gardé le nom Swagger." },
+    { type: "qcm", q: "Dans le document, la section « paths » contient…", opts: ["Les chemins des fichiers du serveur", "Les endpoints et leurs méthodes", "Les mots de passe", "Le CSS de la doc"], a: 1, exp: "/jeux, /jeux/{id}, /locations… avec get, post, patch, delete." },
+    { type: "qcm", q: "components/schemas sert à…", opts: ["Colorier la doc", "Définir une fois les objets (Jeu, Avis…) et les référencer partout", "Lister les serveurs de production", "Stocker les tokens"], a: 1, exp: "Une définition unique, référencée par $ref : fini les copies divergentes." },
+    { type: "qcm", q: "$ref: \"#/components/schemas/Jeu\" signifie…", opts: ["« Utilise ici le schéma Jeu défini une seule fois »", "« Supprime le schéma Jeu »", "« Le champ est facultatif »", "« Redirige vers /jeux »"], a: 0, exp: "La référence évite de dupliquer la description de l'objet." },
+    { type: "qcm", q: "Le bouton « Try it out » de Swagger UI…", opts: ["Simule une réponse sans rien envoyer", "Envoie une vraie requête HTTP à l'API depuis la doc", "Génère du code Python", "Redémarre le serveur"], a: 1, exp: "La doc devient un client de test — plus d'excuse pour ne pas essayer." },
+    { type: "qcm", q: "Le grand avantage de l'approche code-first :", opts: ["La doc est plus jolie", "Pas besoin de serveur", "La doc est générée du code, donc synchrone par construction", "Elle chiffre le YAML"], a: 2, exp: "Chaque déploiement régénère le document : il ne peut pas mentir longtemps." },
+    { type: "qcm", q: "En Django REST Framework, le schéma OpenAPI se génère avec…", opts: ["drf-spectacular", "django-cors-headers", "SimpleJWT", "pytest"], a: 0, exp: "/api/schema/ pour le YAML, /api/docs/ pour Swagger UI." },
+    { type: "qcm", q: "L'équivalent côté Spring :", opts: ["Swashbuckle", "springdoc-openapi", "Scribe", "Route::prefix"], a: 1, exp: "Swashbuckle est le monde ASP.NET, Scribe/L5-Swagger le monde Laravel." },
+    { type: "qcm", q: "Le risque d'une doc maintenue à la main dans un wiki :", opts: ["Elle est trop lue", "Elle diverge du code et devient un mensonge auquel on fait confiance", "Elle consomme trop de RAM", "Aucun"], a: 1, exp: "Une doc fausse est pire que pas de doc : générer, ou valider en CI." },
+    { type: "vf", q: "OpenAPI ne fonctionne qu'avec Python et Django.", a: false, exp: "C'est un standard indépendant du langage : Spring, Laravel, ASP.NET (et les autres) le génèrent aussi." },
+    { type: "vf", q: "À partir du document OpenAPI, on peut générer automatiquement des SDK clients (TypeScript, Python…).", a: true, exp: "Le contrat machine-lisible sert aussi aux consommateurs — la leçon 20 en profitera." },
+    { type: "input", q: "Le nom du format standard de description d'API vu aujourd'hui :", a: ["OpenAPI", "openapi", "Open API"], ph: "Un nom…", exp: "OpenAPI — la spécification ; Swagger désigne l'outillage." },
+    { type: "input", q: "L'outil du cours qui génère le schéma depuis Django REST Framework :", a: ["drf-spectacular", "drf spectacular", "spectacular"], ph: "nom-de-l-outil", exp: "drf-spectacular : AutoSchema, /api/schema/ et /api/docs/." }
+  ],
+  final: {
+    title: "Exercice final — La doc qui ne ment pas",
+    intro: `<p>Un partenaire rejoint le projet Ludothèque et pose ses premières questions. Réponds en professionnel de l'OpenAPI. Rappel : <strong>OpenAPI</strong> est le document-contrat (en YAML), <strong>Swagger UI</strong> est la page web interactive générée à partir de lui.</p>`,
+    questions: [
+      { type: "qcm", q: "« C'est quoi le format exact de POST /locations ? » La meilleure réponse :", opts: ["Un long email écrit de mémoire", "« Demande à Kevin, c'est lui qui l'a codé »", "L'URL de Swagger UI : tout y est, à jour, et il peut essayer", "Un export de la base de données"], a: 2, exp: "La source de vérité est le document généré — pas la mémoire d'un collègue." },
+      { type: "qcm", q: "L'objet Location apparaît dans quatre réponses différentes. Dans le YAML, on le décrit…", opts: ["Quatre fois, par prudence", "Une fois dans components/schemas, référencé par $ref", "Dans un fichier Word joint", "On ne décrit pas les objets"], a: 1, exp: "Définition unique + références : le schéma ne peut pas diverger de lui-même." },
+      { type: "qcm", q: "Pourquoi la doc générée code-first reste-t-elle juste, déploiement après déploiement ?", opts: ["Un stagiaire la relit chaque matin", "Elle est produite depuis les serializers et les routes à chaque build", "Elle est verrouillée en lecture seule", "Le YAML est infaillible"], a: 1, exp: "Synchrone par construction : le code change, la doc suit." },
+      { type: "vf", q: "Le partenaire peut tester POST /locations avec son token directement depuis Swagger UI (Authorize + Try it out).", a: true, exp: "La doc interactive est aussi un client REST : Authorize stocke le Bearer, Try it out envoie la requête." },
+      { type: "input", q: "La section du document OpenAPI qui liste les endpoints et leurs méthodes :", a: ["paths", "\"paths\"", "paths:"], ph: "section", exp: "paths — chaque chemin y déplie ses opérations get, post, patch, delete." }
+    ],
+    solution: `<pre class="pseudo">OpenAPI : LE contrat machine-lisible (YAML/JSON)                              # format standard de description d'API
+  paths (endpoints + méthodes) · parameters · responses (200, 404, 422…)      # sections décrivant chaque opération
+  components/schemas + $ref : chaque objet défini UNE fois                     # définition unique, réutilisée partout
+  info.version : écho de la leçon 13 · l'auth documentée (Bearer)             # la version et la sécurité y figurent aussi
+Swagger UI : la doc interactive générée — Try it out + Authorize              # page web pour explorer ET essayer l'API
+Code-first : /api/schema/ + /api/docs/ via drf-spectacular                    # doc générée DEPUIS le code : ne peut mentir
+  (springdoc-openapi · Scribe / L5-Swagger · Swashbuckle)                     # équivalents Spring / Laravel / ASP.NET
+Règle d'or : la doc se GÉNÈRE (ou se valide en CI) — jamais un wiki à la main  # CI = vérifs automatiques à chaque changement
+Bonus : le même document génère des SDK clients (leçon 20)                     # SDK = bibliothèque client prête à l'emploi</pre>
+<p>La semaine 2 s'achève : l'API de la Ludothèque est conçue, propre, versionnée et documentée. Semaine 3 : on la protège. Première question, dès la prochaine leçon : QUI est en train de louer Catan — session ou token ?</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l14", title: "Le fragment OpenAPI de POST /jeux/5/avis", level: 2,
+    statement: "Rédige en pseudo-YAML le fragment OpenAPI décrivant POST /jeux/{id}/avis : le paramètre de chemin, le corps attendu (référence à un schéma AvisEcriture), et les réponses 201, 401, 404 et 422 avec une description d'une ligne chacune. Termine par la définition du schéma components/schemas/AvisEcriture (champs, types, required) — en te souvenant de la leçon 11 : quel champ le client n'envoie-t-il PAS ?",
+    hints: [
+      "Structure : paths → /jeux/{id}/avis → post → parameters / requestBody / responses, puis components → schemas.",
+      "Les quatre réponses racontent la leçon 5 : création réussie, identité absente, jeu inexistant, données invalides (enveloppe de la leçon 12).",
+      "Le schéma d'écriture ne contient ni id, ni date (le serveur les génère), ni jeu (il est dans l'URL) : note et commentaire suffisent."
+    ],
+    solution: "paths:                                    # section des endpoints\n  /jeux/{id}/avis:                        # chemin visé, avec {id} = le jeu parent\n    post:                                 # opération POST : créer un avis\n      summary: Créer un avis sur un jeu   # résumé affiché dans la doc\n      security: [ bearerAuth ]            # exige un token Bearer (identité prouvée)\n      parameters:                         # paramètres de l'opération\n        - name: id                        # paramètre nommé \"id\"\n          in: path                        # placé dans le chemin de l'URL\n          required: true                  # obligatoire\n          schema: { type: integer }       # doit être un entier\n          description: Identifiant du jeu commenté   # ce que représente cet id\n      requestBody:                        # description du corps envoyé\n        required: true                    # un corps est obligatoire\n        content:                          # selon le type de contenu…\n          application/json:               # …ici du JSON\n            schema: { $ref: \"#/components/schemas/AvisEcriture\" }   # forme du corps : le schéma AvisEcriture\n      responses:                          # réponses possibles\n        \"201\":                            # succès : avis créé\n          description: Avis créé (en-tête Location vers /jeux/{id}/avis/{avisId})   # + l'adresse du nouvel avis\n        \"401\":                            # identité manquante ou invalide\n          description: Preuve d'identité absente ou invalide (enveloppe d'erreur commune)\n        \"404\":                            # le jeu parent n'existe pas\n          description: Le jeu {id} n'existe pas\n        \"422\":                            # données refusées par la validation\n          description: Données invalides — details champ par champ (leçon 12)\n\ncomponents:                               # éléments réutilisables\n  schemas:                                # schémas définis une fois\n    AvisEcriture:                         # schéma du corps d'écriture d'un avis\n      type: object                        # c'est un objet\n      properties:                         # ses champs\n        note:        { type: integer, minimum: 1, maximum: 5 }   # note : entier de 1 à 5\n        commentaire: { type: string }     # commentaire : texte libre\n      required: [note]                    # seul \"note\" est obligatoire\n\nRemarques : pas de champ \"jeu\" (il est dans l'URL — leçon 11), pas d'id ni de date (générés par le serveur). Le schéma de LECTURE (Avis) est un autre schéma, avec id, jeu, membre et date.",
+    note: "Avec drf-spectacular, ce fragment sort tout seul de ton serializer (minimum/maximum inclus, si tes validators les déclarent) — écris-le une fois à la main pour comprendre ce que l'outil génère. Distinguer schéma d'écriture et schéma de lecture est le même réflexe que les deux serializers de la leçon 11. Dans ton capstone, la checklist est simple : chaque endpoint visible dans /api/docs, chaque réponse d'erreur documentée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

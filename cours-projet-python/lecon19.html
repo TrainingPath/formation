@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Qualité : logs, performance (N+1), secrets",
+  subtitle: "Les réflexes qui rendent l'application prête pour de vrais utilisateurs.",
+  theory: `
+<h3>1. Journaliser (logging)</h3>
+<pre class="pseudo">import logging                               # module standard de journalisation
+logger = logging.getLogger(__name__)         # un logger nommé d'après le module courant
+
+# dans services.louer :                      # (les deux lignes suivantes s'insèrent dans le service louer)
+logger.warning("Stock épuisé jeu=%s", jeu_id)          # AVANT le raise : journalise l'avertissement (%s = le jeu_id)
+...                                                     # ... = le reste du service (la transaction)
+logger.info("Location jeu=%s client=%s", jeu_id, client.pk)  # APRÈS le commit : journalise la location réussie</pre>
+<p><strong>Journaliser</strong> (<em>logging</em>), c'est écrire au fil de l'exécution des lignes dans un journal, pour savoir plus tard ce qui s'est passé. C'est vital en <strong>production</strong> (le site en ligne, avec de vrais utilisateurs), où l'on ne peut pas exécuter le programme pas à pas avec un <strong>debugger</strong>. Les <strong>placeholders</strong> <code>%s</code> (des trous remplis ensuite par les valeurs) valent mieux que les f-strings dans les logs : le message reste filtrable et le remplacement n'a lieu que si le niveau de log est réellement affiché.</p>
+
+<h3>2. Le problème N+1</h3>
+<pre class="pseudo"># ⚠️ 1 requête pour les jeux + 1 par jeu pour sa catégorie = N+1   # le piège à éviter
+for jeu in Jeu.objects.all():                # boucle sur tous les jeux…
+    print(jeu.categorie.nom)          # …accéder à la catégorie déclenche 1 requête à CHAQUE tour
+
+# ✅ 2 tables, 1 requête : select_related = JOIN   # la bonne version
+for jeu in Jeu.objects.select_related("categorie"):   # charge les jeux ET leur catégorie d'un coup (JOIN)
+    print(jeu.categorie.nom)          # …aucune requête supplémentaire ici
+
+# ✅ pour les relations multiples (n-n, inverses) : prefetch_related   # l'outil pour les listes de relations</pre>
+<p>Le problème <strong>N+1</strong> : afficher une liste déclenche 1 requête pour la liste, puis 1 requête <em>par ligne</em> pour aller chercher sa relation — soit N+1 requêtes au total. <code>select_related</code> règle le cas d'une clé étrangère (un seul <strong>JOIN</strong>) ; <code>prefetch_related</code> gère les relations multiples (n-n ou inverses) en une deuxième requête groupée. Invisible sur 10 jeux, le N+1 devient catastrophique sur 1 000. <code>django.db.connection.queries</code> (ou la <em>debug toolbar</em>) permet de <strong>compter</strong> les requêtes réellement envoyées.</p>
+
+<h3>3. Les index au bon endroit</h3>
+<pre class="pseudo">class Jeu(models.Model):                     # (le modèle Jeu)
+    ...                                      # ... = les champs déjà définis
+    class Meta:                              # réglages du modèle
+        indexes = [models.Index(fields=["titre"])]      # index sur le titre (accélère la recherche par titre)
+
+class Location(models.Model):                # (le modèle Location)
+    ...                                      # ... = les champs déjà définis
+    class Meta:                              # réglages du modèle
+        indexes = [models.Index(fields=["client"])]     # index sur client (accélère « mes locations »)</pre>
+<p>Un <strong>index</strong> est une structure que la base entretient à côté d'une colonne pour retrouver vite les lignes cherchées — comme l'index d'un livre, qui évite de tout lire page par page. Il accélère les recherches fréquentes, au prix d'écritures un peu plus lentes (l'index doit être tenu à jour). On l'ajoute là où l'on filtre souvent, et il arrive <strong>par migration</strong>, versionné comme le reste du schéma.</p>
+
+<h3>4. Les secrets hors du code</h3>
+<pre class="pseudo"># settings.py                                # dans le fichier de réglages…
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]   # la clé secrète : LUE depuis une variable d'environnement
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"   # DEBUG activé seulement si la variable vaut "1"
+DATABASES["default"]["PASSWORD"] = os.environ["DB_PASSWORD"]  # mot de passe MySQL, hors du code (déjà fait leçon 2)</pre>
+<div class="warn">Une <strong>variable d'environnement</strong> est une valeur fournie au programme par le système au démarrage, en dehors du code : c'est là qu'on range les secrets. La <code>SECRET_KEY</code> signe les sessions et les jetons CSRF : quiconque la connaît peut <strong>forger une session</strong>. Ni elle, ni le mot de passe MySQL n'entrent dans Git — l'historique n'oublie jamais rien.</div>
+
+<h3>5. Compter les requêtes dans un test</h3>
+<pre class="pseudo">with self.assertNumQueries(2):        # vérifie que le bloc envoie EXACTEMENT 2 requêtes SQL
+    self.client.get("/catalogue/")    # (le COUNT du paginator + la page) — pas une de plus</pre>
+<div class="tip">Trois réflexes, un objectif : <strong>comprendre</strong> ce qui se passe (logs), <strong>tenir la charge</strong> (N+1, index), <strong>ne rien divulguer</strong> (secrets, DEBUG=0). C'est la différence entre un projet d'école et une application de production.</div>`,
+  exercises: [
+    { type: "qcm", q: "En production, on sait ce qui s'est passé grâce…", opts: ["Au debugger", "Aux logs", "À la RAM", "Au hasard"], a: 1, exp: "Le debugger n'existe plus en prod." },
+    { type: "qcm", q: "Obtenir un logger :", opts: ["logging.getLogger(__name__)", "print", "console.log", "echo"], a: 0, exp: "Nommé par module." },
+    { type: "qcm", q: "logger.warning avant le raise de StockInsuffisant garde…", opts: ["Le CSS", "La trace du refus", "Le mot de passe", "Le JSON"], a: 1, exp: "Observable en prod." },
+    { type: "qcm", q: "Le log de succès de la location se place…", opts: ["Avant la transaction", "Après le commit", "Dans le template", "Jamais"], a: 1, exp: "On ne journalise pas une location annulée." },
+    { type: "qcm", q: "logger.info(\"jeu=%s\", id) plutôt qu'une f-string :", opts: ["C'est pareil", "Filtrable + interpolation seulement si le niveau est actif", "Plus lent", "Obligatoire"], a: 1, exp: "Bonne pratique logging." },
+    { type: "qcm", q: "Le problème N+1, c'est…", opts: ["Trop d'index", "1 requête + 1 par ligne pour ses relations", "Un bug CSS", "Un test lent"], a: 1, exp: "Explosion de requêtes." },
+    { type: "qcm", q: "La parade pour une FK (jeu → catégorie) :", opts: ["select_related(\"categorie\")", "prefetch_related seul", "un for", "un cache maison"], a: 0, exp: "JOIN unique." },
+    { type: "qcm", q: "Pour les relations multiples (n-n, inverses) :", opts: ["prefetch_related", "select_related", "un if", "rien"], a: 0, exp: "Deux requêtes optimisées." },
+    { type: "vf", q: "Le N+1 se voit facilement sur la petite base de dev.", a: false, exp: "Il explose à l'échelle seulement." },
+    { type: "qcm", q: "Compter les requêtes d'une vue dans un test :", opts: ["assertNumQueries", "un chrono", "print", "top"], a: 0, exp: "Le N+1 devient testable." },
+    { type: "qcm", q: "On indexe…", opts: ["Toutes les colonnes", "Les colonnes souvent filtrées (titre, client)", "Aucune", "Les mots de passe"], a: 1, exp: "Ciblé sur les usages." },
+    { type: "qcm", q: "Le prix d'un index :", opts: ["Lectures plus lentes", "Écritures un peu plus lentes", "Rien", "Des 404"], a: 1, exp: "Il doit être maintenu." },
+    { type: "qcm", q: "La SECRET_KEY sert à…", opts: ["Signer sessions et jetons CSRF", "Chiffrer MySQL", "Rien", "Le CSS"], a: 0, exp: "La divulguer = forger des sessions." },
+    { type: "vf", q: "Un secret commité puis retiré au commit suivant est en sécurité.", a: false, exp: "L'historique Git le garde." },
+    { type: "qcm", q: "Les index déclarés dans Meta arrivent en base…", opts: ["Par migration, versionnés", "À la main", "Jamais", "Par l'admin"], a: 0, exp: "Comme tout le schéma." }
+  ],
+  final: {
+    title: "Exercice final — Le contrôle qualité",
+    intro: `<p>On passe la Ludothèque en revue avant la mise en ligne.</p>`,
+    questions: [
+      { type: "qcm", q: "Le catalogue affiche la catégorie de chaque jeu. Il faut :", opts: ["select_related(\"categorie\")", "une boucle de requêtes", "un cache global", "rien"], a: 0, exp: "Sinon N+1." },
+      { type: "qcm", q: "La recherche par titre mérite :", opts: ["models.Index(fields=[\"titre\"])", "un index partout", "un DELETE", "un mock"], a: 0, exp: "Filtre fréquent." },
+      { type: "qcm", q: "Une location réussie se journalise :", opts: ["En info, après le commit, avec placeholders", "en error avant", "jamais", "en print"], a: 0, exp: "Trace du métier." },
+      { type: "qcm", q: "SECRET_KEY vit dans :", opts: ["Une variable d'environnement", "settings.py commité", "le README", "le template"], a: 0, exp: "Secret hors dépôt." },
+      { type: "vf", q: "assertNumQueries permet de verrouiller la performance par un test.", a: true, exp: "Le N+1 ne reviendra pas en douce." }
+    ],
+    solution: `<pre class="pseudo"># N+1 réglé
+jeux = Jeu.objects.select_related("categorie")   # catégorie chargée par JOIN (1 requête)
+
+# index déclarés (puis makemigrations + migrate)
+class Meta:                                       # réglages du modèle…
+    indexes = [models.Index(fields=["titre"])]    # …index sur le titre
+
+# logs structurés
+logger.info("Location jeu=%s client=%s", jeu_id, client.pk)   # après commit : trace la location
+
+# secrets
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]      # clé secrète depuis l'environnement
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"   # DEBUG seulement si la variable vaut "1"
+
+# performance verrouillée par un test
+with self.assertNumQueries(2):                    # exactement 2 requêtes attendues…
+    self.client.get("/catalogue/")                # …pour afficher le catalogue</pre>
+<p>L'application est propre, rapide et discrète. Demain : la mise en ligne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes logs, tes index et ton test de requêtes…",
+  items: [
+  { id: "projpython-l19", title: "L'audit qualité du service de location", level: 3,
+    statement: "Améliore services.louer : ajoute le logger de module, le warning avant le raise (stock épuisé) et l'info après la transaction. Ajoute les index Meta sur Jeu.titre et Location.client. Écris enfin le test test_catalogue_reste_a_deux_requetes qui verrouille la vue catalogue avec assertNumQueries(2).",
+    hints: [
+      "logger = logging.getLogger(__name__) en tête de services.py.",
+      "L'info se place APRÈS le bloc with transaction.atomic() — pas dedans.",
+      "with self.assertNumQueries(2): self.client.get(\"/catalogue/\")"
+    ],
+    solution: "import logging   # module de journalisation\nlogger = logging.getLogger(__name__)   # logger nommé d'après le module\n\ndef louer(client, jeu_id, nb_jours=7):   # service de location, version « audit »\n    with transaction.atomic():   # tout ou rien\n        jeu = Jeu.objects.select_for_update().get(pk=jeu_id)   # charge et verrouille le jeu\n        if jeu.stock_location <= 0:   # plus de stock ?\n            logger.warning(\"Stock épuisé jeu=%s\", jeu_id)   # journalise l'avertissement\n            raise StockInsuffisant(f\"Plus de stock de location pour {jeu.titre}\")   # refus (rollback)\n        location = Location.objects.create(   # crée la location…\n            client=client, jeu=jeu,   # …client et jeu…\n            date_debut=timezone.now(), nb_jours=nb_jours)   # …dès maintenant, pour nb_jours\n        jeu.stock_location -= 1   # retire 1 au stock\n        jeu.save(update_fields=[\"stock_location\"])   # enregistre le stock\n    logger.info(\"Location jeu=%s client=%s\", jeu_id, client.pk)   # APRÈS le commit : trace la réussite\n    return location   # renvoie la location\n\n# models.py\nclass Jeu(models.Model):   # (le modèle Jeu)\n    ...   # ... = les champs déjà définis\n    class Meta:   # réglages du modèle\n        ordering = [\"titre\"]   # tri par défaut par titre\n        indexes = [models.Index(fields=[\"titre\"])]   # index sur le titre\n\nclass Location(models.Model):   # (le modèle Location)\n    ...   # ... = les champs déjà définis\n    class Meta:   # réglages du modèle\n        indexes = [models.Index(fields=[\"client\"])]   # index sur client (pour « mes locations »)\n\n# tests.py\ndef test_catalogue_reste_a_deux_requetes(self):   # verrouille le nombre de requêtes du catalogue\n    with self.assertNumQueries(2):     # COUNT du paginator + la page\n        self.client.get(\"/catalogue/\")   # appelle la vue catalogue",
+    note: "Le logger.info est sorti du bloc atomic : s'il était dedans et que le commit échouait ensuite, le log mentirait. Les index rejoignent le schéma par migration — un DBA relit toute l'histoire de la base dans Git. Et le test assertNumQueries transforme une bonne intention (« pas de N+1 ») en garantie : le jour où quelqu'un retire le select_related, la CI hurle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

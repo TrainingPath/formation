@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Des erreurs propres : format, messages, validation",
+  subtitle: "Une note de 7 sur 5 vient d'arriver. Ton API doit savoir dire non — clairement.",
+  theory: `
+<h3>1. Le code seul ne raconte pas tout</h3>
+<p>Leçon 5 : le code de statut situe l'histoire — 422, données invalides. Mais mets-toi à la place du front (le programme client, ici l'interface de l'utilisateur) qui reçoit ceci :</p>
+<pre class="pseudo">POST /jeux/5/avis                                       # requête : créer un avis sur le jeu 5
+Content-Type: application/json                          # en-tête : le corps est du JSON
+                                                        # (séparation en-têtes / corps)
+{ "note": 7, "commentaire": "" }                        # corps : note = 7 (hors barème 1..5) et commentaire vide → invalides
+                                                        # (séparation requête / réponse)
+HTTP/1.1 422 Unprocessable Entity                       # réponse : 422 = données invalides (syntaxe OK, sens KO)
+(corps vide)                                            # PROBLÈME : aucun détail → le client ne sait pas QUOI corriger</pre>
+<p>Le client sait que « quelque chose » est invalide… mais quoi ? La note ? Le commentaire ? Les deux ? Il ne peut rien afficher de mieux que « Erreur », et l'utilisateur abandonne. Règle de la leçon : <strong>toute réponse d'erreur porte un corps JSON qui explique</strong>. Le code dit la <em>famille</em> du problème, le corps dit le <em>détail</em>.</p>
+
+<h3>2. Un format unique pour toutes les erreurs</h3>
+<p>Le corps d'erreur de la Ludothèque suit une <strong>enveloppe unique</strong> — une <em>enveloppe</em> étant simplement la structure JSON commune qui emballe chaque erreur, la même pour un 404, un 409, un 422 ou un 500 :</p>
+<pre class="pseudo">{ "erreur": {                                             # une seule enveloppe pour TOUTES les erreurs
+    "code": "VALIDATION",                                 # code = identifiant STABLE, fait pour les PROGRAMMES (testé par le client)
+    "message": "Les données envoyées sont invalides.",    # message = phrase claire, faite pour les HUMAINS
+    "details": { … }                                      # details = le détail champ par champ (voir section 3)
+} }                                                       # fin de l'enveloppe</pre>
+<p>L'essentiel n'est pas ce format précis — c'est qu'il soit <strong>le même partout</strong>. Le client écrit alors UNE fonction de traitement des erreurs, pas une par endpoint. Le champ <code>code</code> est un identifiant que les programmes testent (<code>"VALIDATION"</code>, <code>"CONFLIT"</code>, <code>"INTROUVABLE"</code>) ; le <code>message</code> peut changer de formulation, le <code>code</code> jamais. Si tu préfères ne rien inventer, il existe un standard : la <strong>RFC 7807 « Problem Details »</strong> — une <em>RFC</em> est un document officiel qui définit un standard d'Internet (Content-Type <code>application/problem+json</code>, champs <code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>). Peu importe lequel tu choisis — choisis-en un, et tiens-le.</p>
+
+<h3>3. La validation champ par champ</h3>
+<p>Le cas roi : l'erreur de <strong>validation</strong>. Valider, c'est vérifier que les données reçues respectent les règles ; le JSON se lit, mais les données violent ces règles. Le corps doit permettre au front d'afficher chaque message <em>sous le bon champ du formulaire</em> :</p>
+<pre class="pseudo">POST /jeux/5/avis          { "note": 7, "commentaire": "" }   # requête invalide : note hors barème + commentaire vide
+                                                             # (séparation requête / réponse)
+HTTP/1.1 422 Unprocessable Entity                            # réponse : 422 = données invalides
+Content-Type: application/json                               # le corps est du JSON
+                                                             # (séparation en-têtes / corps)
+{ "erreur": {                                                # l'enveloppe d'erreur commune
+    "code": "VALIDATION",                                    # code stable, pour les programmes
+    "message": "2 champs sont invalides.",                   # résumé lisible, pour l'humain
+    "details": {                                             # le détail, champ par champ…
+      "note":        ["doit être un entier entre 1 et 5"],   # clé = nom EXACT du champ ; valeur = LISTE de messages
+      "commentaire": ["ne peut pas être vide"]               # autre champ fautif, renvoyé EN MÊME TEMPS (pas un par un)
+    } } }                                                    # fermeture de details, erreur, enveloppe</pre>
+<p>Trois décisions cachées là-dedans : les clés de <code>details</code> sont les <strong>noms exacts des champs envoyés</strong> (le front fait la correspondance sans dictionnaire) ; chaque valeur est une <strong>liste</strong> (un champ peut cumuler plusieurs fautes) ; et on renvoie <strong>toutes les erreurs d'un coup</strong> — obliger l'utilisateur à corriger champ par champ, une soumission à la fois, est une petite torture.</p>
+
+<h3>4. Ne jamais fuiter l'intérieur</h3>
+<p>Et quand c'est TON code qui explose ? Compare :</p>
+<pre class="pseudo">✗ HTTP/1.1 500                                                          # MAUVAIS : on renvoie la trace technique brute
+  Traceback (most recent call last):                                    # début de la « stack trace » (le détail interne du plantage)
+    File "/app/ludotheque/views.py", line 214, in create                # fuite : chemin de fichier et ligne du code serveur
+  IntegrityError: duplicate key violates "locations_jeu_id_key"         # fuite : type d'erreur et nom d'une table/clé SQL
+                                                                        # (ligne vide)
+✓ HTTP/1.1 500                                                          # BON : message générique, aucun détail interne
+  { "erreur": { "code": "ERREUR_INTERNE",                               # code stable ; l'enveloppe habituelle
+      "message": "Une erreur interne est survenue. Réessaie plus tard.",# message neutre pour l'utilisateur
+      "ref": "err_8f3a12c4" } }                                         # ref = clé qui relie ce message aux logs serveur détaillés</pre>
+<p>La <strong>stack trace</strong> (la liste des lignes de code traversées au moment du plantage) est une <strong>carte du château offerte à l'attaquant</strong> : chemins des fichiers, versions du framework, noms des tables SQL. Elle appartient aux <strong>logs serveur</strong> (le journal interne), jamais à la réponse. La <code>ref</code> fait le pont : l'utilisateur la communique au support, le développeur la retrouve dans les logs avec la trace complète. En Django, cela commence par <code>DEBUG = False</code> en production — la page d'erreur jaune détaillée est un outil de dev, pas une réponse d'API.</p>
+
+<h3>5. Les frameworks valident pour toi</h3>
+<p>Bonne nouvelle : tu n'écriras presque jamais cette plomberie à la main. Côté Django REST Framework, les règles vivent dans le <strong>serializer</strong> (le composant qui traduit ET valide les données, leçon 3) :</p>
+<pre class="pseudo"># DRF — serializers.py : les règles de validation de l'avis
+class AvisSerializer(serializers.ModelSerializer):                      # le traducteur/valideur de la ressource Avis
+    def validate_note(self, valeur):                                    # méthode appelée pour valider le champ "note"
+        if not (1 &lt;= valeur &lt;= 5):                                       # si la note n'est PAS comprise entre 1 et 5…
+            raise serializers.ValidationError("doit être un entier entre 1 et 5")   # …lever une erreur avec ce message
+        return valeur                                                   # sinon renvoyer la valeur validée telle quelle
+
+# is_valid() échoue → DRF renvoie tout seul le dict champ → [messages]   # DRF fabrique automatiquement le "details" champ par champ
+# Enveloppe commune pour TOUTES les erreurs : EXCEPTION_HANDLER personnalisé   # un gestionnaire central impose l'enveloppe partout
+# Spring : @ControllerAdvice + ProblemDetail · Laravel : FormRequest    # équivalents dans les autres frameworks
+# ASP.NET Core : ValidationProblemDetails (automatique)                 # équivalent côté ASP.NET Core</pre>
+<p>Ton rôle : écrire les règles de validation, choisir l'enveloppe, et vérifier que <strong>toutes</strong> les erreurs — y compris les 404 et les 500 — sortent dans le même format. Un seul endpoint qui répond autrement, et le client doit gérer deux formats : le contrat est cassé.</p>
+<div class="warn">En production, une stack trace, un chemin de fichier ou une erreur SQL dans une réponse est une <strong>fuite grave</strong> : tu offres à l'attaquant le plan de ton serveur. Message générique + référence dans la réponse, détail complet dans les logs. Et <code>DEBUG = False</code>, toujours.</div>
+<div class="tip">Le contrat d'erreur FAIT PARTIE du contrat d'API : documente-le (leçon 14) et <strong>teste tes erreurs comme tes succès</strong>. Un 422 sans <code>details</code> exploitables est un bug au même titre qu'un 200 au JSON cassé.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi un 422 avec un corps vide est-il insuffisant ?", opts: ["422 n'existe pas en HTTP", "Le client ne sait pas QUELS champs corriger ni quoi afficher", "Il faudrait renvoyer 500", "Un corps vide est interdit par TCP"], a: 1, exp: "Le code donne la famille du problème ; le corps doit donner le détail exploitable." },
+    { type: "qcm", q: "L'intérêt d'un format d'erreur UNIQUE dans toute l'API :", opts: ["Les réponses sont plus courtes", "Le serveur va plus vite", "Le client écrit UNE seule logique de traitement des erreurs", "Ça évite d'utiliser les codes de statut"], a: 2, exp: "Même enveloppe pour 404, 409, 422, 500 : une fonction côté client suffit." },
+    { type: "qcm", q: "Dans l'enveloppe, le champ « code » (ex. « VALIDATION ») est destiné…", opts: ["Aux programmes : un identifiant stable qu'on teste", "Aux humains uniquement", "Aux moteurs de recherche", "À remplacer le code de statut HTTP"], a: 0, exp: "Le message peut être reformulé ; le code, lui, ne change jamais." },
+    { type: "qcm", q: "Dans « details », les clés sont…", opts: ["Des numéros d'erreur aléatoires", "Les noms exacts des champs envoyés par le client", "Les noms des tables SQL", "Les initiales du développeur"], a: 1, exp: "Le front fait ainsi la correspondance directe champ ↔ message, sans dictionnaire." },
+    { type: "qcm", q: "Le formulaire d'avis a trois champs invalides. L'API renvoie…", opts: ["La première erreur seulement, les autres au prochain essai", "Trois réponses HTTP successives", "Les trois erreurs d'un coup dans details", "Un 500"], a: 2, exp: "Corriger champ par champ, une soumission à la fois, est une torture pour l'utilisateur." },
+    { type: "qcm", q: "La RFC 7807 « Problem Details » est…", opts: ["Un format standard de corps d'erreur (application/problem+json)", "Un algorithme de chiffrement", "Une méthode HTTP", "Un framework Python"], a: 0, exp: "type, title, status, detail : une enveloppe toute prête si tu ne veux pas inventer la tienne." },
+    { type: "qcm", q: "Que doit contenir le corps d'un 500 en production ?", opts: ["La stack trace complète pour aider au débogage", "Le mot de passe de la base pour vérification", "Rien, jamais", "Un message générique et une référence corrélée aux logs"], a: 3, exp: "Le détail vit dans les logs serveur ; la ref fait le pont entre l'utilisateur et le développeur." },
+    { type: "qcm", q: "À quoi sert la « ref » (ex. err_8f3a12c4) dans une réponse 500 ?", opts: ["À rejouer la requête automatiquement", "À retrouver dans les logs serveur la trace complète de CET incident", "À identifier l'utilisateur", "À chiffrer la réponse"], a: 1, exp: "L'utilisateur la communique au support ; le développeur la cherche dans les logs." },
+    { type: "qcm", q: "En DRF, une ValidationError levée dans un serializer produit…", opts: ["Un crash du serveur", "Un 204 silencieux", "Une réponse d'erreur avec le dict champ → [messages], automatiquement", "Un email à l'administrateur"], a: 2, exp: "is_valid() échoue et DRF construit la réponse champ par champ tout seul." },
+    { type: "qcm", q: "Une stack trace exposée fuite notamment…", opts: ["La couleur du site", "Chemins de fichiers, versions du framework, noms de tables SQL", "L'adresse du client", "Rien d'exploitable"], a: 1, exp: "Autant d'indices précieux pour préparer une attaque : la carte du château." },
+    { type: "vf", q: "Le corps d'un 404 devrait suivre la même enveloppe d'erreur que celui d'un 422.", a: true, exp: "Un seul format partout — sinon le client doit gérer plusieurs cas et le contrat se fissure." },
+    { type: "vf", q: "En production, laisser la stack trace dans la réponse aide les utilisateurs honnêtes, donc c'est acceptable.", a: false, exp: "Les utilisateurs honnêtes n'en font rien ; les attaquants, si. Logs côté serveur, ref côté client." },
+    { type: "vf", q: "Il vaut mieux valider et renvoyer les erreurs une par une, dans l'ordre des champs.", a: false, exp: "On renvoie TOUTES les erreurs d'un coup : l'utilisateur corrige tout en une passe." },
+    { type: "input", q: "Le code de statut pour un JSON lisible mais aux données invalides :", a: ["422"], ph: "Un code…", exp: "422 Unprocessable Entity (400 pour un corps illisible — la syntaxe)." },
+    { type: "input", q: "Le réglage Django à mettre à False en production pour ne plus afficher les pages d'erreur détaillées :", a: ["DEBUG", "debug", "DEBUG=False", "DEBUG = False"], ph: "NOM_DU_RÉGLAGE", exp: "DEBUG = False — la page jaune de Django est un outil de dev, pas une réponse d'API." }
+  ],
+  final: {
+    title: "Exercice final — L'avis impossible",
+    intro: `<p>Aïcha envoie POST /jeux/5/avis avec { "note": 7, "commentaire": "" }. Déroulons la réponse parfaite.</p>`,
+    questions: [
+      { type: "qcm", q: "Le JSON se parse mais viole les règles (note de 1 à 5, commentaire requis). Code de statut :", opts: ["400 obligatoirement", "422 (Unprocessable Entity)", "409", "500"], a: 1, exp: "Syntaxe OK, sémantique invalide : 422 — le duo vu à la leçon 5." },
+      { type: "qcm", q: "Le corps idéal de cette réponse :", opts: ["Vide, le code suffit", "« Erreur de validation » en texte brut", "L'enveloppe commune avec details : { \"note\": […], \"commentaire\": […] }", "La stack trace du serializer"], a: 2, exp: "Le front affiche chaque message sous le bon champ, en une seule passe." },
+      { type: "qcm", q: "Même requête mais avec un JSON malformé (accolade manquante). Code :", opts: ["400 Bad Request", "422", "204", "301"], a: 0, exp: "Le corps est illisible : erreur de syntaxe → 400, avant même la validation." },
+      { type: "vf", q: "Si le token d'Aïcha avait expiré, le 401 renvoyé devrait AUSSI utiliser l'enveloppe d'erreur commune.", a: true, exp: "Toutes les erreurs, sans exception, parlent le même format." },
+      { type: "input", q: "Le champ de l'enveloppe qui porte les erreurs champ par champ :", a: ["details", "\"details\""], ph: "champ", exp: "details : clés = noms des champs, valeurs = listes de messages." }
+    ],
+    solution: `<pre class="pseudo">Toute erreur = un CODE juste + un CORPS explicatif, même enveloppe partout :   # la règle centrale de la leçon
+{ "erreur": { "code": "VALIDATION", "message": "2 champs sont invalides.",     # code (programmes) + message (humains)
+    "details": { "note":        ["doit être un entier entre 1 et 5"],          # details : nom du champ → liste de messages
+                 "commentaire": ["ne peut pas être vide"] } } }                # tous les champs fautifs d'un coup
+                                                                              # (ligne vide)
+Validation → 422 (corps illisible → 400) · TOUTES les erreurs d'un coup        # 422 = données invalides ; 400 = JSON cassé
+404, 409, 500… → même enveloppe (standard possible : RFC 7807)                 # un SEUL format, pour toutes les familles
+500 → message générique + ref corrélée aux logs — JAMAIS de stack trace        # ne jamais fuiter l'intérieur du serveur
+DRF : serializers + EXCEPTION_HANDLER (Spring @ControllerAdvice ·              # où centraliser tout ça selon le framework
+      Laravel FormRequest · ASP.NET ProblemDetails)</pre>                      # (suite des équivalents)
+<p>Ton API sait échouer proprement. Mais elle va vivre : renommer des champs, ajouter des endpoints… sans écraser l'app mobile déjà installée ? Prochaine leçon : versionner sans casser les clients.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l12", title: "Le contrat d'erreur de la Ludothèque", level: 2,
+    statement: "Rédige le document « Contrat d'erreur » de l'API Ludothèque, celui que tout développeur (back ou front) devra respecter. Il doit contenir : la structure JSON commune à toutes les erreurs (avec le rôle de chaque champ et son public), puis trois exemples complets de réponses — un 422 sur POST /jeux/5/avis (note à 7, commentaire vide), un 404 sur GET /jeux/999, et un 500 —, et enfin deux règles absolues sur ce qu'une réponse d'erreur ne doit JAMAIS contenir.",
+    hints: [
+      "Chaque champ de l'enveloppe a un public : lequel est fait pour les programmes, lequel pour les humains, lequel pour le formulaire ?",
+      "Pour le 422 : les clés de details sont les noms exacts des champs envoyés, les valeurs des listes de messages — et on renvoie tout d'un coup.",
+      "Pour le 500 : que voit le client, que voit le développeur dans les logs, et qu'est-ce qui relie les deux ?"
+    ],
+    solution: "CONTRAT D'ERREUR — API Ludothèque v1\n\nEnveloppe commune (toutes les erreurs, sans exception) :\n{ \"erreur\": {\n    \"code\":    identifiant STABLE pour les programmes (VALIDATION, INTROUVABLE, CONFLIT, ERREUR_INTERNE…),\n    \"message\": phrase claire pour les humains (peut évoluer, le code jamais),\n    \"details\": présent pour la validation — clés = noms des champs envoyés, valeurs = listes de messages,\n    \"ref\":     présent sur les 5xx — référence corrélée aux logs serveur } }\n\nExemple 1 — 422 sur POST /jeux/5/avis :\nHTTP/1.1 422 Unprocessable Entity\n{ \"erreur\": { \"code\": \"VALIDATION\", \"message\": \"2 champs sont invalides.\",\n    \"details\": { \"note\": [\"doit être un entier entre 1 et 5\"],\n                 \"commentaire\": [\"ne peut pas être vide\"] } } }\n(le front affiche chaque message sous le champ correspondant ; toutes les erreurs partent d'un coup)\n\nExemple 2 — 404 sur GET /jeux/999 :\nHTTP/1.1 404 Not Found\n{ \"erreur\": { \"code\": \"INTROUVABLE\", \"message\": \"Le jeu 999 n'existe pas.\" } }\n\nExemple 3 — 500 :\nHTTP/1.1 500 Internal Server Error\n{ \"erreur\": { \"code\": \"ERREUR_INTERNE\",\n    \"message\": \"Une erreur interne est survenue. Réessaie plus tard.\",\n    \"ref\": \"err_8f3a12c4\" } }\n(la trace complète part dans les logs, indexée par la ref)\n\nRÈGLES ABSOLUES — une réponse d'erreur ne contient JAMAIS :\n1. de stack trace, chemin de fichier, requête SQL ou version de framework (carte offerte à l'attaquant) ;\n2. de code de statut menteur : jamais de 200 pour un échec, jamais de 500 pour une faute du client.",
+    note: "Ce contrat sera documenté noir sur blanc dans le schéma OpenAPI (leçon 14) et il paiera doublement à la leçon 20 : un client qui reçoit toujours la même enveloppe se code en dix lignes. Côté frameworks, l'enveloppe se centralise dans un EXCEPTION_HANDLER DRF, un @ControllerAdvice Spring, le Handler Laravel ou les ProblemDetails ASP.NET — un seul endroit, comme il se doit." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

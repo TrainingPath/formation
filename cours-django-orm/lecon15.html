@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Agrégats et annotations : Count, Sum, Avg",
+  subtitle: "Combien de locations, quelle note moyenne, quel chiffre d'affaires ? Le GROUP BY du Niveau 4, version objets.",
+  theory: `
+<h3>1. La question change de nature</h3>
+<p>Depuis la leçon 5, toutes tes requêtes répondent à la même famille de questions : « <strong>quels</strong> jeux ? quels membres ? quelles locations ? » — et l'ORM te rend des objets. Mais la gérante de la Ludothèque pose d'autres questions : « <strong>combien</strong> d'avis par jeu ? quelle <strong>note moyenne</strong> ? quel <strong>chiffre d'affaires</strong> total ? » La réponse n'est plus une liste d'objets, c'est un <strong>nombre calculé</strong>. Au Niveau 4, tu répondais avec les fonctions d'agrégation SQL et <em>GROUP BY</em> ; côté Django, les mêmes outils s'importent depuis <em>django.db.models</em> :</p>
+<pre class="pseudo">from django.db.models import Count, Sum, Avg, Max, Min
+
+# Niveau 4 (SQL)                        Niveau 5 (ORM)
+# COUNT(*), SUM(...), AVG(...)          Count, Sum, Avg
+# GROUP BY + HAVING                     annotate + filter</pre>
+<p>Deux méthodes vont se partager le travail : <strong>aggregate()</strong> quand tu veux <em>un</em> résultat pour toute la table, <strong>annotate()</strong> quand tu veux un résultat <em>par objet</em>. Toute la leçon tient dans cette distinction.</p>
+
+<h3>2. aggregate() : UN résultat pour toute la table</h3>
+<p><strong>aggregate()</strong> réduit tout le QuerySet à une seule ligne de résultats. Surprise : elle ne renvoie <strong>pas un QuerySet</strong> mais un simple <strong>dictionnaire Python</strong> — et elle s'exécute <strong>immédiatement</strong>, sans paresse.</p>
+<pre class="pseudo">&gt;&gt;&gt; from django.db.models import Avg, Sum
+&gt;&gt;&gt; Jeu.objects.aggregate(Avg('prix'))
+{'prix__avg': Decimal('31.20')}
+# SQL : SELECT AVG(prix) FROM ludotheque_jeu
+
+# Nommer les clés soi-même (bien plus lisible) :
+&gt;&gt;&gt; Jeu.objects.aggregate(prix_moyen=Avg('prix'), total_stock=Sum('stock'))
+{'prix_moyen': Decimal('31.20'), 'total_stock': 87}</pre>
+<p>Sans nom explicite, Django fabrique la clé <em>champ__fonction</em> (« prix__avg »). Et comme un dictionnaire ne peut pas rester « à évaluer plus tard », aggregate() part en base à l'instant même où tu l'appelles — contrairement à tout ce que tu sais des QuerySets depuis la leçon 7.</p>
+
+<h3>3. annotate() : un agrégat PAR objet</h3>
+<p><strong>annotate()</strong> ne réduit rien : elle <strong>ajoute un attribut calculé à chaque objet</strong> du QuerySet. Chaque Jeu ressort avec son compteur d'avis et sa note moyenne accrochés à lui :</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Jeu.objects.annotate(nb_avis=Count('avis'), note_moyenne=Avg('avis__note'))
+&gt;&gt;&gt; print(qs.query)   # le réflexe de la leçon 2
+# SELECT jeu.*, COUNT(avis.id) AS nb_avis, AVG(avis.note) AS note_moyenne
+# FROM ludotheque_jeu
+# LEFT JOIN ludotheque_avis ON (avis.jeu_id = jeu.id)
+# GROUP BY jeu.id
+
+&gt;&gt;&gt; for jeu in qs:
+...     print(jeu.titre, jeu.nb_avis, jeu.note_moyenne)
+Catan 12 4.3
+Azul 7 4.6
+Dixit 0 None      # LEFT JOIN : les jeux sans avis restent là</pre>
+<p>Note le SQL : un <strong>LEFT JOIN</strong> (les jeux sans avis comptent 0, avec une moyenne None) et un <strong>GROUP BY jeu.id</strong> — ton Niveau 4, écrit pour toi. Et annotate() renvoie un <strong>QuerySet</strong>, donc paresseux, chaînable, tout ce que tu connais.</p>
+
+<h3>4. Filtrer et trier sur l'annotation : le HAVING retrouvé</h3>
+<p>Une fois l'annotation posée, elle se comporte comme un champ : tu peux la passer à <em>filter()</em> et à <em>order_by()</em>. Voici le top des jeux les plus loués de la Ludothèque :</p>
+<pre class="pseudo">&gt;&gt;&gt; top = (Jeu.objects
+...          .annotate(nb_locations=Count('locations'))
+...          .filter(nb_locations__gte=5)
+...          .order_by('-nb_locations'))
+# SQL : SELECT jeu.*, COUNT(location.id) AS nb_locations
+#       FROM ludotheque_jeu LEFT JOIN ludotheque_location ...
+#       GROUP BY jeu.id
+#       HAVING COUNT(location.id) &gt;= 5
+#       ORDER BY nb_locations DESC</pre>
+<p>Regarde bien : filtrer sur une annotation ne génère pas un WHERE mais un <strong>HAVING</strong> — la clause du Niveau 4 qui filtre <em>après</em> le GROUP BY, sur le résultat de l'agrégat. Un WHERE filtre des lignes, un HAVING filtre des groupes : Django choisit le bon tout seul.</p>
+
+<h3>5. values() + annotate : le GROUP BY par colonne</h3>
+<p>Dernière combinaison, la plus proche de ton SQL du Niveau 4 : <em>values()</em> placé <strong>avant</strong> annotate() change la règle du groupement. On ne groupe plus par objet, mais par les colonnes listées — et on obtient des <strong>dictionnaires</strong>, plus des objets :</p>
+<pre class="pseudo">&gt;&gt;&gt; Location.objects.values('jeu__titre').annotate(ca=Sum('prix_location'))
+&lt;QuerySet [{'jeu__titre': 'Catan', 'ca': Decimal('54.00')},
+           {'jeu__titre': 'Azul', 'ca': Decimal('31.50')}, ...]&gt;
+# SQL : SELECT jeu.titre, SUM(prix_location) AS ca
+#       FROM ludotheque_location JOIN ludotheque_jeu ...
+#       GROUP BY jeu.titre</pre>
+<p>Le chiffre d'affaires par jeu, en une ligne. Un piège classique pour finir : <strong>deux annotations qui traversent des relations différentes</strong> (Count('avis') et Count('locations') dans le même appel) multiplient les JOIN, et les comptes gonflent. Le remède se nomme <em>Count('avis', distinct=True)</em> — retiens surtout qu'il existe. Ailleurs : GroupBy/Average en LINQ (EF Core), withCount/withAvg chez Eloquent, fonctions d'agrégation JPQL chez Hibernate/JPA.</p>
+<div class="warn">aggregate() renvoie un <strong>dictionnaire</strong> et exécute la requête <strong>tout de suite</strong> ; annotate() renvoie un <strong>QuerySet</strong> paresseux. Confondre les deux est l'erreur classique de cette leçon. Et méfie-toi du double annotate : deux agrégats sur des relations différentes gonflent les comptes via les JOIN — pense à distinct=True.</div>
+<div class="tip">Nomme toujours tes agrégats : note_moyenne=Avg('avis__note') plutôt que la clé automatique « avis__note__avg », pénible à taper et à relire. Bonus : une annotation nommée se réutilise telle quelle dans filter() et order_by().</div>`,
+  exercises: [
+    { type: "qcm", q: "Jeu.objects.aggregate(Avg('prix')) renvoie…", opts: ["Un QuerySet de jeux", "Un objet Jeu", "Un dictionnaire Python", "Un nombre flottant nu"], a: 2, exp: "aggregate() réduit toute la table à un dict, ici {'prix__avg': Decimal('31.20')}." },
+    { type: "qcm", q: "Sans nom explicite, la clé du résultat de aggregate(Avg('prix')) est…", opts: ["'prix__avg'", "'avg_prix'", "'moyenne'", "'prix'"], a: 0, exp: "Django fabrique champ__fonction ; d'où l'intérêt de nommer soi-même (prix_moyen=Avg('prix'))." },
+    { type: "input", q: "La fonction d'agrégation qui compte les objets liés (le nombre d'avis d'un jeu, par exemple) :", a: ["Count", "count", "Count()"], ph: "from django.db.models import …", exp: "Count('avis') — le COUNT() de ton Niveau 4, version Python." },
+    { type: "qcm", q: "annotate() renvoie…", opts: ["Un dictionnaire", "Un QuerySet, toujours paresseux", "Une liste Python figée", "Un entier"], a: 1, exp: "Chaque objet reçoit un attribut calculé, et tout reste chaînable et évalué tard (leçon 7)." },
+    { type: "vf", q: "Comme un QuerySet, aggregate() est paresseux : la requête ne part que quand on lit le résultat.", a: false, exp: "aggregate() renvoie un dict, qui ne peut pas être « évalué plus tard » : la requête part immédiatement." },
+    { type: "qcm", q: "Après qs = Jeu.objects.annotate(nb_avis=Count('avis')), chaque jeu du QuerySet…", opts: ["Porte un attribut nb_avis calculé par MySQL", "A perdu ses attributs habituels", "Est devenu un dictionnaire", "Doit appeler save() pour lire nb_avis"], a: 0, exp: "jeu.titre, jeu.prix… et en plus jeu.nb_avis, calculé par la base dans la même requête." },
+    { type: "qcm", q: "Le SQL généré par Jeu.objects.annotate(note_moyenne=Avg('avis__note')) contient…", opts: ["Un DELETE", "Deux requêtes séparées", "Un LEFT JOIN et un GROUP BY jeu.id", "Une sous-requête par jeu"], a: 2, exp: "LEFT JOIN pour garder les jeux sans avis, GROUP BY pour un agrégat par jeu — vérifie avec print(qs.query)." },
+    { type: "qcm", q: ".annotate(nb_locations=Count('locations')).filter(nb_locations__gte=5) se traduit en SQL par…", opts: ["Un WHERE classique", "Un HAVING après le GROUP BY", "Un ORDER BY", "Un LIMIT"], a: 1, exp: "Filtrer sur un agrégat, c'est filtrer des groupes : le HAVING de ton Niveau 4." },
+    { type: "input", q: "La fonction d'agrégation qui additionne une colonne (le total des stocks, le CA des locations) :", a: ["Sum", "sum", "Sum()"], ph: "from django.db.models import …", exp: "Sum('stock'), Sum('prix_location') — le SUM() du SQL." },
+    { type: "qcm", q: "Location.objects.values('jeu__titre').annotate(ca=Sum('prix_location')) renvoie…", opts: ["Des objets Location enrichis", "Des objets Jeu", "Une seule valeur", "Des dictionnaires {'jeu__titre': …, 'ca': …}"], a: 3, exp: "values() avant annotate() : on groupe par colonne et on reçoit des dicts, plus des objets." },
+    { type: "qcm", q: "Dans values('jeu__titre').annotate(ca=Sum('prix_location')), le GROUP BY porte sur…", opts: ["location.id", "jeu.titre", "prix_location", "Aucun GROUP BY"], a: 1, exp: "values() placé avant annotate() définit les colonnes de groupement." },
+    { type: "vf", q: "Deux annotations Count sur des relations différentes dans le même appel peuvent renvoyer des comptes gonflés.", a: true, exp: "Les JOIN se multiplient entre eux ; Count('avis', distinct=True) corrige le tir." },
+    { type: "qcm", q: "Le remède au double annotate qui gonfle les comptes :", opts: ["Count('avis', distinct=True)", "Un try/except", "order_by()", "refresh_from_db()"], a: 0, exp: "distinct=True fait compter chaque avis une seule fois malgré les JOIN multipliés." },
+    { type: "qcm", q: "L'équivalent de annotate(nb_avis=Count('avis')) chez Eloquent (Laravel) :", opts: ["hasMany", "withCount", "belongsTo", "paginate"], a: 1, exp: "withCount('avis') ; côté LINQ/EF Core : GroupBy et Average, côté JPA : les fonctions d'agrégation JPQL." },
+    { type: "qcm", q: "Le top 3 des jeux les plus loués s'écrit…", opts: ["Jeu.objects.aggregate(Count('locations'))[:3]", "Jeu.objects.filter(locations__gte=3)", "Jeu.objects.annotate(nb=Count('locations')).order_by('-nb')[:3]", "Location.objects.count()[:3]"], a: 2, exp: "Annoter, trier sur l'annotation en descendant, trancher (slicing, leçon 13) : LIMIT 3 en SQL." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau de bord de la gérante",
+    intro: `<p>La gérante de la Ludothèque veut ses chiffres. À toi de choisir le bon outil — aggregate ou annotate — pour chaque question.</p>`,
+    questions: [
+      { type: "qcm", q: "« Le prix moyen du catalogue » — un seul chiffre pour toute la table :", opts: ["Jeu.objects.aggregate(prix_moyen=Avg('prix'))", "Jeu.objects.annotate(prix_moyen=Avg('prix'))", "Jeu.objects.filter(prix__avg=True)", "Jeu.objects.count()"], a: 0, exp: "Un résultat unique pour toute la table : aggregate, qui renvoie un dict immédiatement." },
+      { type: "qcm", q: "« La note moyenne de CHAQUE jeu » — un chiffre par objet :", opts: ["aggregate(Avg('avis__note'))", "annotate(note_moyenne=Avg('avis__note'))", "values_list('note')", "get(note__avg=True)"], a: 1, exp: "Un agrégat par objet : annotate, avec LEFT JOIN + GROUP BY jeu.id derrière." },
+      { type: "vf", q: "Filtrer sur une annotation (filter(nb_locations__gte=5)) génère un HAVING, pas un WHERE.", a: true, exp: "On filtre le résultat d'un agrégat, donc des groupes : c'est le rôle du HAVING au Niveau 4." },
+      { type: "input", q: "Le mot-clé à ajouter à Count pour éviter les comptes gonflés par des JOIN multiples :", a: ["distinct=True", "distinct", "distinct = True"], ph: "Count('avis', …)", exp: "Count('avis', distinct=True) compte chaque ligne une seule fois." },
+      { type: "qcm", q: "Le chiffre d'affaires PAR jeu (dictionnaires {titre, total}) :", opts: ["Location.objects.aggregate(Sum('prix_location'))", "Jeu.objects.all().values()", "Location.objects.values('jeu__titre').annotate(ca=Sum('prix_location'))", "Location.objects.count()"], a: 2, exp: "values() avant annotate() : GROUP BY jeu.titre, une ligne-dict par jeu." }
+    ],
+    solution: `<pre class="pseudo">Imports    : from django.db.models import Count, Sum, Avg, Max, Min
+aggregate  : UN résultat pour toute la table → un DICT, exécution IMMÉDIATE
+             Jeu.objects.aggregate(prix_moyen=Avg('prix'), total_stock=Sum('stock'))
+annotate   : un agrégat PAR objet → un QUERYSET paresseux
+             Jeu.objects.annotate(nb_avis=Count('avis'), note_moyenne=Avg('avis__note'))
+             SQL : LEFT JOIN + GROUP BY jeu.id
+HAVING     : .filter(nb_locations__gte=5) sur une annotation
+Top N      : .order_by('-nb_locations')[:3]
+GROUP BY colonne : values('jeu__titre').annotate(ca=Sum('prix_location')) → des dicts
+Piège      : double annotate → comptes gonflés → Count(..., distinct=True)
+Ailleurs   : GroupBy/Average (LINQ) · withCount/withAvg (Eloquent) · agrégats JPQL (JPA)</pre>
+<p>Tu sais calculer — mais un catalogue de 400 jeux ne s'affiche pas d'un bloc. Leçon 16 : <strong>Pagination : Paginator</strong> — découper les résultats en pages propres.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l15", title: "Le tableau de bord chiffré de la Ludothèque", level: 2,
+    statement: "La gérante te commande un tableau de bord en quatre indicateurs : (1) le prix moyen du catalogue ; (2) le chiffre d'affaires total de toutes les locations ; (3) pour chaque jeu, sa note moyenne et son nombre d'avis ; (4) le top 3 des membres les plus actifs (ceux qui ont le plus de locations). Pour chaque indicateur : choisis entre aggregate() et annotate() en justifiant en une phrase, écris la requête ORM complète (imports compris), et prédis le SQL généré — en particulier : y aura-t-il un GROUP BY, et sur quelle colonne ? Termine en expliquant pourquoi l'indicateur 3 doit nommer ses deux agrégats dans le MÊME appel annotate, et le piège qui guetterait si l'on ajoutait Count('locations') dans cet appel.",
+    hints: [
+      "La question à se poser à chaque fois : la réponse est-elle UN chiffre pour toute la table (aggregate → dict) ou un chiffre PAR objet (annotate → QuerySet) ?",
+      "Pour le top 3 des membres : annoter Membre avec Count('locations') grâce au related_name de la leçon 9, trier en descendant, puis trancher avec [:3] (leçon 13).",
+      "GROUP BY : aggregate n'en a pas besoin (une seule ligne de résultat) ; annotate groupe par la clé primaire du modèle annoté ; deux Count sur des relations différentes dans le même annotate gonflent les comptes → distinct=True."
+    ],
+    solution: "from django.db.models import Avg, Sum, Count\n\n1) Prix moyen du catalogue — UN chiffre pour toute la table → aggregate.\n   Jeu.objects.aggregate(prix_moyen=Avg('prix'))\n   → {'prix_moyen': Decimal('31.20')}\n   SQL : SELECT AVG(prix) FROM ludotheque_jeu — AUCUN GROUP BY (une seule ligne).\n\n2) CA total des locations — un seul total → aggregate.\n   Location.objects.aggregate(ca_total=Sum('prix_location'))\n   SQL : SELECT SUM(prix_location) FROM ludotheque_location — pas de GROUP BY.\n\n3) Note moyenne et nombre d'avis PAR jeu → annotate.\n   Jeu.objects.annotate(note_moyenne=Avg('avis__note'), nb_avis=Count('avis'))\n   SQL : SELECT jeu.*, AVG(avis.note), COUNT(avis.id)\n         FROM ludotheque_jeu LEFT JOIN ludotheque_avis ...\n         GROUP BY jeu.id — un groupe par jeu, LEFT JOIN pour garder les jeux sans avis.\n\n4) Top 3 des membres les plus actifs → annotate + order_by + slicing.\n   Membre.objects.annotate(nb_locations=Count('locations')).order_by('-nb_locations')[:3]\n   SQL : GROUP BY membre.id ... ORDER BY nb_locations DESC LIMIT 3.\n\nIndicateur 3 : les deux agrégats dans le MÊME annotate → une seule requête,\nun seul GROUP BY, et des noms clairs réutilisables (filter, order_by).\nPiège : ajouter Count('locations') dans cet appel croiserait les JOIN avis × locations\net gonflerait les comptes → Count('avis', distinct=True) et Count('locations', distinct=True).",
+    note: "Ces quatre requêtes sont exactement tes GROUP BY, HAVING et COUNT du Niveau 4, générés par l'ORM — print(qs.query) te permet de les relire ligne à ligne. Au Niveau 3, tu aurais affiché ces chiffres dans un template Django ; au Niveau 6, ils deviendront la page « statistiques » de ton projet full-stack, calculée par la base en une requête plutôt qu'en boucles Python." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

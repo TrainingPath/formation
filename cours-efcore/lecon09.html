@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "La relation 1-N : collections de navigation",
+  subtitle: "Traverser le miroir : jeu.Locations, membre.Locations — la même relation, vue de l'autre rive.",
+  theory: `
+<h3>1. La même relation, l'autre sens de lecture</h3>
+<p>Hier, tu as regardé la relation depuis Location : « une location a UN jeu » (N-1). Aujourd'hui, on traverse le miroir : depuis Jeu, la même relation se lit « un jeu a PLUSIEURS locations » — c'est le côté <strong>1-N</strong>. Important : il n'y a toujours <strong>qu'une seule relation</strong> en base, matérialisée par l'unique colonne <em>JeuId</em> dans la table Locations. Ce qui change, c'est le point de vue du code C# — comme une même route qu'on peut parcourir dans les deux sens.</p>
+<pre class="pseudo">Base SQL : UNE relation = UNE clé étrangère (Locations.JeuId)
+
+Code C#  : DEUX points de vue sur cette relation
+  Location.Jeu        → navigation de référence (leçon 8)
+  Jeu.Locations       → collection de navigation (aujourd'hui)</pre>
+
+<h3>2. Déclarer les collections : List et initialisation</h3>
+<p>Côté « un », la relation s'exprime par une <strong>collection de navigation</strong> (une liste d'objets liés, ici toutes les locations d'un jeu) : une propriété List&lt;Location&gt; sur Jeu, List&lt;Location&gt; sur Membre, List&lt;Avis&gt; sur Jeu. Bonne pratique systématique : initialiser la collection avec <em>= new()</em> — ainsi, jamais de NullReferenceException (le plantage quand on utilise un objet qui vaut null) quand on parcourt une collection vide.</p>
+<pre class="pseudo">public class Jeu                                          // le moule d'une ligne de la table Jeux
+{
+    public int Id { get; set; }                           // clé primaire
+    public string Titre { get; set; }                     // titre du jeu
+    public decimal Prix { get; set; }                     // prix du jeu
+
+    public List&lt;Location&gt; Locations { get; set; } = new();  // collection de navigation : les locations de ce jeu (= new() évite le null)
+    public List&lt;Avis&gt; Avis { get; set; } = new();          // collection de navigation : les avis de ce jeu
+}
+
+public class Membre                                       // le moule d'une ligne de la table Membres
+{
+    public int Id { get; set; }                           // clé primaire
+    public string Pseudo { get; set; }                    // pseudonyme du membre
+
+    public List&lt;Location&gt; Locations { get; set; } = new();  // collection de navigation : les locations de ce membre
+}</pre>
+<p>Regarde une migration après cet ajout : <strong>rien ne change dans la base</strong>. Aucune colonne, aucune table nouvelle — la collection n'est qu'une façon C# de lire la FK qui existe déjà côté Locations. Chez les voisins, c'est le @OneToMany(mappedBy = ...) de JPA/Hibernate, le hasMany d'Eloquent, et le <em>related_name</em> automatique de Django (jeu.location_set).</p>
+
+<h3>3. Une relation, une seule configuration : HasMany ou HasOne</h3>
+<p>En Fluent API, la relation complète se déclare <strong>une seule fois</strong>, au choix depuis l'un ou l'autre bout. HasOne(l =&gt; l.Jeu).WithMany(j =&gt; j.Locations) écrit à la leçon 8, ou son miroir exact HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu) : les deux phrases décrivent LA même relation. N'écris jamais les deux — EF Core croirait voir deux relations distinctes et fabriquerait une seconde FK fantôme (JeuId1).</p>
+<pre class="pseudo">// Depuis Jeu (équivalent strict de la version leçon 8) :
+modelBuilder.Entity&lt;Jeu&gt;()                    // on configure l'entité Jeu…
+    .HasMany(j =&gt; j.Locations)                // …un Jeu A PLUSIEURS Locations…
+    .WithOne(l =&gt; l.Jeu)                       // …et chaque Location A UN Jeu
+    .HasForeignKey(l =&gt; l.JeuId)              // la clé étrangère vit côté Location (colonne JeuId)
+    .OnDelete(DeleteBehavior.Restrict);       // supprimer le jeu est bloqué tant qu'il a des locations</pre>
+<p>La FK reste déclarée côté « N » (HasForeignKey pointe une propriété de Location) : c'est logique, la colonne vit dans la table Locations, comme au Niveau 4 où la clé migrait toujours du côté (1,1).</p>
+
+<h3>4. Manipuler par la collection : l'écriture « en cascade »</h3>
+<p>La collection n'est pas qu'une lecture confortable : c'est aussi un canal d'écriture. Ajoute un Avis dans jeu.Avis, sauve — EF Core <strong>déduit la FK tout seul</strong> et insère la ligne avec le bon JeuId. Mieux : ajoute un jeu ET ses avis d'un coup, EF insère le jeu, récupère son Id, puis insère les avis avec cet Id — dans le bon ordre, sans que tu y penses. On appelle ça écrire un <strong>graphe d'objets</strong> (un objet et tous ceux qui lui sont reliés, comme un arbre).</p>
+<pre class="pseudo">// Ajouter un avis via la collection : la FK est déduite
+var jeu = ctx.Jeux.First(j =&gt; j.Titre == "Catan");        // charge le jeu Catan
+jeu.Avis.Add(new Avis { Note = 5, Commentaire = "Excellent !", MembreId = 7 });  // ajoute un avis à la collection (en mémoire)
+ctx.SaveChanges();   // INSERT INTO Avis (..., JeuId) VALUES (..., id de Catan)   // EF insère l'avis en remplissant JeuId tout seul
+
+// Créer un graphe complet en une fois
+var nouveau = new Jeu {                                    // construit un nouveau jeu en mémoire…
+    Titre = "Cascadia", Prix = 37.90m,                     // …avec ses champs…
+    Avis = { new Avis { Note = 4, MembreId = 7 } }         // …et déjà un avis dans sa collection
+};
+ctx.Jeux.Add(nouveau);                                    // note l'ajout du graphe entier (jeu + avis)
+ctx.SaveChanges();   // INSERT Jeu PUIS INSERT Avis, FK remplie automatiquement   // EF ordonne : jeu d'abord, puis l'avis avec le JeuId généré</pre>
+<p>Retirer un élément de la collection (jeu.Avis.Remove(avis)) « orpheline » l'enfant : si la FK est obligatoire (int JeuId), EF Core supprime la ligne ; si elle est facultative (int? JeuId), il la met à NULL. C'est la traduction directe de la nullabilité de ta FK.</p>
+
+<h3>5. Relation obligatoire ou facultative — et la collection qui « ment »</h3>
+<p>La <strong>nullabilité de la FK</strong> décide du caractère obligatoire de la relation : <em>int JeuId</em> = toute location a forcément un jeu (la FK est NOT NULL, et par convention le DELETE du principal cascade) ; <em>int? JeuId</em> = relation facultative (FK NULL possible, DELETE → SetNull par convention). Dernier point, le plus piégeux : charge un jeu avec ctx.Jeux.First(...), puis regarde jeu.Locations… <strong>vide</strong>. Toujours. EF Core ne charge <em>jamais</em> les collections tout seul : une liste vide ne veut PAS dire « aucune location en base », mais « pas encore chargée ». Le chargement explicite des relations, c'est tout l'objet de la leçon 12 (Include).</p>
+<pre class="pseudo">var jeu = ctx.Jeux.First(j =&gt; j.Id == 5);                 // charge SEULEMENT le jeu (un SELECT sur la table Jeux)
+Console.WriteLine(jeu.Locations.Count);   // 0 … alors que la base en a 32 !   // la collection n'a pas été chargée → affiche 0
+// La collection n'est pas chargée : rendez-vous leçon 12 (Include)</pre>
+<div class="warn">Ne configure jamais la même relation deux fois (HasOne…WithMany côté Location ET HasMany…WithOne côté Jeu) : EF Core y verrait DEUX relations et créerait une colonne fantôme JeuId1. Une relation = une seule phrase Fluent, peu importe le bout choisi.</div>
+<div class="tip">Initialise toutes tes collections de navigation avec « = new() » dès la déclaration : ton code de création de graphes (jeu + avis d'un coup) devient naturel, et plus aucun foreach ne plantera sur une collection null. Réflexe gratuit, bugs en moins.</div>`,
+  exercises: [
+    { type: "qcm", q: "La relation Jeu → Locations vue depuis Jeu est de type…", opts: ["N-1", "1-N : un jeu a plusieurs locations", "N-N", "1-1"], a: 1, exp: "Même relation qu'hier, lue depuis l'autre rive : le côté « un » voit une collection." },
+    { type: "qcm", q: "Ajouter List&lt;Location&gt; Locations sur Jeu change quoi dans la base ?", opts: ["Une colonne Locations dans Jeux", "Une table de jointure", "Rien : la relation reste matérialisée par la FK JeuId de Locations", "Un index unique"], a: 2, exp: "La collection est une vue C# ; la seule trace SQL de la relation reste la clé étrangère côté N." },
+    { type: "qcm", q: "La propriété List&lt;Avis&gt; Avis sur Jeu s'appelle…", opts: ["Une clé étrangère", "Une collection de navigation", "Une shadow property", "Un DbSet"], a: 1, exp: "Navigation de référence côté N (Avis.Jeu), collection de navigation côté 1 (Jeu.Avis)." },
+    { type: "vf", q: "Il faut configurer la relation deux fois : HasOne…WithMany depuis Location ET HasMany…WithOne depuis Jeu.", a: false, exp: "Une seule phrase suffit — les deux créeraient DEUX relations et une FK fantôme JeuId1." },
+    { type: "qcm", q: "Le miroir exact de HasOne(l =&gt; l.Jeu).WithMany(j =&gt; j.Locations) est…", opts: ["HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu)", "HasOne(j =&gt; j.Locations).WithMany()", "HasKey(j =&gt; j.Locations)", "OwnsMany(j =&gt; j.Locations)"], a: 0, exp: "Même relation, autre point d'entrée : au choix, mais un seul des deux." },
+    { type: "input", q: "Quelle méthode Fluent ouvre la configuration de la relation depuis le côté « un » (Jeu) ?", a: ["HasMany", "HasMany()"], ph: "Has…", exp: "HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu) : la phrase se lit depuis l'entité configurée." },
+    { type: "qcm", q: "Dans HasMany(...).WithOne(...).HasForeignKey(...), la FK désignée appartient à…", opts: ["L'entité côté « un » (Jeu)", "L'entité côté « N » (Location)", "Une table de jointure", "Au DbContext"], a: 1, exp: "La colonne vit dans la table du côté N — la clé migre du côté (1,1), comme en Merise." },
+    { type: "qcm", q: "jeu.Avis.Add(new Avis { Note = 5, MembreId = 7 }) puis SaveChanges :", opts: ["Échoue : JeuId n'est pas renseigné", "Insère l'avis avec JeuId déduit automatiquement du jeu", "Insère l'avis avec JeuId NULL", "Met à jour le jeu"], a: 1, exp: "L'ajout via la collection suffit : EF Core remplit la FK au moment de sauver." },
+    { type: "vf", q: "En ajoutant un Jeu dont la collection Avis contient déjà deux avis, un seul SaveChanges insère le jeu PUIS ses avis avec la bonne FK.", a: true, exp: "EF Core ordonne les INSERT et propage l'Id fraîchement généré : c'est l'écriture de graphe." },
+    { type: "qcm", q: "jeu.Avis.Remove(avis) avec une FK obligatoire (int JeuId) puis SaveChanges :", opts: ["L'avis est supprimé de la base (orphelin interdit)", "JeuId passe à NULL", "Rien ne se passe", "Le jeu est supprimé"], a: 0, exp: "FK NOT NULL : un avis sans jeu ne peut pas exister → DELETE de l'orphelin." },
+    { type: "qcm", q: "Avec une FK facultative (int? JeuId), le même Remove aboutit à…", opts: ["Un DELETE de l'avis", "Un UPDATE mettant JeuId à NULL", "Une exception systématique", "Un TRUNCATE"], a: 1, exp: "Relation facultative : l'enfant survit, détaché — sa FK devient NULL." },
+    { type: "input", q: "Quelle valeur affiche jeu.Locations.Count juste après ctx.Jeux.First(...), sans autre chargement ?", a: ["0", "zéro", "zero"], ph: "Un nombre…", exp: "La collection n'est jamais chargée automatiquement : vide ≠ « aucune ligne en base »." },
+    { type: "qcm", q: "Pourquoi initialiser les collections avec « = new() » ?", opts: ["Pour créer la table plus vite", "Pour éviter les NullReferenceException et permettre l'écriture de graphes", "C'est obligatoire pour la migration", "Pour activer le lazy loading"], a: 1, exp: "Une collection jamais null : parcours et Add sûrs dès la construction de l'objet." },
+    { type: "vf", q: "La nullabilité de la propriété FK (int contre int?) détermine si la relation est obligatoire ou facultative.", a: true, exp: "int = NOT NULL = obligatoire (cascade par convention) ; int? = NULL possible = facultative (SetNull)." },
+    { type: "qcm", q: "L'équivalent JPA/Hibernate de la collection Jeu.Locations est…", opts: ["@OneToMany(mappedBy = &quot;jeu&quot;)", "@ManyToOne", "@JoinColumn seul", "@ElementCollection"], a: 0, exp: "@OneToMany avec mappedBy = le côté collection ; hasMany chez Eloquent, related_name chez Django." }
+  ],
+  final: {
+    title: "Exercice final — Le jeu et sa tribu",
+    intro: `<p>Tu enrichis Jeu et Membre avec leurs collections (Locations, Avis), puis tu crées un jeu accompagné de ses premiers avis. Vérifions les réflexes des deux rives.</p>`,
+    questions: [
+      { type: "qcm", q: "Après l'ajout des trois collections (Jeu.Locations, Jeu.Avis, Membre.Locations), la migration générée contient…", opts: ["Trois nouvelles colonnes", "Trois tables de jointure", "Rien : aucune modification de schéma", "Un index unique"], a: 2, exp: "Les collections ne sont qu'une lecture C# des FK déjà présentes côté N." },
+      { type: "vf", q: "HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu) et HasOne(l =&gt; l.Jeu).WithMany(j =&gt; j.Locations) décrivent la même relation.", a: true, exp: "Deux points d'entrée pour une seule phrase — en écrire une seule, jamais les deux." },
+      { type: "qcm", q: "var j = new Jeu { Titre = « Cascadia », Avis = { new Avis { Note = 4, MembreId = 7 } } }; ctx.Jeux.Add(j); ctx.SaveChanges(); — combien d'INSERT ?", opts: ["Un seul", "Deux : le jeu puis l'avis, avec la FK propagée", "Trois", "Zéro"], a: 1, exp: "EF Core insère le principal, récupère son Id, puis insère l'enfant avec ce JeuId." },
+      { type: "qcm", q: "ctx.Jeux.First(j =&gt; j.Id == 5) puis jeu.Avis.Count == 0 : la conclusion correcte est…", opts: ["Le jeu n'a aucun avis en base", "La collection n'est simplement pas chargée : il faudra Include (leçon 12)", "Les avis ont été supprimés", "La FK est cassée"], a: 1, exp: "EF Core ne charge jamais les collections tout seul : vide = pas encore chargée." },
+      { type: "input", q: "Quelle propriété de l'entité Location décide si la relation au Jeu est obligatoire (int) ou facultative (int?) ?", a: ["JeuId", "la FK", "la clé étrangère"], ph: "Nom de la propriété…", exp: "La nullabilité de la FK JeuId pilote le caractère obligatoire ET le comportement de suppression par convention." }
+    ],
+    solution: `<pre class="pseudo">1-N = la MÊME relation que la N-1, vue du côté « un »
+  Jeu.Locations : List&lt;Location&gt; = new()   ← collection de navigation
+  Jeu.Avis, Membre.Locations : idem
+  Base inchangée : la FK JeuId (côté N) matérialise tout
+
+Config (UNE seule fois) :
+  HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu)
+      .HasForeignKey(l =&gt; l.JeuId)      ← FK toujours côté N
+
+Écriture : jeu.Avis.Add(...) → FK déduite au SaveChanges
+           graphe complet (jeu + avis) → INSERT ordonnés
+Remove    : FK int → DELETE orphelin ; FK int? → SET NULL
+Piège     : collection JAMAIS chargée seule → vide ≠ table vide
+Ailleurs  : @OneToMany(mappedBy) (JPA), hasMany (Eloquent),
+            related_name (Django)</pre>
+<p>Références d'un côté, collections de l'autre : les cardinalités classiques sont couvertes. Prochaine leçon : le cas où <em>les deux côtés</em> sont des collections — la relation <strong>N-N</strong> et les catégories de jeux.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l9", title: "La collection vide qui disait la vérité (ou pas)", level: 2,
+    statement: "Un collègue débogue la page « fiche jeu » de la Ludothèque : le jeu 5 s'affiche, mais la section avis est vide alors que SSMS montre 32 avis pour JeuId = 5. Son code : var jeu = ctx.Jeux.First(j => j.Id == 5); puis un foreach sur jeu.Avis. Rédige l'analyse complète : pourquoi la collection est vide sans qu'aucune exception ne soit levée, en quoi l'initialisation « = new() » joue un rôle dans ce silence, ce que ce comportement d'EF Core a de volontaire (compare avec un ORM qui ferait du lazy loading par défaut), et les DEUX pistes de correction que tu entrevois pour la leçon 12. Termine par une règle d'équipe pour ne plus jamais confondre « collection vide » et « pas de données ».",
+    hints: [
+      "Le First ne génère qu'UN SELECT sur la table Jeux : à quel moment les avis auraient-ils pu être lus ?",
+      "Sans « = new() », le foreach aurait planté sur null : le bug aurait-il été plus facile ou plus difficile à repérer ? C'est le paradoxe à discuter.",
+      "Un ORM à lazy loading par défaut (Hibernate, Django) aurait chargé les avis en silence — au prix de quoi ? Pense à la leçon 18 qui arrive (N+1)."
+    ],
+    solution: "1. Pourquoi la collection est vide\nctx.Jeux.First(...) génère UN seul SELECT sur la table Jeux : aucune requête\nne touche la table Avis. EF Core ne charge JAMAIS une navigation sans qu'on\nle lui demande (pas de lazy loading par défaut). jeu.Avis reste donc la List\ncréée par « = new() » : vide, valide, silencieuse.\n\n2. Le rôle ambigu du « = new() »\nSans initialisation, jeu.Avis serait null et le foreach aurait levé une\nNullReferenceException : bug bruyant, détecté immédiatement. Avec new(),\nle code « marche » en affichant zéro avis : bug silencieux, découvert par\nun utilisateur. L'initialisation reste la bonne pratique (écriture de\ngraphes, parcours sûrs), mais elle déplace la vigilance : c'est au moment\nde la REQUÊTE qu'il faut penser au chargement.\n\n3. Un choix volontaire d'EF Core\nHibernate ou Django chargeraient les avis à la première lecture (lazy\nloading) : confortable, mais chaque accès dans une boucle déclenche une\nrequête cachée — le fameux N+1 qu'on disséquera leçon 18. EF Core préfère\nl'explicite : rien ne part en base sans un mot-clé visible dans le code.\n\n4. Deux pistes pour la leçon 12\n- charger la relation avec la requête : ctx.Jeux.Include(j => j.Avis)... ;\n- ou projeter directement ce dont la page a besoin avec un Select\n  (titre + liste des avis), sans charger l'entité complète.\n\n5. Règle d'équipe\n« Une collection de navigation ne dit la vérité que si la requête l'a\nexplicitement chargée. » En revue de code : tout foreach sur une navigation\ndoit pouvoir montrer son Include (ou sa projection) dans la même méthode.",
+    note: "Ce bug silencieux est LE rite de passage de tout débutant EF Core — et son symétrique existe ailleurs : Hibernate lève une LazyInitializationException hors session, Django déclenche des requêtes invisibles. Trois ORM, trois philosophies de chargement ; comprendre celle de ton outil est plus important que la syntaxe. La leçon 12 te donne les mots (Include, ThenInclude), la 18 te donnera les chiffres." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 28</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 28,
+  title: "Sécurité web : mots de passe, XSS, CSRF",
+  subtitle: "Les trois réflexes qui séparent un site amateur d'un site fiable.",
+  theory: `
+<h3>1. Ne JAMAIS stocker un mot de passe en clair</h3>
+<p>Si ta base stocke <code>"azerty123"</code> tel quel et qu'elle fuite, tous les comptes sont compromis. La règle absolue : on ne stocke JAMAIS le mot de passe, mais son <strong>hash</strong>. Un <strong>hachage</strong> transforme un texte en une empreinte illisible et NON réversible. Analogie : passer un fruit au mixeur — on obtient une purée unique, mais on ne peut PAS reconstituer le fruit.</p>
+<pre class="pseudo">\$hash = password_hash(\$motDePasse, PASSWORD_DEFAULT); // transforme le mdp en empreinte sécurisée
+// password_hash ajoute AUTOMATIQUEMENT un « sel » (données aléatoires) : deux mots de passe
+// identiques donnent des hash DIFFÉRENTS → impossible à comparer ou à pré-calculer
+// On stocke \$hash en base (une longue chaîne), JAMAIS le mot de passe lui-même</pre>
+<div class="warn">N'invente jamais ton propre hachage (md5, sha1 = obsolètes et cassables). <code>password_hash</code> avec <code>PASSWORD_DEFAULT</code> utilise l'algorithme recommandé du moment et évolue avec PHP.</div>
+
+<h3>2. Vérifier un mot de passe à la connexion</h3>
+<p>Comme le hash n'est pas réversible, on ne « déchiffre » pas : on re-hache la saisie et on compare via <code>password_verify()</code>.</p>
+<pre class="pseudo">\$stmt = \$pdo->prepare("SELECT hash FROM membres WHERE email = ?"); // requête PRÉPARÉE (anti-injection)
+\$stmt->execute([\$email]);                          // cherche le membre par email
+\$ligne = \$stmt->fetch();                            // récupère la ligne (ou false si inconnu)
+if (\$ligne &amp;&amp; password_verify(\$saisie, \$ligne["hash"])) { // compare la saisie au hash stocké
+    // connexion réussie : le mot de passe correspond
+    session_regenerate_id(true);                    // régénère l'id de session (anti-vol de session)
+    \$_SESSION["membre"] = \$email;                    // marque l'utilisateur comme connecté
+} else {                                            // email inconnu OU mauvais mot de passe
+    echo "Identifiants incorrects";                  // message VOLONTAIREMENT vague
+}                                                   // fin</pre>
+<div class="tip">Un message « email inconnu » vs « mauvais mot de passe » aiderait un attaquant à deviner les comptes existants. On répond toujours la même chose : « Identifiants incorrects ».</div>
+
+<h3>3. XSS : quand la page exécute le poison (rappel + approfondissement)</h3>
+<p>Le <strong>XSS</strong> (Cross-Site Scripting) : un attaquant place du code dans un champ ; si tu réaffiches ce contenu sans le neutraliser, le navigateur l'EXÉCUTE chez les autres visiteurs. Le bouclier : <code>htmlspecialchars()</code> à l'AFFICHAGE (leçon 13), qui transforme les caractères dangereux en entités inoffensives.</p>
+<pre class="pseudo">// Un visiteur malveillant tape ceci dans le champ « pseudo » :
+//   &lt;script&gt;vole_les_cookies()&lt;/script&gt;
+echo htmlspecialchars(\$pseudo, ENT_QUOTES, "UTF-8"); // &lt; devient &amp;lt; , &gt; devient &amp;gt;
+// le navigateur AFFICHE le texte au lieu de l'exécuter : le poison est neutralisé
+// ENT_QUOTES échappe AUSSI les guillemets simples et doubles (utile dans un attribut)</pre>
+<div class="warn">Règle : ÉCHAPPER à la sortie, systématiquement, TOUTE donnée d'origine utilisateur réaffichée — même si elle vient de ta propre base (elle y a été saisie par quelqu'un).</div>
+
+<h3>4. CSRF : la requête forgée à ton insu</h3>
+<p>Le <strong>CSRF</strong> (Cross-Site Request Forgery, « falsification de requête ») : tu es connecté à la Ludothèque ; un site piège te fait, à ton insu, envoyer une requête vers la Ludothèque (ex : « supprime mon compte »). Le navigateur joint tes cookies de session, donc le serveur croit que TU l'as voulu. Analogie : quelqu'un glisse un ordre signé dans ton courrier sortant sans que tu le saches.</p>
+<p>Le bouclier : un <strong>jeton CSRF</strong> (token) — une valeur secrète et aléatoire, mise dans la session ET dans un champ caché du formulaire. Un site piège ne peut pas connaître ce jeton, donc sa requête forgée est rejetée.</p>
+<pre class="pseudo">// À l'affichage du formulaire : on génère un jeton et on le mémorise
+\$_SESSION["csrf"] = bin2hex(random_bytes(32));      // 32 octets aléatoires → jeton imprévisible
+// dans le HTML du formulaire, un champ caché porte ce jeton :
+//   &lt;input type="hidden" name="csrf" value="LE_JETON"&gt;</pre>
+
+<h3>5. Vérifier le jeton à la réception</h3>
+<pre class="pseudo">// Au traitement du formulaire (POST) :
+\$recu   = \$_POST["csrf"] ?? "";                     // le jeton renvoyé par le formulaire
+\$attendu = \$_SESSION["csrf"] ?? "";                 // le jeton mémorisé côté serveur
+if (!hash_equals(\$attendu, \$recu)) {                // compare de façon SÛRE (résistante au timing)
+    http_response_code(403);                         // interdit : jeton absent ou faux
+    die("Requête refusée (CSRF)");                    // on stoppe : requête probablement forgée
+}                                                   // sinon, la requête est légitime → on traite</pre>
+<p><code>hash_equals()</code> compare deux chaînes en temps CONSTANT (il ne s'arrête pas au premier caractère différent), ce qui empêche une attaque fine par mesure du temps de réponse. On l'utilise dès qu'on compare un secret.</p>
+
+<h3>6. La défense en profondeur : empiler les boucliers</h3>
+<pre class="pseudo">// Le parcours complet d'une donnée, du formulaire à la page :
+// 1. VALIDER l'entrée            → filter_var, cast, encadrements (leçon 13)
+// 2. Requête PRÉPARÉE en base    → anti-injection SQL (leçon 19)
+// 3. HACHER les mots de passe    → password_hash / password_verify
+// 4. Jeton CSRF sur les formulaires qui MODIFIENT → anti-requête forgée
+// 5. ÉCHAPPER à l'affichage      → htmlspecialchars (anti-XSS)
+// 6. HTTPS + cookies de session sécurisés → chiffrer le transport</pre>
+<div class="tip">Aucun bouclier seul ne suffit : la sécurité est un EMPILEMENT (défense en profondeur). Chaque couche protège d'une menace précise ; ensemble, elles rendent l'attaque très coûteuse. Ces réflexes te suivront toute ta carrière.</div>`,
+  exercises: [
+    { type: "qcm", q: "Comment stocker un mot de passe en base ?", opts: ["En clair", "Son HASH via password_hash : une empreinte NON réversible, jamais le mot de passe lui-même", "En md5", "Chiffré avec une clé partagée"], a: 1, exp: "Si la base fuite, les hash ne révèlent pas les mots de passe." },
+    { type: "qcm", q: "Un hachage est…", opts: ["Réversible", "Une transformation NON réversible : on ne peut pas retrouver le texte d'origine (comme un fruit passé au mixeur)", "Un chiffrement", "Un tri"], a: 1, exp: "D'où l'usage de password_verify au lieu de « déchiffrer »." },
+    { type: "qcm", q: "Le « sel » ajouté par password_hash…", opts: ["Ralentit le site", "Est une donnée aléatoire qui rend deux hash DIFFÉRENTS pour un même mot de passe : empêche les tables pré-calculées", "Chiffre la base", "Est le mot de passe"], a: 1, exp: "password_hash gère le sel automatiquement." },
+    { type: "qcm", q: "Faut-il utiliser md5 ou sha1 pour les mots de passe ?", opts: ["Oui", "NON : obsolètes et cassables ; utiliser password_hash avec PASSWORD_DEFAULT", "sha1 seulement", "md5 si HTTPS"], a: 1, exp: "PASSWORD_DEFAULT suit l'algorithme recommandé du moment." },
+    { type: "qcm", q: "Pour vérifier un mot de passe à la connexion, on utilise…", opts: ["== avec le hash", "password_verify($saisie, $hashStocké), car le hash n'est pas réversible", "password_hash à nouveau et ==", "un LIKE SQL"], a: 1, exp: "verify re-hache la saisie et compare de façon sûre." },
+    { type: "qcm", q: "Pourquoi un message « Identifiants incorrects » plutôt que « email inconnu » ?", opts: ["Plus court", "Pour ne pas RÉVÉLER quels emails existent : un message vague gêne l'attaquant", "Par style", "Sans raison"], a: 1, exp: "On évite de divulguer l'existence d'un compte." },
+    { type: "qcm", q: "Le XSS consiste à…", opts: ["Voler la base", "Injecter du code (souvent JS) dans un champ, exécuté chez les autres visiteurs si on réaffiche sans neutraliser", "Saturer le serveur", "Modifier le CSS"], a: 1, exp: "Le poison vise le navigateur des visiteurs." },
+    { type: "qcm", q: "Le bouclier anti-XSS est…", opts: ["Requête préparée", "htmlspecialchars() à l'AFFICHAGE : les caractères dangereux deviennent des entités inoffensives", "password_hash", "un cookie"], a: 1, exp: "On échappe en SORTANT vers le HTML." },
+    { type: "qcm", q: "Quand échapper une donnée avec htmlspecialchars ?", opts: ["Jamais", "À CHAQUE réaffichage d'une donnée utilisateur, MÊME si elle vient de ta base (elle y a été saisie)", "Seulement les formulaires", "Une fois par session"], a: 1, exp: "Toute donnée d'origine utilisateur réaffichée est suspecte." },
+    { type: "qcm", q: "Le CSRF consiste à…", opts: ["Injecter du SQL", "Faire envoyer, à ton insu, une requête vers un site où tu es connecté (tes cookies sont joints automatiquement)", "Voler un mot de passe", "Afficher du script"], a: 1, exp: "Une requête « forgée » que le serveur croit légitime." },
+    { type: "qcm", q: "Le bouclier anti-CSRF est…", opts: ["htmlspecialchars", "un JETON secret et aléatoire dans la session ET un champ caché du formulaire, vérifié à la réception", "password_hash", "un GET"], a: 1, exp: "Un site piège ne peut pas connaître ce jeton." },
+    { type: "qcm", q: "On génère un jeton CSRF avec…", opts: ["rand()", "bin2hex(random_bytes(32)) : des octets aléatoires imprévisibles", "time()", "le mot de passe"], a: 1, exp: "random_bytes fournit de l'aléa cryptographique." },
+    { type: "qcm", q: "Pourquoi comparer les jetons avec <code>hash_equals</code> et non <code>==</code> ?", opts: ["Plus lisible", "hash_equals compare en temps CONSTANT : il résiste aux attaques par mesure du temps de réponse", "C'est plus rapide", "== ne marche pas sur les chaînes"], a: 1, exp: "On utilise hash_equals dès qu'on compare un secret." },
+    { type: "qcm", q: "La « défense en profondeur » signifie…", opts: ["Un seul bon bouclier", "EMPILER plusieurs protections (validation, préparation, hachage, CSRF, échappement, HTTPS), chacune contre une menace précise", "Chiffrer deux fois", "Cacher le code source"], a: 1, exp: "Aucune couche seule ne suffit ; ensemble elles rendent l'attaque coûteuse." },
+    { type: "vf", q: "On échappe (htmlspecialchars) à l'AFFICHAGE contre le XSS, et on prépare les requêtes contre l'injection SQL : deux failles, deux boucliers distincts.", a: true, exp: "Chaque menace a son réflexe ; ils ne sont jamais interchangeables." }
+  ],
+  final: {
+    title: "Exercice final — Inscription et connexion sécurisées",
+    intro: `<p>La Ludothèque gère ses comptes avec les trois réflexes : hachage, CSRF, échappement.</p>
+<pre class="pseudo">// --- INSCRIPTION (traitement du POST) ---
+if (!hash_equals(\$_SESSION["csrf"] ?? "", \$_POST["csrf"] ?? "")) { // (1) contrôle du jeton CSRF
+    http_response_code(403); die("Requête refusée");                // jeton absent/faux → stop
+}                                                                   // fin contrôle CSRF
+\$email = filter_var(\$_POST["email"] ?? "", FILTER_VALIDATE_EMAIL);  // (2) validation de l'email
+\$hash  = password_hash(\$_POST["mdp"] ?? "", PASSWORD_DEFAULT);      // (3) hachage du mot de passe
+\$stmt = \$pdo->prepare("INSERT INTO membres (email, hash) VALUES (?, ?)"); // requête PRÉPARÉE
+\$stmt->execute([\$email, \$hash]);                                    // on stocke le HASH, jamais le mdp
+
+// --- CONNEXION (traitement du POST) ---
+\$stmt = \$pdo->prepare("SELECT hash FROM membres WHERE email = ?");  // cherche par email (préparée)
+\$stmt->execute([\$_POST["email"] ?? ""]);                            // exécute
+\$ligne = \$stmt->fetch();                                            // ligne ou false
+if (\$ligne &amp;&amp; password_verify(\$_POST["mdp"] ?? "", \$ligne["hash"])) { // (4) vérifie le mdp
+    session_regenerate_id(true);                                    // anti-vol de session
+    \$_SESSION["connecte"] = true;                                    // marque la connexion
+    echo "Bienvenue, " . htmlspecialchars(\$_POST["email"]);          // (5) affichage ÉCHAPPÉ
+} else {                                                            // échec
+    echo "Identifiants incorrects";                                  // message volontairement vague
+}                                                                   // fin</pre>`,
+    questions: [
+      { type: "qcm", q: "(1) Pourquoi vérifier le jeton CSRF avant toute action ?", opts: ["Pour la vitesse", "Pour s'assurer que la requête vient bien de NOTRE formulaire et non d'un site piège qui l'aurait forgée", "Pour valider l'email", "C'est optionnel"], a: 1, exp: "Le jeton, secret, prouve l'origine légitime de la requête." },
+      { type: "qcm", q: "(3) Que stocke-t-on réellement en base ?", opts: ["Le mot de passe en clair", "Le HASH produit par password_hash : une empreinte non réversible, jamais le mot de passe", "Le mot de passe en md5", "Rien"], a: 1, exp: "Une fuite de base ne révèle alors pas les mots de passe." },
+      { type: "qcm", q: "(4) Pourquoi <code>password_verify</code> et non une comparaison directe ?", opts: ["Habitude", "Le hash n'est pas réversible : verify re-hache la saisie (avec le bon sel) et compare de façon sûre", "C'est plus rapide", "Pour l'afficher"], a: 1, exp: "On ne « déchiffre » jamais un hash ; on vérifie." },
+      { type: "qcm", q: "(5) Pourquoi <code>htmlspecialchars</code> sur l'email au moment de l'afficher ?", opts: ["Inutile, c'est un email", "Parce que c'est une donnée utilisateur : l'échapper à l'affichage neutralise un éventuel XSS", "Pour valider", "Pour le hacher"], a: 1, exp: "Échapper à la sortie, systématiquement." },
+      { type: "qcm", q: "Combien de boucliers distincts apparaissent dans ce script ?", opts: ["Un seul", "Plusieurs : CSRF (jeton), validation (filter_var), requêtes préparées, hachage (password_hash/verify), échappement (htmlspecialchars), régénération de session — la défense en profondeur", "Deux", "Aucun"], a: 1, exp: "Chaque couche contre une menace précise : l'empilement fait la robustesse." }
+    ],
+    solution: `<pre class="pseudo">// Générer le jeton à l'AFFICHAGE du formulaire :
+\$_SESSION["csrf"] = bin2hex(random_bytes(32));       // jeton aléatoire imprévisible
+// puis dans le HTML : un champ caché
+//   &lt;input type="hidden" name="csrf" value="..."&gt;   // renvoyé avec le formulaire
+
+// Les 3 réflexes de cette leçon, réunis :
+// · MOTS DE PASSE : password_hash pour stocker, password_verify pour vérifier   // jamais en clair
+// · XSS : htmlspecialchars à CHAQUE affichage de donnée utilisateur             // échapper à la sortie
+// · CSRF : jeton en session + champ caché, comparé avec hash_equals            // prouver l'origine
+
+// Et l'empilement complet (défense en profondeur) :
+// valider → préparer → hacher → jeton CSRF → échapper → HTTPS
+// Chaque couche bloque une attaque précise ; ensemble, elles font un site fiable.</pre>
+<p>Tu maîtrises les trois réflexes de sécurité qui distinguent un vrai professionnel. Demain, dernier approfondissement : prouver que ton code marche avec les tests unitaires (PHPUnit).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code PHP ici…",
+  items: [
+  { id: "php-securite", title: "Inscrire un membre avec mot de passe haché", level: 3,
+    statement: "Écris une fonction <code>inscrire(PDO $pdo, string $email, string $mdp): bool</code> qui : valide l'email, refuse un mot de passe de moins de 8 caractères, <strong>hache</strong> le mot de passe et l'enregistre avec une requête <strong>préparée</strong>. Elle renvoie <code>true</code> en cas de succès.",
+    hints: [
+      "Valide l'email : if (!filter_var($email, FILTER_VALIDATE_EMAIL)) return false;",
+      "Refuse un mot de passe trop court : if (strlen($mdp) < 8) return false;",
+      "Hache et insère : $hash = password_hash($mdp, PASSWORD_DEFAULT); puis un INSERT préparé avec [$email, $hash]. Ne stocke JAMAIS $mdp directement."
+    ],
+    solution: "<?php                                          // ouverture PHP\nfunction inscrire(PDO $pdo, string $email, string $mdp): bool { // inscrit un membre en sécurité\n    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { // valide le format de l'email\n        return false;                           // email invalide → on refuse\n    }                                          // fin du test email\n    if (strlen($mdp) < 8) {                     // exige un mot de passe d'au moins 8 caractères\n        return false;                           // trop court → on refuse\n    }                                          // fin du test longueur\n    $hash = password_hash($mdp, PASSWORD_DEFAULT); // HACHE le mot de passe (empreinte non réversible)\n    try {                                       // l'insertion peut échouer (email déjà pris...)\n        $stmt = $pdo->prepare(\"INSERT INTO membres (email, hash) VALUES (?, ?)\"); // requête PRÉPARÉE\n        $stmt->execute([$email, $hash]);        // on stocke le HASH, JAMAIS $mdp en clair\n        return true;                            // succès\n    } catch (PDOException $e) {                  // en cas d'erreur base\n        error_log($e->getMessage());             // détail dans le journal (pas à l'écran)\n        return false;                           // échec propre\n    }                                          // fin try/catch\n}                                              // fin de la fonction\n\n// $ok = inscrire($pdo, \"lea@exemple.fr\", \"motdepasse42\"); // exemple d'appel\n?>",
+    note: "Trois réflexes en une fonction : valider l'entrée (filter_var + longueur), hacher le mot de passe (password_hash, jamais en clair) et écrire via une requête préparée (anti-injection SQL)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

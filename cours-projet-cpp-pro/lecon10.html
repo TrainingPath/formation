@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Autorisation par rôle et par ressource (anti-IDOR)",
+  subtitle: "Vérifier non seulement « as-tu le bon rôle ? » mais « cette ressource est-elle bien la tienne ? ».",
+  theory: `
+<h3>1. Deux niveaux d'autorisation</h3>
+<p>L'<strong>autorisation</strong> répond à la question « as-tu le droit de faire ça ? » (à ne pas confondre avec l'authentification de la leçon 9, qui répond à « qui es-tu ? »). Autoriser, ce n'est pas seulement contrôler le <strong>rôle</strong> (« un vendeur peut gérer le stock »), c'est aussi contrôler la <strong>ressource</strong> (« ce client ne peut voir que SES locations »). Une ressource est une donnée précise manipulée par l'application (une location, un achat…). Oublier ce second niveau, c'est ouvrir la faille <strong>IDOR</strong>.</p>
+
+<h3>2. Qu'est-ce qu'une IDOR ?</h3>
+<div class="warn"><strong>IDOR</strong> (<em>Insecure Direct Object Reference</em>, « référence directe à un objet non sécurisée ») : l'application accepte un identifiant fourni par l'utilisateur pour accéder à un objet, sans vérifier que cet objet lui appartient. Exemple : <code>voirLocation(id)</code> où un client passe l'<code>id</code> d'un autre client et lit ainsi ses données. La parade : filtrer sur l'<strong>identité de session</strong> (l'identité prouvée lors de la connexion), et non sur un id fourni dans la requête.</div>
+
+<h3>3. Gardes de rôle centralisés</h3>
+<p>Une <strong>garde</strong> est une petite fonction qui répond par oui/non à « cet utilisateur a-t-il le droit ? ». On les centralise pour n'écrire chaque règle qu'une seule fois.</p>
+<pre class="pseudo">bool peutGererStock(const Utilisateur&amp; u) {                 // ce role peut-il gerer le stock ?
+    return u.role() == Role::Vendeur || u.role() == Role::Admin; // vrai si Vendeur OU Admin (|| = OU)
+}                                                          // fin de la garde
+bool peutAdministrer(const Utilisateur&amp; u) { return u.role() == Role::Admin; } // seul l'Admin peut administrer</pre>
+
+<h3>4. Filtrer sur l'identité, pas sur la saisie</h3>
+<p><code>std::vector&lt;Location&gt;</code> est une <strong>liste</strong> d'objets Location (un <code>vector</code> = une liste redimensionnable, comme une étagère qui s'allonge selon les besoins). Ici on renvoie la liste des locations de l'utilisateur.</p>
+<pre class="pseudo">std::vector&lt;Location&gt; LocationService::mesLocations(          // renvoie la liste des locations de l'utilisateur u
+        const Utilisateur&amp; u, sql::Connection&amp; con) {        // recoit l'utilisateur authentifie et la connexion
+    std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement( // requete preparee a trou
+        "SELECT * FROM location WHERE utilisateur_id = ?"));  // ne prendre que les lignes de cet utilisateur (? = son id)
+    p-&gt;setInt(1, u.id());          // remplir le ? avec u.id() : l'id vient de la SESSION, jamais de la saisie
+    std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery());   // executer ; r possede les lignes trouvees
+    return mapperLocations(r.get());  // transformer les lignes en objets Location et renvoyer la liste
+}                                     // fin de la fonction</pre>
+<div class="tip">On ne demande jamais au client « quel id veux-tu voir ? ». L'id provient de l'<code>Utilisateur</code> authentifié. Un admin, lui, peut disposer d'une méthode distincte qui voit tout — mais explicitement autorisée.</div>
+
+<h3>5. Défense en profondeur</h3>
+<p>Rôle vérifié dans le service (leçon précédente), ressource filtrée par l'identité, requêtes préparées, et menus adaptés côté UI : plusieurs barrières se cumulent. Si l'une est contournée, les autres tiennent encore. C'est le principe de <strong>défense en profondeur</strong> : ne jamais compter sur une seule protection, comme un château fort qui possède à la fois des douves, des remparts ET des portes.</p>
+`,
+  exercises: [
+    { type: "qcm", q: "Autoriser, c'est contrôler…", opts: ["le rôle seulement", "le rôle ET la ressource (propriété)", "la vitesse", "l'affichage"], a: 1, exp: "Deux niveaux." },
+    { type: "qcm", q: "Une IDOR, c'est…", opts: ["une injection SQL", "accéder à l'objet d'autrui via un id fourni non vérifié", "une fuite mémoire", "un log"], a: 1, exp: "Référence directe non sécurisée." },
+    { type: "qcm", q: "La parade à l'IDOR :", opts: ["chiffrer l'id", "filtrer sur l'identité de session, pas sur l'id fourni", "cacher le bouton", "logger"], a: 1, exp: "u.id()." },
+    { type: "qcm", q: "mesLocations filtre par…", opts: ["un id de saisie", "u.id() (session)", "le rôle seul", "rien"], a: 1, exp: "Identité authentifiée." },
+    { type: "qcm", q: "Demande-t-on au client quel id voir ?", opts: ["oui", "non : l'id vient de la session", "parfois", "toujours"], a: 1, exp: "Jamais la saisie." },
+    { type: "qcm", q: "peutGererStock autorise…", opts: ["le client", "vendeur et admin", "tout le monde", "personne"], a: 1, exp: "Rôle." },
+    { type: "qcm", q: "Un admin qui voit tout doit…", opts: ["contourner les règles", "avoir une méthode distincte explicitement autorisée", "utiliser mesLocations", "être un client"], a: 1, exp: "Autorisation explicite." },
+    { type: "qcm", q: "La défense en profondeur, c'est…", opts: ["une seule barrière", "plusieurs barrières cumulées", "aucune", "le chiffrement seul"], a: 1, exp: "Redondance." },
+    { type: "qcm", q: "Le contrôle de ressource se fait…", opts: ["dans l'UI seule", "dans le service, par filtrage sur l'identité", "au compile", "jamais"], a: 1, exp: "Côté serveur." },
+    { type: "qcm", q: "Un client passant l'id d'un autre voit…", opts: ["ses données", "rien (filtré sur u.id())", "tout", "le hash"], a: 1, exp: "IDOR bloquée." },
+    { type: "vf", q: "Vérifier seulement le rôle suffit à empêcher un client de lire les locations d'un autre client.", a: false, exp: "Faux : même rôle, ressource différente → filtrer sur l'identité." },
+    { type: "qcm", q: "L'id de session provient…", opts: ["de la saisie", "de l'Utilisateur authentifié", "de l'URL brute", "d'un fichier"], a: 1, exp: "Confiance = session." },
+    { type: "qcm", q: "Les requêtes restent…", opts: ["concaténées", "préparées (setInt lié)", "sans contrôle", "affichées"], a: 1, exp: "Anti-injection aussi." },
+    { type: "qcm", q: "Si une barrière est contournée…", opts: ["tout tombe", "les autres tiennent (défense en profondeur)", "rien ne change", "on logge le mdp"], a: 1, exp: "Redondance utile." },
+    { type: "qcm", q: "IDOR signifie…", opts: ["Injection Directe", "Insecure Direct Object Reference", "Interface DOM", "rien"], a: 1, exp: "Référence directe non sécurisée." }
+  ],
+  final: {
+    title: "Exercice final — Colmater une IDOR",
+    intro: `<p>Un endpoint console (point d'entrée de l'application) lit une location par id :</p>
+<pre class="pseudo">Location voir(sql::Connection&amp; con, int locationId) {       // lit une location d'apres un id
+    return LocationRepository::findById(con, locationId);   // DANGER : locationId vient du client, aucun controle de proprietaire -> IDOR
+}                                                          // fin : n'importe qui peut lire la location d'autrui</pre>
+`,
+    questions: [
+      { type: "qcm", q: "La faille :", opts: ["aucune", "IDOR : un client peut passer l'id d'une location d'autrui", "trop lent", "trop long"], a: 1, exp: "Pas de contrôle de propriété." },
+      { type: "qcm", q: "La correction :", opts: ["chiffrer l'id", "vérifier que la location appartient à u (filtrer sur u.id())", "cacher le menu", "logger"], a: 1, exp: "Propriété vérifiée." },
+      { type: "qcm", q: "L'identité vient…", opts: ["de locationId", "de l'Utilisateur authentifié (u.id())", "de l'UI", "d'un fichier"], a: 1, exp: "Session." },
+      { type: "qcm", q: "Si la location n'est pas la sienne, on…", opts: ["la renvoie", "refuse (AccesRefuse) ou ne renvoie rien", "affiche le hash", "commit"], a: 1, exp: "Accès refusé." },
+      { type: "qcm", q: "Un admin légitime…", opts: ["utilise ce même code", "passe par une méthode admin explicitement autorisée", "n'a aucun accès", "contourne tout"], a: 1, exp: "Autorisation explicite." }
+    ],
+    solution: `<pre class="pseudo">Location LocationService::voir(const Utilisateur&amp; u,           // version securisee : recoit l'utilisateur authentifie
+                              sql::Connection&amp; con, int locationId) { // la connexion et l'id demande
+    std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement( // requete preparee a deux trous
+        "SELECT * FROM location WHERE id = ? AND utilisateur_id = ?")); // la location doit avoir cet id ET appartenir a u
+    p-&gt;setInt(1, locationId);                   // 1er ? : l'id de location demande
+    p-&gt;setInt(2, u.id());                       // 2e ? : l'id de l'utilisateur (la ressource DOIT etre la sienne)
+    std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery()); // executer ; r possede le resultat
+    if (!r-&gt;next()) throw AccesRefuse("Location introuvable ou non autorisee"); // aucune ligne -> refuser l'acces
+    return mapper(r.get());                     // sinon : la location est bien la sienne, la renvoyer
+}                                               // fin de la fonction</pre>
+<p>La requête filtre sur <code>utilisateur_id = u.id()</code> : impossible de lire la ressource d'un autre. IDOR colmatée par le filtrage sur l'identité. Demain : louer un jeu — transaction et test d'intégration.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpppro-l10", title: "Un accès filtré sur l'identité", level: 3,
+    statement: "Écris LocationService::mesLocations(const Utilisateur& u, sql::Connection& con) qui renvoie un std::vector<Location> ne contenant QUE les locations de u : requête préparée WHERE utilisateur_id = ? liée à u.id(). Suppose mapperLocations(res) disponible.",
+    hints: [
+      "prepareStatement(\"SELECT * FROM location WHERE utilisateur_id = ?\").",
+      "setInt(1, u.id()) — jamais un id fourni par la saisie.",
+      "Retourne mapperLocations(r.get())."
+    ],
+    solution: "std::vector<Location> LocationService::mesLocations(     // renvoie les locations de l'utilisateur u\n        const Utilisateur& u, sql::Connection& con) {    // recoit l'utilisateur authentifie et la connexion\n    std::unique_ptr<sql::PreparedStatement> p(con.prepareStatement( // requete preparee a trou\n        \"SELECT id, utilisateur_id, jeu_id, jours, date_debut \" // colonnes demandees (1/2)\n        \"FROM location WHERE utilisateur_id = ?\"));      // ...table et filtre WHERE utilisateur_id = ?\n    p->setInt(1, u.id());          // remplir le ? avec u.id() : l'id vient de la SESSION, pas de la saisie\n    std::unique_ptr<sql::ResultSet> r(p->executeQuery()); // executer ; r possede les lignes trouvees\n    return mapperLocations(r.get());  // transformer les lignes en objets Location et renvoyer la liste\n}                                     // fin de la fonction",
+    note: "La clé anti-IDOR : l'identifiant de filtrage provient de l'utilisateur authentifié (u.id()), jamais d'une valeur fournie par le client. Ainsi, aucun utilisateur ne peut lire les locations d'un autre, même en manipulant les entrées. Combinée aux gardes de rôle et aux requêtes préparées, cette règle réalise la défense en profondeur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

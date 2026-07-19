@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Versionner son API sans casser les clients",
+  subtitle: "Le champ « prix » doit devenir « prix_location »… et l'app mobile 1.0 est déjà dans mille poches.",
+  theory: `
+<h3>1. Le jour où tout casse</h3>
+<p><strong>Versionner</strong> une API, c'est lui donner des numéros de version (v1, v2…) pour la faire évoluer sans casser ceux qui l'utilisent déjà. Pourquoi est-ce nécessaire ? L'équipe décide de renommer un champ pour plus de clarté. Innocent, non ?</p>
+<pre class="pseudo">Aujourd'hui  GET /jeux/5 → { "id": 5, "titre": "Catan", "prix": 3.50 }          # version actuelle : le champ s'appelle "prix"
+Demain       GET /jeux/5 → { "id": 5, "titre": "Catan", "prix_location": 3.50 } # après renommage : "prix" devient "prix_location"
+                                                                               # (ligne vide)
+→ l'app mobile lit jeu.prix … qui n'existe plus → écran cassé                   # le client cherche "prix" : absent → valeur vide → bug
+→ et tu ne peux PAS forcer mille téléphones à se mettre à jour ce soir          # les clients déjà installés ne se mettent pas à jour à la demande</pre>
+<p>Un endpoint publié est une <strong>promesse</strong> (leçon 8) — et tes clients ne se déploient pas en même temps que toi : app mobile en attente de validation sur les stores, partenaires qui migrent quand ils peuvent, vieux front encore en cache. Versionner, c'est faire <strong>évoluer le contrat sans renier la promesse</strong> : l'ancien monde continue de fonctionner pendant que le nouveau s'installe.</p>
+
+<h3>2. Cassant ou compatible ?</h3>
+<p>Première compétence : diagnostiquer un changement. Un changement <strong>cassant</strong> (en anglais <em>breaking</em>) casse les clients qui utilisent l'ancien contrat ; un changement <strong>compatible</strong> (ou <em>additif</em>) n'ajoute que du nouveau, sans rien briser. Tout part de là.</p>
+<pre class="pseudo">CASSANT (breaking) → exige une nouvelle version                                # « breaking » = casse les clients existants
+  renommer ou supprimer un champ         "prix" → "prix_location"              # le client ne trouve plus le champ attendu
+  changer un type                        3.50 (nombre) → "3,50 €" (chaîne)     # les calculs du client explosent
+  rendre obligatoire un champ optionnel  le POST des anciens clients → 422     # leurs anciennes requêtes deviennent invalides
+  changer une URL, un code de statut, le mécanisme d'auth                      # toute rupture du contrat déjà publié
+                                                                              # (ligne vide)
+COMPATIBLE (additif) → aucune nouvelle version nécessaire                      # « additif » = on AJOUTE sans rien casser
+  ajouter un champ optionnel à une réponse    "editeur": "Kosmos"             # un client tolérant l'ignore s'il ne le connaît pas
+  ajouter un endpoint                          GET /jeux/5/statistiques       # nouvelle route : personne ne l'utilisait avant
+  accepter un nouveau paramètre optionnel      ?tri=editeur                   # une option en plus, sans obligation</pre>
+<p>Les changements additifs supposent des clients <strong>« lecteurs tolérants »</strong> : un client bien écrit ignore les champs qu'il ne connaît pas au lieu de planter. C'est la moitié client du contrat — documente-la. Corollaire précieux : la plupart des évolutions d'une API sont additives et ne coûtent <em>rien</em>.</p>
+
+<h3>3. La version dans l'URL : /v1/</h3>
+<p>Quand le cassant est inévitable, la stratégie la plus répandue met la version <strong>majeure</strong> (le grand numéro : 1, 2, 3…) dans le chemin :</p>
+<pre class="pseudo">GET /v1/jeux/5   → { "prix": 3.50 }            (les anciens clients respirent)   # /v1 garde l'ANCIEN contrat, inchangé
+GET /v2/jeux/5   → { "prix_location": 3.50 }   (les nouveaux migrent)            # /v2 sert le NOUVEAU contrat</pre>
+<p>Avantages : la version est <strong>visible</strong>, copiable, testable dans curl et le navigateur, simple à mettre en cache et à router. On ne met que la version majeure — <code>/v1</code>, <code>/v2</code>, jamais <code>/v1.3</code> : les évolutions compatibles enrichissent la version en place sans cérémonie. C'est le choix de la Ludothèque, et celui de la majorité des API publiques.</p>
+
+<h3>4. L'alternative : la version dans un en-tête</h3>
+<pre class="pseudo">GET /jeux/5 HTTP/1.1                                                            # même URL, SANS numéro de version dedans
+Accept: application/vnd.ludotheque.v2+json    (négociation de contenu)         # la version voulue est demandée dans l'en-tête Accept
+                                                                              # (ligne vide)
+ou, variante plus simple :                                                    # autre possibilité, plus lisible…
+X-API-Version: 2                                                              # …un en-tête « maison » qui donne juste le numéro</pre>
+<p>La <strong>négociation de contenu</strong> est le mécanisme par lequel le client précise, via l'en-tête <code>Accept</code>, la forme de réponse qu'il souhaite. L'argument puriste : l'URL identifie la <em>ressource</em>, et le jeu 5 reste le même jeu — la version est une affaire de <em>représentation</em>, donc d'en-tête (comme <code>Accept</code>, leçon 2). Contrepartie : invisible dans l'URL, plus difficile à tester à la main, à partager et à mettre en cache. Les deux écoles sont défendables ; le vrai péché serait d'en mélanger deux. Choisis, documente, tiens-toi-y.</p>
+
+<h3>5. Déprécier proprement (et les frameworks)</h3>
+<p>Une v2 qui naît, c'est une v1 qui devra mourir — mais pas par surprise. <strong>Déprécier</strong>, c'est annoncer officiellement qu'une version est vouée à disparaître et laisser le temps aux clients de migrer :</p>
+<pre class="pseudo">1. ANNONCER   changelog, email aux partenaires : « /v1 fermera le 01/11/2026 »  # prévenir LONGTEMPS à l'avance (changelog = journal des changements)
+2. MARQUER    les réponses de /v1 portent désormais :                           # ajouter des en-têtes d'avertissement…
+              Deprecation: true                                                 # …« cette version est dépréciée (à abandonner) »…
+              Sunset: Sun, 01 Nov 2026 00:00:00 GMT                             # …« date de fermeture définitive » (sunset = coucher de soleil)
+3. OBSERVER   les logs : QUI appelle encore /v1 ? les relancer un à un          # repérer les retardataires et les contacter
+4. COUPER     à la date annoncée → 410 Gone (« a existé, n'existe plus »)        # fermeture nette, avec un code sans ambiguïté</pre>
+<p>Côté code, le routage par version est trivial : DRF propose <code>URLPathVersioning</code> (la vue lit <code>request.version</code> pour adapter le serializer) ; Spring préfixe ses mappings (<code>@RequestMapping("/v1")</code>), Laravel groupe avec <code>Route::prefix("v1")</code>, ASP.NET Core a la bibliothèque <code>Asp.Versioning</code>. La difficulté n'est jamais technique : c'est la discipline du calendrier.</p>
+<div class="warn">Chaque version vivante est une API de plus à maintenir, tester, documenter et sécuriser. La v2 n'est pas un rangement de printemps : ne la crée que pour du cassant <strong>inévitable</strong>, et range tout l'additif dans la version en place.</div>
+<div class="tip">Mets <code>/v1/</code> dans tes URLs dès le PREMIER jour, même sans le moindre projet de v2 : le jour du premier changement cassant, tes clients auront déjà une adresse versionnée — aucune migration d'URL à improviser.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi ne peut-on pas simplement renommer « prix » et prévenir tout le monde ?", opts: ["Parce que JSON interdit de renommer", "Parce que des clients qu'on ne contrôle pas (app mobile, partenaires) utilisent encore l'ancien contrat", "Parce que le serveur garderait l'ancien nom en cache", "Parce que c'est payant"], a: 1, exp: "Mille téléphones ne se mettent pas à jour le soir même : l'ancien monde doit continuer à fonctionner." },
+    { type: "qcm", q: "Renommer « prix » en « prix_location » est un changement…", opts: ["Compatible : le sens est le même", "Cassant : les clients lisent un champ qui n'existe plus", "Neutre si on prévient par email", "Interdit par HTTP"], a: 1, exp: "jeu.prix devient undefined chez tous les clients existants." },
+    { type: "qcm", q: "Ajouter un champ optionnel « editeur » aux réponses de /jeux est…", opts: ["Cassant : il faut une v2", "Compatible : aucun client existant ne casse", "Cassant seulement le week-end", "Impossible sans redémarrer"], a: 1, exp: "Un lecteur tolérant ignore les champs inconnus : l'additif est gratuit." },
+    { type: "qcm", q: "Changer 3.50 (nombre) en « 3,50 € » (chaîne) est…", opts: ["Compatible : la valeur est la même", "Un simple détail d'affichage", "Cassant : le TYPE change, les calculs des clients explosent", "Recommandé par la RFC 7807"], a: 2, exp: "jeu.prix * 4 ne veut plus rien dire : changer un type casse le contrat." },
+    { type: "qcm", q: "Le principal avantage de /v1/ dans l'URL :", opts: ["C'est plus court", "La version est visible, copiable et testable dans curl comme dans le navigateur", "Ça chiffre la requête", "Ça évite d'écrire de la doc"], a: 1, exp: "Et le routage comme le cache restent simples — d'où sa popularité." },
+    { type: "qcm", q: "L'argument des partisans de la version par en-tête (Accept: …vnd.ludotheque.v2+json) :", opts: ["C'est plus rapide", "L'URL identifie la ressource ; la version est une affaire de représentation", "Les URLs sont limitées à 20 caractères", "Les en-têtes sont chiffrés"], a: 1, exp: "Le jeu 5 reste le même jeu : seule sa représentation change — c'est l'école puriste." },
+    { type: "qcm", q: "Dans l'URL, on met…", opts: ["La version majeure seulement : /v1, /v2", "Le numéro complet : /v1.3.7", "La date du déploiement", "Le nom du développeur"], a: 0, exp: "Les évolutions compatibles enrichissent la version en place, sans nouveau préfixe." },
+    { type: "qcm", q: "L'en-tête Sunset sur les réponses de /v1 annonce…", opts: ["L'heure de la sauvegarde", "La date à laquelle /v1 cessera d'exister", "La fin de la journée de travail", "L'expiration du token"], a: 1, exp: "Avec Deprecation: true, il prévient machinalement chaque client encore accroché à /v1." },
+    { type: "qcm", q: "Après la coupure définitive, GET /v1/jeux devrait renvoyer…", opts: ["200 avec les données v2", "500", "410 Gone", "204"], a: 2, exp: "« A existé, n'existe plus » — plus honnête qu'un 404 qui laisserait croire à une faute de frappe." },
+    { type: "qcm", q: "En Django REST Framework, la version dans le chemin se gère avec…", opts: ["URLPathVersioning (et request.version dans la vue)", "DEBUG = False", "filterset_fields", "un cookie"], a: 0, exp: "Équivalents : @RequestMapping(\"/v1\") en Spring, Route::prefix en Laravel, Asp.Versioning en ASP.NET." },
+    { type: "vf", q: "Chaque ajout de champ optionnel exige d'incrémenter la version de l'API.", a: false, exp: "L'additif est compatible : il enrichit la version en place. La v2 est réservée au cassant." },
+    { type: "vf", q: "Un client « lecteur tolérant » ignore les champs qu'il ne connaît pas au lieu de planter.", a: true, exp: "C'est la moitié client du contrat : elle rend les évolutions additives indolores." },
+    { type: "vf", q: "Dès que /v2 est en ligne, on peut couper /v1 le lendemain.", a: false, exp: "Annoncer, marquer (Deprecation/Sunset), observer les logs, PUIS couper à la date promise." },
+    { type: "input", q: "L'en-tête de réponse qui annonce la date de retrait d'une version dépréciée :", a: ["Sunset", "sunset"], ph: "Nom de l'en-tête…", exp: "Sunset: Sun, 01 Nov 2026… — accompagné de Deprecation: true." },
+    { type: "input", q: "Le préfixe d'URL de la première version de l'API :", a: ["/v1", "v1", "/v1/"], ph: "/…", exp: "À poser dès le premier jour, même sans projet de v2." }
+  ],
+  final: {
+    title: "Exercice final — La migration « prix_location »",
+    intro: `<p>La décision est prise : « prix » devient « prix_location ». Pilote la migration sans casser un seul client.</p>`,
+    questions: [
+      { type: "qcm", q: "Ce renommage est un changement…", opts: ["Compatible : on le fait dans la v1", "Cassant : il justifie une /v2", "Ni l'un ni l'autre", "Cosmétique donc sans impact"], a: 1, exp: "Renommer un champ casse tous les lecteurs existants : c'est LE cas d'école du breaking change." },
+      { type: "qcm", q: "Pendant la transition, GET /v1/jeux/5 répond…", opts: ["Le nouveau format avec prix_location", "Une erreur 426", "L'ancien format avec « prix », strictement inchangé", "Un mélange des deux"], a: 2, exp: "C'est toute la promesse : la v1 reste identique à elle-même jusqu'à sa coupure." },
+      { type: "qcm", q: "Au même moment, on veut ajouter « editeur » aux réponses. On le fait…", opts: ["Uniquement dans une v3", "Dans la v1 et la v2 : c'est additif, aucune version nécessaire", "Jamais pendant une migration", "Par un en-tête spécial"], a: 1, exp: "L'additif voyage librement : seul le cassant a déclenché la v2." },
+      { type: "vf", q: "Marquer /v1 avec Deprecation: true et Sunset, puis surveiller les logs pour relancer les retardataires, fait partie du plan.", a: true, exp: "Annoncer, marquer, observer, couper : la dépréciation est un calendrier, pas un interrupteur." },
+      { type: "input", q: "Le code de statut de /v1 après la coupure définitive :", a: ["410"], ph: "Un code…", exp: "410 Gone : la ressource a existé et n'existe plus — le message est sans ambiguïté." }
+    ],
+    solution: `<pre class="pseudo">Diagnostiquer : CASSANT (renommer, retyper, supprimer, URL, codes, auth)         # ce qui casse les clients → nouvelle version
+                → nouvelle version · COMPATIBLE (additif) → version en place      # ce qui ajoute → reste dans la version actuelle
+/v1/ dans l'URL : visible, testable, cache simple — choix Ludothèque             # stratégie retenue : la version dans le chemin
+   (école en-tête : Accept: application/vnd.ludotheque.v2+json)                  # alternative : la version dans un en-tête
+Version MAJEURE seulement · clients « lecteurs tolérants »                       # /v1, /v2 (pas /v1.3) ; le client ignore l'inconnu
+Déprécier : annoncer → Deprecation: true + Sunset: date                          # le calendrier de retrait, étape par étape…
+            → observer les logs → couper : 410 Gone                              # …jusqu'à la fermeture nette (410)
+DRF URLPathVersioning · @RequestMapping("/v1") · Route::prefix · Asp.Versioning</pre>  # router par version selon le framework
+<p>Le contrat peut désormais évoluer sans trahir personne. Encore faut-il qu'il soit écrit quelque part, noir sur blanc et à jour — pas dans la tête de Kevin. Prochaine leçon : OpenAPI et Swagger.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l13", title: "Le plan de migration", level: 2,
+    statement: "La direction valide deux changements : « prix » devient « prix_location », et la date des locations passe du format « 03/07/2026 » au format ISO « 2026-07-03 ». Rédige la note de migration destinée à l'équipe et aux partenaires : classe d'abord chaque changement (cassant ou compatible, et pourquoi), décide du nombre de nouvelles versions nécessaires, puis détaille le calendrier de dépréciation de la v1 en quatre étapes datées (annonce, marquage, observation, coupure) avec les en-têtes HTTP exacts et le code de statut final.",
+    hints: [
+      "Change-t-on le NOM d'un champ ou le FORMAT d'une valeur sans casser les clients qui les lisent ? Relis la section 2.",
+      "Deux changements cassants qui sortent en même temps : faut-il une v2 et une v3, ou une seule nouvelle version qui les regroupe ?",
+      "Le marquage passe par deux en-têtes de réponse sur /v1 ; la coupure par un code 4xx précis, plus parlant qu'un 404."
+    ],
+    solution: "NOTE DE MIGRATION — API Ludothèque, passage en v2\n\n1) Diagnostic des changements\n- \"prix\" → \"prix_location\" : CASSANT. Tous les clients qui lisent jeu.prix obtiendront undefined.\n- date \"03/07/2026\" → \"2026-07-03\" : CASSANT. Le format (donc le parsing côté client) change ; même champ, contrat différent.\n→ Deux changements cassants, UNE seule nouvelle version : la v2 les regroupe. On ne fait pas subir deux migrations aux clients quand une suffit.\n\n2) Ce qui ne change pas\nLa v1 reste STRICTEMENT identique jusqu'à sa coupure : mêmes champs, mêmes formats. Les ajouts compatibles éventuels (nouveaux champs optionnels) peuvent continuer d'arriver en v1 comme en v2.\n\n3) Calendrier de dépréciation de /v1\n- 15/07/2026 — ANNONCE : /v2 en ligne, changelog publié, email à tous les partenaires : « /v1 fermera le 01/11/2026 ». Guide de migration : renommer prix → prix_location, parser les dates ISO.\n- 15/07/2026 — MARQUAGE : toutes les réponses de /v1 portent :\n  Deprecation: true\n  Sunset: Sun, 01 Nov 2026 00:00:00 GMT\n- Août-octobre — OBSERVATION : suivi des logs par consommateur (token / API key) : qui appelle encore /v1 ? Relance individuelle des retardataires à J-60, J-30, J-7.\n- 01/11/2026 — COUPURE : /v1 répond 410 Gone (corps au format d'erreur commun, avec un lien vers le guide de migration).\n\nRègle rappelée à l'équipe : la v2 n'accueille QUE le cassant. Tout l'additif reste hors cérémonie, et /v3 n'existera que le jour où un nouveau cassant sera inévitable.",
+    note: "Ce plan est exactement celui qu'exécutent les grandes API publiques (Stripe, GitHub…) — souvent avec des années de préavis. Dans ton capstone, l'important est le réflexe : diagnostiquer cassant/compatible AVANT de toucher au code. La leçon 14 t'apprendra à publier chaque version dans un document OpenAPI, et la leçon 20 te fera vivre la migration côté client." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Déployer automatiquement (SSH, compose)",
+  subtitle: "Le pipeline se connecte au serveur et rejoue — au robot — la leçon 20 de Docker.",
+  theory: `
+<h3>1. Ce que le job doit faire</h3>
+<p><strong>Déployer</strong>, c'est installer et lancer la nouvelle version sur le serveur de <strong>production</strong> (la machine où les vrais utilisateurs se connectent). Le job va faire exactement ce que tes mains faisaient au cours Docker : se connecter au serveur en <strong>SSH</strong> (un protocole de connexion à distance sécurisée), mettre à jour la version, puis <code>compose pull</code> (télécharger l'image), <code>up -d</code> (relancer les conteneurs), <code>migrate</code> (mettre à jour la base), et vérifier. Ni plus, ni moins — c'est pour cela qu'on l'a d'abord fait à la main.</p>
+
+<h3>2. L'utilisateur de déploiement</h3>
+<pre class="pseudo"># sur le serveur (une fois) :
+adduser deploy                      # créer un utilisateur dédié "deploy", NON-root (pas administrateur)
+# sa clé publique dans ~deploy/.ssh/authorized_keys   # authorized_keys = liste des clés autorisées à se connecter comme deploy
+# droits : docker compose dans /srv/ludotheque — c'est TOUT   # deploy ne peut rien faire d'autre : moindre privilège
+# la clé PRIVÉE part dans le secret SSH_PRIVATE_KEY (leçon 13)   # le pipeline la reçoit comme secret pour prouver son identité</pre>
+<p>SSH fonctionne par paire de clés : une <strong>clé publique</strong> (posée sur le serveur, dans <code>authorized_keys</code>) et une <strong>clé privée</strong> (gardée secrète, ici dans le secret GitHub). Qui possède la privée peut se connecter. L'utilisateur <code>deploy</code> est bridé : il ne peut que gérer le compose de l'app.</p>
+
+<h3>3. Le job deployer</h3>
+<pre class="pseudo">  deployer:                          # un job nommé "deployer"
+    runs-on: ubuntu-latest           # machine Ubuntu neuve
+    needs: publier                   # attend le job "publier" : jamais déployer avant que l'image soit au registre
+    steps:
+      - name: Préparer la clé
+        run: |                       # bloc de commandes shell
+          echo "${'$'}{{ secrets.SSH_PRIVATE_KEY }}" > cle   # écrire la clé privée (secret) dans un fichier nommé "cle"
+          chmod 600 cle              # chmod 600 = lisible/écrivable par le seul propriétaire ; ssh REFUSE une clé trop ouverte
+
+      - name: Déployer
+        run: |
+          ssh -i cle -o StrictHostKeyChecking=accept-new \\   # ssh -i cle = se connecter avec cette clé ; l'option gère la vérif de l'identité du serveur
+              deploy@ludotheque.example.com \\                # se connecter en tant que "deploy" sur ce serveur
+              "cd /srv/ludotheque && \\                        # (commandes exécutées SUR le serveur) aller dans le dossier de l'app
+               echo VERSION=${'$'}{GITHUB_REF_NAME#v} > .env.version && \\   # écrire la version (ex. 1.1.0) dans le fichier lu par compose
+               docker compose pull && \\                       # télécharger l'image de cette version depuis le registre
+               docker compose up -d && \\                      # (re)lancer les conteneurs en arrière-plan (-d = detached)
+               docker compose exec -T app python manage.py migrate"   # appliquer les migrations dans le conteneur "app" ; -T = sans terminal</pre>
+<p>Le fichier compose du serveur lit <code>image: ghcr.io/toi/ludotheque:${'$'}{VERSION}</code> — changer <code>.env.version</code> suffit donc à changer de version déployée.</p>
+
+<h3>4. Vérifier — sinon ce n'est pas déployé</h3>
+<pre class="pseudo">      - name: Vérifier la santé
+        run: |
+          sleep 10                                            # attendre 10 s que l'app finisse de démarrer
+          curl -fs https://ludotheque.example.com/sante/       # curl = interroger une URL ; -f = échouer si le statut n'est pas 2xx ; -s = silencieux
+# la vue /sante/ (Docker, leçon 13) teste jusqu'à la base ;
+# curl -f échoue si != 2xx → le JOB échoue → alerte immédiate</pre>
+<p><strong>curl</strong> est un outil qui envoie une requête à une adresse web. La vue <code>/sante/</code> répond « tout va bien » (statut 200) seulement si l'application ET la base répondent. Si ce n'est pas le cas, <code>curl -f</code> échoue et le job devient rouge.</p>
+
+<h3>5. Le déploiement raté n'est pas silencieux</h3>
+<p>Si <code>pull</code>, <code>up</code>, <code>migrate</code> ou le <code>curl</code> échoue, le job est <strong>rouge</strong>, l'équipe est notifiée, et le <strong>rollback</strong> (retour à la version précédente, leçon 19) s'applique. Comparé au déploiement manuel : l'oubli n'existe plus, le silence non plus.</p>
+<div class="warn"><code>exec -T</code> : sans terminal (le pipeline n'en a pas) — un <strong>TTY</strong> est un terminal interactif ; l'oublier donne l'erreur cryptique « the input device is not a TTY ». Et <code>StrictHostKeyChecking=accept-new</code> accepte la clé du serveur au premier contact mais <strong>refuse</strong> tout changement ultérieur (protection contre l'attaque de « l'homme du milieu » — <em>man in the middle</em> — où un intrus se fait passer pour le serveur).</div>
+<div class="tip">Le serveur n'a toujours besoin que de Docker, du YAML et des .env — le pipeline n'installe rien, il <strong>déclenche</strong>. Toute l'intelligence de déploiement reste dans le compose du cours Docker : chaque outil à sa place.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le job deployer rejoue…", opts: ["Les tests", "La leçon 20 du cours Docker (pull, up -d, migrate), en robot", "Le build", "La revue"], a: 1, exp: "On automatise ce qu'on sait faire à la main." },
+    { type: "qcm", q: "L'utilisateur de déploiement est…", opts: ["root", "deploy : dédié, non-root, limité à compose dans /srv/ludotheque", "admin", "le stagiaire"], a: 1, exp: "Moindre privilège, encore." },
+    { type: "qcm", q: "La clé privée de deploy vit…", opts: ["Dans le YAML", "Dans le secret SSH_PRIVATE_KEY", "Sur le bureau", "Dans l'image"], a: 1, exp: "Leçon 13." },
+    { type: "qcm", q: "needs: publier garantit…", opts: ["Rien", "Qu'on ne déploie jamais avant que l'image soit au registre", "La vitesse", "Le rollback"], a: 1, exp: "L'ordre du graphe." },
+    { type: "qcm", q: "chmod 600 sur la clé :", opts: ["Décoratif", "Permissions minimales exigées par ssh", "Pour la vitesse", "Interdit"], a: 1, exp: "ssh refuse une clé trop lisible." },
+    { type: "qcm", q: "Changer la version déployée revient à…", opts: ["Rebuild sur le serveur", "Changer .env.version (lu par le compose) et pull/up", "Éditer l'image", "Reboot"], a: 1, exp: "image: ...:${VERSION}." },
+    { type: "qcm", q: "exec -T évite…", opts: ["Les secrets", "« the input device is not a TTY » (pas de terminal en pipeline)", "Les conflits", "Le cache"], a: 1, exp: "Le piège classique." },
+    { type: "qcm", q: "StrictHostKeyChecking=accept-new…", opts: ["Accepte tout, toujours", "Accepte la clé au 1er contact, refuse tout CHANGEMENT ensuite", "Refuse tout", "Désactive SSH"], a: 1, exp: "Anti man-in-the-middle." },
+    { type: "qcm", q: "La vérification finale :", opts: ["curl -fs sur /sante/", "un ping", "l'espoir", "un email au client"], a: 0, exp: "Déployé = vérifié." },
+    { type: "qcm", q: "curl -f échoue si…", opts: ["Le statut HTTP est >= 400", "jamais", "le JSON est long", "la page est lente"], a: 0, exp: "Le job devient rouge." },
+    { type: "vf", q: "Un déploiement raté par le pipeline passe inaperçu.", a: false, exp: "Job rouge + notification : le silence n'existe plus." },
+    { type: "qcm", q: "Le serveur a besoin de…", opts: ["Python, gunicorn, le code", "Docker + compose.yaml + .env (comme au cours Docker)", "GitHub Actions installé", "Un IDE"], a: 1, exp: "Le pipeline déclenche, il n'installe rien." },
+    { type: "qcm", q: "Si migrate échoue au déploiement…", opts: ["Personne ne le sait", "Le job est rouge : l'équipe agit (rollback, leçon 19)", "Le serveur brûle", "La CI reteste"], a: 1, exp: "L'échec est visible et actionnable." },
+    { type: "qcm", q: "La chaîne complète depuis le poste du dev :", opts: ["git push origin v1.1.0 → publier → deployer → /sante/ vert", "docker push manuel", "ftp", "un ticket"], a: 0, exp: "Une commande, tout s'enchaîne." },
+    { type: "vf", q: "L'intelligence de déploiement (healthchecks, limites, volumes) reste dans le compose.", a: true, exp: "Chaque outil à sa place." }
+  ],
+  final: {
+    title: "Exercice final — Le serveur qui se met à jour seul",
+    intro: `<p>Le tag poussé, l'image publiée — et maintenant le serveur suit, tout seul.</p>`,
+    questions: [
+      { type: "qcm", q: "Le job dépend de :", opts: ["needs: publier", "rien", "needs: tests", "needs: main"], a: 0, exp: "L'image d'abord." },
+      { type: "qcm", q: "La connexion :", opts: ["ssh -i cle (secret) vers deploy@serveur", "root@serveur au mot de passe", "telnet", "http"], a: 0, exp: "Clé dédiée, utilisateur limité." },
+      { type: "qcm", q: "Sur le serveur, le job exécute :", opts: ["VERSION → pull → up -d → migrate", "rebuild complet", "rm -rf", "git clone"], a: 0, exp: "La leçon 20 de Docker." },
+      { type: "qcm", q: "La preuve du succès :", opts: ["curl -fs /sante/ en 200", "l'absence d'erreur ssh", "un sentiment", "les logs du lendemain"], a: 0, exp: "Vérifié, pas supposé." },
+      { type: "vf", q: "De git push origin v1.1.0 au site à jour : zéro intervention humaine.", a: true, exp: "Le CD est né." }
+    ],
+    solution: `<pre class="pseudo">  deployer:                                       # le job de déploiement
+    runs-on: ubuntu-latest                        # machine neuve
+    needs: publier                                # après la publication de l'image seulement
+    steps:
+      - run: echo "${'$'}{{ secrets.SSH_PRIVATE_KEY }}" > cle && chmod 600 cle   # écrire la clé privée + permissions strictes
+      - run: |
+          ssh -i cle -o StrictHostKeyChecking=accept-new \\   # se connecter au serveur avec la clé
+              deploy@ludotheque.example.com \\                # en tant que deploy
+              "cd /srv/ludotheque && \\                        # aller dans le dossier de l'app
+               echo VERSION=${'$'}{GITHUB_REF_NAME#v} > .env.version && \\   # fixer la version à déployer
+               docker compose pull && docker compose up -d && \\            # télécharger l'image et relancer
+               docker compose exec -T app python manage.py migrate"         # migrer la base (sans terminal)
+      - run: sleep 10 && curl -fs https://ludotheque.example.com/sante/     # attendre puis vérifier la santé</pre>
+<p>Le site suit les tags, tout seul. Demain : une répétition générale avant la prod — staging.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton job de déploiement…",
+  items: [
+  { id: "cicd-l17", title: "Le déploiement qui a échoué à 14h07", level: 3,
+    statement: "Post-mortem à rédiger : le job deployer de la v1.1.0 est rouge — le step « Vérifier la santé » a échoué (curl 503) alors que pull/up/migrate ont réussi. Écris : la lecture des indices (que dit un 503 de /sante/ ?), les 3 commandes de diagnostic à lancer sur le serveur (dans l'ordre du runbook Docker l.18), la cause plausible (migration longue → healthcheck app pas encore vert), et les 2 améliorations du job (retry du curl, timeout raisonné).",
+    hints: [
+      "/sante/ renvoie 503 quand la BASE ne répond pas à SELECT 1 — ou si l'app démarre encore.",
+      "Diagnostic : compose ps (états/santé) → logs app → logs bdd.",
+      "Amélioration : boucle curl avec retries (for i in 1..12; curl && break; sleep 5)."
+    ],
+    solution: "POST-MORTEM — déploiement v1.1.0, échec du step santé (14h07)\n\nLECTURE DES INDICES\npull/up/migrate verts : l'image est bonne, le schéma appliqué.\ncurl 503 sur /sante/ : la vue répond mais déclare le service indisponible\n— soit la base injoignable, soit l'app encore en train de démarrer\n(le sleep 10 du job est une supposition, pas une garantie).\n\nDIAGNOSTIC SUR LE SERVEUR (runbook Docker l.18)\n1. docker compose ps        → app « starting », bdd « healthy »\n2. docker compose logs --tail 50 app\n   → gunicorn démarre, mais les workers chargent encore (migration\n     v1.1.0 a réindexé : démarrage plus long que d'habitude)\n3. docker compose logs bdd | grep -i error → rien : fausse alerte côté base\n\nCAUSE\nLe healthcheck app (start_period 15s) n'était pas encore vert à 14h07 :\nle curl du job est parti trop tôt. À 14h09, /sante/ répondait 200.\nLe déploiement était BON ; la VÉRIFICATION était impatiente.\n\nAMÉLIORATIONS DU JOB\n1. Retry au lieu d'un sleep aveugle :\n   for i in $(seq 1 12); do\n     curl -fs https://ludotheque.example.com/sante/ && exit 0\n     sleep 5\n   done\n   exit 1        # rouge seulement après ~60 s d'échecs répétés\n2. Chaîner la santé Docker : attendre que compose ps affiche healthy\n   avant même le premier curl (la sonde interne sait mieux que nous).",
+    note: "Le faux positif est l'ennemi n° 1 d'un pipeline : une alerte à tort par semaine, et l'équipe cesse d'y croire. La correction ne « désactive » pas la vérification — elle la rend PATIENTE et alignée sur les healthchecks Docker existants. Un post-mortem se conclut toujours par une amélioration du système, jamais par « on fera attention »." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

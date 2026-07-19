@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Louer un jeu : transaction, stock, réservation",
+  subtitle: "Le cœur métier : deux écritures indissociables.",
+  theory: `
+<h3>1. Le besoin</h3>
+<p>Louer un jeu, c'est <strong>deux écritures</strong> en base (une « écriture » = un enregistrement ou une modification de données) : enregistrer la location ET décrémenter (diminuer de 1) le stock de location. Les deux réussissent ensemble, ou aucune. Si le stock manque, on refuse la location.</p>
+
+<h3>2. L'exception métier</h3>
+<p>Une <strong>exception métier</strong> est un signal d'erreur qu'on crée soi-même pour exprimer une règle de l'activité (ici « plus de stock »).</p>
+<pre class="pseudo">public class StockInsuffisantException extends RuntimeException {   // exception « maison » : hérite de RuntimeException
+    public StockInsuffisantException(String message) { super(message); }   // constructeur : transmet le message au parent
+}                                                     // fin de la classe</pre>
+<p><code>extends RuntimeException</code> signifie que notre exception <em>hérite</em> d'une exception standard de Java (elle en est une variante spécialisée). <code>super(message)</code> transmet le message d'erreur à cette classe parente. Cette exception dédiée sera traduite en code HTTP 409 (Conflict) par l'advice (leçon 8).</p>
+
+<h3>3. Le service transactionnel</h3>
+<pre class="pseudo">@Service                                              // couche métier gérée par Spring
+public class LocationService {                        // classe du service de location
+    private final JeuRepository jeux;                 // repository des jeux (injecté)
+    private final LocationRepository locations;       // repository des locations (injecté)
+    // constructeur…                                 // reçoit les deux repositories (injection)
+
+    @Transactional                                    // toute la méthode = une transaction (tout ou rien)
+    public void louer(Long idClient, Long idJeu) {    // louer le jeu idJeu au client idClient
+        Jeu j = jeux.findById(idJeu).orElseThrow();   // récupérer le jeu (ou exception s'il n'existe pas)
+        if (j.getStockLocation() &lt;= 0)                // s'il ne reste aucun exemplaire à louer…
+            throw new StockInsuffisantException("Plus de stock de location");   // …refuser via l'exception métier
+        locations.save(new Location(idClient, idJeu, LocalDate.now(), 7));   // 1re écriture : enregistrer la location (date du jour, 7 jours)
+        j.setStockLocation(j.getStockLocation() - 1); // 2e écriture : retirer 1 du stock de location
+        jeux.save(j);                                 // sauvegarder le jeu mis à jour (UPDATE)
+    }                                                 // fin de la méthode (COMMIT si tout s'est bien passé)
+}                                                     // fin de la classe</pre>
+
+<h3>4. Pourquoi @Transactional est indispensable</h3>
+<p>Sans transaction, si l'enregistrement de la location réussit mais que la mise à jour du stock échoue, on aurait une location « fantôme » sans décompte du stock. <code>@Transactional</code> garantit l'<strong>atomicité</strong> (« tout ou rien ») : toute exception déclenche un <code>ROLLBACK</code> (annulation qui remet la base dans son état d'avant) ; à l'inverse, si tout se passe bien, un <code>COMMIT</code> valide définitivement. La base reste toujours cohérente. <code>LocalDate.now()</code> fournit simplement la date du jour.</p>
+
+<h3>5. Réservation : une variante</h3>
+<pre class="pseudo">// réserver = mettre de côté sans encore décrémenter le stock disponible   // principe de la réservation
+@Transactional                                        // opération atomique
+public void reserver(Long idClient, Long idJeu) {     // réserver le jeu idJeu pour le client idClient
+    reservations.save(new Reservation(idClient, idJeu, LocalDate.now()));   // enregistrer la réservation, datée d'aujourd'hui
+}                                                     // fin de la méthode</pre>
+<div class="tip">C'est exactement la transaction MySQL vue en cours de bases de données (les propriétés <em>ACID</em>), mais pilotée par Spring : <code>@Transactional</code> ouvre, valide (COMMIT) ou annule (ROLLBACK) automatiquement autour de la méthode. Le métier de la Ludothèque prend vie.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer un jeu implique…", opts: ["Une seule écriture", "Deux écritures : location + décrément du stock", "Aucune écriture", "Un SELECT"], a: 1, exp: "Opérations liées." },
+    { type: "qcm", q: "Les deux écritures doivent…", opts: ["Réussir indépendamment", "Réussir ensemble ou être annulées", "S'exécuter deux fois", "Être ignorées"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "Rendre la méthode atomique :", opts: ["@Async", "@Transactional", "@Cacheable", "rien"], a: 1, exp: "Transaction." },
+    { type: "qcm", q: "Si le stock est nul, on…", opts: ["Loue quand même", "Lève StockInsuffisantException", "Met le stock à -1", "Ignore"], a: 1, exp: "Refus métier." },
+    { type: "qcm", q: "Une exception dans une méthode @Transactional…", opts: ["Valide (COMMIT)", "Déclenche un ROLLBACK", "N'a pas d'effet", "Relance le serveur"], a: 1, exp: "Annulation." },
+    { type: "qcm", q: "Sans transaction, un échec partiel donne…", opts: ["Une base cohérente", "Une location fantôme sans décompte", "Rien", "Un tri"], a: 1, exp: "Incohérence." },
+    { type: "qcm", q: "StockInsuffisantException sera traduite en…", opts: ["200", "409 Conflict (via l'advice)", "404", "301"], a: 1, exp: "Code métier." },
+    { type: "qcm", q: "Décrémenter le stock :", opts: ["j.setStockLocation(j.getStockLocation() - 1)", "delete j", "stock = 0", "rien"], a: 0, exp: "Une unité en moins." },
+    { type: "qcm", q: "Réserver, c'est…", opts: ["Louer immédiatement", "Mettre de côté sans finaliser", "Supprimer le jeu", "Acheter"], a: 1, exp: "Variante." },
+    { type: "qcm", q: "@Transactional gère le COMMIT/ROLLBACK…", opts: ["À la main", "Automatiquement autour de la méthode", "Jamais", "Dans le DTO"], a: 1, exp: "Géré par Spring." },
+    { type: "vf", q: "C'est la transaction MySQL du cours BDD, pilotée par Spring.", a: true, exp: "Même principe ACID." },
+    { type: "qcm", q: "L'ordre logique de louer :", opts: ["Décrémenter puis vérifier", "Vérifier le stock, enregistrer, décrémenter", "Supprimer le jeu", "Ne rien vérifier"], a: 1, exp: "Contrôle d'abord." },
+    { type: "vf", q: "Une exception métier dédiée rend la règle explicite et traduisible en HTTP.", a: true, exp: "Lisibilité + advice." },
+    { type: "qcm", q: "findById(idJeu).orElseThrow() gère…", opts: ["Le stock", "Le cas d'un jeu introuvable", "La casse", "Le tri"], a: 1, exp: "404 possible." },
+    { type: "qcm", q: "Le stock concerné par une location :", opts: ["stockVente", "stockLocation", "les deux", "aucun"], a: 1, exp: "Stock de location." }
+  ],
+  final: {
+    title: "Exercice final — Le service de location",
+    intro: `<p>On code la location atomique.</p>`,
+    questions: [
+      { type: "qcm", q: "Annoter la méthode louer :", opts: ["@Transactional", "@Async", "@Cacheable", "rien"], a: 0, exp: "Atomicité." },
+      { type: "qcm", q: "Vérifier avant d'agir :", opts: ["if stockLocation <= 0 -> exception", "décrémenter d'abord", "supprimer", "ignorer"], a: 0, exp: "Contrôle du stock." },
+      { type: "qcm", q: "Enregistrer la location :", opts: ["locations.save(new Location(...))", "jeux.delete", "rien", "un SELECT"], a: 0, exp: "Persistance." },
+      { type: "qcm", q: "Puis mettre à jour le stock :", opts: ["setStockLocation(stock - 1) + save", "supprimer le jeu", "rien", "stock = 100"], a: 0, exp: "Décrément." },
+      { type: "vf", q: "Une exception annule toute la transaction (location + stock).", a: true, exp: "ROLLBACK." }
+    ],
+    solution: `<pre class="pseudo">@Transactional                                        // toute la méthode = une transaction (tout ou rien)
+public void louer(Long idClient, Long idJeu) {        // louer le jeu idJeu au client idClient
+  Jeu j = jeux.findById(idJeu).orElseThrow();         // récupérer le jeu (ou exception si introuvable)
+  if (j.getStockLocation() &lt;= 0)                      // s'il ne reste aucun exemplaire à louer…
+    throw new StockInsuffisantException("Plus de stock de location");   // …refuser via l'exception métier
+  locations.save(new Location(idClient, idJeu, LocalDate.now(), 7));   // 1re écriture : enregistrer la location
+  j.setStockLocation(j.getStockLocation() - 1);       // 2e écriture : retirer 1 du stock de location
+  jeux.save(j);                                       // sauvegarder le jeu mis à jour
+}</pre>
+<p>On sait louer. Demain : acheter, sur l'autre stock.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service transactionnel…",
+  items: [
+  { id: "projjava-l12", title: "Rendre un jeu loué", level: 3,
+    statement: "Écris une méthode rendre(idLocation) dans LocationService qui, de façon transactionnelle, marque la location comme rendue et ré-incrémente de 1 le stock de location du jeu concerné. Lève une exception si la location est introuvable ou déjà rendue.",
+    hints: [
+      "@Transactional ; charger la Location par son id (orElseThrow).",
+      "Si location.isRendue() -> throw new IllegalStateException(\"Déjà rendue\").",
+      "location.setRendue(true) ; puis charger le Jeu et faire setStockLocation(stock + 1) + save."
+    ],
+    solution: "@Transactional                                          // methode atomique (tout ou rien)\npublic void rendre(Long idLocation) {                   // rendre la location identifiee par idLocation\n  Location loc = locations.findById(idLocation)         // retrouver la location…\n      .orElseThrow(() -> new NoSuchElementException(\"Location introuvable\"));   // …ou lever une exception\n  if (loc.isRendue())                                   // si elle a deja ete rendue…\n    throw new IllegalStateException(\"Location déjà rendue\");   // …refuser (evite de crediter deux fois)\n  loc.setRendue(true);                                  // marquer la location comme rendue\n  locations.save(loc);                                  // enregistrer ce changement\n  Jeu j = jeux.findById(loc.getIdJeu()).orElseThrow();  // charger le jeu concerne\n  j.setStockLocation(j.getStockLocation() + 1);         // remettre 1 exemplaire en stock de location\n  jeux.save(j);                                         // sauvegarder le jeu (UPDATE)\n}",
+    note: "Le retour est l'opération inverse de la location : il remet une unité en stock, là encore de façon atomique. La vérification isRendue() empêche de créditer deux fois le stock avec la même location. @Transactional garantit que le marquage et le ré-incrément vont de pair." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

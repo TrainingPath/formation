@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Injection SQL : et pourquoi l'ORM protège",
+  subtitle: "La faille née d'un seul geste : mélanger code et données.",
+  theory: `
+<h3>1. Le mécanisme</h3>
+<p>Commençons par les mots. Une <strong>base de données</strong> est le grand classeur où l'application range ses informations (les jeux, les clients, les locations), organisé en <em>tables</em> (des tableaux à lignes et colonnes). Pour lui parler, on écrit des <strong>requêtes</strong> dans un langage appelé <strong>SQL</strong> (Structured Query Language). Exemple : <code>SELECT * FROM catalogue_jeu WHERE titre = 'Uno'</code> se lit « SÉLECTIONNE toutes les colonnes (*) DEPUIS la table catalogue_jeu OÙ la colonne titre vaut Uno ».</p>
+<p>Une <strong>entrée utilisateur</strong> est toute donnée fournie par le visiteur (ici, le mot recherché). L'<strong>injection SQL</strong> survient quand on fabrique la requête par <strong>concaténation</strong> — c'est-à-dire en collant bout à bout des morceaux de texte, dont celui du visiteur. Le piège : ce texte cesse alors d'être une simple <em>donnée</em> et peut devenir du <em>code SQL</em> que la base exécute. Image : tu dictes une adresse à un chauffeur de taxi, et le passager glisse « …et au fait, ouvre le coffre et donne-moi les clés » — sa phrase se fond dans ta consigne.</p>
+<pre class="pseudo">q = request.GET["q"]                 # q = le texte tape par le visiteur : il en a le controle total
+cursor.execute(f"SELECT * FROM catalogue_jeu WHERE titre = '{q}'")   # f"..." (f-string Python) COLLE q dans la requete -> danger
+# q = "' OR '1'='1"   -> la condition WHERE devient toujours vraie -> renvoie TOUS les jeux
+# q = "'; DROP TABLE catalogue_jeu; --"  -> DROP TABLE = supprimer la table -> potentiellement destructeur</pre>
+<p>Le <code>--</code> en SQL démarre un commentaire : tout ce qui suit est ignoré par la base. L'attaquant s'en sert pour « couper » la fin de la requête d'origine et neutraliser ce qui devait s'y trouver.</p>
+
+<h3>2. Ce que ça permet à l'attaquant</h3>
+<pre class="pseudo">- lire des donnees non autorisees (contourner un WHERE)     # voir ce qu'on ne devrait pas voir
+- s'authentifier sans mot de passe (' OR '1'='1' -- )       # forcer la condition de connexion a "vrai"
+- modifier ou detruire des donnees                          # ordres UPDATE / DELETE / DROP injectes
+- parfois : exfiltrer toute la base clients                 # aspirer emails, historiques, etc.</pre>
+<p>C'est une faille <strong>critique</strong> et l'une des plus anciennes — toujours présente dans le « top OWASP », la liste de référence des dix risques web les plus répandus, publiée par la fondation OWASP (une organisation à but non lucratif dédiée à la sécurité des applications).</p>
+
+<h3>3. La parade : séparer code et données</h3>
+<p>La solution s'appelle la <strong>requête paramétrée</strong> (ou « préparée »). Le <strong>driver</strong> — le petit programme qui relie ton code à la base — reçoit d'un côté la requête avec un <strong>emplacement réservé</strong> (un <em>placeholder</em>, noté <code>%s</code>), et de l'autre la valeur, transmise <em>à part</em>. Il garantit alors que cette valeur sera traitée comme une simple donnée, jamais comme du SQL. Reprenons le taxi : cette fois l'adresse voyage dans une enveloppe scellée « ceci est UNE destination, rien d'autre » — impossible d'y cacher un ordre.</p>
+<pre class="pseudo"># Requete PARAMETREE : le driver traite %s comme une VALEUR, jamais comme du SQL
+cursor.execute("SELECT * FROM catalogue_jeu WHERE titre = %s", [q])   # %s = emplacement ; q voyage a part, dans la liste [q]
+# q = "' OR '1'='1"  -> la base cherche LITTERALEMENT ce titre bizarre -> 0 resultat, aucune injection</pre>
+<p>Le placeholder <code>%s</code> n'est pas une simple substitution de texte : la valeur est transmise <strong>séparément</strong> et échappée par le driver. Le code et les données ne se mélangent jamais.</p>
+
+<h3>4. L'ORM le fait pour toi</h3>
+<p>Un <strong>ORM</strong> (Object-Relational Mapping) est une couche qui te laisse manipuler la base avec des objets de ton langage, sans écrire de SQL à la main. Avantage sécurité décisif : il fabrique ses requêtes en les <strong>paramétrant toujours</strong>, automatiquement.</p>
+<pre class="pseudo">Jeu.objects.filter(titre__icontains=q)   # l'ORM traduit ceci en requete PARAMETREE d'office -> sur
+# C'est pourquoi le capstone etait protege : l'ORM ne concatene jamais
+# Le danger vient de la route "vite faite" qui contourne l'ORM :
+#   .raw(), .extra(), cursor.execute() avec une f-string   -> retour a la concatenation manuelle</pre>
+
+<h3>5. Toutes les piles, même règle</h3>
+<p>Le principe est universel : quelle que soit la « pile » technique (le langage et ses outils), on <strong>paramètre</strong> au lieu de concaténer.</p>
+<pre class="pseudo">Java  : PreparedStatement + setString(1, q)          // version parametree ; JAMAIS Statement + concatenation
+C#    : SqlParameter / EF Core parametre d'office     // EF Core (l'ORM de .NET) parametre tout seul
+PHP   : PDO::prepare + bindParam / bindValue          // JAMAIS l'interpolation de "$q" directe dans la requete</pre>
+<div class="warn">L'échappement manuel (« je remplace les <code>'</code> par <code>''</code> ») est une fausse solution : il y a toujours un cas oublié (encodages, commentaires, requêtes multiples). La seule réponse fiable est le <strong>paramétrage</strong> par le driver.</div>
+<div class="tip">Audite ton capstone : cherche <code>.raw(</code>, <code>.extra(</code>, <code>cursor.execute(</code>, toute f-string ou concaténation dans une requête. L'ORM protège par défaut — les failles se cachent dans les exceptions à l'ORM.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'injection SQL naît de…", opts: ["L'ORM", "La concaténation d'une entrée utilisateur dans une requête", "HTTPS", "Un cookie"], a: 1, exp: "Code et données mélangés." },
+    { type: "qcm", q: "Avec titre = '{q}', q = \"' OR '1'='1\" …", opts: ["Ne renvoie rien", "Renvoie tous les jeux (condition toujours vraie)", "Plante Python", "Chiffre la base"], a: 1, exp: "L'entrée devient du code." },
+    { type: "qcm", q: "L'injection SQL permet notamment…", opts: ["D'accélérer", "De lire, modifier ou détruire des données non autorisées", "De colorer la page", "De compresser"], a: 1, exp: "Faille critique." },
+    { type: "qcm", q: "La parade fondamentale :", opts: ["Échapper les guillemets à la main", "Requêtes paramétrées (le driver sépare code et données)", "Cacher la requête", "Un WAF seul"], a: 1, exp: "%s transmis séparément." },
+    { type: "qcm", q: "cursor.execute(\"... = %s\", [q]) traite q comme…", opts: ["Du code SQL", "Une valeur, échappée par le driver", "Un commentaire", "Une colonne"], a: 1, exp: "Jamais exécuté comme SQL." },
+    { type: "qcm", q: "%s dans une requête paramétrée est…", opts: ["Une substitution de texte simple", "Un placeholder dont la valeur voyage séparément", "Un format d'affichage", "Un opérateur"], a: 1, exp: "Le cœur de la protection." },
+    { type: "qcm", q: "Pourquoi le capstone était-il protégé ?", opts: ["Par chance", "L'ORM paramètre toujours (filter, get…)", "HTTPS", "Le hachage"], a: 1, exp: "L'ORM ne concatène pas." },
+    { type: "qcm", q: "Le danger dans un projet ORM vient de…", opts: ["L'ORM lui-même", "Les contournements : .raw(), .extra(), cursor.execute + f-string", "Les templates", "Les migrations"], a: 1, exp: "Les exceptions à l'ORM." },
+    { type: "qcm", q: "En Java, la bonne pratique :", opts: ["Statement + concaténation", "PreparedStatement + setString", "String.format", "un WHERE dynamique en dur"], a: 1, exp: "Paramétrage." },
+    { type: "qcm", q: "En PHP :", opts: ["Interpolation dans la requête", "PDO::prepare + bindParam", "str_replace des quotes", "mysql_query concaténé"], a: 1, exp: "PDO paramétré." },
+    { type: "vf", q: "Échapper soi-même les guillemets est une protection fiable.", a: false, exp: "Toujours un cas oublié : paramétrer." },
+    { type: "qcm", q: "\"' OR '1'='1' -- \" dans un formulaire de connexion vulnérable…", opts: ["Échoue", "Peut authentifier sans mot de passe", "Chiffre la session", "Est ignoré"], a: 1, exp: "Contournement d'authentification." },
+    { type: "qcm", q: "Auditer son projet, c'est chercher…", opts: [".raw(, .extra(, cursor.execute avec concaténation", "les commentaires", "le CSS", "les images"], a: 0, exp: "Les requêtes non paramétrées." },
+    { type: "qcm", q: "Un ORM utilisé normalement (filter/get)…", opts: ["Est vulnérable", "Paramètre automatiquement : sûr", "Doit être échappé à la main", "Concatène"], a: 1, exp: "Protection par défaut." },
+    { type: "vf", q: "L'injection SQL peut mener à l'exfiltration de toute la base clients.", a: true, exp: "D'où sa criticité." }
+  ],
+  final: {
+    title: "Exercice final — Fermer la porte SQL",
+    intro: `<p>Une route de statistiques a été bricolée en SQL brut. On la corrige.</p>`,
+    questions: [
+      { type: "qcm", q: "cursor.execute(f\"...WHERE cat='{c}'\") est :", opts: ["Vulnérable à l'injection", "Sûr", "Plus rapide donc mieux", "Illisible mais sûr"], a: 0, exp: "f-string = concaténation." },
+      { type: "qcm", q: "La correction paramétrée :", opts: ["cursor.execute(\"...WHERE cat=%s\", [c])", "échapper c à la main", "cacher la requête", "un try/except"], a: 0, exp: "Valeur séparée." },
+      { type: "qcm", q: "La meilleure correction :", opts: ["Revenir à l'ORM : Jeu.objects.filter(categorie=c)", "un WAF", "renommer la route", "supprimer les stats"], a: 0, exp: "L'ORM paramètre d'office." },
+      { type: "qcm", q: "Ensuite, on vérifie :", opts: ["Qu'aucun autre .raw/.extra/cursor.execute concaténé ne traîne", "le CSS", "les logs", "rien"], a: 0, exp: "Audit complet." },
+      { type: "vf", q: "Le paramétrage traite l'entrée comme une donnée, jamais comme du SQL.", a: true, exp: "Le principe." }
+    ],
+    solution: `<pre class="pseudo"># VULNERABLE
+c = request.GET["cat"]                                                            # c vient du visiteur (parametre d'URL ?cat=...)
+cursor.execute(f"SELECT COUNT(*) FROM catalogue_jeu WHERE categorie_id = {c}")    # f-string -> c colle dans le SQL -> injection
+
+# CORRIGE — parametre
+cursor.execute("SELECT COUNT(*) FROM catalogue_jeu WHERE categorie_id = %s", [c]) # %s + valeur a part -> sur
+
+# MIEUX — l'ORM
+Jeu.objects.filter(categorie_id=c).count()                                        # parametre d'office, plus lisible
+
+# Audit : grep -rn "\\.raw(\\|\\.extra(\\|cursor.execute" — verifier chaque cas    # grep = chercher ces motifs dans tout le code</pre>
+<p>La porte SQL est fermée. Demain : le script injecté — le XSS.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta correction anti-injection…",
+  items: [
+  { id: "secu-l2", title: "L'audit anti-injection", level: 3,
+    statement: "Écris la procédure d'audit anti-injection de ton capstone : 1) la commande qui repère toutes les requêtes potentiellement dangereuses (raw, extra, cursor.execute, concaténation), 2) pour un cas trouvé (une recherche multi-critères bricolée en SQL), la version vulnérable et sa correction paramétrée OU en ORM, 3) la règle d'équipe pour éviter la récidive.",
+    hints: [
+      "grep récursif sur les motifs .raw( .extra( cursor.execute( et les f-strings dans du SQL.",
+      "Si l'ORM peut faire la requête, préfère-le toujours au SQL brut.",
+      "Règle : tout SQL brut passe en revue obligatoire + justification."
+    ],
+    solution: "# 1. REPÉRER les requêtes à risque\ngrep -rn --include=*.py -E \"\\.raw\\(|\\.extra\\(|cursor\\.execute\" catalogue/\n# + repérer les f-strings/concaténations DANS ces appels\n\n# 2. UN CAS — recherche multi-critères bricolée\n# VULNÉRABLE\nsql = f\"SELECT * FROM catalogue_jeu WHERE 1=1\"\nif titre: sql += f\" AND titre LIKE '%{titre}%'\"   # injection !\nif cat:   sql += f\" AND categorie_id = {cat}\"      # injection !\ncursor.execute(sql)\n\n# CORRIGÉ — l'ORM compose sans jamais concaténer de SQL\nqs = Jeu.objects.all()\nif titre: qs = qs.filter(titre__icontains=titre)\nif cat:   qs = qs.filter(categorie_id=cat)\n# (si SQL brut vraiment nécessaire : execute(sql_avec_%s, params) — liste liée)\n\n# 3. RÈGLE D'ÉQUIPE\n# - l'ORM par défaut ; le SQL brut est l'EXCEPTION, justifiée en PR\n# - tout .raw()/.execute() paramétré, JAMAIS de f-string/concat dans une requête\n# - le linter de sécurité (bandit, leçon 17) signale les SQL construits\n#   dynamiquement -> détection automatique en CI",
+    note: "La recherche multi-critères est le piège classique : elle « exige » du SQL dynamique… sauf que l'ORM compose exactement de la même façon, sans jamais mélanger code et données. La règle d'équipe transforme la vigilance ponctuelle en garantie : l'ORM par défaut, le SQL brut justifié, et un linter (leçon 17) qui attrape les récidives automatiquement en CI." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

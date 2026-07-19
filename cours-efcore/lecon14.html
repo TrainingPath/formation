@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "LINQ avancé : projections, agrégats, GroupBy",
+  subtitle: "Ton GROUP BY du Niveau 4 revient — en C# typé, avec des DTO à la clé.",
+  theory: `
+<h3>1. La projection vers un DTO : le Select adulte</h3>
+<p>Hier, Select projetait vers une colonne ou un type anonyme. Aujourd'hui on vise le vrai outil des API : le <strong>DTO</strong> (Data Transfer Object, « objet de transfert de données ») — une classe dédiée au transport, comme un colis qui ne contient que ce que le client doit voir, rien de plus. Projeter vers un DTO directement dans la requête, c'est trois victoires d'un coup : SQL minimal (seules les colonnes utiles), pas d'entités suivies par le tracker, et un contrat JSON stable pour ton API ASP.NET Core.</p>
+<pre class="pseudo">public class JeuResumeDto                              // DTO : classe de transport pour l'affichage / l'API
+{
+    public int Id { get; set; }                        // identifiant du jeu
+    public string Titre { get; set; }                  // titre du jeu
+    public decimal Prix { get; set; }                  // prix du jeu
+    public int NbAvis { get; set; }                    // nombre d'avis (valeur calculée)
+    public double NoteMoyenne { get; set; }            // note moyenne (valeur calculée)
+}
+
+var catalogue = ctx.Jeux                              // on part de la table Jeux
+    .Where(j =&gt; j.EstDisponible)                      // seulement les jeux disponibles
+    .Select(j =&gt; new JeuResumeDto {                   // projection directe vers le DTO
+        Id = j.Id,                                    // recopie l'Id
+        Titre = j.Titre,                              // recopie le titre
+        Prix = j.Prix,                                // recopie le prix
+        NbAvis = j.Avis.Count,                        // compte les avis → sous-requête SQL, sans aucun Include
+        NoteMoyenne = j.Avis.Average(a =&gt; (double)a.Note)   // moyenne des notes → AVG en SQL
+    })
+    .ToList();                                        // matérialise la liste de DTO</pre>
+<p>Regarde bien : <strong>j.Avis.Count</strong> et <strong>j.Avis.Average(...)</strong> dans la projection, <em>sans aucun Include</em>. EF Core traduit chaque navigation utilisée en sous-requête ou jointure — tu décris le résultat, il trouve le SQL.</p>
+
+<h3>2. Les agrégats : Count, Sum, Average, Min, Max</h3>
+<p>Les <strong>fonctions d'agrégation</strong> (qui résument plusieurs lignes en une seule valeur : un total, une moyenne…) de ton cours SQL ont chacune leur méthode LINQ, et toutes se traduisent en SQL exécuté <strong>côté serveur</strong> : une seule valeur voyage sur le réseau.</p>
+<pre class="pseudo">int nbJeux        = ctx.Jeux.Count();                          // COUNT(*)  : nombre total de jeux
+int nbDispo       = ctx.Jeux.Count(j =&gt; j.EstDisponible);      // COUNT + WHERE : nombre de jeux disponibles
+decimal caTotal   = ctx.Locations.Sum(l =&gt; l.Prix);            // SUM(Prix) : chiffre d'affaires des locations
+decimal prixMoyen = ctx.Jeux.Average(j =&gt; j.Prix);             // AVG(Prix) : prix moyen d'un jeu
+decimal prixMax   = ctx.Jeux.Max(j =&gt; j.Prix);                 // MAX(Prix) : prix du jeu le plus cher
+bool dejaLoue     = ctx.Locations.Any(l =&gt; l.JeuId == 5);      // EXISTS(...) : le jeu 5 a-t-il déjà été loué ?</pre>
+<p><strong>Any</strong> mérite une mention : il devient un EXISTS, qui s'arrête à la première ligne trouvée. Le remplacer par Count() &gt; 0 force SQL Server à tout compter pour rien — un classique des revues de code. Attention aussi à Average sur une séquence vide : exception ! Filtre d'abord, ou projette vers un nullable (Average sur decimal? renvoie null au lieu de planter).</p>
+
+<h3>3. GroupBy : ton GROUP BY, version typée</h3>
+<p>« Combien de locations par mois ? » « Quelle note moyenne par jeu ? » — au Niveau 4, tu répondais avec GROUP BY. En LINQ, <strong>GroupBy</strong> crée des groupes (des paquets de lignes partageant une même valeur) dont la clé est accessible via <strong>g.Key</strong>, et chaque agrégat s'applique au groupe.</p>
+<pre class="pseudo">var statsParJeu = ctx.Avis                            // on part de la table Avis
+    .GroupBy(a =&gt; a.JeuId)                            // regroupe les avis par jeu (clé = JeuId)
+    .Select(g =&gt; new {                                // pour chaque groupe, on projette…
+        JeuId = g.Key,                                // …la clé du groupe (le JeuId)
+        NbAvis = g.Count(),                           // …le nombre d'avis du groupe
+        NoteMoyenne = g.Average(a =&gt; (double)a.Note)  // …la note moyenne du groupe
+    })
+    .ToList();                                        // matérialise les statistiques
+
+-- SQL généré :
+SELECT [a].[JeuId], COUNT(*) AS [NbAvis], AVG(CAST([a].[Note] AS float)) AS [NoteMoyenne]   -- clé + agrégats
+FROM [Avis] AS [a]                                    -- table Avis
+GROUP BY [a].[JeuId]                                  -- un groupe par JeuId</pre>
+<p>La clé peut être composée — GroupBy(l =&gt; new { l.DateDebut.Year, l.DateDebut.Month }) pour des statistiques mensuelles — et g.Key.Year, g.Key.Month ressortent dans la projection.</p>
+
+<h3>4. Filtrer les groupes : le HAVING s'écrit Where</h3>
+<p>« Les jeux ayant AU MOINS 10 avis » : en SQL, c'était HAVING COUNT(*) &gt;= 10. En LINQ, pas de mot-clé dédié — un simple <strong>Where placé APRÈS le GroupBy</strong> filtre les groupes, et EF Core génère le HAVING. La position fait tout : Where avant GroupBy = WHERE (filtre les lignes), Where après = HAVING (filtre les groupes).</p>
+<pre class="pseudo">var jeuxPopulaires = ctx.Avis                         // on part de la table Avis
+    .Where(a =&gt; a.Note &gt;= 3)                 // WHERE  : filtre les LIGNES   // ne garder que les avis de note >= 3
+    .GroupBy(a =&gt; a.JeuId)                            // regroupe par jeu
+    .Where(g =&gt; g.Count() &gt;= 10)             // HAVING : filtre les GROUPES   // ne garder que les jeux avec >= 10 avis
+    .Select(g =&gt; new { JeuId = g.Key, Nb = g.Count() })   // projette la clé + le nombre d'avis
+    .OrderByDescending(x =&gt; x.Nb)                     // trie du plus commenté au moins commenté
+    .ToList();                                        // matérialise</pre>
+
+<h3>5. La règle d'or de la traduction — et les cousins</h3>
+<p>Un GroupBy relationnel ne sait produire <em>que</em> des agrégats : SQL Server ne peut pas renvoyer « les groupes avec toutes leurs lignes » en une table plate. D'où la règle : <strong>après un GroupBy traduit en SQL, projette la clé et des agrégats</strong> (Count, Sum, Average, Min, Max). Demander g.ToList() ou les entités complètes du groupe force EF Core à basculer (ou échouer) — si tu veux vraiment les lignes groupées, charge-les puis groupe <em>en mémoire</em> (AsEnumerable() avant le GroupBy), en connaissance de cause. Une ligne pour ta culture : JPQL a GROUP BY/HAVING, Eloquent groupBy() + havingRaw(), et Django condense tout dans annotate()/aggregate() — values('jeu').annotate(nb=Count('id')) est l'exact jumeau de notre exemple.</p>
+<pre class="pseudo">// SQL pur : clé + agrégats  ✔
+.GroupBy(a =&gt; a.JeuId).Select(g =&gt; new { g.Key, Nb = g.Count() })   // regroupe et ne renvoie QUE clé + agrégat (traduisible en SQL)
+
+// Les lignes de chaque groupe ? En mémoire, volontairement :
+var parMois = ctx.Locations                           // on part de la table Locations
+    .Where(l =&gt; l.DateDebut.Year == 2026)    // filtre EN SQL d'abord   // ne rapatrie que les locations de 2026
+    .AsEnumerable()                           // bascule assumée   // à partir d'ici, tout se passe en mémoire (C#)
+    .GroupBy(l =&gt; l.DateDebut.Month);         // groupes complets, en C#   // regroupe par mois avec les lignes entières</pre>
+<div class="warn">Average sur une séquence vide lève une exception (« Sequence contains no elements ») : un jeu sans avis suffit à faire tomber ta page de stats. Parade : caster vers un nullable — Average(a =&gt; (double?)a.Note) renvoie null — ou vérifier Any() avant. Et souviens-toi : Count() &gt; 0 à la place de Any(), c'est payer un COUNT complet pour une question à un franc.</div>
+<div class="tip">Pour toute lecture destinée à l'affichage ou à une API, prends le réflexe « projection d'abord » : un Select vers DTO avec agrégats intégrés remplace souvent un Include + calculs en C#, avec un SQL plus court et zéro entité suivie. Vérifie au ToQueryString : si tu vois GROUP BY et des sous-requêtes propres, c'est gagné.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un DTO (Data Transfer Object) sert à…", opts: ["Remplacer le DbContext", "Transporter exactement les données utiles au client, découplées des entités", "Accélérer les migrations", "Chiffrer les réponses JSON"], a: 1, exp: "Le contrat de sortie de l'API : ni plus ni moins que ce que l'écran consomme." },
+    { type: "qcm", q: "Projeter vers un DTO directement dans le Select apporte…", opts: ["SQL minimal, pas de suivi par le tracker, contrat stable", "Plus de colonnes ramenées", "Un cache automatique", "Des entités complètes"], a: 0, exp: "Trois victoires d'un coup — c'est LA technique de lecture des API EF Core." },
+    { type: "vf", q: "Utiliser j.Avis.Count dans une projection Select exige un Include(j =&gt; j.Avis) préalable.", a: false, exp: "La projection se traduit en sous-requête SQL : Include ne sert qu'à matérialiser des entités." },
+    { type: "qcm", q: "ctx.Locations.Sum(l =&gt; l.Prix) génère…", opts: ["Un SELECT * suivi d'une somme en C#", "SELECT SUM([Prix]) côté SQL Server, une seule valeur transférée", "Une boucle de N requêtes", "Un GROUP BY"], a: 1, exp: "Les agrégats LINQ s'exécutent côté serveur : le réseau ne voit passer qu'un nombre." },
+    { type: "input", q: "Quelle méthode LINQ se traduit en EXISTS et s'arrête à la première ligne trouvée ?", a: ["Any", "Any()"], ph: "Nom de la méthode…", exp: "Any(prédicat) : le bon outil pour « existe-t-il ? » — bien plus économe que Count() &gt; 0." },
+    { type: "qcm", q: "Pourquoi préférer Any() à Count() &gt; 0 ?", opts: ["Any est plus joli", "EXISTS s'arrête à la première ligne ; COUNT parcourt tout pour un simple oui/non", "Count est obsolète", "Any contourne le WHERE"], a: 1, exp: "Même réponse, coût très différent : un classique des revues de code." },
+    { type: "qcm", q: "ctx.Jeux.Where(j =&gt; j.Id == 999).Average(j =&gt; j.Prix) sans aucun jeu correspondant :", opts: ["Renvoie 0", "Renvoie null", "Lève une exception « Sequence contains no elements »", "Renvoie -1"], a: 2, exp: "Average sur séquence vide plante — caster vers un nullable (decimal?) renvoie null à la place." },
+    { type: "qcm", q: "Dans un GroupBy(a =&gt; a.JeuId), la clé du groupe s'obtient via…", opts: ["g.JeuId", "g.Key", "g.First().JeuId obligatoirement", "g.Id"], a: 1, exp: "g.Key porte la valeur de regroupement — ici le JeuId de chaque groupe." },
+    { type: "qcm", q: "GroupBy(a =&gt; a.JeuId).Select(g =&gt; new { g.Key, Nb = g.Count() }) se traduit par…", opts: ["Un GROUP BY avec COUNT(*) côté SQL Server", "Un chargement complet puis un tri en C#", "Un DISTINCT", "Une table temporaire"], a: 0, exp: "Clé + agrégats : la forme que SQL sait produire — la traduction est directe." },
+    { type: "input", q: "Quel opérateur LINQ, placé APRÈS un GroupBy, se traduit en HAVING ?", a: ["Where", "Where()"], ph: "Nom de l'opérateur…", exp: "Pas de mot-clé Having en LINQ : Where après GroupBy filtre les groupes → HAVING." },
+    { type: "vf", q: "Where avant GroupBy et Where après GroupBy produisent le même SQL.", a: false, exp: "Avant = WHERE (filtre les lignes) ; après = HAVING (filtre les groupes) : la position change tout." },
+    { type: "qcm", q: "Pour des statistiques par mois, la clé de groupement s'écrit…", opts: ["GroupBy(l =&gt; new { l.DateDebut.Year, l.DateDebut.Month })", "GroupBy(l =&gt; l.DateDebut) tel quel", "GroupBy(Mois)", "OrderBy(l =&gt; l.Mois)"], a: 0, exp: "Clé composée anonyme : g.Key.Year et g.Key.Month ressortent dans la projection." },
+    { type: "qcm", q: "Après un GroupBy traduit en SQL, la projection doit contenir…", opts: ["Toutes les entités du groupe", "La clé et des agrégats (Count, Sum, Average, Min, Max)", "Un ToList imbriqué", "Des Include"], a: 1, exp: "SQL ne sait renvoyer que ça en table plate ; les lignes complètes des groupes = regroupement en mémoire assumé." },
+    { type: "vf", q: "AsEnumerable() placé avant un GroupBy fait basculer le regroupement en mémoire (LINQ to Objects).", a: true, exp: "Bascule volontaire : filtre en SQL d'abord, puis groupes complets en C# — jamais l'inverse." },
+    { type: "qcm", q: "L'équivalent Django de GroupBy + Count est…", opts: ["values(...).annotate(nb=Count(...))", "filter(...)", "select_related()", "raw()"], a: 0, exp: "annotate/aggregate côté Django, GROUP BY en JPQL, groupBy()+havingRaw() chez Eloquent : même mécanique partout." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau de bord du gérant",
+    intro: `<p>Le gérant de la Ludothèque veut son tableau de bord : chiffre d'affaires total, top des jeux par note moyenne (au moins 10 avis), et locations par mois de l'année en cours. Trois requêtes, trois traductions à prédire.</p>`,
+    questions: [
+      { type: "qcm", q: "Le chiffre d'affaires total des locations s'écrit…", opts: ["ctx.Locations.Sum(l =&gt; l.Prix)", "ctx.Locations.ToList().Count", "ctx.Locations.Average(l =&gt; l.Prix)", "ctx.Locations.GroupBy(l =&gt; l.Prix)"], a: 0, exp: "SUM(Prix) côté serveur : une valeur, un aller-retour." },
+      { type: "qcm", q: "« Note moyenne par jeu, au moins 10 avis » exige…", opts: ["GroupBy(a =&gt; a.JeuId) + Where(g =&gt; g.Count() &gt;= 10) + Select(clé, Average)", "Include(j =&gt; j.Avis) seulement", "Distinct()", "ExecuteUpdate"], a: 0, exp: "GROUP BY + HAVING + AVG : le trio du Niveau 4, en version typée." },
+      { type: "vf", q: "Dans cette requête, le Where(g =&gt; g.Count() &gt;= 10) sera traduit en clause HAVING.", a: true, exp: "Placé après le GroupBy, il filtre les groupes : HAVING COUNT(*) &gt;= 10." },
+      { type: "input", q: "Quelle propriété du groupe portes-tu dans la projection pour identifier chaque jeu ?", a: ["g.Key", "Key", "la clé", "g.key"], ph: "g.…", exp: "g.Key = la valeur de regroupement (JeuId), à projeter à côté des agrégats." },
+      { type: "qcm", q: "Un jeu sans avis fait planter la moyenne globale du tableau de bord. La parade la plus propre :", opts: ["try/catch autour du ToList", "Average(a =&gt; (double?)a.Note) : le nullable renvoie null au lieu de lever", "Supprimer les jeux sans avis", "Count() &gt; 0 partout"], a: 1, exp: "Le cast nullable transforme l'exception en null — à afficher comme « pas encore noté »." }
+    ],
+    solution: `<pre class="pseudo">-- 1. CA total
+ctx.Locations.Sum(l =&gt; l.Prix)                    → SELECT SUM([Prix])
+
+-- 2. Top jeux (≥ 10 avis)
+ctx.Avis.GroupBy(a =&gt; a.JeuId)
+        .Where(g =&gt; g.Count() &gt;= 10)              → HAVING COUNT(*) &gt;= 10
+        .Select(g =&gt; new { g.Key,
+                Moyenne = g.Average(a =&gt; (double)a.Note) })
+        .OrderByDescending(x =&gt; x.Moyenne)
+
+-- 3. Locations par mois (2026)
+ctx.Locations.Where(l =&gt; l.DateDebut.Year == 2026)          → WHERE
+        .GroupBy(l =&gt; l.DateDebut.Month)                    → GROUP BY
+        .Select(g =&gt; new { Mois = g.Key, Nb = g.Count() })
+
+Règles : projection DTO d'abord · Any() pas Count()&gt;0 ·
+         Average vide → nullable · GroupBy SQL = clé + agrégats
+Ailleurs : GROUP BY (JPQL), groupBy/having (Eloquent), annotate (Django)</pre>
+<p>LINQ te suit désormais jusque dans les statistiques. Mais certaines requêtes — rapports tordus, fonctions exotiques — dépassent la traduction… Prochaine leçon : reprendre la main en SQL natif avec <strong>FromSqlInterpolated</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l14", title: "Refactorer l'endpoint obèse", level: 3,
+    statement: "Un collègue a écrit l'endpoint GET /api/jeux/stats ainsi : il charge ctx.Jeux.Include(j => j.Avis).Include(j => j.Locations).ToList(), puis calcule EN C# pour chaque jeu le nombre d'avis, la note moyenne et le nombre de locations, et construit la liste de DTO à la main. La page fonctionne mais met 8 secondes avec 3 000 jeux, 45 000 avis et 120 000 locations. Rédige l'analyse du problème (volume transféré, rôle du tracker, travail déplacé du serveur SQL vers le serveur web) puis propose la réécriture en UNE requête projetée avec agrégats. Compare les deux versions : données transférées, SQL généré, mémoire, et indique le risque résiduel de ta version (pense aux jeux sans avis).",
+    hints: [
+      "Chiffre le volume de la version actuelle : 3 000 + 45 000 + 120 000 entités matérialisées ET suivies par le tracker — pour produire 3 000 lignes de DTO.",
+      "Ta réécriture tient en un Select : new StatsDto { Titre, NbAvis = j.Avis.Count(), Moyenne = ..., NbLocations = j.Locations.Count() } — qui fait les calculs, désormais ?",
+      "Moyenne sur un jeu sans avis : que renvoie Average ? Quel cast la rend inoffensive ?"
+    ],
+    solution: "ANALYSE DU PROBLÈME\n1. Volume : les deux Include matérialisent 168 000 entités (3 000 jeux +\n   45 000 avis + 120 000 locations) pour produire... 3 000 lignes de stats.\n   Toutes les colonnes de toutes les tables voyagent sur le réseau.\n2. Tracker : ToList() sans AsNoTracking → 168 000 instantanés en mémoire,\n   du travail de suivi pur gaspillage pour une lecture.\n3. Déplacement du calcul : COUNT et AVG sont le métier de SQL Server\n   (il a les index, il agrège sans transférer) ; ici le serveur web\n   refait en C# ce que la base aurait fait en une passe.\n4. Bonus aggravant : deux Include de collections = explosion cartésienne\n   (chaque ligne combine un avis ET une location) — le transfert réel\n   dépasse largement 168 000 lignes.\n\nRÉÉCRITURE\nvar stats = ctx.Jeux\n    .Select(j => new StatsDto {\n        Id = j.Id,\n        Titre = j.Titre,\n        NbAvis = j.Avis.Count(),\n        NoteMoyenne = j.Avis.Average(a => (double?)a.Note),\n        NbLocations = j.Locations.Count()\n    })\n    .ToList();\n\nCOMPARAISON\n- Transfert : 3 000 lignes de 5 colonnes contre des centaines de milliers\n  de lignes larges → deux ordres de grandeur de moins.\n- SQL : un SELECT avec sous-requêtes/JOIN agrégés, GROUP BY géré par le\n  moteur ; vérifiable au ToQueryString().\n- Mémoire : zéro entité suivie (une projection n'entre pas dans le tracker),\n  juste 3 000 DTO.\n- Les 8 secondes deviennent typiquement quelques dizaines de ms (les index\n  sur les FK, posés au Niveau 4, font le reste).\n\nRISQUE RÉSIDUEL : un jeu sans avis → Average lève « Sequence contains no\nelements » côté traduction. Le cast (double?) renvoie NULL, que le DTO\nexpose en double? et que le front affiche « pas encore noté ».",
+    note: "Ce refactoring est l'argument massue de la projection : on ne « charge » pas des statistiques, on les DEMANDE à la base. Les Rails/Django/Laravel du monde ont le même piège (boucler en Ruby/Python/PHP sur ce que SQL agrégerait en une passe) et la même parade (annotate, withCount). Au Niveau 6, ton tableau de bord full-stack utilisera exactement cette requête." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

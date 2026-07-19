@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Louer un jeu : transaction, stock, réservation",
+  subtitle: "Décrémenter le stock ET créer la location : tout ou rien, grâce à la transaction.",
+  theory: `
+<h3>1. Le problème : deux écritures liées</h3>
+<p>Louer un jeu, c'est en réalité <strong>deux opérations</strong> dans la base : <strong>insérer</strong> une nouvelle ligne dans la table <code>location</code> (<em>INSERT</em> = ajouter une ligne) ET <strong>décrémenter</strong> (baisser de 1) la colonne <code>stock_location</code> (<em>UPDATE</em> = modifier une ligne existante). Si la première réussit mais que la seconde échoue, on obtient une « location fantôme » : une location enregistrée alors que le stock n'a pas bougé. Il faut donc que les deux écritures se fassent <strong>ensemble ou pas du tout</strong>.</p>
+
+<h3>2. La transaction : atomicité</h3>
+<p>Une <strong>transaction</strong> regroupe plusieurs modifications en un seul bloc « tout ou rien ». On appelle cette garantie l'<strong>atomicité</strong> (du grec <em>atomos</em>, « insécable ») : le bloc est indivisible, comme un virement bancaire où le débit et le crédit doivent tomber ensemble. La fonction <code>mysql_query</code> envoie une commande SQL à la base.</p>
+<pre class="pseudo">mysql_query(c, "START TRANSACTION");     // ouvre la transaction : les écritures deviennent provisoires
+   ... plusieurs INSERT / UPDATE ...     // (ici, une ou plusieurs modifications de la base)
+mysql_query(c, "COMMIT");     // valide TOUT d'un coup : les modifications deviennent définitives
+// ou
+mysql_query(c, "ROLLBACK");   // annule TOUT en cas de problème : on revient à l'état d'avant</pre>
+<p>Entre <code>START TRANSACTION</code> (« démarrer la transaction ») et <code>COMMIT</code>, les modifications sont <strong>provisoires</strong> : elles ne sont pas encore vraiment inscrites. Le <code>COMMIT</code> (« valider ») les rend définitives d'un seul bloc ; le <code>ROLLBACK</code> (« revenir en arrière ») les efface toutes, comme si rien ne s'était passé.</p>
+
+<h3>3. Louer, étape par étape</h3>
+<p>Un symbole nouveau ici : l'<strong>esperluette</strong> <code>&amp;</code> devant une variable veut dire « l'<em>adresse</em> de » — <code>&amp;j</code> se lit « l'adresse de la fiche j ». On la passe à une fonction pour qu'elle puisse <strong>remplir</strong> cette fiche (on lui donne une adresse où écrire), à la manière d'un formulaire qu'on tend vierge pour qu'on nous le complète.</p>
+<pre class="pseudo">Code service_louer(MYSQL *c, int uid, int jeu_id, int jours) {   // louer le jeu jeu_id à l'utilisateur uid pour "jours" jours
+    if (valider_duree(jours) != OK) return ERR_SAISIE;           // rejette tôt une durée invalide, avant même d'ouvrir la transaction
+    mysql_query(c, "START TRANSACTION");                         // début de la transaction (tout ou rien)
+
+    Jeu j;                                                       // une fiche Jeu vide, qui recevra les infos du jeu
+    if (dao_jeu_par_id(c, jeu_id, &amp;j) != 0)  { mysql_query(c,"ROLLBACK"); return ERR_DB; }    // lit le jeu ; si échec, on annule tout et on sort
+    if (!service_peut_louer(&amp;j))            { mysql_query(c,"ROLLBACK"); return ERR_STOCK; }  // stock insuffisant : on annule tout et on sort
+
+    if (dao_inserer_location(c, uid, jeu_id, jours) != 0 ||      // insère la location ; si cette écriture échoue OU…
+        dao_decrementer_stock_loc(c, jeu_id) != 0) {            // …si la baisse du stock échoue…
+        mysql_query(c, "ROLLBACK");          // …une erreur : tout annuler
+        return ERR_DB;                       // et signaler l'erreur de base de données
+    }
+    mysql_query(c, "COMMIT");                // les deux écritures ont réussi → on valide définitivement
+    return OK;                               // succès complet de la location
+}</pre>
+<p>Ici <code>uid</code> est l'identifiant de l'utilisateur, <code>jeu_id</code> celui du jeu, <code>jours</code> la durée. Chaque appel au DAO est <strong>testé</strong> (<code>!= 0</code> signifie « a échoué ») : à la moindre erreur, on fait <code>ROLLBACK</code> et on renvoie un code. Le <code>COMMIT</code> n'arrive qu'en tout dernier, quand plus rien ne peut échouer.</p>
+
+<h3>4. Vérifier le stock DANS la transaction</h3>
+<div class="warn">Le contrôle du stock se fait <strong>à l'intérieur</strong> de la transaction, juste avant de décrémenter : sinon, deux locations <strong>simultanées</strong> (on parle de contexte <em>concurrent</em>, quand plusieurs actions tournent en même temps) pourraient toutes deux « voir » le dernier exemplaire et le louer deux fois. La transaction, renforcée par un <code>SELECT ... FOR UPDATE</code> (qui <strong>verrouille</strong> la ligne lue jusqu'au COMMIT) en contexte concurrent, protège contre ça.</div>
+<div class="tip">Règle d'or : dès qu'une opération touche <strong>plusieurs lignes/tables</strong> et doit rester cohérente, elle vit dans une transaction. Louer, acheter, transférer : toujours atomique.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique combien d'écritures liées ?", opts: ["une", "deux : insérer la location ET décrémenter le stock", "trois", "aucune"], a: 1, exp: "Elles doivent réussir ensemble." },
+    { type: "qcm", q: "Une transaction garantit…", opts: ["la vitesse", "l'atomicité : tout ou rien", "le chiffrement", "le tri"], a: 1, exp: "COMMIT valide tout, ROLLBACK annule tout." },
+    { type: "qcm", q: "START TRANSACTION ouvre…", opts: ["une connexion", "un bloc de modifications provisoires", "un fichier", "une table"], a: 1, exp: "Jusqu'au COMMIT ou ROLLBACK." },
+    { type: "qcm", q: "COMMIT fait…", opts: ["annuler", "rendre les modifications définitives d'un bloc", "ouvrir la base", "supprimer"], a: 1, exp: "Validation atomique." },
+    { type: "qcm", q: "ROLLBACK fait…", opts: ["valider", "annuler toutes les modifications de la transaction", "fermer la base", "trier"], a: 1, exp: "On revient à l'état d'avant." },
+    { type: "qcm", q: "Si un INSERT réussit mais l'UPDATE échoue, on…", opts: ["garde l'INSERT", "ROLLBACK pour tout annuler", "ignore", "COMMIT quand même"], a: 1, exp: "Cohérence : tout ou rien." },
+    { type: "qcm", q: "Le contrôle du stock se fait…", opts: ["après le COMMIT", "dans la transaction, avant de décrémenter", "dans l'UI", "jamais"], a: 1, exp: "Éviter la double location." },
+    { type: "qcm", q: "En contexte concurrent, quel outil verrouille la ligne lue ?", opts: ["SELECT ... FOR UPDATE", "un simple SELECT", "printf", "un enum"], a: 0, exp: "Il verrouille jusqu'au COMMIT." },
+    { type: "qcm", q: "Une « location fantôme » survient si…", opts: ["tout va bien", "l'insertion réussit mais le stock n'est pas décrémenté", "on utilise une transaction", "le jeu n'existe pas"], a: 1, exp: "Incohérence sans transaction." },
+    { type: "qcm", q: "Quand utiliser une transaction ?", opts: ["jamais", "dès qu'une opération touche plusieurs lignes/tables et doit rester cohérente", "pour un seul SELECT", "à l'affichage"], a: 1, exp: "Louer, acheter, transférer." },
+    { type: "vf", q: "On peut décrémenter le stock puis insérer la location sans transaction, sans risque.", a: false, exp: "Faux : un échec intermédiaire laisserait des données incohérentes." },
+    { type: "qcm", q: "service_louer valide d'abord…", opts: ["le COMMIT", "la durée (saisie) avant d'ouvrir la transaction", "l'affichage", "rien"], a: 1, exp: "Rejeter tôt les saisies fautives." },
+    { type: "qcm", q: "Si le stock est nul, le service renvoie…", opts: ["OK", "ERR_STOCK (après ROLLBACK)", "ERR_DROIT", "le jeu"], a: 1, exp: "Refus pour stock insuffisant." },
+    { type: "qcm", q: "La transaction est gérée dans…", opts: ["l'UI", "le service (qui orchestre) via le DAO", "le Makefile", "modele.h"], a: 1, exp: "Le service décide, le DAO exécute le SQL." },
+    { type: "qcm", q: "COMMIT n'est appelé que…", opts: ["au hasard", "si toutes les étapes ont réussi", "toujours en premier", "jamais"], a: 1, exp: "Sinon ROLLBACK." }
+  ],
+  final: {
+    title: "Exercice final — Réparer une location non atomique",
+    intro: `<p>Cette version n'est pas sûre. Analyse :</p>
+<pre class="pseudo">Code service_louer(MYSQL *c, int uid, int jeu_id, int jours) {   // même signature que la bonne version
+    dao_inserer_location(c, uid, jeu_id, jours);   // insère la location… sans vérifier le résultat
+    dao_decrementer_stock_loc(c, jeu_id);          // baisse le stock… sans transaction ni contrôle de stock
+    return OK;                                      // renvoie OK même si une étape a échoué (c'est un mensonge)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Défaut principal ?", opts: ["trop lent", "pas de transaction : les deux écritures peuvent se désynchroniser", "trop de fichiers", "rien"], a: 1, exp: "Un échec intermédiaire casse la cohérence." },
+      { type: "qcm", q: "Que manque-t-il autour des écritures ?", opts: ["rien", "START TRANSACTION ... COMMIT / ROLLBACK", "un printf", "un malloc"], a: 1, exp: "Encadrer par une transaction." },
+      { type: "qcm", q: "Que manque-t-il avant d'insérer ?", opts: ["rien", "vérifier le stock (service_peut_louer) et la durée", "un sleep", "un COMMIT"], a: 1, exp: "Contrôles métier d'abord." },
+      { type: "qcm", q: "Les retours des dao_* doivent être…", opts: ["ignorés", "testés, pour ROLLBACK en cas d'échec", "affichés ici", "toujours OK"], a: 1, exp: "On propage l'erreur." },
+      { type: "qcm", q: "Renvoyer OK sans vérifier est…", opts: ["prudent", "un mensonge : on masque les échecs", "rapide", "recommandé"], a: 1, exp: "Il faut refléter le vrai résultat." }
+    ],
+    solution: `<pre class="pseudo">Code service_louer(MYSQL *c, int uid, int jeu_id, int jours) {   // louer le jeu jeu_id à l'utilisateur uid
+    if (valider_duree(jours) != OK) return ERR_SAISIE;          // rejette tôt une durée invalide
+    mysql_query(c, "START TRANSACTION");                        // ouvre la transaction (tout ou rien)
+
+    Jeu j;                                                      // fiche vide pour recevoir le jeu
+    if (dao_jeu_par_id(c, jeu_id, &amp;j) != 0) { mysql_query(c,"ROLLBACK"); return ERR_DB; }    // lecture du jeu ; échec → annuler
+    if (!service_peut_louer(&amp;j))           { mysql_query(c,"ROLLBACK"); return ERR_STOCK; }  // stock insuffisant → annuler
+
+    if (dao_inserer_location(c, uid, jeu_id, jours) != 0 ||     // insère la location ; si échec OU…
+        dao_decrementer_stock_loc(c, jeu_id) != 0) {           // …si la baisse du stock échoue…
+        mysql_query(c, "ROLLBACK");          // …tout annuler
+        return ERR_DB;                       // signaler l'erreur
+    }
+    mysql_query(c, "COMMIT");                // les deux écritures ont réussi → valider
+    return OK;                               // succès
+}</pre>
+<p>Validation, transaction, contrôle du stock à l'intérieur, ROLLBACK sur erreur, COMMIT sur succès. L'opération est atomique et sûre. Demain : acheter, avec le prix figé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C ici…",
+  items: [
+  { id: "projc-l12", title: "Le squelette transactionnel", level: 3,
+    statement: "Écris le squelette d'une fonction transactionnelle générique (en pseudocode C commenté) : START TRANSACTION, une suite d'opérations, COMMIT si tout va bien, ROLLBACK sur la moindre erreur. Montre où placer le contrôle métier.",
+    hints: [
+      "Ouvre avec mysql_query(c, \"START TRANSACTION\").",
+      "Chaque opération testée : en cas d'échec → ROLLBACK + return code.",
+      "COMMIT seulement si toutes les étapes ont réussi."
+    ],
+    solution: "Code operation_atomique(MYSQL *c, ...) {   // squelette generique d'une operation tout-ou-rien\n    // 1) validations et controle metier AVANT ou juste apres l'ouverture\n    mysql_query(c, \"START TRANSACTION\");   // ouvre la transaction (ecritures provisoires)\n\n    if (etape1(c) != 0)      { mysql_query(c, \"ROLLBACK\"); return ERR_DB; }     // 1re ecriture ; echec -> tout annuler\n    if (controle_metier())   { mysql_query(c, \"ROLLBACK\"); return ERR_STOCK; }  // regle metier non respectee -> annuler\n    if (etape2(c) != 0)      { mysql_query(c, \"ROLLBACK\"); return ERR_DB; }     // 2e ecriture ; echec -> tout annuler\n\n    mysql_query(c, \"COMMIT\");   // toutes les etapes ont reussi -> validation definitive\n    return OK;                   // succes complet\n}",
+    note: "Ce squelette se réutilise pour louer, acheter, transférer : toute opération multi-écritures. La règle : une seule erreur suffit à tout annuler par ROLLBACK ; le COMMIT clôt un succès complet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

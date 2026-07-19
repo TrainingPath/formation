@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Validation, gestion des erreurs et entrées sûres",
+  subtitle: "La robustesse et la première ligne de défense, du même geste.",
+  theory: `
+<h3>1. Toute entrée est hostile jusqu'à validation</h3>
+<p>Avant que l'API n'écrive quoi que ce soit, on blinde les <strong>entrées</strong> — toute donnée venue de l'extérieur (formulaire, URL, requête). Deux familles à distinguer : les <strong>données invalides</strong> (un prix négatif) qu'on refuse à la porte, et les <strong>refus métier</strong> (un stock nul) qu'on traduit en <strong>code HTTP</strong> (le nombre à trois chiffres qui résume le sort d'une requête : 200 succès, 404 absent…). <strong>Valider</strong>, c'est vérifier qu'une entrée respecte les règles attendues avant de s'en servir. Ce n'est pas qu'une commodité : c'est la <strong>première défense</strong> contre l'<strong>injection</strong> (glisser du code malveillant dans une donnée) et les abus (cours Sécurité).</p>
+
+<h3>2. Valider en liste d'autorisation</h3>
+<pre class="pseudo">class JeuForm(forms.ModelForm):   # un formulaire lie au modele Jeu (il valide les entrees)
+    class Meta:   # options du formulaire
+        model = Jeu   # le modele cible
+        fields = ["titre","prix_achat","prix_location","stock_vente","stock_location","categorie"]   # LISTE des champs acceptes (liste d'autorisation)
+    def clean_prix_location(self):   # regle de validation propre au champ prix_location
+        v = self.cleaned_data["prix_location"]   # recupere la valeur deja nettoyee du champ
+        if v <= 0:   # un prix nul ou negatif est interdit…
+            raise forms.ValidationError("Le prix doit être positif")   # …message d'erreur attache au champ
+        return v   # sinon, renvoyer la valeur validee
+    def clean(self):   # validation GLOBALE : coherence entre plusieurs champs
+        d = super().clean()   # recupere toutes les donnees nettoyees
+        if d.get("prix_location") and d.get("prix_achat") and d["prix_location"] > d["prix_achat"]:   # louer plus cher qu'acheter est incoherent…
+            raise forms.ValidationError("Louer ne peut coûter plus que d'acheter")   # …erreur globale du formulaire
+        return d   # renvoyer les donnees validees</pre>
+<p>On <strong>autorise</strong> ce qu'on attend (type, bornes, cohérence), on refuse le reste — jamais l'inverse (une liste d'interdiction oublie toujours un cas).</p>
+
+<h3>3. Traduire les erreurs sans fuite</h3>
+<pre class="pseudo">try:   # tenter l'operation nominale
+    devis = services.devis_location(jeu, jours)   # calculer le devis via le service
+    return JsonResponse(devis)   # succes : renvoyer le devis en JSON (200 par defaut)
+except Jeu.DoesNotExist:   return JsonResponse({"erreur": "Introuvable"}, status=404)   # jeu absent -> 404 Not Found
+except StockInsuffisant as e: return JsonResponse({"erreur": str(e)}, status=409)   # conflit metier (stock nul) -> 409 Conflict
+except ValueError:         return JsonResponse({"erreur": "Requête invalide"}, status=400)   # donnee invalide -> 400 Bad Request</pre>
+<p>404 (absent), 409 (conflit métier), 400 (invalide) : le client comprend, sans qu'on divulgue le nom d'une colonne ou une trace (cours Sécurité l.14).</p>
+
+<h3>4. Un test par branche d'erreur</h3>
+<pre class="pseudo">def test_prix_negatif_refuse(self):   # un prix negatif doit etre refuse par le form
+    form = JeuForm({"titre":"X","prix_location":-1, ...})   # soumettre un formulaire avec prix -1
+    self.assertFalse(form.is_valid())   # on VERIFIE que le formulaire est invalide
+def test_devis_jeu_absent_404(self):   # un jeu inexistant doit donner 404
+    r = self.client.get("/api/devis/999999/?jours=7")   # demander un devis pour un id qui n'existe pas
+    self.assertEqual(r.status_code, 404)   # on VERIFIE le code 404</pre>
+<p>La CI verrouille chaque cas d'erreur : la robustesse devient <strong>vérifiée</strong>, pas espérée.</p>
+
+<h3>5. Défense en profondeur</h3>
+<div class="warn">La même règle « prix positif » existe au formulaire (1ʳᵉ ligne), au service (logique métier) et en base (contraintes). Ce n'est pas redondant : si une couche est contournée (un import direct, une route oubliée), la suivante tient. C'est le principe qui rend un système robuste — aucune barrière ne se croit seule.</div>
+<div class="tip">Écrire la validation MAINTENANT, avec messages génériques et liste d'autorisation, ferme d'emblée injection et fuite d'information. Au Niveau 6 c'était une leçon « robustesse » ; ici c'est aussi une leçon de sécurité — les deux du même geste.</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle d'or des entrées :", opts: ["Faire confiance", "Toute entrée est hostile jusqu'à validation", "Valider une fois", "Côté client seulement"], a: 1, exp: "Le socle." },
+    { type: "qcm", q: "La validation est aussi…", opts: ["Décorative", "La première ligne de défense (sécurité)", "Optionnelle", "Côté client"], a: 1, exp: "Robustesse ET sécurité." },
+    { type: "qcm", q: "Liste d'autorisation vs d'interdiction :", opts: ["Identiques", "Autoriser le connu (sûr) > interdire le mauvais (incomplet)", "Interdire est mieux", "Ni l'un ni l'autre"], a: 1, exp: "On oublie toujours un cas." },
+    { type: "qcm", q: "clean_<champ> ajoute…", opts: ["Une couche réseau", "Une règle de validation sur un champ", "Un template", "Un test"], a: 1, exp: "clean_prix_location." },
+    { type: "qcm", q: "clean() (global) sert à…", opts: ["Trier", "Vérifier une cohérence entre plusieurs champs", "Chiffrer", "Migrer"], a: 1, exp: "prix_location > prix_achat." },
+    { type: "qcm", q: "Jeu.DoesNotExist se traduit en…", opts: ["500", "404", "200 vide", "302"], a: 1, exp: "Absent." },
+    { type: "qcm", q: "StockInsuffisant →", opts: ["409 Conflict", "404", "201", "400"], a: 0, exp: "Conflit métier." },
+    { type: "qcm", q: "Une durée invalide →", opts: ["400 Bad Request", "409", "404", "500"], a: 0, exp: "Requête invalide." },
+    { type: "qcm", q: "Un message d'erreur API doit…", opts: ["Donner le nom de la colonne", "Rester générique (pas de fuite technique)", "Montrer la trace", "Donner le chemin"], a: 1, exp: "Cours Sécurité l.14." },
+    { type: "qcm", q: "Chaque cas d'erreur a…", opts: ["Un vœu", "Son test, verrouillé par la CI", "Un log seul", "Rien"], a: 1, exp: "Robustesse vérifiée." },
+    { type: "vf", q: "La même règle peut exister au formulaire, au service et en base.", a: true, exp: "Défense en profondeur." },
+    { type: "qcm", q: "La défense en profondeur suppose…", opts: ["Une barrière parfaite", "Que si une couche est contournée, la suivante tient", "Un seul contrôle", "Rien"], a: 1, exp: "Aucune barrière seule." },
+    { type: "qcm", q: "Écrire la validation maintenant ferme d'emblée…", opts: ["Le CSS", "Injection et fuite d'information", "Le N+1", "Le cache"], a: 1, exp: "Sécurité du même geste." },
+    { type: "qcm", q: "form.is_valid() en échec remplit…", opts: ["form.errors (par champ)", "une exception fatale", "rien", "la base"], a: 0, exp: "À afficher près des champs." },
+    { type: "vf", q: "Une liste d'interdiction finit toujours par oublier un cas.", a: true, exp: "D'où l'autorisation." }
+  ],
+  final: {
+    title: "Exercice final — Blinder l'écriture",
+    intro: `<p>On valide les entrées et on traduit les erreurs.</p>`,
+    questions: [
+      { type: "qcm", q: "Prix négatif soumis :", opts: ["is_valid() False + message sur le champ", "500", "enregistré", "ignoré"], a: 0, exp: "clean_prix_location." },
+      { type: "qcm", q: "Jeu inexistant dans l'API :", opts: ["404 JSON générique", "stack trace", "200", "302"], a: 0, exp: "Sans fuite." },
+      { type: "qcm", q: "Stock nul :", opts: ["409 avec le message métier", "400", "200", "201"], a: 0, exp: "StockInsuffisant." },
+      { type: "qcm", q: "Chaque branche d'erreur :", opts: ["A son test en CI", "n'est pas testée", "est ignorée", "est chiffrée"], a: 0, exp: "Robustesse vérifiée." },
+      { type: "vf", q: "Validation = robustesse ET première défense de sécurité.", a: true, exp: "Du même geste." }
+    ],
+    solution: `<pre class="pseudo">class JeuForm(forms.ModelForm):   # formulaire lie au modele Jeu
+    class Meta: model = Jeu; fields = [...]   # champs acceptes (liste d'autorisation)
+    def clean_prix_location(self):   # validation du champ prix_location
+        v = self.cleaned_data["prix_location"]   # valeur nettoyee du champ
+        if v <= 0: raise forms.ValidationError("Le prix doit être positif")   # refuser un prix <= 0
+        return v   # renvoyer la valeur validee
+
+try:   # operation nominale
+    ...   # (calcul du devis)
+except Jeu.DoesNotExist:   return JsonResponse({"erreur":"Introuvable"}, status=404)   # absent -> 404
+except StockInsuffisant as e: return JsonResponse({"erreur":str(e)}, status=409)   # conflit metier -> 409
+except ValueError:         return JsonResponse({"erreur":"Requête invalide"}, status=400)   # invalide -> 400
+
+# + un test par branche, verrouillé en CI   # chaque cas d'erreur a son test</pre>
+<p>L'écriture est blindée. Demain : des comptes et une authentification durcie.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta validation et ta traduction d'erreurs…",
+  items: [
+  { id: "proj6py-l8", title: "Le formulaire de location validé + tests", level: 3,
+    statement: "Écris LocationForm (nb_jours entier, 1 à 60, message clair hors bornes) et la vue API api_devis(request, jeu_id) : valider via le form (400 + errors si invalide), charger le jeu (404 si absent), appeler devis_location (409 si StockInsuffisant). Écris les tests des trois cas d'erreur (400, 404, 409). Explique pourquoi la validation de forme (form) et la validation de fond (service) sont séparées.",
+    hints: [
+      "class LocationForm(forms.Form): nb_jours = forms.IntegerField(min_value=1, max_value=60).",
+      "form.is_valid() -> 400 + form.errors ; Jeu.DoesNotExist -> 404 ; StockInsuffisant -> 409.",
+      "Forme = un entier borné (form) ; fond = stock, existence (service)."
+    ],
+    solution: "class LocationForm(forms.Form):   # formulaire simple (non lie a un modele)\n    nb_jours = forms.IntegerField(   # un champ entier obligatoire…\n        min_value=1, max_value=60,   # …borne entre 1 et 60 jours\n        error_messages={\"min_value\": \"Minimum 1 jour\", \"max_value\": \"Maximum 60 jours\"})   # messages clairs hors bornes\n\ndef api_devis(request, jeu_id):   # vue API : renvoie un devis en JSON\n    form = LocationForm(request.GET)   # construire le form depuis les parametres d'URL (?nb_jours=…)\n    if not form.is_valid():   # si la FORME de la requete est invalide…\n        return JsonResponse({\"erreurs\": form.errors}, status=400)   # …400 avec le detail par champ\n    try:   # la forme est bonne : tenter l'operation\n        jeu = Jeu.objects.get(pk=jeu_id)   # charger le jeu par sa cle primaire\n        devis = services.devis_location(jeu, form.cleaned_data[\"nb_jours\"])   # calculer le devis (valeur validee)\n        return JsonResponse(devis)   # succes -> renvoyer le devis\n    except Jeu.DoesNotExist:   # le jeu n'existe pas…\n        return JsonResponse({\"erreur\": \"Introuvable\"}, status=404)   # …404 Not Found\n    except StockInsuffisant as e:   # plus de stock…\n        return JsonResponse({\"erreur\": str(e)}, status=409)   # …409 Conflict\n\n# tests.py — une branche, un test\nclass DevisApiTests(TestCase):   # tests des cas d'erreur de l'API\n    def setUp(self):   # donnees communes avant chaque test\n        self.cat = Categorie.objects.create(nom=\"Stratégie\")   # une categorie\n        self.jeu = Jeu.objects.create(titre=\"Catan\", prix_achat=30, prix_location=5,   # un jeu de test…\n                                      stock_location=3, categorie=self.cat)   # …avec du stock\n    def test_jours_invalide_400(self):   # cas 400 : duree hors bornes\n        r = self.client.get(f\"/api/devis/{self.jeu.id}/?nb_jours=0\")   # 0 jour est refuse par le form\n        self.assertEqual(r.status_code, 400)   # on attend 400\n    def test_jeu_absent_404(self):   # cas 404 : jeu inexistant\n        r = self.client.get(\"/api/devis/999999/?nb_jours=7\")   # id qui n'existe pas\n        self.assertEqual(r.status_code, 404)   # on attend 404\n    def test_stock_nul_409(self):   # cas 409 : stock epuise\n        self.jeu.stock_location = 0; self.jeu.save()   # vider le stock du jeu\n        r = self.client.get(f\"/api/devis/{self.jeu.id}/?nb_jours=7\")   # demander un devis\n        self.assertEqual(r.status_code, 409)   # on attend 409\n\n# Forme vs fond :\n# Le FORM valide la FORME de la requête (un entier entre 1 et 60) -> 400.\n# Le SERVICE décide du FOND (le jeu existe ? le stock suffit ?) -> 404/409.\n# Séparer les deux garde le service pur (testable sans HTTP) et rend l'API\n# prévisible : chaque code HTTP raconte une histoire distincte au client.",
+    note: "La séparation forme/fond est structurante : le formulaire (couche web) refuse ce qui n'a pas la bonne forme, le service (couche métier) décide du reste sur des données déjà propres. Trois codes HTTP, trois histoires — c'est ce qui rend une API agréable à consommer, et chaque histoire a son test qui la fige en CI." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

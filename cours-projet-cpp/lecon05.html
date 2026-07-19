@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "La couche dépôt (DAO) : SELECT et mapping",
+  subtitle: "Lire des lignes MySQL et les transformer en objets Jeu : le rôle du dépôt.",
+  theory: `
+<h3>1. Le dépôt : traduire base ↔ objets</h3>
+<p>Le <strong>dépôt</strong> (ou <strong>DAO</strong>, <em>Data Access Object</em>) est la seule couche qui connaît MySQL — le magasinier du projet. Il exécute les requêtes et <strong>mappe</strong> (« fait correspondre ») chaque ligne du <code>ResultSet</code> — le tableau de réponses de la base — en un objet du domaine. Autrement dit, il transforme une ligne de tableau en un vrai <code>Jeu</code>. Les services, eux, ne voient jamais de SQL : seulement des objets <code>Jeu</code> tout faits.</p>
+
+<h3>2. Un SELECT qui construit des objets</h3>
+<pre class="pseudo">std::vector&lt;Jeu&gt; JeuRepository::findAll(sql::Connection&amp; con) {   // renvoie la liste de TOUS les jeux
+    std::vector&lt;Jeu&gt; jeux;                                        // la liste (vide au depart) qu'on va remplir
+    std::unique_ptr&lt;sql::Statement&gt; stmt(con.createStatement());  // cree un ordre SQL (ferme tout seul : RAII)
+    std::unique_ptr&lt;sql::ResultSet&gt; res(                          // on range le resultat dans un unique_ptr...
+        stmt-&gt;executeQuery("SELECT id,nom,prix_achat,prix_location,"   // ...en executant le SELECT (suite a la ligne suivante)
+                           "stock_vente,stock_location FROM jeu"));    // les deux chaines collees forment UNE seule requete
+    while (res-&gt;next()) {                                        // tant qu'il reste une ligne a lire...
+        jeux.emplace_back(                                       // ...construit un Jeu DIRECTEMENT dans la liste
+            res-&gt;getInt("id"), res-&gt;getString("nom"),            // colonnes id et nom, converties dans le bon type
+            res-&gt;getDouble("prix_achat"), res-&gt;getDouble("prix_location"),   // les deux prix (nombres a virgule)
+            res-&gt;getInt("stock_vente"), res-&gt;getInt("stock_location"));      // les deux stocks (entiers)
+    }
+    return jeux;   // renvoyé par valeur (RVO : pas de copie inutile)
+}</pre>
+<p>Un <code>std::vector&lt;Jeu&gt;</code> est une <strong>liste</strong> de jeux qui grandit à la demande. <code>while (res-&gt;next())</code> avance ligne par ligne dans le résultat (comme tourner les pages une à une). <code>emplace_back</code> ajoute un élément à la fin en le <strong>construisant sur place</strong>. Le commentaire <code>RVO</code> (<em>Return Value Optimization</em>) signifie que le compilateur renvoie la liste sans la recopier bêtement.</p>
+
+<h3>3. Lire les colonnes typées</h3>
+<p><code>res-&gt;getInt("id")</code>, <code>getString("nom")</code>, <code>getDouble("prix_achat")</code> : le connecteur convertit chaque colonne dans le bon <strong>type</strong> C++ (entier, texte, nombre à virgule). On y accède par <strong>nom de colonne</strong> (lisible) ou par numéro d'ordre (1, 2…).</p>
+<div class="warn"><code>emplace_back</code> construit le <code>Jeu</code> <strong>directement dans le vector</strong>, sans créer d'objet temporaire intermédiaire (plus efficace). Le <code>vector</code> et les <code>unique_ptr</code> gèrent la mémoire tout seuls : rien à libérer, aucune <strong>fuite</strong> (mémoire oubliée et jamais rendue).</div>
+
+<h3>4. Chercher un seul objet</h3>
+<pre class="pseudo">Jeu JeuRepository::findById(sql::Connection&amp; con, int id) {   // cherche UN jeu par son identifiant
+    std::unique_ptr&lt;sql::PreparedStatement&gt; pstmt(             // requete "preparee" : un modele avec un trou ?
+        con.prepareStatement("SELECT ... FROM jeu WHERE id=?"));   // le ? sera remplace par l'id (WHERE = filtre)
+    pstmt-&gt;setInt(1, id);                                     // remplit le 1er ? avec l'entier id (en toute securite)
+    std::unique_ptr&lt;sql::ResultSet&gt; res(pstmt-&gt;executeQuery());   // execute et recupere le resultat
+    if (!res-&gt;next())                                        // si aucune ligne (le jeu n'existe pas)...
+        throw std::runtime_error("Jeu introuvable");         // ...leve une exception (signal d'alarme)
+    return Jeu(res-&gt;getInt("id"), /* ... */);                // sinon : construit et renvoie le Jeu
+}</pre>
+<p>Un <strong>PreparedStatement</strong> (« requête préparée ») est un modèle de requête où l'on laisse un <strong>trou</strong> noté <code>?</code>, rempli ensuite par <code>setInt(1, id)</code> (le 1 désigne le premier trou). <code>WHERE id=?</code> est un <strong>filtre</strong> : « seulement la ligne dont l'id vaut ceci ». Si rien n'est trouvé, <code>throw</code> <strong>lance</strong> une <strong>exception</strong> — une erreur signalée bruyamment — que l'appelant attrapera.</p>
+
+<h3>5. Le dépôt isole la base</h3>
+<div class="tip">Le dépôt renvoie des <strong>objets</strong> (ou lance une exception si l'objet est absent) : les services raisonnent sur des <code>Jeu</code>, pas sur des <code>ResultSet</code>. Ce <strong>découplage</strong> (le fait que chaque couche ignore les détails des autres) rend le métier testable et permettrait même de changer de base de données sans toucher aux services.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le dépôt est la couche qui…", opts: ["affiche", "connaît MySQL et mappe lignes ↔ objets", "décide des règles", "compile"], a: 1, exp: "Data Access Object." },
+    { type: "qcm", q: "Un SELECT renvoie un…", opts: ["int", "sql::ResultSet (parcouru par next())", "objet Jeu direct", "vector"], a: 1, exp: "On mappe ensuite." },
+    { type: "qcm", q: "res->getDouble(\"prix_achat\") récupère…", opts: ["une chaîne", "un réel typé", "un int", "un objet"], a: 1, exp: "Accès typé par nom." },
+    { type: "qcm", q: "emplace_back construit l'objet…", opts: ["dans une copie", "directement dans le vector (sans temporaire)", "en mémoire brute", "jamais"], a: 1, exp: "Efficace." },
+    { type: "qcm", q: "Qui gère la mémoire du Statement/ResultSet ?", opts: ["à la main (delete)", "les unique_ptr (RAII)", "personne", "le service"], a: 1, exp: "Fermeture automatique." },
+    { type: "qcm", q: "Les services voient…", opts: ["du SQL", "des objets Jeu, jamais de SQL", "des ResultSet", "des CMakeLists"], a: 1, exp: "Le dépôt isole." },
+    { type: "qcm", q: "findById, si le jeu est absent…", opts: ["renvoie un Jeu vide", "lance une exception", "renvoie -1", "plante en silence"], a: 1, exp: "Signaler proprement." },
+    { type: "qcm", q: "On lit les colonnes par…", opts: ["adresse mémoire", "nom (ou index) via getInt/getString/getDouble", "pointeur", "octet"], a: 1, exp: "res->getInt(\"id\")." },
+    { type: "qcm", q: "Le vector renvoyé par valeur est…", opts: ["copié coûteusement", "optimisé (RVO / move)", "interdit", "un pointeur"], a: 1, exp: "Pas de copie inutile." },
+    { type: "qcm", q: "Le dépôt renvoie…", opts: ["du SQL", "des objets du domaine (ou une exception)", "des ResultSet", "rien"], a: 1, exp: "Découplage." },
+    { type: "vf", q: "Grâce aux unique_ptr, il n'y a rien à libérer dans le dépôt.", a: true, exp: "RAII." },
+    { type: "qcm", q: "findById utilise un PreparedStatement pour…", opts: ["afficher", "lier l'id en toute sécurité (setInt)", "trier", "compiler"], a: 1, exp: "Requête paramétrée." },
+    { type: "qcm", q: "while (res->next()) parcourt…", opts: ["un tableau C", "les lignes du ResultSet", "un fichier", "la pile"], a: 1, exp: "Curseur de résultat." },
+    { type: "qcm", q: "Le mapping consiste à…", opts: ["afficher", "construire un objet depuis les colonnes d'une ligne", "trier", "chiffrer"], a: 1, exp: "Ligne SQL → objet C++." },
+    { type: "qcm", q: "Changer de base sans toucher aux services est possible car…", opts: ["impossible", "seul le dépôt connaît la base (découplage)", "tout est global", "le service fait le SQL"], a: 1, exp: "Isolation." }
+  ],
+  final: {
+    title: "Exercice final — Lire un jeu par id",
+    intro: `<p>On charge un jeu. Analyse :</p>
+<pre class="pseudo">Jeu JeuRepository::findById(sql::Connection&amp; con, int id) {   // version A CORRIGER
+    sql::Statement* stmt = con.createStatement();             // PROBLEME : pointeur brut (qui fera le delete ?)
+    auto res = stmt-&gt;executeQuery("SELECT * FROM jeu WHERE id=" + std::to_string(id));   // PROBLEME : id colle dans le SQL
+    res-&gt;next();                                              // PROBLEME : resultat non teste (et si le jeu est absent ?)
+    return Jeu(res-&gt;getInt("id"), ...);                       // construit le Jeu (mais tout ceci est fragile)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Problème n°1 — <code>sql::Statement* stmt</code> (pointeur brut) :", opts: ["correct", "risque de fuite : utiliser std::unique_ptr", "trop lent", "rien"], a: 1, exp: "RAII." },
+      { type: "qcm", q: "Problème n°2 — concaténer l'id dans le SQL :", opts: ["correct pour un int", "à éviter : préférer un PreparedStatement (setInt)", "il faut un double", "rien"], a: 1, exp: "Requête préparée systématique." },
+      { type: "qcm", q: "Problème n°3 — <code>res->next()</code> non testé :", opts: ["correct", "si le jeu n'existe pas, next() renvoie false : lancer une exception", "trie", "rien"], a: 1, exp: "Gérer l'absence." },
+      { type: "qcm", q: "Le retour si absent :", opts: ["un Jeu vide", "une exception (Jeu introuvable)", "-1", "nullptr"], a: 1, exp: "Signaler." },
+      { type: "qcm", q: "Bonne pratique générale :", opts: ["pointeurs bruts", "unique_ptr + PreparedStatement + vérifier next()", "concaténer", "tout dans l'UI"], a: 1, exp: "Sûr et propre." }
+    ],
+    solution: `<pre class="pseudo">Jeu JeuRepository::findById(sql::Connection&amp; con, int id) {   // version corrigee
+    std::unique_ptr&lt;sql::PreparedStatement&gt; pstmt(             // requete preparee (fermee tout seule : RAII)
+        con.prepareStatement(
+            "SELECT id,nom,prix_achat,prix_location,"          // debut de la requete...
+            "stock_vente,stock_location FROM jeu WHERE id=?"));  // ...fin ; le ? = emplacement de l'id
+    pstmt-&gt;setInt(1, id);                        // paramètre lié
+    std::unique_ptr&lt;sql::ResultSet&gt; res(pstmt-&gt;executeQuery());   // execute et recupere le resultat
+    if (!res-&gt;next())                            // si aucune ligne trouvee...
+        throw std::runtime_error("Jeu introuvable");   // ...leve une exception claire
+    return Jeu(res-&gt;getInt("id"), res-&gt;getString("nom"),          // construit le Jeu depuis les colonnes...
+               res-&gt;getDouble("prix_achat"), res-&gt;getDouble("prix_location"),   // ...les deux prix...
+               res-&gt;getInt("stock_vente"), res-&gt;getInt("stock_location"));      // ...et les deux stocks
+}</pre>
+<p>unique_ptr (RAII), PreparedStatement (sûr), <code>next()</code> vérifié (exception si absent). Le dépôt lit proprement. Demain : écrire sans se faire injecter.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpp-l05", title: "Compter les jeux d'une catégorie", level: 3,
+    statement: "Écris JeuRepository::nbParCategorie(sql::Connection& con, int catId) qui renvoie le nombre de jeux d'une catégorie via un PreparedStatement (WHERE categorie_id = ?). Utilise des unique_ptr et lis COUNT(*).",
+    hints: [
+      "prepareStatement(\"SELECT COUNT(*) AS n FROM jeu WHERE categorie_id=?\").",
+      "pstmt->setInt(1, catId); res->next(); return res->getInt(\"n\").",
+      "unique_ptr pour le PreparedStatement et le ResultSet."
+    ],
+    solution: "#include <cppconn/prepared_statement.h>   // pour sql::PreparedStatement (requete preparee)\n#include <cppconn/resultset.h>            // pour sql::ResultSet (le resultat)\n#include <memory>                         // pour std::unique_ptr\n\nint JeuRepository::nbParCategorie(sql::Connection& con, int catId) {   // compte les jeux d'une categorie\n    std::unique_ptr<sql::PreparedStatement> pstmt(                     // requete preparee (fermee tout seule : RAII)\n        con.prepareStatement(\"SELECT COUNT(*) AS n FROM jeu WHERE categorie_id=?\"));   // le ? = la categorie voulue\n    pstmt->setInt(1, catId);              // remplit le ? avec l'identifiant de categorie\n    std::unique_ptr<sql::ResultSet> res(pstmt->executeQuery());   // execute et recupere le resultat\n    res->next();                          // avance sur la ligne (COUNT renvoie toujours 1 ligne)\n    return res->getInt(\"n\");              // lit et renvoie le nombre compte\n}",
+    note: "Même pour un id entier, on utilise un PreparedStatement (setInt) : c'est le réflexe systématique, et il uniformise le code. Les unique_ptr ferment tout automatiquement. COUNT(*) renvoie toujours une ligne, qu'on lit avec getInt." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

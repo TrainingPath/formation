@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "filter, exclude et les lookups (__gte, __icontains…)",
+  subtitle: "Un double underscore, et tout le WHERE du Niveau 4 revient dans ton Python : comparaisons, LIKE, BETWEEN, IS NULL.",
+  theory: `
+<h3>1. filter, exclude et l'anatomie d'un lookup</h3>
+<p>Depuis la leçon 5, tu sais que <strong>filter()</strong> est le WHERE du monde objet (le WHERE = la clause SQL qui garde certaines lignes), et <strong>exclude()</strong> son négatif : un WHERE NOT. Il est temps de disséquer ce qui se passe entre les parenthèses. Un <strong>lookup</strong> (« recherche ») est l'opérateur de comparaison qu'on demande. Chaque argument suit la même grammaire : <strong>champ__lookup=valeur</strong> — le nom d'un champ du modèle, deux underscores (les deux tirets bas <code>__</code>), un opérateur, une valeur. Et quand tu n'écris aucun lookup, Django en ajoute un pour toi : <strong>__exact</strong>, l'égalité stricte.</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(editeur="Days of Wonder")   # tous les jeux de cet editeur
+# SELECT ... FROM ludotheque_jeu WHERE editeur = 'Days of Wonder'   -- egalite exacte
+# editeur="..." est un raccourci de editeur__exact="..."           # __exact est sous-entendu
+
+&gt;&gt;&gt; Jeu.objects.exclude(disponible=True)          # tous les jeux NON disponibles
+# SELECT ... FROM ludotheque_jeu WHERE NOT (disponible = 1)        -- exclude = WHERE NOT
+
+        champ __ lookup = valeur                  # la grammaire generale d'un filtre
+        prix  __ lte    = 30      →  prix &lt;= 30.00   # exemple : lte = "inferieur ou egal"</pre>
+<p>Retiens bien ce double underscore : c'est le même que celui qui traverse les relations depuis la leçon 10 (categories__nom) — Django utilise une seule syntaxe pour « descendre » dans un champ, que ce soit vers un opérateur ou vers une table liée.</p>
+
+<h3>2. Comparer : gt, gte, lt, lte, range, in</h3>
+<p>Les lookups de comparaison couvrent tous les opérateurs du Niveau 4 : <strong>gt</strong> (greater than, &gt;), <strong>gte</strong> (&gt;=), <strong>lt</strong> (less than, &lt;), <strong>lte</strong> (&lt;=), plus deux raccourcis que tu connais en SQL : <strong>range</strong> (BETWEEN, « entre deux bornes ») et <strong>in</strong> (IN, « parmi une liste »).</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Jeu.objects.filter(prix__lte=30)      # les jeux à 30 euros ou moins   # lte = <=
+&gt;&gt;&gt; print(qs.query)                            # le réflexe de la leçon 2   # afficher le SQL prevu
+# SELECT ... FROM ludotheque_jeu WHERE prix &lt;= 30.00   -- traduction du lookup lte
+
+&gt;&gt;&gt; Avis.objects.filter(note__range=(3, 5))    # les avis corrects à excellents   # range = BETWEEN
+# WHERE note BETWEEN 3 AND 5                    -- bornes incluses (3, 4, 5)
+
+&gt;&gt;&gt; Jeu.objects.filter(editeur__in=["Asmodee", "Repos Production"])   # editeur parmi cette liste
+# WHERE editeur IN ('Asmodee', 'Repos Production')   -- in = IN (...)</pre>
+<p>range prend un tuple (bornes incluses, comme BETWEEN), in prend n'importe quel <strong>itérable</strong> (tout ce qui se parcourt) — une liste Python, ou même un autre QuerySet, ce qui donnera des sous-requêtes.</p>
+
+<h3>3. Chercher du texte : contains, icontains, startswith, iexact</h3>
+<p>Le <strong>LIKE</strong> du Niveau 4 (la recherche de texte partiel, avec le joker <code>%</code>) a lui aussi ses lookups : <strong>contains</strong> génère un LIKE '%...%' (contient), <strong>startswith</strong> un LIKE '...%' (commence par). Et chacun existe en version préfixée d'un <strong>i</strong> (pour <em>insensitive</em>, insensible) : <strong>icontains</strong>, <strong>istartswith</strong>, <strong>iexact</strong> — la comparaison ignore alors la <em>casse</em> (majuscules/minuscules).</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(titre__icontains="wonder")   # titre contenant "wonder", casse ignoree
+# WHERE titre LIKE '%wonder%'    → trouve '7 Wonders' (casse ignorée)   -- % de chaque cote
+
+&gt;&gt;&gt; Jeu.objects.filter(titre__istartswith="cat")    # titre commencant par "cat"
+# WHERE titre LIKE 'cat%'        → trouve 'Catan'   -- % seulement a la fin
+
+&gt;&gt;&gt; Membre.objects.filter(pseudo__iexact="ZELDA42")  # egalite exacte, casse ignoree
+# WHERE pseudo LIKE 'ZELDA42'    → trouve 'zelda42'   -- iexact = egal, sans tenir compte de la casse</pre>
+<p>Nuance héritée du Niveau 4 : sur MySQL, la sensibilité à la casse dépend en réalité de la <strong>collation</strong> de ta base (les règles de comparaison des textes). Avec utf8mb4 et une collation en <em>_ci</em> (case insensitive, le défaut), contains se comporte déjà comme icontains. Prends quand même l'habitude d'écrire la version <em>i</em> quand tu veux ignorer la casse : ton intention est explicite, et ton code survivra à un changement de SGBD ou de collation.</p>
+
+<h3>4. Dates et NULL : __year, __month, __isnull</h3>
+<p>Les champs DateField offrent des lookups d'extraction : <strong>__year</strong> (année), <strong>__month</strong> (mois), <strong>__day</strong> (jour)… Et le fameux <strong>NULL</strong> du Niveau 4 (l'absence de valeur) — qu'aucun = ne sait tester — a son lookup dédié : <strong>__isnull=True</strong> génère IS NULL, <strong>__isnull=False</strong> génère IS NOT NULL.</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(date_sortie__year=2024)   # les jeux sortis en 2024
+# WHERE date_sortie BETWEEN '2024-01-01' AND '2024-12-31'   -- __year devient un intervalle d'annee
+
+&gt;&gt;&gt; Jeu.objects.filter(date_sortie__month=12)   # les sorties de décembre   # __month = numero du mois
+
+&gt;&gt;&gt; Location.objects.filter(date_retour__isnull=True)   # date de retour absente = pas encore rendu
+# WHERE date_retour IS NULL     ← LE test des locations EN COURS   -- isnull=True -> IS NULL
+&gt;&gt;&gt; Location.objects.filter(date_retour__isnull=False)  # date de retour presente = deja rendu
+# WHERE date_retour IS NOT NULL ← les locations terminées   -- isnull=False -> IS NOT NULL</pre>
+<p>Ce date_retour__isnull=True est la requête la plus importante de la Ludothèque : c'est elle qui dira quels jeux sont sortis, quels membres doivent rendre quelque chose, et ce qu'il faut relancer. Note-la quelque part, elle reviendra sans cesse.</p>
+
+<h3>5. Combiner les conditions et traverser les relations</h3>
+<p>Plusieurs arguments dans un même filter() sont reliés par <strong>AND</strong> (« et ») ; et comme le QuerySet est chaînable (leçon 7), tu peux enchaîner .filter().exclude() — le tout fusionne en une seule requête. Enfin, le double underscore traverse les relations à n'importe quelle profondeur, dans les deux sens :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(disponible=True, prix__lte=30)   # deux criteres dans un meme filter
+# WHERE disponible = 1 AND prix &lt;= 30.00                  -- les deux relies par AND
+
+&gt;&gt;&gt; Jeu.objects.filter(prix__lte=30).exclude(stock=0)   # on chaine filter puis exclude
+# WHERE prix &lt;= 30.00 AND NOT (stock = 0)      ← une SEULE requête   -- fusionne (lecon 7)
+
+&gt;&gt;&gt; qs = Jeu.objects.filter(locations__membre__pseudo="zelda42")   # les jeux loues par zelda42
+# INNER JOIN ludotheque_location ... INNER JOIN ludotheque_membre ...   -- 2 jointures
+# WHERE membre.pseudo = 'zelda42'                         -- condition sur le pseudo
+&gt;&gt;&gt; qs.distinct()      # zelda42 a loué Catan deux fois → Catan sortait en double !   # distinct() dedoublonne</pre>
+<p>Le piège du dernier exemple vient du Niveau 4 : une jointure vers une table « plusieurs » (locations, categories) peut produire la même ligne de jeu plusieurs fois. Le remède est le même qu'en SQL : <strong>.distinct()</strong>, qui ajoute SELECT DISTINCT. En une ligne, les équivalents ailleurs : Where et ses lambdas en LINQ (EF Core), where('prix', '&lt;=', 30) chez Eloquent, JPQL ou l'API Criteria chez Hibernate/JPA.</p>
+<div class="warn">filter() renvoie <strong>toujours</strong> un QuerySet — éventuellement vide — et ne lève <strong>jamais</strong> DoesNotExist, contrairement à get(). Pour savoir s'il y a au moins un résultat, teste avec <em>.exists()</em> plutôt qu'avec len() : la requête générée est minuscule et ne rapatrie aucune ligne.</div>
+<div class="tip">Au moindre doute sur un lookup, fais le chemin dans l'autre sens : écris d'abord la requête SQL cible (ton Niveau 4 sait faire), puis cherche le lookup qui la produit — et vérifie ta traduction avec print(qs.query).</div>`,
+  exercises: [
+    { type: "qcm", q: "En SQL, filter(…) et exclude(…) correspondent respectivement à…", opts: ["SELECT … WHERE et SELECT … WHERE NOT (…)", "INSERT et DELETE", "UPDATE et DROP", "GROUP BY et HAVING"], a: 0, exp: "filter garde ce qui correspond, exclude garde ce qui ne correspond pas." },
+    { type: "qcm", q: "Dans prix__lte=30, la partie lte est…", opts: ["Un nom de colonne", "Un lookup, séparé du champ par un double underscore", "Une méthode Python appelée sur prix", "Une valeur"], a: 1, exp: "champ__lookup=valeur : la grammaire de tous les filtres Django." },
+    { type: "qcm", q: "Sans lookup explicite, pseudo='zelda42' équivaut à…", opts: ["pseudo__contains", "pseudo__in", "pseudo__exact", "pseudo__isnull"], a: 2, exp: "L'égalité stricte __exact est le lookup implicite par défaut." },
+    { type: "input", q: "Le lookup « contient, sans tenir compte de la casse » :", a: ["icontains", "__icontains"], ph: "titre__…", exp: "Le i de insensitive : LIKE '%…%' en ignorant la casse." },
+    { type: "qcm", q: "note__range=(3, 5) génère en SQL…", opts: ["note IN (3, 5)", "note BETWEEN 3 AND 5", "note = 3 OR note = 5", "note &gt; 3 AND note &lt; 5"], a: 1, exp: "range = BETWEEN, bornes incluses : les notes 3, 4 et 5 passent." },
+    { type: "qcm", q: "prix__in=[10, 20, 30] génère…", opts: ["prix BETWEEN 10 AND 30", "Trois requêtes successives", "prix IN (10, 20, 30)", "prix = 10 AND prix = 20 AND prix = 30"], a: 2, exp: "Le IN du Niveau 4, en une seule requête." },
+    { type: "qcm", q: "titre__startswith='Cat' correspond au SQL…", opts: ["titre LIKE '%Cat'", "titre LIKE 'Cat%'", "titre = 'Cat'", "titre LIKE '%Cat%'"], a: 1, exp: "Commence par : le joker % est placé à la fin." },
+    { type: "vf", q: "filter() lève DoesNotExist quand aucune ligne ne correspond.", a: false, exp: "Il renvoie un QuerySet vide ; seul get() lève DoesNotExist (leçon 5)." },
+    { type: "qcm", q: "Pour trouver les locations EN COURS (jeu pas encore rendu) :", opts: ["date_retour__isnull=True", "date_retour__isnull=False", "date_retour__year=0", "date_retour__in=[]"], a: 0, exp: "Pas de date de retour = IS NULL = la location court toujours." },
+    { type: "qcm", q: "Jeu.objects.filter(date_sortie__year=2024) renvoie…", opts: ["Les jeux sortis en 2024", "Les jeux sortis après 2024", "Les jeux dont l'id vaut 2024", "Une erreur : year n'existe pas"], a: 0, exp: "__year extrait l'année d'un DateField ; __month et __day existent aussi." },
+    { type: "vf", q: ".filter(disponible=True).exclude(stock=0) envoie deux requêtes SQL à MySQL.", a: false, exp: "Le chaînage fusionne en un seul SELECT … WHERE … AND NOT (…) — leçon 7." },
+    { type: "qcm", q: "filter(disponible=True, prix__lte=30) relie les deux conditions par…", opts: ["OR", "AND", "NOT", "Au choix de MySQL"], a: 1, exp: "Plusieurs arguments d'un même filter = AND. Le OR attendra les objets Q (leçon 14)." },
+    { type: "input", q: "La méthode qui élimine les doublons d'un QuerySet (SELECT DISTINCT) :", a: ["distinct", "distinct()", ".distinct()"], ph: "qs.…", exp: "Indispensable après une traversée de relation « plusieurs » qui duplique les lignes." },
+    { type: "qcm", q: "Chez Eloquent (Laravel), l'équivalent de filter(prix__lte=30) :", opts: ["where('prix', '&lt;=', 30)", "filter('prix &lt;= 30')", "select(30)", "lte('prix', 30)"], a: 0, exp: "Le Query Builder d'Eloquent ; LINQ dit Where(j =&gt; j.Prix &lt;= 30), JPA passe par JPQL/Criteria." },
+    { type: "vf", q: "Pour tester s'il existe au moins un résultat, len(qs) est préférable à qs.exists().", a: false, exp: "len() rapatrie toutes les lignes ; exists() envoie une requête minimale — leçon 13." }
+  ],
+  final: {
+    title: "Exercice final — Le WHERE en version objets",
+    intro: `<p>Cinq questions pour vérifier que tu traduis dans les deux sens : du SQL du Niveau 4 vers les lookups, et retour.</p>`,
+    questions: [
+      { type: "qcm", q: "La traduction de SELECT * FROM jeu WHERE prix &lt;= 30 AND disponible = 1 :", opts: ["Jeu.objects.exclude(prix__lte=30, disponible=True)", "Jeu.objects.filter(prix__lte=30, disponible=True)", "Jeu.objects.filter(prix__lt=30 OR disponible=True)", "Jeu.objects.get(prix=30)"], a: 1, exp: "Deux arguments dans un même filter = AND ; lte = &lt;=." },
+      { type: "input", q: "Le lookup qui génère IS NULL / IS NOT NULL :", a: ["isnull", "__isnull"], ph: "date_retour__…", exp: "date_retour__isnull=True : le test des locations en cours." },
+      { type: "qcm", q: "Les jeux dont le titre contient « wonder », peu importe la casse :", opts: ["titre__contains='wonder' obligatoirement", "titre__icontains='wonder'", "titre__iexact='wonder'", "titre__in='wonder'"], a: 1, exp: "icontains : LIKE '%wonder%' insensible à la casse, quelle que soit la collation." },
+      { type: "vf", q: "filter() renvoie toujours un QuerySet, éventuellement vide, jamais une exception DoesNotExist.", a: true, exp: "C'est get() qui lève DoesNotExist ; filter se teste avec .exists()." },
+      { type: "qcm", q: "Jeu.objects.filter(locations__membre__pseudo='zelda42') peut renvoyer le même jeu plusieurs fois. Le remède :", opts: [".unique()", ".clean()", ".distinct()", "Trier par titre"], a: 2, exp: "La jointure vers locations duplique les lignes ; DISTINCT les fusionne, comme au Niveau 4." }
+    ],
+    solution: `<pre class="pseudo">Anatomie    : champ__lookup=valeur   (sans lookup → __exact implicite)   # nom, __, operateur, valeur
+filter      : SELECT … WHERE         exclude : WHERE NOT (…)             # garder / rejeter
+Comparaison : gt, gte, lt, lte · range → BETWEEN · in → IN (…)          # tous les operateurs du Niveau 4
+Texte       : contains/startswith → LIKE · préfixe i = casse ignorée    # recherche partielle
+              (sur MySQL, la collation _ci du Niveau 4 joue déjà ce rôle)   # deja insensible par defaut
+Dates/NULL  : date_sortie__year=2024 · __month · date_retour__isnull=True   # extraction + test de NULL
+Combiner    : filter(a, b) = AND · .filter().exclude() = 1 seule requête    # AND + chainage fusionne
+Traverser   : locations__membre__pseudo, categories__nom → JOIN         # __ traverse les relations
+              doublons possibles → .distinct()                         # dedoublonner apres jointure
+Réflexes    : print(qs.query) pour vérifier · .exists() pour tester     # controler et tester efficacement</pre>
+<p>Tu sais filtrer ; il reste à ordonner et à doser. Leçon 13 : <strong>Trier, trancher, compter : order_by, slicing, count</strong> — le ORDER BY, le LIMIT et le COUNT du monde objet.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l12", title: "Cinq requêtes du Niveau 4 et un moteur de recherche", level: 2,
+    statement: "Première partie : traduis en QuerySets Django ces cinq requêtes SQL que tu écrivais au Niveau 4 pour la Ludothèque, en nommant le lookup utilisé à chaque fois. (1) SELECT * FROM jeu WHERE prix &lt;= 25 ; (2) SELECT * FROM jeu WHERE titre LIKE '%aventure%' sans tenir compte de la casse ; (3) SELECT * FROM avis WHERE note BETWEEN 4 AND 5 ; (4) SELECT * FROM location WHERE date_retour IS NULL ; (5) les jeux loués au moins une fois par le membre 'mario_b' (jointure location + membre). Deuxième partie : la page catalogue propose un formulaire de recherche à trois critères facultatifs — un mot-clé (cherché dans le titre), un prix maximum, une case « seulement les jeux disponibles ». Écris le code qui construit le QuerySet en ne chaînant que les critères réellement remplis, et explique pourquoi ce chaînage conditionnel ne coûte aucune requête supplémentaire (leçon 7). Termine en prédisant le SQL quand les trois critères sont remplis.",
+    hints: [
+      "Pour chaque requête SQL, isole l'opérateur (WHERE =, LIKE, BETWEEN, IS NULL, jointure) puis cherche le lookup correspondant : lte, icontains, range, isnull, et la traversée locations__membre__pseudo.",
+      "La requête 5 traverse une relation « plusieurs » : que se passe-t-il si mario_b a loué deux fois le même jeu ? Une méthode de la leçon règle ça.",
+      "Pour le moteur de recherche : pars de Jeu.objects.all(), puis if mot_cle: qs = qs.filter(…) — souviens-toi que chaque filter renvoie un NOUVEAU queryset qu'il faut réaffecter, et que tout reste paresseux jusqu'à l'affichage."
+    ],
+    solution: "Première partie — les cinq traductions :\n1) Jeu.objects.filter(prix__lte=25)                        # lookup lte → prix <= 25\n2) Jeu.objects.filter(titre__icontains='aventure')          # icontains → LIKE '%aventure%', casse ignorée\n3) Avis.objects.filter(note__range=(4, 5))                  # range → BETWEEN 4 AND 5\n4) Location.objects.filter(date_retour__isnull=True)        # isnull → IS NULL (locations en cours)\n5) Jeu.objects.filter(locations__membre__pseudo='mario_b').distinct()\n   # traversée jeu → location → membre : 2 JOIN écrits par l'ORM,\n   # et distinct() car deux locations du même jeu dupliqueraient la ligne.\n\nDeuxième partie — le moteur de recherche :\nqs = Jeu.objects.all()                     # 0 requête (paresseux)\nif mot_cle:\n    qs = qs.filter(titre__icontains=mot_cle)\nif prix_max:\n    qs = qs.filter(prix__lte=prix_max)\nif seulement_dispo:\n    qs = qs.filter(disponible=True)\n# Toujours 0 requête : on n'a fait qu'affiner la description.\n# La requête unique partira à l'affichage des résultats (itération).\n\nSQL prédit avec les trois critères (à vérifier avec print(qs.query)) :\nSELECT ... FROM ludotheque_jeu\nWHERE titre LIKE '%catan%' AND prix <= 30.00 AND disponible = 1\nUne seule requête, trois conditions reliées par AND.",
+    note: "Ce formulaire multi-critères est exactement celui que tu afficheras avec les vues et templates du Niveau 3, et le SQL prédit est celui que tu aurais écrit à la main au Niveau 4 — l'ORM n'a fait que le générer. Dans le projet full-stack du Niveau 6, chaque page de recherche ou de filtres (catalogue, historique, admin) reposera sur ce même motif : partir de all(), affiner sous condition, laisser la paresse ne déclencher qu'une requête." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

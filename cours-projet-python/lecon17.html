@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Tests unitaires (TestCase, mocks)",
+  subtitle: "Prouver que la logique métier est correcte — et l'empêcher de casser.",
+  theory: `
+<h3>1. Pourquoi tester ?</h3>
+<p>Un <strong>test</strong> est un petit programme qui appelle ton code avec des valeurs connues et vérifie que le résultat est bien celui attendu. Un test <strong>unitaire</strong> se concentre sur une seule fonction, isolée. Automatisé, il se relance à chaque modification : il documente les règles et attrape les <strong>régressions</strong> (un ancien comportement cassé par un nouveau changement) <em>avant</em> les utilisateurs. <code>python manage.py test</code> exécute toute la suite d'un coup.</p>
+
+<h3>2. TestCase : une base de test isolée</h3>
+<pre class="pseudo">from django.test import TestCase            # TestCase = classe de base pour écrire des tests Django
+
+class ServicesTests(TestCase):              # un groupe de tests (les tests des services)
+    def setUp(self):                        # setUp : exécuté AVANT chaque test, prépare des données communes
+        self.cat = Categorie.objects.create(nom="Stratégie")   # crée une catégorie de test
+        self.client_u = User.objects.create_user(   # crée un utilisateur de test…
+            "c@ludo.fr", "c@ludo.fr", "Mdp8carac!")   # …(username, email, mot de passe)</pre>
+<p>Django crée une <strong>base de test</strong> dédiée, séparée de la vraie (jamais tes vraies données !), puis enveloppe <strong>chaque test dans une transaction annulée</strong> à la fin. Résultat : chaque test repart d'une base propre et ne voit pas ce qu'un autre a écrit — on dit qu'ils sont <strong>isolés</strong>.</p>
+
+<h3>3. Tester les règles de la Ludothèque</h3>
+<pre class="pseudo">def test_location_stock_nul_refusee(self):   # test : louer un jeu sans stock doit être refusé
+    jeu = Jeu.objects.create(titre="Catan", prix_achat=30, prix_location=5,   # crée un jeu…
+                             stock_location=0, categorie=self.cat)   # …avec 0 en stock de location
+    with self.assertRaises(StockInsuffisant):   # on s'attend à ce que l'exception soit levée…
+        services.louer(self.client_u, jeu.id)   # …en tentant de louer (sinon le test échoue)
+
+def test_achat_fige_le_prix(self):           # test : le montant d'un achat ne bouge plus après coup
+    jeu = Jeu.objects.create(titre="Dixit", prix_achat=Decimal("29.99"),   # crée un jeu à 29,99 €…
+                             prix_location=4, stock_vente=3, categorie=self.cat)   # …avec 3 en stock de vente
+    achat = services.acheter(self.client_u, jeu.id)   # on achète (montant figé à 29,99)
+    jeu.prix_achat = Decimal("39.99"); jeu.save()   # le vendeur change le prix (39,99)
+    achat.refresh_from_db()                  # on relit l'achat depuis la base
+    self.assertEqual(achat.montant, Decimal("29.99"))  # le montant doit valoir 29,99 (figé ✓)
+
+def test_prolongation_tarifee(self):         # test : le tarif de prolongation
+    jeu = Jeu(prix_location=Decimal("5.00"))   # un jeu à 5 € (pas besoin de l'enregistrer)
+    self.assertEqual(services.prix_location(jeu, 10),   # prix pour 10 jours…
+                     Decimal("6.50"))               # …doit valoir 5 + 3 × 0,50 = 6,50</pre>
+
+<h3>4. Mocker une dépendance externe</h3>
+<pre class="pseudo">from unittest.mock import patch             # patch = remplacer temporairement une fonction (un « mock »)
+
+@patch("catalogue.services.envoyer_email")     # remplace envoyer_email : pas de vrai email en test
+def test_location_envoie_confirmation(self, mock_email):   # le mock est reçu en argument
+    services.louer(self.client_u, self.jeu.id)   # on loue…
+    mock_email.assert_called_once()          # …et on vérifie que l'email a été demandé une seule fois</pre>
+<p>Un <strong>mock</strong> (« objet factice ») est un remplaçant qui imite une fonction sans faire son vrai travail, tout en notant comment on l'a appelée. <code>patch</code> installe ce faux le temps du test : on évite ainsi un <strong>effet de bord</strong> (une conséquence extérieure, comme envoyer un vrai email ou appeler un service payant) et le test reste rapide. C'est l'équivalent de Moq en C#.</p>
+<div class="warn">Un bon test est <strong>rapide</strong>, <strong>isolé</strong> et <strong>déterministe</strong> (même résultat à chaque exécution). Un test qui passe « parfois » est pire que pas de test : on apprend à l'ignorer.</div>
+<div class="tip">On teste en priorité les <strong>règles métier</strong> : stock nul refusé, prix figé, double-rendu interdit, tarif de prolongation. C'est là que les bugs coûtent cher — et services.py, en Python pur, se teste en millisecondes.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un test automatique sert à…", opts: ["Ralentir", "Vérifier le comportement à chaque modification", "Remplacer Git", "Déployer"], a: 1, exp: "Anti-régression." },
+    { type: "qcm", q: "Lancer les tests :", opts: ["python manage.py test", "runserver", "migrate", "check"], a: 0, exp: "Toute la suite." },
+    { type: "qcm", q: "Les tests s'exécutent sur…", opts: ["La base de production", "Une base de test dédiée, créée puis détruite", "Aucune base", "Un fichier Excel"], a: 1, exp: "Jamais la vraie." },
+    { type: "qcm", q: "Chaque test de TestCase est isolé car…", opts: ["Enveloppé dans une transaction annulée à la fin", "Il dort", "Il copie la base", "Il est seul"], a: 0, exp: "Les tests ne se voient pas." },
+    { type: "qcm", q: "setUp() sert à…", opts: ["Préparer les données communes avant chaque test", "Déployer", "Nettoyer Git", "Rien"], a: 0, exp: "Arrange partagé." },
+    { type: "qcm", q: "Vérifier qu'une exception est levée :", opts: ["with self.assertRaises(StockInsuffisant):", "try sans except", "un if", "print"], a: 0, exp: "Le refus se teste aussi." },
+    { type: "qcm", q: "test_achat_fige_le_prix vérifie…", opts: ["La vitesse", "Que le montant ne change pas quand le prix change", "Le CSS", "Le login"], a: 1, exp: "La règle de la leçon 13, verrouillée." },
+    { type: "qcm", q: "refresh_from_db() sert à…", opts: ["Relire l'objet depuis la base", "Vider la base", "Migrer", "Trier"], a: 0, exp: "Vérifier l'état réel." },
+    { type: "qcm", q: "prix_location(jeu, 10) avec base 5 € doit valoir…", opts: ["5.00", "6.50", "10.00", "0.50"], a: 1, exp: "5 + 3 × 0,50 (leçon 6)." },
+    { type: "qcm", q: "@patch(\"catalogue.services.envoyer_email\") :", opts: ["Envoie un vrai email", "Remplace la fonction par un mock le temps du test", "Supprime la fonction", "La teste"], a: 1, exp: "Pas d'effet de bord." },
+    { type: "qcm", q: "mock_email.assert_called_once() vérifie…", opts: ["Le contenu de l'email", "Que la fonction a été appelée exactement une fois", "La base", "Le CSS"], a: 1, exp: "L'interaction." },
+    { type: "qcm", q: "L'équivalent C# de patch/mock vu dans l'autre capstone :", opts: ["Moq", "xUnit", "LINQ", "Kestrel"], a: 0, exp: "Mêmes idées, autre langage." },
+    { type: "vf", q: "Un test qui échoue une fois sur dix est acceptable.", a: false, exp: "Non déterministe = inutilisable." },
+    { type: "qcm", q: "On teste en priorité…", opts: ["Les getters", "Les règles métier (stock, prix figé, double-rendu)", "Le CSS", "Les imports"], a: 1, exp: "Là où les bugs coûtent." },
+    { type: "vf", q: "services.py en Python pur se teste vite car il ne dépend ni de HTTP ni des templates.", a: true, exp: "L'architecture de la leçon 1 paie." }
+  ],
+  final: {
+    title: "Exercice final — Verrouiller les règles",
+    intro: `<p>On écrit les tests des règles les plus précieuses.</p>`,
+    questions: [
+      { type: "qcm", q: "Le refus à stock nul se teste par :", opts: ["assertRaises(StockInsuffisant)", "assertEqual(None)", "un print", "un if"], a: 0, exp: "Exception attendue." },
+      { type: "qcm", q: "Le prix figé se vérifie en :", opts: ["Changeant le prix APRÈS l'achat puis en relisant le montant", "ne changeant rien", "supprimant le jeu", "mockant tout"], a: 0, exp: "Le scénario réel." },
+      { type: "qcm", q: "La base utilisée :", opts: ["Une base de test jetable", "la prod", "SQLite en prod", "aucune"], a: 0, exp: "Créée/détruite par Django." },
+      { type: "qcm", q: "L'envoi d'email en test :", opts: ["Mocké avec @patch", "réel", "interdit", "manuel"], a: 0, exp: "Isolé." },
+      { type: "vf", q: "Si quelqu'un supprime le contrôle de stock, un test devient rouge.", a: true, exp: "C'est leur raison d'être." }
+    ],
+    solution: `<pre class="pseudo">class ServicesTests(TestCase):              # groupe de tests des services
+    def setUp(self):                        # préparation avant chaque test
+        self.cat = Categorie.objects.create(nom="Stratégie")   # catégorie de test
+        self.client_u = User.objects.create_user("c@ludo.fr", "c@ludo.fr", "Mdp8carac!")   # utilisateur de test
+
+    def test_location_stock_nul_refusee(self):   # louer sans stock = refus
+        jeu = Jeu.objects.create(titre="Catan", prix_achat=30, prix_location=5,   # jeu…
+                                 stock_location=0, categorie=self.cat)   # …stock de location = 0
+        with self.assertRaises(StockInsuffisant):   # on attend l'exception…
+            services.louer(self.client_u, jeu.id)   # …en louant
+
+    def test_achat_fige_le_prix(self):       # le montant reste figé
+        jeu = Jeu.objects.create(titre="Dixit", prix_achat=Decimal("29.99"),   # jeu à 29,99…
+                                 prix_location=4, stock_vente=3, categorie=self.cat)   # …stock de vente = 3
+        achat = services.acheter(self.client_u, jeu.id)   # achat au prix courant
+        jeu.prix_achat = Decimal("39.99"); jeu.save()   # le prix change ensuite
+        achat.refresh_from_db()              # on relit l'achat
+        self.assertEqual(achat.montant, Decimal("29.99"))   # le montant n'a pas bougé</pre>
+<p>Les règles sont verrouillées. Demain : tester l'assemblage complet, en HTTP.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes tests…",
+  items: [
+  { id: "projpython-l17", title: "Tester le double-rendu", level: 3,
+    statement: "Écris le test test_rendre_deux_fois_refuse : créer un jeu (stock_location=1), louer via services.louer, rendre via services.rendre (vérifie que le stock revient à 1 avec refresh_from_db), puis vérifier qu'un second rendre lève DejaRendue ET que le stock n'a pas été gonflé à 2.",
+    hints: [
+      "location = services.louer(self.client_u, jeu.id) ; services.rendre(location.id)",
+      "jeu.refresh_from_db() ; self.assertEqual(jeu.stock_location, 1)",
+      "with self.assertRaises(DejaRendue): services.rendre(location.id) — puis re-vérifier le stock."
+    ],
+    solution: "def test_rendre_deux_fois_refuse(self):   # test : rendre deux fois la même location doit être refusé\n    jeu = Jeu.objects.create(   # crée un jeu de test…\n        titre=\"Catan\", prix_achat=30, prix_location=5,   # …titre et prix…\n        stock_location=1, categorie=self.cat)   # …avec 1 exemplaire en location\n\n    location = services.louer(self.client_u, jeu.id)   # on loue le jeu\n    jeu.refresh_from_db()   # on relit le jeu depuis la base\n    self.assertEqual(jeu.stock_location, 0)   # loué : le stock est tombé à 0\n\n    services.rendre(location.id)   # on rend la location\n    jeu.refresh_from_db()   # on relit le jeu\n    self.assertEqual(jeu.stock_location, 1)   # rendu : le stock est remonté à 1\n\n    with self.assertRaises(DejaRendue):   # on attend l'exception « déjà rendue »…\n        services.rendre(location.id)          # …en rendant une seconde fois\n\n    jeu.refresh_from_db()   # on relit une dernière fois\n    self.assertEqual(jeu.stock_location, 1)   # le stock vaut toujours 1 (PAS gonflé à 2)",
+    note: "Le test raconte le cycle de vie complet (louer → rendre → re-rendre refusé) et vérifie l'état de la base à chaque étape — pas seulement l'exception, mais aussi son EFFET : le stock n'a pas bougé au second rendu, preuve que le rollback a tout annulé. C'est la protection écrite à la leçon 12, désormais indestructible." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

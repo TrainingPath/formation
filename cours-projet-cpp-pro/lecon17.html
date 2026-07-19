@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "L'image de production : multi-stage, non-root, scan",
+  subtitle: "Fabriquer une image minimale : compiler dans une étape, ne livrer que le binaire, tourner sans privilèges.",
+  theory: `
+<h3>1. Le problème d'une image « tout-en-un »</h3>
+<div class="warn">Rappel : une <strong>image</strong> est le modèle figé à partir duquel on crée un conteneur. Une image qui contient le compilateur, les sources et les outils de construction est <strong>énorme</strong> et expose une large <strong>surface d'attaque</strong> — l'ensemble des points par lesquels un attaquant pourrait entrer (chaque outil embarqué est une faille potentielle). En production, on ne veut que le strict nécessaire : le binaire et ses dépendances d'exécution.</div>
+
+<h3>2. Le build multi-stage</h3>
+<p>Un Dockerfile <strong>multi-stage</strong> (« à plusieurs étapes ») décrit deux images successives : la première compile, la seconde ne récupère que le résultat. Chaque étape s'ouvre par un <code>FROM</code> ; on nomme la première avec <code>AS build</code> pour pouvoir y puiser ensuite.</p>
+<pre class="pseudo"># --- etape 1 : build (jetee a la fin) ---            # etape de fabrication, non conservee
+FROM debian:stable AS build                           # base complete, nommee "build"
+RUN apt-get update &amp;&amp; apt-get install -y g++ cmake libmysqlcppconn-dev # installer les outils de compilation
+COPY . /src                                           # copier le code source dans l'image
+RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build /build # compiler en mode Release (optimise)
+
+# --- etape 2 : runtime (minimale) ---                # etape finale, celle qui sera livree
+FROM debian:stable-slim                               # base "slim" (allegee) pour l'execution
+RUN apt-get update &amp;&amp; apt-get install -y libmysqlcppconn7 &amp;&amp; useradd -m app # installer SEULEMENT la lib d'execution + creer l'utilisateur "app"
+COPY --from=build /build/ludotheque /usr/local/bin/ludotheque # recuperer UNIQUEMENT le binaire depuis l'etape "build"
+USER app                              # non-root : desormais on tourne sous l'utilisateur "app"
+ENTRYPOINT ["ludotheque"]             # commande lancee au demarrage du conteneur</pre>
+<p>La première étape compile ; la seconde ne <strong>copie que le binaire</strong> (<code>COPY --from=build</code> puise dans l'étape nommée). Le <strong>runtime</strong> (l'environnement d'exécution) n'embarque pas la chaîne de compilation : image plus petite, plus sûre. <code>Release</code> demande un binaire optimisé (par opposition à un binaire de débogage). <code>ENTRYPOINT</code> fixe la commande de lancement.</p>
+
+<h3>3. Tourner en non-root</h3>
+<div class="tip">Par défaut, un conteneur tourne en <code>root</code> (le super-utilisateur, qui a tous les droits) : si l'application est compromise, l'attaquant se retrouve root dans le conteneur. On crée donc un utilisateur dédié sans privilèges avec <code>useradd</code>, et l'on bascule dessus avec <code>USER app</code> : c'est le principe du <strong>moindre privilège</strong> (ne donner que les droits strictement nécessaires), qui limite les dégâts.</div>
+
+<h3>4. Scanner l'image</h3>
+<pre class="pseudo"># CI : chercher les vulnerabilites connues (CVE) dans l'image   # controle de securite avant livraison
+trivy image ludotheque:latest --exit-code 1 --severity HIGH,CRITICAL # echouer (--exit-code 1) s'il trouve une faille grave</pre>
+<p>Un <strong>scanner</strong> d'image (ici <strong>Trivy</strong>) compare les paquets contenus dans l'image à des bases de <strong>vulnérabilités connues</strong>, les <strong>CVE</strong> (<em>Common Vulnerabilities and Exposures</em> : des failles répertoriées publiquement, chacune avec un numéro). L'option <code>--severity HIGH,CRITICAL</code> ne retient que les failles graves ; <code>--exit-code 1</code> fait échouer la commande si l'une est trouvée. En CI, un CVE critique fait donc échouer le pipeline : on ne livre pas une image trouée.</p>
+
+<h3>5. Épingler les versions</h3>
+<div class="warn"><strong>Épingler</strong> une version, c'est fixer un numéro précis (<code>debian:stable-slim</code>, tags de bibliothèques) plutôt que l'étiquette mouvante <code>latest</code> (« la dernière »), qui peut changer sans prévenir. On obtient ainsi des builds reproductibles et des scans fiables. Reconstruire régulièrement l'image permet de récupérer les correctifs de sécurité récents.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Une image « tout-en-un » (compilateur inclus) est…", opts: ["idéale", "grosse et à large surface d'attaque", "minimale", "sans risque"], a: 1, exp: "Trop d'outils = trop de failles." },
+    { type: "qcm", q: "Un build multi-stage…", opts: ["compile en prod", "compile dans une étape, ne livre que le binaire", "double l'image", "supprime les tests"], a: 1, exp: "Étapes séparées." },
+    { type: "qcm", q: "COPY --from=build copie…", opts: ["tout le système", "seulement le binaire compilé", "les sources", "le compilateur"], a: 1, exp: "Runtime minimal." },
+    { type: "qcm", q: "Par défaut, un conteneur tourne en…", opts: ["utilisateur limité", "root", "app", "invité"], a: 1, exp: "D'où le durcissement." },
+    { type: "qcm", q: "USER app sert à…", opts: ["accélérer", "tourner en non-root (moindre privilège)", "logger", "compiler"], a: 1, exp: "Limiter les dégâts." },
+    { type: "qcm", q: "Un scanner d'image (Trivy) cherche…", opts: ["des fautes de frappe", "des vulnérabilités connues (CVE)", "des secrets métier", "des logs"], a: 1, exp: "CVE." },
+    { type: "qcm", q: "En CI, un CVE critique…", opts: ["est ignoré", "fait échouer le pipeline", "déploie quand même", "compile"], a: 1, exp: "On ne livre pas troué." },
+    { type: "qcm", q: "On épingle les versions plutôt que latest pour…", opts: ["la vitesse", "des builds reproductibles et des scans fiables", "l'esthétique", "rien"], a: 1, exp: "Reproductibilité." },
+    { type: "qcm", q: "Reconstruire régulièrement l'image permet…", opts: ["de grossir", "de récupérer les correctifs de sécurité", "de perdre le binaire", "rien"], a: 1, exp: "Patchs à jour." },
+    { type: "qcm", q: "debian:stable-slim est…", opts: ["une image de build lourde", "une base runtime minimale", "un secret", "un linter"], a: 1, exp: "Léger pour la prod." },
+    { type: "vf", q: "Le multi-stage réduit la taille et la surface d'attaque de l'image finale.", a: true, exp: "On jette la chaîne de build." },
+    { type: "qcm", q: "Si une app root est compromise, l'attaquant…", opts: ["est limité", "est root dans le conteneur", "ne peut rien", "est déconnecté"], a: 1, exp: "D'où non-root." },
+    { type: "qcm", q: "Le CMAKE_BUILD_TYPE=Release produit…", opts: ["un binaire debug", "un binaire optimisé pour la prod", "des sources", "un log"], a: 1, exp: "Optimisé." },
+    { type: "qcm", q: "L'étape build de l'image est…", opts: ["livrée en prod", "jetée (non embarquée dans le runtime)", "un secret", "versionnée"], a: 1, exp: "Intermédiaire." },
+    { type: "qcm", q: "Le principe appliqué au conteneur :", opts: ["tout permettre", "moindre privilège", "root partout", "aucune limite"], a: 1, exp: "Durcissement." }
+  ],
+  final: {
+    title: "Exercice final — Durcir un Dockerfile",
+    intro: `<p>Un Dockerfile de départ, non durci :</p>
+<pre class="pseudo">FROM debian:stable                    # base complete (une seule etape)
+RUN apt-get install -y g++ cmake libmysqlcppconn-dev # installe le compilateur ET les outils dans l'image finale
+COPY . /src                           # copie tout le code source
+RUN cmake -S /src -B build &amp;&amp; cmake --build build # compile dans cette meme image
+CMD ["/src/build/ludotheque"]         # DEFAUT : tourne en root, compilateur embarque (grosse image, exposee)</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Défaut n°1 :", opts: ["aucun", "image finale contient le compilateur (grosse, exposée)", "trop petite", "trop rapide"], a: 1, exp: "Pas de multi-stage." },
+      { type: "qcm", q: "Correction n°1 :", opts: ["ajouter des outils", "build multi-stage : ne copier que le binaire", "supprimer le binaire", "rien"], a: 1, exp: "Runtime minimal." },
+      { type: "qcm", q: "Défaut n°2 :", opts: ["aucun", "tourne en root", "trop de USER", "trop lent"], a: 1, exp: "Pas de moindre privilège." },
+      { type: "qcm", q: "Correction n°2 :", opts: ["rien", "useradd + USER app (non-root)", "root explicite", "un log"], a: 1, exp: "Durcissement." },
+      { type: "qcm", q: "Ajout en CI :", opts: ["rien", "un scan d'image (trivy) bloquant sur CVE critiques", "un déploiement direct", "un secret"], a: 1, exp: "Image sûre." }
+    ],
+    solution: `<pre class="pseudo">FROM debian:stable AS build                           # etape 1 : fabrication (nommee "build")
+RUN apt-get update &amp;&amp; apt-get install -y g++ cmake libmysqlcppconn-dev # installer les outils de compilation
+COPY . /src                                           # copier le code source
+RUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build /build # compiler en Release
+
+FROM debian:stable-slim                               # etape 2 : image finale allegee (slim)
+RUN apt-get update &amp;&amp; apt-get install -y libmysqlcppconn7 &amp;&amp; useradd -m app # lib d'execution + utilisateur "app"
+COPY --from=build /build/ludotheque /usr/local/bin/ludotheque # copier UNIQUEMENT le binaire depuis l'etape build
+USER app                              # non-root (moindre privilege)
+ENTRYPOINT ["ludotheque"]             # commande de demarrage
+# CI : - run: trivy image ludotheque:latest --exit-code 1 --severity HIGH,CRITICAL # scanner l'image (echoue sur CVE grave)</pre>
+<p>Multi-stage (binaire seul), non-root, image scannée : une production minimale et durcie. Demain : le pipeline complet — build, test, scan, protection.</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile ici…",
+  items: [
+  { id: "projcpppro-l17", title: "Un Dockerfile multi-stage non-root", level: 3,
+    statement: "Écris un Dockerfile en deux étapes : une étape 'build' qui compile en Release avec CMake, et une étape runtime minimale (slim) qui copie seulement le binaire depuis l'étape build, crée un utilisateur non-root et l'utilise. ENTRYPOINT sur le binaire.",
+    hints: [
+      "FROM ... AS build ; installe g++/cmake ; compile en Release.",
+      "FROM ...-slim ; COPY --from=build du seul binaire.",
+      "useradd + USER app ; ENTRYPOINT [\"ludotheque\"]."
+    ],
+    solution: "# --- etape build (jetee) ---\nFROM debian:stable AS build                     # etape 1 : fabrication (nommee \"build\")\nRUN apt-get update && apt-get install -y g++ cmake libmysqlcppconn-dev # installer les outils de compilation\nCOPY . /src                                     # copier le code source\nRUN cmake -S /src -B /build -DCMAKE_BUILD_TYPE=Release && cmake --build /build # compiler en Release\n\n# --- etape runtime (minimale, non-root) ---\nFROM debian:stable-slim                         # etape 2 : image finale allegee\nRUN apt-get update && apt-get install -y libmysqlcppconn7 && useradd -m app # lib d'execution + utilisateur \"app\"\nCOPY --from=build /build/ludotheque /usr/local/bin/ludotheque # copier UNIQUEMENT le binaire\nUSER app                         # moindre privilege : jamais root\nENTRYPOINT [\"ludotheque\"]        # commande lancee au demarrage",
+    note: "Le multi-stage sépare la fabrication (compilateur, sources) de l'exécution : l'image finale ne contient que le binaire et ses dépendances runtime, réduisant taille et surface d'attaque. Tourner en non-root applique le moindre privilège : une compromission ne donne pas root. Scanner l'image (Trivy) en CI complète le durcissement." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

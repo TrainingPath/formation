@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Les espaces client, vendeur et administrateur",
+  subtitle: "Trois portes, trois clés — on assemble les services existants, on n'invente rien.",
+  theory: `
+<h3>1. Trois espaces, trois rôles</h3>
+<p>Un <strong>espace</strong> est une zone de l'application réservée à un profil : le client voit ses locations et achats, le vendeur gère les stocks, l'administrateur gère comptes et catégories. C'est du <strong>cloisonnement</strong> : trois portes, trois clés. Point important : ces espaces n'inventent <em>aucune</em> logique métier neuve — ils <em>orchestrent</em> (assemblent) les services et requêtes déjà écrits et testés dans les leçons précédentes.</p>
+<pre class="pseudo">/client   -> ses locations, ses achats            (role client)
+/vendeur  -> stocks, retards, mises en vente        (gate gerer-catalogue)
+/gestion  -> comptes, promotions, catégories        (gate administrer)</pre>
+<p>Aucune logique métier <strong>nouvelle</strong> : chaque espace orchestre les services (leçons 6-12) et les requêtes (leçon 15) déjà écrits et testés.</p>
+
+<h3>2. Les routes protégées par groupe</h3>
+<p>Un <strong>groupe de routes</strong> (<code>Route::middleware('auth')->group(…)</code>) applique un même filtre à plusieurs routes d'un coup. Le middleware <code>'auth'</code> exige d'être connecté ; <code>can:gerer-catalogue</code> et <code>can:administrer</code> exigent en plus la permission correspondante (les Gates de la leçon 10). On <em>imbrique</em> les groupes pour empiler les conditions : pour atteindre <code>/gestion</code>, il faut être connecté ET administrateur.</p>
+<pre class="pseudo">// routes/web.php
+Route::middleware('auth')->group(function () {                     // toutes ces routes exigent d'être connecté
+    Route::get('/client', [EspaceClientController::class, 'index']);   // espace client (tout utilisateur connecté)
+    Route::middleware('can:gerer-catalogue')->group(function () {  // sous-groupe : en plus, permission "gerer-catalogue"
+        Route::get('/vendeur', [EspaceVendeurController::class, 'index']);   // espace vendeur
+    });
+    Route::middleware('can:administrer')->group(function () {      // sous-groupe : en plus, permission "administrer"
+        Route::post('/gestion/promouvoir/{user}', [GestionController::class, 'promouvoir']);   // promouvoir un compte (POST, écriture)
+    });
+});</pre>
+
+<h3>3. L'espace client (par ressource)</h3>
+<p>L'espace client ne montre que les données de l'utilisateur courant : <code>auth()->id()</code> donne son identifiant, et <code>Location::where('client_id', auth()->id())</code> ne récupère que SES locations. <code>with('jeu')</code> précharge le jeu de chaque location (anti-N+1), <code>get()</code> exécute la requête. C'est le contrôle par <em>ressource</em> vu en leçon 10, appliqué à un espace entier.</p>
+<pre class="pseudo">public function index() {                                          // affiche l'espace du client connecté
+    return view('client.espace', [                                // envoie deux listes à la vue
+        'locations' => Location::where('client_id', auth()->id())->with('jeu')->get(),   // SES locations seulement (jeu préchargé)
+        'achats' => Achat::where('client_id', auth()->id())->with('jeu')->get(),         // SES achats seulement
+    ]);
+}</pre>
+
+<h3>4. Le test de refus croisé, par espace</h3>
+<p>Le <strong>test de refus croisé</strong> vérifie qu'un rôle ne peut pas entrer dans l'espace d'un autre : on connecte un client (ou un vendeur) et on tente une action réservée à l'admin. <code>assertForbidden()</code> exige un refus (code 403). Un tel test par espace transforme la matrice « qui accède à quoi » en garantie vérifiée à chaque commit.</p>
+<pre class="pseudo">public function test_client_naccede_pas_a_la_gestion(): void {    // un client ne doit pas entrer dans /gestion
+    $this->actingAs($this->client)->get('/gestion')->assertForbidden();      // 403
+}
+public function test_vendeur_ne_promeut_pas(): void {             // un vendeur ne doit pas promouvoir de compte
+    $this->actingAs($this->vendeur)->post('/gestion/promouvoir/1')->assertForbidden();   // 403 attendu
+}</pre>
+
+<h3>5. Le dividende de l'architecture en couches</h3>
+<div class="warn">Chaque espace a son test de refus croisé, verrouillé par la CI : la matrice « qui accède à quoi » est prouvée, pas supposée. Une régression d'autorisation (un <code>middleware('can:...')</code> oublié) redevient rouge immédiatement.</div>
+<div class="tip">Les espaces n'ajoutent presque pas de code : ils <strong>assemblent</strong> ce qui existe. C'est le dividende d'une architecture montée proprement dès la semaine 1 — la dernière ligne droite compose des briques testées, elle ne réinvente pas la mécanique. Quand la fondation est saine, la finition est rapide.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les trois espaces correspondent à…", opts: ["Trois bases", "Trois rôles (client, vendeur, admin)", "Trois serveurs", "Trois langues"], a: 1, exp: "Cloisonnement par profil." },
+    { type: "qcm", q: "Les espaces ajoutent…", opts: ["Beaucoup de métier neuf", "Presque aucun métier (ils assemblent)", "Une base", "Un WAF"], a: 1, exp: "Orchestration." },
+    { type: "qcm", q: "L'espace client filtre par…", opts: ["L'URL", "auth()->id() (l'utilisateur courant)", "Le rôle brut", "Le cookie"], a: 1, exp: "Par ressource." },
+    { type: "qcm", q: "L'espace admin se protège par…", opts: ["Un menu caché", "middleware('can:administrer')", "Rien", "Un cookie"], a: 1, exp: "Par rôle (Gate)." },
+    { type: "qcm", q: "Le test de refus croisé vérifie…", opts: ["Le CSS", "Qu'un rôle n'accède pas à l'espace d'un autre", "La vitesse", "Le port"], a: 1, exp: "403 attendu." },
+    { type: "qcm", q: "actingAs($this->client) simule…", opts: ["Un admin", "Un utilisateur client connecté", "Personne", "Un vendeur"], a: 1, exp: "Test d'autorisation." },
+    { type: "qcm", q: "Une régression d'autorisation…", opts: ["Passe inaperçue", "Redevient rouge (test croisé en CI)", "Casse la base", "Est ignorée"], a: 1, exp: "Filet permanent." },
+    { type: "qcm", q: "Les services réutilisés viennent des leçons…", opts: ["Aucune", "6-15 (déjà écrits et testés)", "20-21", "Externes"], a: 1, exp: "On assemble." },
+    { type: "qcm", q: "La matrice « qui accède à quoi » est…", opts: ["Supposée", "Prouvée par les tests", "Aléatoire", "Décorative"], a: 1, exp: "Vérifiée." },
+    { type: "qcm", q: "La finition est rapide car…", opts: ["On code vite", "La fondation (couches) est saine", "On saute les tests", "Par chance"], a: 1, exp: "Dividende de l'archi." },
+    { type: "vf", q: "Chaque espace a son test de refus croisé.", a: true, exp: "Cloisonnement prouvé." },
+    { type: "qcm", q: "promouvoir se fait en…", opts: ["GET", "POST + can:administrer", "HEAD", "Sans protection"], a: 1, exp: "Écrire = POST protégé." },
+    { type: "qcm", q: "Un middleware('can:...') oublié serait détecté par…", opts: ["Rien", "Le test de refus croisé (rouge)", "Le CSS", "L'utilisateur"], a: 1, exp: "La CI garde la matrice." },
+    { type: "qcm", q: "L'espace client ne montre que…", opts: ["Tout", "Les données de l'utilisateur courant", "Les données admin", "Rien"], a: 1, exp: "where('client_id', auth()->id())." },
+    { type: "vf", q: "Une architecture en couches saine rend la dernière ligne droite rapide.", a: true, exp: "Assembler, pas réinventer." }
+  ],
+  final: {
+    title: "Exercice final — Trois espaces cloisonnés",
+    intro: `<p>Espaces + protection + refus croisé.</p>`,
+    questions: [
+      { type: "qcm", q: "L'espace client montre :", opts: ["les données de l'utilisateur courant", "tout", "les comptes", "rien"], a: 0, exp: "auth()->id()." },
+      { type: "qcm", q: "L'espace gestion est protégé par :", opts: ["middleware('can:administrer')", "un menu caché", "rien", "un cookie"], a: 0, exp: "Par rôle." },
+      { type: "qcm", q: "Le cloisonnement est prouvé par :", opts: ["un test de refus croisé par espace", "un screenshot", "la confiance", "un WAF"], a: 0, exp: "403 attendu." },
+      { type: "qcm", q: "Les espaces contiennent :", opts: ["quasiment aucune logique neuve (assemblage)", "tout le métier", "une nouvelle base", "un cache"], a: 0, exp: "Dividende des couches." },
+      { type: "vf", q: "Un middleware oublié est rattrapé par la CI.", a: true, exp: "Test croisé." }
+    ],
+    solution: `<pre class="pseudo">Route::middleware('auth')->group(function () {                    // routes réservées aux connectés
+  Route::get('/client', [EspaceClientController::class, 'index']);   // espace client
+  Route::middleware('can:gerer-catalogue')->group(fn() =>          // + permission "gerer-catalogue"
+    Route::get('/vendeur', [EspaceVendeurController::class, 'index']));   // espace vendeur
+  Route::middleware('can:administrer')->group(fn() =>              // + permission "administrer"
+    Route::post('/gestion/promouvoir/{user}', [GestionController::class, 'promouvoir']));   // action admin (POST)
+});
+// client : Location::where('client_id', auth()->id())->with('jeu')->get()   // ses données seulement
+// test : actingAs($client)->get('/gestion')->assertForbidden();             // refus croisé (403)</pre>
+<p>Les espaces sont cloisonnés. Demain : l'image de production, durcie.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes espaces et leurs tests de refus…",
+  items: [
+  { id: "proj6php-l16", title: "Trois espaces cloisonnés, prouvés par refus croisé", level: 2,
+    statement: "Écris les routes groupées par rôle, l'espace client (filtré par auth()->id()), un endpoint admin protégé, et deux tests de refus croisé (un client sur /gestion, un vendeur sur promouvoir). Explique en 2-3 lignes pourquoi les espaces n'ajoutent presque pas de code et ce que le test de refus croisé garantit.",
+    hints: [
+      "Route::middleware('can:gerer-catalogue')->group(...) ; can:administrer pour l'admin.",
+      "Espace client : Location::where('client_id', auth()->id())->with('jeu').",
+      "Tests : actingAs(...)->assertForbidden()."
+    ],
+    solution: "// routes/web.php\nRoute::middleware('auth')->group(function () {                     // routes reservees aux connectes\n    Route::get('/client', [EspaceClientController::class, 'index']);   // espace client\n    Route::middleware('can:gerer-catalogue')->group(function () {  // + permission \"gerer-catalogue\"\n        Route::get('/vendeur', [EspaceVendeurController::class, 'index']);   // espace vendeur\n    });\n    Route::middleware('can:administrer')->group(function () {      // + permission \"administrer\"\n        Route::post('/gestion/promouvoir/{user}', [GestionController::class, 'promouvoir']);   // action admin (POST)\n    });\n});\n\n// EspaceClientController — par ressource\npublic function index() {                                          // espace du client connecte\n    return view('client.espace', [                                // deux listes envoyees a la vue\n        'locations' => Location::where('client_id', auth()->id())->with('jeu')->get(),   // SES locations (jeu precharge)\n        'achats' => Achat::where('client_id', auth()->id())->with('jeu')->get(),         // SES achats\n    ]);\n}\n\n// Tests de refus croise (verrouilles par la CI)\npublic function test_client_naccede_pas_a_la_gestion(): void {     // un client ne doit pas entrer dans /gestion\n    $this->actingAs($this->client)->get('/gestion')->assertForbidden();   // 403 attendu\n}\npublic function test_vendeur_ne_promeut_pas(): void {              // un vendeur ne doit pas promouvoir\n    $this->actingAs($this->vendeur)->post('/gestion/promouvoir/1')->assertForbidden();   // 403 attendu\n}\n\n// POURQUOI SI PEU DE CODE, CE QUE GARANTIT LE REFUS CROISE\n// Les espaces ne font qu'APPELER des services et des requetes deja ecrits et\n// testes (leçons 6-15) : ils cablent des vues sur des briques existantes. C'est\n// le dividende d'une architecture en couches montee proprement -- la finition\n// assemble, elle ne reinvente pas.\n// Le test de refus croise transforme la matrice 'qui accede a quoi' en propriete\n// VERIFIEE : un middleware can: oublie fait echouer la CI. Sans lui, une regression\n// d'autorisation ne se decouvre qu'en... incident de securite.",
+    note: "Cette leçon illustre le paiement des intérêts d'un bon investissement : parce que le métier a été construit en couches, testé et sécurisé au fil de l'eau, l'ouverture des trois espaces se réduit à du câblage de routes. Les groupes de middleware de Laravel rendent le cloisonnement lisible et centralisé. La matrice d'autorisation, prouvée espace par espace, documente et garantit simultanément qui peut faire quoi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

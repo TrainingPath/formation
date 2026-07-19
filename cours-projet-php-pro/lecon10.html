@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Autorisation par rôle et par ressource (Policies, anti-IDOR)",
+  subtitle: "Qui peut agir ? Sur SON objet ? Les deux, dès la création — et testés.",
+  theory: `
+<h3>1. Deux questions, pas une</h3>
+<p>Authentifié ≠ autorisé. Deux contrôles distincts :</p>
+<pre class="pseudo">RÔLE      cet utilisateur a-t-il le DROIT d'effectuer cette action ?  (vendeur ?)
+RESSOURCE agit-il bien sur SON objet à lui, pas celui d'un autre ?    (SA location ?)</pre>
+<p>Oublier le second, c'est l'<strong>IDOR</strong> (Insecure Direct Object Reference) — la faille n°1 (OWASP A01).</p>
+<p>Décryptons : être <strong>authentifié</strong>, c'est avoir prouvé son identité (s'être connecté) ; être <strong>autorisé</strong>, c'est avoir le droit de faire une action précise. Un badge d'entreprise l'illustre : il prouve qui vous êtes (authentification) mais n'ouvre que certaines portes (autorisation). L'<strong>IDOR</strong> (<em>Insecure Direct Object Reference</em>, « référence directe non sécurisée à un objet ») consiste à changer un identifiant dans l'URL — <code>/locations/42</code> → <code>/locations/43</code> — pour consulter la donnée d'un autre. C'est, selon l'<strong>OWASP</strong> (l'organisation de référence en sécurité web), la catégorie de faille la plus répandue (« A01 »).</p>
+
+<h3>2. Autorisation par rôle (Gate)</h3>
+<p>Un <strong>Gate</strong> (« portail ») répond à la question du <em>rôle</em> : cet utilisateur a-t-il le droit d'effectuer telle action ? <code>Gate::define('gerer-catalogue', …)</code> crée une règle nommée, et <code>$this->authorize('gerer-catalogue')</code> l'applique dans le contrôleur : si la règle renvoie faux, Laravel bloque avec un code <strong>403</strong> (« interdit »).</p>
+<pre class="pseudo">// AppServiceProvider::boot()
+Gate::define('gerer-catalogue', fn(User $u) => in_array($u->role, ['vendeur','admin']));   // règle "gerer-catalogue" : vraie si le rôle est vendeur ou admin
+// contrôleur : $this->authorize('gerer-catalogue');   // 403 sinon</pre>
+
+<h3>3. Autorisation par ressource (Policy)</h3>
+<p>Une <strong>Policy</strong> (« politique ») répond à la question de la <em>ressource</em> : l'utilisateur agit-il bien sur SON objet ? Elle regroupe les règles d'accès à un type d'objet (ici <code>Location</code>). La méthode <code>view(User $u, Location $location)</code> renvoie vrai seulement si l'objet appartient à l'utilisateur (<code>$u->id === $location->client_id</code>). Le contrôleur l'invoque via <code>$this->authorize('view', $location)</code>.</p>
+<pre class="pseudo">// app/Policies/LocationPolicy.php
+public function view(User $u, Location $location): bool {   // a-t-il le droit de VOIR cette location ?
+    return $u->id === $location->client_id;      // sur SON objet
+}
+// contrôleur
+public function show(Location $location) {       // affiche une location précise
+    $this->authorize('view', $location);          // 403 si pas à lui
+    return view('locations.show', compact('location'));   // sinon, affiche la page de la location
+}</pre>
+
+<h3>4. Le piège de l'id d'URL</h3>
+<p><code>findOrFail($id)</code> cherche un objet par son identifiant et renvoie une erreur 404 s'il n'existe pas. Utilisé seul, il ne vérifie <em>pas</em> à qui appartient l'objet : c'est la porte ouverte à l'IDOR. La parade : partir de l'utilisateur connecté (<code>auth()->user()->locations()</code>) pour ne chercher que parmi SES locations — un objet qui n'est pas à lui devient alors introuvable (404).</p>
+<pre class="pseudo">// VULNÉRABLE : /locations/42 -> renvoie la location 42 quel qu'en soit le client
+$loc = Location::findOrFail($id);   // IDOR ! aucun contrôle d'appartenance
+// SÛR : on vérifie via la Policy (authorize) OU on filtre par auth()->id()
+$loc = auth()->user()->locations()->findOrFail($id);   // 404 si pas à lui</pre>
+
+<h3>5. Le test d'accès croisé — le plus important</h3>
+<p>Le <strong>test d'accès croisé</strong> est la preuve décisive : on connecte l'utilisateur A (<code>actingAs</code>) et on lui fait tenter d'ouvrir un objet appartenant à B. <code>assertForbidden()</code> vérifie que le serveur refuse bien (403). Tant que ce test est vert, aucune IDOR ne peut s'installer sur cette ressource.</p>
+<pre class="pseudo">public function test_client_ne_voit_pas_les_locations_dautrui(): void {   // prouve l'absence d'IDOR
+    $this->actingAs($this->clientA)              // on connecte le client A
+        ->get("/locations/{$this->locationDeB->id}")   // A tente d'ouvrir la location de B
+        ->assertForbidden();     // A ne voit pas l'objet de B
+}</pre>
+<div class="warn">Le test d'accès croisé (A tente l'objet de B) est le seul qui prouve l'absence d'IDOR. Écrit AVEC la fonctionnalité, il tourne à chaque commit : la faille ne peut plus s'installer sans un job rouge. Masquer le bouton dans la vue Blade ne protège rien — la protection est côté serveur, sur la donnée (Gate + Policy).</div>
+<div class="tip">Renvoyer 403/404 sur une ressource qui n'appartient pas à l'utilisateur (via <code>auth()->user()->locations()</code>) évite en plus de révéler qu'elle existe. Rôle (Gate) ET ressource (Policy), contrôlés côté serveur, testés par accès croisé : c'est la parade complète à la faille la plus répandue du web.</div>`,
+  exercises: [
+    { type: "qcm", q: "Authentifié signifie…", opts: ["Autorisé à tout", "Identifié — mais pas forcément autorisé", "Admin", "Rien"], a: 1, exp: "Deux notions distinctes." },
+    { type: "qcm", q: "L'IDOR, c'est…", opts: ["Un chiffrement", "Accéder à l'objet d'un autre via son id", "Un rôle", "Un cookie"], a: 1, exp: "OWASP A01." },
+    { type: "qcm", q: "Un Gate contrôle…", opts: ["La ressource", "Le rôle / le droit d'agir", "Le CSS", "La base"], a: 1, exp: "403 sinon." },
+    { type: "qcm", q: "Une Policy contrôle…", opts: ["Le rôle seul", "L'accès à UNE ressource précise (appartenance)", "Le cache", "Rien"], a: 1, exp: "SON objet." },
+    { type: "qcm", q: "Location::findOrFail($id) sans contrôle est…", opts: ["Sûr", "Vulnérable à l'IDOR", "Rapide", "Chiffré"], a: 1, exp: "N'importe qui lit n'importe quoi." },
+    { type: "qcm", q: "auth()->user()->locations()->findOrFail($id) renvoie…", opts: ["Toujours l'objet", "404 si l'objet n'est pas à lui", "500", "Le rôle"], a: 1, exp: "Appartenance vérifiée." },
+    { type: "qcm", q: "$this->authorize('view', $location) déclenche…", opts: ["Rien", "La Policy (403 si refus)", "Un cache", "Un log"], a: 1, exp: "Contrôle par ressource." },
+    { type: "qcm", q: "Masquer le bouton dans Blade…", opts: ["Protège la donnée", "Ne protège rien (contrôle côté serveur)", "Suffit", "Chiffre"], a: 1, exp: "Sécurité serveur." },
+    { type: "qcm", q: "Le test d'accès croisé vérifie…", opts: ["Le CSS", "Que A ne voit pas l'objet de B", "La vitesse", "Le port"], a: 1, exp: "Preuve anti-IDOR." },
+    { type: "qcm", q: "Rôle ET ressource, c'est…", opts: ["Redondant", "Les deux contrôles nécessaires", "Un seul suffit", "Décoratif"], a: 1, exp: "Peut-il agir ? sur SON objet ?" },
+    { type: "vf", q: "Le contrôle d'accès cassé est la faille n°1 (OWASP A01).", a: true, exp: "Très répandue." },
+    { type: "qcm", q: "actingAs($clientA) dans le test…", opts: ["Chiffre", "Simule le client A connecté", "Ralentit", "Déploie"], a: 1, exp: "Test d'autorisation." },
+    { type: "qcm", q: "Le test croisé tourne…", opts: ["Une fois", "À chaque commit (CI)", "En prod seulement", "Jamais"], a: 1, exp: "Filet permanent." },
+    { type: "qcm", q: "Renvoyer 404 plutôt que 403 évite…", opts: ["Rien", "De révéler que la ressource existe", "Le login", "Le cache"], a: 1, exp: "Discrétion." },
+    { type: "vf", q: "Écrire le test d'accès croisé avec la fonctionnalité empêche l'IDOR de s'installer.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Rôle + ressource, testés",
+    intro: `<p>Gate + Policy + test croisé.</p>`,
+    questions: [
+      { type: "qcm", q: "Le droit d'agir se contrôle par :", opts: ["un Gate (authorize)", "un if dans Blade", "le menu masqué", "rien"], a: 0, exp: "Par rôle." },
+      { type: "qcm", q: "L'appartenance se contrôle par :", opts: ["une Policy / auth()->user()->locations()", "findOrFail($id) brut", "l'id d'URL de confiance", "un cookie"], a: 0, exp: "Par ressource." },
+      { type: "qcm", q: "L'IDOR se prouve absent par :", opts: ["un test d'accès croisé", "un screenshot", "la bonne foi", "un WAF"], a: 0, exp: "A tente l'objet de B." },
+      { type: "qcm", q: "Sur un objet qui n'est pas à lui, on renvoie :", opts: ["403/404 (ne révèle pas l'existence)", "200", "le SQL", "500"], a: 0, exp: "Discret." },
+      { type: "vf", q: "Rôle ET ressource sont tous deux nécessaires.", a: true, exp: "Peut-il agir ? sur SON objet ?" }
+    ],
+    solution: `<pre class="pseudo">Gate::define('gerer-catalogue', fn(User $u) => in_array($u->role,['vendeur','admin']));   // par RÔLE : vendeur ou admin
+
+// LocationPolicy
+public function view(User $u, Location $l): bool { return $u->id === $l->client_id; }   // par RESSOURCE : seulement SON objet
+// contrôleur
+public function show(Location $location) {                 // afficher une location
+  $this->authorize('view', $location);          // 403 si pas à lui
+  return view('locations.show', compact('location'));      // sinon, la page
+}
+// test : actingAs($clientA)->get("/locations/{$locB->id}")->assertForbidden();   // A ne voit pas l'objet de B</pre>
+<p>L'IDOR est fermé. Demain : louer — transaction et test de fonctionnalité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton autorisation et son test croisé…",
+  items: [
+  { id: "proj6php-l10", title: "Autorisation par rôle et par ressource, prouvée", level: 3,
+    statement: "Écris un Gate 'gerer-catalogue' (rôle), une LocationPolicy (ressource), le contrôleur qui appelle authorize(), la version SÛRE d'un accès par id, et le test d'accès croisé prouvant l'absence d'IDOR. Explique en 3-4 lignes pourquoi masquer le bouton ne suffit pas et pourquoi 404 plutôt que 403.",
+    hints: [
+      "Gate::define('gerer-catalogue', fn(User $u) => in_array($u->role, ['vendeur','admin'])).",
+      "SÛR : auth()->user()->locations()->findOrFail($id) -> 404 si pas à lui.",
+      "Test : actingAs($clientA)->get('/locations/'.$locB->id)->assertForbidden()."
+    ],
+    solution: "// AppServiceProvider::boot() — par ROLE\nGate::define('gerer-catalogue', fn(User $u) => in_array($u->role, ['vendeur', 'admin']));\n\n// app/Policies/LocationPolicy.php — par RESSOURCE\npublic function view(User $u, Location $location): bool {\n    return $u->id === $location->client_id;      // sur SON objet\n}\n\n// controleur\npublic function store(StoreJeuRequest $r) {        // authorize() dans la Form Request\n    // ... creation reservee au vendeur/admin\n}\npublic function show(Location $location) {\n    $this->authorize('view', $location);           // 403 si pas a lui (Policy)\n    return view('locations.show', compact('location'));\n}\n// Acces par id, version SURE : filtre par le proprietaire\n$loc = auth()->user()->locations()->findOrFail($id);   // 404 si pas a lui\n\n// LE TEST QUI COMPTE : acces croise\npublic function test_client_ne_voit_pas_les_locations_dautrui(): void {\n    $this->actingAs($this->clientA)\n        ->get(\"/locations/{$this->locationDeB->id}\")\n        ->assertForbidden();\n}\n\n// POURQUOI MASQUER LE BOUTON NE SUFFIT PAS, POURQUOI 404\n// Le bouton cache n'existe que dans le HTML Blade : un attaquant appelle l'URL\n// directement (curl, Postman) sans passer par l'interface. La seule vraie\n// protection est cote SERVEUR, sur la donnee (Gate + Policy, ou le filtre par\n// auth()->id()). On renvoie 404 et non 403 quand on filtre par proprietaire, car\n// un 403 confirmerait que la location 42 EXISTE ; le 404 ne revele meme pas son\n// existence. Role + ressource + test croise = parade complete a l'IDOR (OWASP A01).",
+    note: "L'IDOR est à la fois la faille la plus répandue et la plus facile à ignorer, parce qu'en test manuel avec son propre compte, tout fonctionne. Seul le test d'accès CROISÉ (un utilisateur qui tente l'objet d'un autre) la révèle. Les Gates (rôle) et Policies (ressource) de Laravel séparent proprement les deux questions ; en écrivant le test croisé avec la fonctionnalité, on le rend permanent. C'est le cœur du secure by design appliqué à l'autorisation." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

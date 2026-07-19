@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Modifier et supprimer : le change tracker à l'œuvre",
+  subtitle: "Tu changes une propriété, EF Core écrit l'UPDATE — voici comment il devine.",
+  theory: `
+<h3>1. Modifier : lire, changer, sauver — sans jamais écrire d'UPDATE</h3>
+<p>À la leçon 5, le change tracker n'était qu'un carnet où Add notait « à insérer ». Aujourd'hui il passe au premier plan. Pour modifier un jeu de la Ludothèque, la recette tient en trois temps : <strong>lire</strong> l'entité (elle entre dans le carnet, état <em>Unchanged</em>), <strong>changer</strong> ses propriétés comme n'importe quel objet C#, <strong>appeler SaveChanges</strong>. Aucun UPDATE à écrire : EF Core le génère.</p>
+<pre class="pseudo">using var ctx = new LudothequeContext();                                    // crée le contexte (session de travail) ; "using" le libérera à la fin
+
+var catan = ctx.Jeux.First(j =&gt; j.Nom == "Catan");  // suivi : Unchanged    // lit le jeu Catan : il entre dans le tracker à l'état Unchanged
+catan.Prix = 34.90m;                                 // simple affectation C#  // on change juste l'objet en mémoire (rien en base encore)
+ctx.SaveChanges();                                                          // EF compare à l'instantané et envoie l'UPDATE tout seul
+
+-- SQL généré : UPDATE ciblé, UNE SEULE colonne
+UPDATE [Jeux] SET [Prix] = @p0     -- ne met à jour QUE la colonne Prix (la seule qui a changé)
+WHERE [Id] = @p1;                  -- cible la ligne précise par sa clé primaire</pre>
+<p>Regarde bien le log : l'UPDATE ne touche que <strong>Prix</strong>. Ni Nom, ni DureeMinutes ne partent sur le réseau. C'est l'<strong>UPDATE partiel</strong> — et il n'a rien de magique.</p>
+
+<h3>2. Comment le tracker devine : l'instantané (snapshot)</h3>
+<p>Au moment où une entité est lue, le change tracker en prend un <strong>instantané</strong> (snapshot) : une copie des valeurs d'origine, comme une photo avant/après. Quand SaveChanges arrive, il compare chaque entité suivie à son instantané, propriété par propriété. Une différence ? L'entité passe à l'état <strong>Modified</strong> et seules les colonnes qui divergent entrent dans l'UPDATE. C'est le <strong>dirty checking</strong> (la « détection du sale », c'est-à-dire de ce qui a changé) — exactement le même mécanisme que chez Hibernate, quand Eloquent compare via isDirty() et Django réécrit par défaut toutes les colonnes au save().</p>
+<pre class="pseudo">Lecture   : catan { Prix = 39.90 }  → instantané { Prix = 39.90 }
+Affectation: catan.Prix = 34.90     → objet ≠ instantané
+SaveChanges: comparaison            → Prix a bougé → UPDATE SET Prix = 34.90
+             après coup             → nouvel instantané, état Unchanged</pre>
+<p>Ce schéma retrace les quatre temps : lecture (photo prise), affectation (l'objet s'écarte de la photo), SaveChanges (comparaison → UPDATE), puis remise à zéro. Conséquence directe : le tracker ne voit que les entités <strong>qu'il suit</strong>. Un objet construit avec new et jamais passé au contexte est invisible — cette situation (l'entité « détachée ») deviendra centrale à la leçon 19 avec les API web.</p>
+
+<h3>3. Supprimer : Remove, RemoveRange et le DELETE</h3>
+<p>La suppression suit la même logique déclarative : <strong>Remove</strong> marque l'entité à l'état <strong>Deleted</strong> dans le carnet, et SaveChanges traduit en <strong>DELETE</strong>. Pour vider une sélection entière, <strong>RemoveRange</strong> marque toute la collection.</p>
+<pre class="pseudo">var jeu = ctx.Jeux.Find(12);                                        // lit le jeu d'Id 12 (par clé primaire)
+if (jeu != null)                                                    // on ne supprime que s'il existe réellement
+{
+    ctx.Jeux.Remove(jeu);        // état : Deleted — rien en base    // marque l'entité "à supprimer" dans le tracker (aucun SQL)
+    ctx.SaveChanges();           // DELETE FROM [Jeux] WHERE [Id] = 12   // c'est ici que le DELETE part vers la base
+}
+
+// Supprimer sans SELECT préalable : l'entité « souche »
+ctx.Jeux.Remove(new Jeu { Id = 12 });                              // objet "souche" : juste la clé, aucune lecture préalable
+ctx.SaveChanges();               // même DELETE, zéro lecture        // le DELETE part avec l'Id 12, sans le SELECT d'avant</pre>
+<p>La variante « souche » (un objet vide portant juste la clé, passé à Remove) évite le SELECT quand tu connais déjà l'Id — utile dans un endpoint DELETE d'API. Attention en revanche aux <strong>clés étrangères</strong> du Niveau 4 : si des locations référencent le jeu 12 et que la contrainte l'interdit, SaveChanges lève une <strong>DbUpdateException</strong> enveloppant l'erreur SQL Server. Le comportement exact (bloquer ou propager) se règlera avec OnDelete à la leçon 8.</p>
+
+<h3>4. Un seul SaveChanges pour tout le lot</h3>
+<p>Le carnet peut contenir des insertions, des modifications et des suppressions <em>en même temps</em> : un unique SaveChanges envoie tout, dans le bon ordre, et — retiens-le pour la leçon 17 — <strong>dans une transaction implicite</strong> (un « tout ou rien » : soit l'ensemble réussit, soit tout est annulé).</p>
+<pre class="pseudo">ctx.Jeux.Add(new Jeu { Nom = "Splendor", Prix = 29.90m });  // Added         // note une insertion dans le carnet
+var azul = ctx.Jeux.First(j =&gt; j.Nom == "Azul");                            // lit Azul (état Unchanged)
+azul.Prix = 31.00m;                                          // Modified      // change son prix → deviendra Modified au SaveChanges
+var vieux = ctx.Jeux.Find(3);                                                // lit le jeu d'Id 3
+ctx.Jeux.Remove(vieux);                                      // Deleted       // marque le jeu 3 à supprimer
+
+int n = ctx.SaveChanges();   // 1 INSERT + 1 UPDATE + 1 DELETE → retourne 3   // envoie tout le lot d'un coup, en une transaction implicite</pre>
+
+<h3>5. Les opérations de masse : ExecuteUpdate et ExecuteDelete</h3>
+<p>Modifier 5 000 jeux via le tracker, c'est 5 000 entités chargées, 5 000 instantanés, 5 000 UPDATE. Depuis EF Core 7, les opérations <strong>en masse</strong> court-circuitent tout ça : <strong>ExecuteUpdate</strong> et <strong>ExecuteDelete</strong> génèrent UN SEUL ordre SQL portant sur toutes les lignes filtrées — comme l'UPDATE … WHERE que tu écrivais au Niveau 4.</p>
+<pre class="pseudo">// +10 % sur tous les jeux de plus de 60 minutes : UNE requête
+ctx.Jeux                                                              // on part de la table Jeux…
+   .Where(j =&gt; j.DureeMinutes &gt; 60)                                  // …filtrée sur les parties de plus de 60 minutes
+   .ExecuteUpdate(s =&gt; s.SetProperty(j =&gt; j.Prix, j =&gt; j.Prix * 1.10m));   // UN seul UPDATE : Prix = Prix × 1,10, exécuté immédiatement
+
+// Purger les jeux jamais loués d'avant 2020 : UNE requête
+ctx.Jeux                                                              // on part de la table Jeux…
+   .Where(j =&gt; j.DureeMinutes == 0)                                  // …filtrée (ici les jeux à DureeMinutes 0)
+   .ExecuteDelete();                                                  // UN seul DELETE portant sur toutes les lignes filtrées</pre>
+<p>Deux différences capitales avec Remove/SaveChanges : ces méthodes s'exécutent <strong>immédiatement</strong> (pas d'attente de SaveChanges), et elles <strong>ignorent le change tracker</strong> — les entités déjà chargées en mémoire ne sont pas mises à jour et peuvent devenir périmées.</p>
+<div class="warn">Deux pièges symétriques. Modifier une entité <strong>jamais lue par ce contexte</strong> (new + affectation) : SaveChanges ne fait rien, le tracker ne la connaît pas. Et à l'inverse, <strong>ExecuteUpdate/ExecuteDelete</strong> partent immédiatement en base sans transaction commune avec ton SaveChanges et sans rafraîchir les objets suivis — ne mélange pas les deux styles sur les mêmes données dans la même unité de travail.</div>
+<div class="tip">Garde LogTo ouvert et fais l'expérience : modifie deux propriétés d'un jeu, sauve, et lis l'UPDATE — seules ces deux colonnes y figurent. C'est le meilleur moyen d'ancrer le réflexe « le tracker compare à l'instantané » ; Hibernate appelle ça le dirty checking, même mot d'ordre.</div>`,
+  exercises: [
+    { type: "qcm", q: "La recette pour modifier le prix d'un jeu avec EF Core :", opts: ["Écrire un UPDATE SQL dans une chaîne", "Lire l'entité, affecter la propriété, appeler SaveChanges", "Appeler ctx.Jeux.Update() obligatoirement", "Supprimer puis recréer le jeu"], a: 1, exp: "Aucun SQL à écrire : le tracker détecte l'écart et génère l'UPDATE." },
+    { type: "qcm", q: "Après var j = ctx.Jeux.First(...); j.Prix = 10m; — qu'est-il parti vers SQL Server ?", opts: ["Un UPDATE", "Un SELECT puis un UPDATE", "Seulement le SELECT du First ; l'affectation reste en mémoire", "Rien du tout"], a: 2, exp: "L'affectation ne touche que l'objet C# ; l'UPDATE attendra SaveChanges." },
+    { type: "qcm", q: "L'UPDATE généré après la modification du seul Prix contient…", opts: ["Toutes les colonnes de la table", "Seulement la colonne Prix", "Un DELETE + INSERT", "Une clause TRUNCATE"], a: 1, exp: "UPDATE partiel : le tracker ne pousse que les colonnes qui divergent de l'instantané." },
+    { type: "input", q: "Comment s'appelle la copie des valeurs d'origine que le tracker garde pour chaque entité lue ?", a: ["instantané", "snapshot", "l'instantané", "un snapshot"], ph: "Un mot…", exp: "L'instantané (snapshot) : SaveChanges compare l'objet actuel à cette copie, propriété par propriété." },
+    { type: "qcm", q: "Ce mécanisme de comparaison porte un nom chez tous les ORM :", opts: ["Le lazy loading", "Le dirty checking", "Le connection pooling", "Le sharding"], a: 1, exp: "Dirty checking : détecter les entités « sales » (modifiées) — même principe chez Hibernate." },
+    { type: "vf", q: "Une entité créée avec new, jamais passée à Add ni lue par le contexte, sera quand même sauvée par SaveChanges si on modifie ses propriétés.", a: false, exp: "Le tracker ne suit que ce qu'il connaît : cet objet est invisible (état détaché, approfondi leçon 19)." },
+    { type: "qcm", q: "ctx.Jeux.Remove(jeu) a pour effet immédiat…", opts: ["Un DELETE en base", "De marquer l'entité à l'état Deleted dans le carnet", "De vider la table", "De supprimer aussi le fichier de migration"], a: 1, exp: "Comme Add : une intention notée ; le DELETE part au SaveChanges." },
+    { type: "input", q: "Quelle méthode marque toute une collection d'entités pour suppression d'un coup ?", a: ["RemoveRange", "RemoveRange()"], ph: "Nom de la méthode…", exp: "RemoveRange(liste) : l'équivalent côté suppression de AddRange." },
+    { type: "qcm", q: "Supprimer le jeu 12 sans SELECT préalable, c'est possible avec…", opts: ["ctx.Jeux.Remove(new Jeu { Id = 12 })", "ctx.Jeux.Find(12) obligatoirement", "un TRUNCATE TABLE", "ctx.Jeux.Delete(12)"], a: 0, exp: "L'entité « souche » porte juste la clé : Remove + SaveChanges génèrent le DELETE, zéro lecture." },
+    { type: "qcm", q: "Le jeu 12 est référencé par des locations (FK bloquante). SaveChanges après Remove…", opts: ["Supprime aussi les locations", "Réussit en ignorant la contrainte", "Lève une DbUpdateException enveloppant l'erreur SQL Server", "Convertit le DELETE en UPDATE"], a: 2, exp: "La contrainte du Niveau 4 a le dernier mot ; la politique OnDelete se règle à la leçon 8." },
+    { type: "qcm", q: "Un même SaveChanges avec un Add, une modification et un Remove en attente…", opts: ["Lève une exception : un seul type d'opération à la fois", "Exécute INSERT, UPDATE et DELETE dans une transaction implicite", "N'exécute que l'INSERT", "Exécute trois transactions séparées"], a: 1, exp: "Tout le lot part ensemble : tout réussit ou rien — prélude à la leçon 17." },
+    { type: "vf", q: "SaveChanges retourne le nombre total de lignes affectées par le lot (INSERT + UPDATE + DELETE).", a: true, exp: "1 insertion + 1 modification + 1 suppression → SaveChanges retourne 3." },
+    { type: "qcm", q: "Pour augmenter de 10 % le prix de 5 000 jeux en UNE requête SQL :", opts: ["Une boucle foreach + SaveChanges", "ExecuteUpdate avec SetProperty", "AddRange", "ToList puis modification en mémoire"], a: 1, exp: "ExecuteUpdate génère un UPDATE … WHERE unique, sans charger ni suivre les 5 000 entités." },
+    { type: "qcm", q: "Différence majeure entre ExecuteDelete et Remove + SaveChanges :", opts: ["ExecuteDelete ne supprime qu'une ligne", "ExecuteDelete s'exécute immédiatement et ignore le change tracker", "Remove est plus rapide sur 10 000 lignes", "Aucune : ce sont des synonymes"], a: 1, exp: "Ordre SQL direct : pas d'attente de SaveChanges, et les entités en mémoire ne sont pas rafraîchies." },
+    { type: "vf", q: "Après un ExecuteUpdate, les entités déjà chargées dans le contexte reflètent automatiquement les nouvelles valeurs.", a: false, exp: "L'opération contourne le tracker : les objets en mémoire deviennent périmés — recharge-les si besoin." }
+  ],
+  final: {
+    title: "Exercice final — Grand ménage dans le catalogue",
+    intro: `<p>Session d'entretien du catalogue : tu corriges le prix d'Azul, tu retires un jeu abîmé, et tu appliques une remise de masse. Vérifions chaque geste.</p>`,
+    questions: [
+      { type: "qcm", q: "Tu lis Azul, tu changes son Prix, mais le programme plante AVANT SaveChanges. En base :", opts: ["Le prix est modifié", "Le prix est inchangé : rien n'était parti", "La ligne est verrouillée", "Le jeu est supprimé"], a: 1, exp: "L'affectation ne vivait qu'en mémoire ; sans SaveChanges, aucun UPDATE n'a été émis." },
+      { type: "qcm", q: "Tu modifies Prix ET DureeMinutes d'Azul puis tu sauves. L'UPDATE contient…", opts: ["Toutes les colonnes", "Les deux colonnes modifiées uniquement", "Une colonne au hasard", "Deux UPDATE séparés"], a: 1, exp: "Le tracker compare à l'instantané colonne par colonne : seuls les écarts partent." },
+      { type: "vf", q: "Pour l'endpoint DELETE /api/jeux/12, Remove(new Jeu { Id = 12 }) évite un SELECT inutile.", a: true, exp: "L'entité souche suffit : le DELETE part avec la clé, sans lecture préalable." },
+      { type: "input", q: "Quelle méthode EF Core 7+ appliquerais-tu pour une remise sur tous les jeux filtrés, en une seule requête ?", a: ["ExecuteUpdate", "ExecuteUpdate()", "ExecuteUpdateAsync"], ph: "Execute…", exp: "Where(...).ExecuteUpdate(s =&gt; s.SetProperty(...)) : l'UPDATE de masse, sans passer par le tracker." },
+      { type: "qcm", q: "Après ce ExecuteUpdate, un jeu déjà chargé dans le contexte affiche…", opts: ["Le nouveau prix automatiquement", "L'ancien prix : l'objet en mémoire n'a pas été rafraîchi", "null", "Une exception à la lecture"], a: 1, exp: "L'opération de masse a contourné le carnet : mémoire et base divergent jusqu'au rechargement." }
+    ],
+    solution: `<pre class="pseudo">Modifier  : lire → affecter → SaveChanges
+            instantané (snapshot) + comparaison = dirty checking
+            → UPDATE PARTIEL (seules les colonnes modifiées)
+Supprimer : Remove / RemoveRange → état Deleted → DELETE au SaveChanges
+            variante souche : Remove(new Jeu { Id = n }) — zéro SELECT
+            FK bloquante → DbUpdateException (politique OnDelete : leçon 8)
+Lot       : 1 SaveChanges = INSERT + UPDATE + DELETE, transaction implicite
+Masse     : ExecuteUpdate / ExecuteDelete (EF Core 7+)
+            → 1 requête SQL, immédiate, HORS change tracker
+Ailleurs  : dirty checking Hibernate, isDirty() Eloquent, save() Django</pre>
+<p>Le CRUD complet est entre tes mains. Mais [MaxLength] et consorts ne suffisent plus pour tout configurer : leçon 7, la <strong>Fluent API</strong> prend la salle des machines.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l6", title: "Boucle de 5 000 UPDATE ou ExecuteUpdate ?", level: 2,
+    statement: "La Ludothèque solde : -20 % sur tous les jeux de plus de 40 euros (environ 5 000 jeux concernés). Un collègue propose : charger les jeux avec Where + ToList, boucler pour modifier chaque Prix, puis un SaveChanges. Toi, tu penses à ExecuteUpdate. Rédige la comparaison complète des deux approches : ce qui transite sur le réseau, ce que fait le change tracker dans chaque cas, le nombre et la forme des requêtes SQL, le comportement en cas d'échec au milieu, et les effets de bord sur des entités déjà chargées. Conclus par ta recommandation, en précisant UN cas où la boucle resterait pourtant le bon choix.",
+    hints: [
+      "Compte les requêtes : la boucle = 1 SELECT de 5 000 lignes + combien d'UPDATE ? ExecuteUpdate = combien au total ?",
+      "Pense au tracker : 5 000 instantanés en mémoire d'un côté, zéro suivi de l'autre — et qu'implique « zéro suivi » pour les objets déjà chargés ?",
+      "Le cas où la boucle gagne : que se passe-t-il si la remise dépend d'une logique C# intraduisible en SQL (appel d'un service, arrondi métier complexe) ?"
+    ],
+    solution: "APPROCHE A — boucle + SaveChanges\n- 1 SELECT rapatrie 5 000 entités complètes (réseau + RAM) ;\n- le tracker crée 5 000 instantanés, puis compare tout au SaveChanges ;\n- SaveChanges émet 5 000 UPDATE (regroupés en lots par EF Core, mais\n  chaque ligne a son ordre) dans UNE transaction implicite :\n  échec au milieu → tout est annulé, la base reste cohérente ;\n- les objets chargés sont à jour en mémoire après coup.\n\nAPPROCHE B — ExecuteUpdate\n  ctx.Jeux.Where(j => j.Prix > 40m)\n     .ExecuteUpdate(s => s.SetProperty(j => j.Prix, j => j.Prix * 0.8m));\n- UNE seule requête : UPDATE Jeux SET Prix = Prix * 0.8 WHERE Prix > 40 ;\n- aucune entité chargée, aucun instantané : ni réseau ni RAM gaspillés ;\n- exécution immédiate, atomique côté SQL Server (un seul ordre) ;\n- effet de bord : les jeux déjà suivis par le contexte gardent l'ANCIEN\n  prix en mémoire → à recharger si on continue à travailler avec.\n\nRECOMMANDATION : ExecuteUpdate, sans hésiter — c'est l'UPDATE … WHERE\nque j'écrivais au Niveau 4, piloté depuis C#. 5 000 fois moins de trafic.\n\nLE CAS OÙ LA BOUCLE GAGNE : quand le nouveau prix dépend d'une logique\nC# intraduisible en SQL (barème par appel de service, arrondi métier\ncomplexe, règle par catégorie calculée en mémoire). Là, il FAUT charger,\ncalculer en C#, et laisser le tracker générer les UPDATE partiels.",
+    note: "Ce dilemme « objet par objet ou ordre de masse » existe dans tous les ORM : Hibernate a ses bulk queries HQL, Eloquent son Jeu::where(...)->update([...]), Django son queryset.update(). La règle transversale : dès que la transformation s'exprime en SQL pur, pousse-la vers la base — c'est elle la plus forte. Tu retrouveras cet arbitrage dans les traitements batch de ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

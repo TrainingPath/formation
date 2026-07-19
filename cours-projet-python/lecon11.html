@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Autorisation : permissions, décorateurs et mixins",
+  subtitle: "Qui a le droit de faire quoi : la matrice des trois profils.",
+  theory: `
+<h3>1. La matrice des droits</h3>
+<pre class="pseudo">                      Client   Vendeur   Administrateur
+Consulter le catalogue   ✔        ✔            ✔
+Louer / acheter          ✔        ✔            ✔
+Gérer jeux et stocks     ✘        ✔            ✔
+Gérer les comptes        ✘        ✘            ✔</pre>
+<p>L'<strong>autorisation</strong> décide, une fois l'utilisateur identifié, ce qu'il a le droit de faire. Cette <strong>matrice des droits</strong> (un tableau qui croise les profils et les actions) est la référence : chaque case dit « autorisé » (✔) ou « interdit » (✘). Tout le code de cette leçon ne fait que la traduire fidèlement.</p>
+
+<h3>2. Le test de rôle + le décorateur</h3>
+<pre class="pseudo">from django.contrib.auth.decorators import user_passes_test   # décorateur : n'autorise que si un test est vrai
+
+def est_vendeur(user):        # fonction écrite à la leçon 9
+    return user.groups.filter(                          # vrai si l'utilisateur appartient…
+        name__in=[ROLE_VENDEUR, ROLE_ADMIN]).exists()   # …au groupe Vendeur OU Administrateur
+
+@user_passes_test(est_vendeur)   # accès seulement si est_vendeur(user) est vrai
+def creer_jeu(request):          # créer un jeu : réservé vendeur/admin
+    ...                        # seuls vendeur et admin arrivent ici
+
+@user_passes_test(est_admin)     # accès seulement si est_admin(user) est vrai
+def gerer_comptes(request):      # gérer les comptes : réservé admin
+    ...</pre>
+<p>Le décorateur applique la règle <strong>au plus près de la vue</strong>, avant même que son code ne s'exécute. Sans le bon rôle, un utilisateur des pages HTML est <strong>redirigé</strong> ; l'API DRF, elle, renvoie un code <strong>403</strong> (<em>Forbidden</em>, « interdit ») : « je sais qui tu es, mais tu n'as pas le droit ».</p>
+
+<h3>3. Le droit par ressource : « mes » locations</h3>
+<pre class="pseudo">@login_required                  # il faut d'abord être connecté
+def mes_locations(request):      # affiche les locations DE l'utilisateur connecté
+    locations = Location.objects.de_client(request.user).en_cours()   # ses locations en cours (QuerySet leçon 5)
+    return render(request, "mes_locations.html", {"locations": locations})   # rend la page avec ces locations</pre>
+<div class="warn">L'identité vient de <code>request.user</code> (posée par la session), <strong>jamais</strong> d'un paramètre : <code>/locations/?client=42</code> laisserait n'importe qui lire les locations de n'importe qui en changeant le nombre.</div>
+
+<h3>4. Côté DRF : les permissions</h3>
+<pre class="pseudo">class EstVendeur(permissions.BasePermission):    # règle d'autorisation « maison » pour l'API
+    def has_permission(self, request, view):     # méthode appelée par DRF pour chaque requête
+        return request.user.is_authenticated and est_vendeur(request.user)   # connecté ET vendeur ?
+
+class GestionJeuxViewSet(viewsets.ModelViewSet): # ViewSet d'écriture (créer/modifier/supprimer des jeux)
+    permission_classes = [EstVendeur]     # applique notre règle : sinon 403
+    ...                                          # ... = queryset et serializer</pre>
+
+<h3>5. Adapter l'affichage (confort, pas sécurité)</h3>
+<pre class="pseudo">{% if est_vendeur %}&lt;a href="{% url 'espace_vendeur' %}"&gt;Espace vendeur&lt;/a&gt;{% endif %}   &lt;!-- le lien n'apparaît que si l'utilisateur est vendeur --&gt;</pre>
+<div class="tip">Le menu s'adapte au rôle, mais la vraie barrière est le décorateur/la permission <strong>côté serveur</strong> : un attaquant forge la requête HTTP sans passer par le menu. Les deux vont ensemble : l'un pour l'ergonomie, l'autre pour la sécurité.</div>`,
+  exercises: [
+    { type: "qcm", q: "Autoriser, c'est…", opts: ["Vérifier l'identité", "Décider des droits d'un utilisateur identifié", "Hacher", "Créer un compte"], a: 1, exp: "Le QUOI après le QUI." },
+    { type: "qcm", q: "Gérer les stocks est permis à…", opts: ["Client", "Vendeur et Administrateur", "Tout le monde", "Personne"], a: 1, exp: "La matrice." },
+    { type: "qcm", q: "Gérer les comptes est réservé à…", opts: ["L'Administrateur", "Vendeur", "Client", "L'anonyme"], a: 0, exp: "Le plus privilégié seulement." },
+    { type: "qcm", q: "Restreindre une vue à un test de rôle :", opts: ["@user_passes_test(est_vendeur)", "un if dans le template", "du CSS", "un commentaire"], a: 0, exp: "Au plus près de la vue." },
+    { type: "qcm", q: "est_vendeur inclut l'admin car…", opts: ["Un bug", "L'admin peut tout ce que peut le vendeur (matrice)", "Le hasard", "Django l'impose"], a: 1, exp: "Encodé une fois, leçon 9." },
+    { type: "qcm", q: "Dans mes_locations, l'identité vient de…", opts: ["request.user (session)", "?client= dans l'URL", "un champ caché", "l'IP"], a: 0, exp: "Jamais de la requête." },
+    { type: "vf", q: "/locations/?client=42 serait un design acceptable.", a: false, exp: "N'importe qui changerait le 42." },
+    { type: "qcm", q: "Un client qui force l'URL de gestion des comptes…", opts: ["Y accède", "Est refusé (redirection ou 403)", "Plante le serveur", "Devient admin"], a: 1, exp: "La barrière serveur." },
+    { type: "qcm", q: "Côté API DRF, le rôle se vérifie par…", opts: ["permission_classes (BasePermission)", "du JS", "le routeur", "un template"], a: 0, exp: "has_permission → 403." },
+    { type: "qcm", q: "Pages vs API : sans le droit, on obtient…", opts: ["Redirection vs 403", "500 vs 200", "404 vs 301", "Pareil"], a: 0, exp: "Deux conventions." },
+    { type: "vf", q: "Masquer le lien « Espace vendeur » dans le menu suffit à protéger l'espace.", a: false, exp: "La requête se forge sans menu." },
+    { type: "qcm", q: "Le {% if est_vendeur %} du template sert à…", opts: ["La sécurité", "L'ergonomie (ne pas montrer l'inaccessible)", "La vitesse", "Rien"], a: 1, exp: "Confort + barrière serveur." },
+    { type: "qcm", q: "Authentification et autorisation sont…", opts: ["Le même mécanisme", "Deux étapes distinctes (qui ? / quel droit ?)", "Optionnelles", "Frontend"], a: 1, exp: "Leçons 10 et 11." },
+    { type: "qcm", q: "Les QuerySets métier (de_client) aident l'autorisation car…", opts: ["Ils trient", "Le filtre par propriétaire est nommé et réutilisé", "Ils cachent", "Ils chiffrent"], a: 1, exp: "Leçon 5 réutilisée." },
+    { type: "vf", q: "La règle du rôle est appliquée côté serveur même si le bouton est masqué.", a: true, exp: "Toujours." }
+  ],
+  final: {
+    title: "Exercice final — Appliquer la matrice",
+    intro: `<p>On protège les vues sensibles de la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "creer_jeu porte :", opts: ["@user_passes_test(est_vendeur)", "@login_required seul", "rien", "@csrf_exempt"], a: 0, exp: "Vendeur ou admin." },
+      { type: "qcm", q: "gerer_comptes porte :", opts: ["@user_passes_test(est_admin)", "@user_passes_test(est_vendeur)", "@login_required seul", "rien"], a: 0, exp: "Admin seulement." },
+      { type: "qcm", q: "mes_locations filtre par :", opts: ["request.user", "request.GET[\"client\"]", "un cookie maison", "rien"], a: 0, exp: "Identité de session." },
+      { type: "qcm", q: "L'API de gestion utilise :", opts: ["permission_classes = [EstVendeur]", "un if en JS", "l'URL secrète", "rien"], a: 0, exp: "403 sinon." },
+      { type: "vf", q: "Un vendeur peut louer un jeu comme n'importe quel client.", a: true, exp: "La matrice : louer est ouvert à tous les connectés." }
+    ],
+    solution: `<pre class="pseudo">@user_passes_test(est_vendeur)                   # créer un jeu : vendeur/admin seulement
+def creer_jeu(request): ...
+
+@user_passes_test(est_admin)                     # gérer les comptes : admin seulement
+def gerer_comptes(request): ...
+
+@login_required                                  # être connecté suffit ici
+def mes_locations(request):                      # les locations DU connecté
+    locations = Location.objects.de_client(request.user).en_cours()   # filtrées sur request.user, en cours
+    return render(request, "mes_locations.html", {"locations": locations})   # affiche la page
+
+class EstVendeur(permissions.BasePermission):    # autorisation API
+    def has_permission(self, request, view):     # appelée par DRF
+        return request.user.is_authenticated and est_vendeur(request.user)   # connecté ET vendeur</pre>
+<p>Les droits sont posés. Demain, le cœur métier : louer un jeu, dans une transaction.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes protections…",
+  items: [
+  { id: "projpython-l11", title: "Protéger l'ajustement des stocks", level: 3,
+    statement: "Écris la vue modifier_stock(request, jeu_id) réservée aux vendeurs/admins (décorateur + test de la leçon 9) : en POST, elle lit stock_location et stock_vente (entiers >= 0, sinon message d'erreur), les applique via jeu.save(update_fields=...) et redirige. Écris aussi la permission DRF EstVendeur et son usage sur un ViewSet de gestion.",
+    hints: [
+      "@user_passes_test(est_vendeur) au-dessus de la vue.",
+      "jeu = get_object_or_404(Jeu, pk=jeu_id) ; valeurs via int(request.POST[...]) dans un try.",
+      "class EstVendeur(permissions.BasePermission): def has_permission(self, request, view): ..."
+    ],
+    solution: "@user_passes_test(est_vendeur)   # accès réservé vendeur/admin\ndef modifier_stock(request, jeu_id):   # ajuster les stocks d'un jeu\n    jeu = get_object_or_404(Jeu, pk=jeu_id)   # charge le jeu, ou 404 s'il n'existe pas\n    if request.method == \"POST\":   # formulaire soumis ?\n        try:   # on tente de lire des entiers valides\n            sl = int(request.POST[\"stock_location\"])   # nouveau stock de location\n            sv = int(request.POST[\"stock_vente\"])   # nouveau stock de vente\n            if sl < 0 or sv < 0:   # un stock négatif est interdit…\n                raise ValueError   # …on force l'erreur pour tomber dans le except\n        except (KeyError, ValueError):   # champ manquant OU valeur non entière/négative\n            messages.error(request, \"Stocks invalides (entiers positifs attendus)\")   # message d'erreur\n            return redirect(\"espace_vendeur\")   # et on repart\n        jeu.stock_location, jeu.stock_vente = sl, sv   # applique les nouvelles valeurs\n        jeu.save(update_fields=[\"stock_location\", \"stock_vente\"])   # UPDATE ciblé sur ces deux colonnes\n        messages.success(request, f\"Stocks de {jeu.titre} mis à jour\")   # message de succès\n    return redirect(\"espace_vendeur\")   # retour à l'espace vendeur\n\n# DRF\nclass EstVendeur(permissions.BasePermission):   # autorisation API : réservé aux vendeurs\n    def has_permission(self, request, view):   # appelée par DRF à chaque requête\n        return request.user.is_authenticated and est_vendeur(request.user)   # connecté ET vendeur ?\n\nclass GestionJeuxViewSet(viewsets.ModelViewSet):   # ViewSet d'écriture sur les jeux\n    queryset = Jeu.objects.all()   # tous les jeux\n    serializer_class = JeuSerializer   # serializer utilisé\n    permission_classes = [EstVendeur]   # applique la règle : sinon 403",
+    note: "Deux portes, une même règle : la vue web (décorateur → redirection) et l'API (permission → 403) s'appuient toutes deux sur est_vendeur() de la leçon 9 — la matrice des droits n'est écrite qu'une fois. La validation des entiers reste minimale ici ; un Form dédié (leçon 8) serait le cran au-dessus." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

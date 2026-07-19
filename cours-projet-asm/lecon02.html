@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Écrire sur la sortie standard (write)",
+  subtitle: "Le premier morceau visible : afficher un libellé avec l'appel système write.",
+  theory: `
+<h3>1. Afficher, c'est demander au noyau d'écrire des octets</h3>
+<p>Le premier morceau visible de <code>ludostat</code> : afficher un texte à l'écran. En assembleur sans libc, on ne dispose pas de <code>print</code> ; on utilise l'appel système <strong>write</strong> (numéro 1). <strong>write</strong> ne « connaît » pas le texte : il envoie simplement une suite d'<strong>octets</strong> (rappel : un octet = un caractère ou un nombre de 0 à 255) vers un <strong>descripteur de fichier</strong>.</p>
+<p>Un <strong>descripteur de fichier</strong> (en anglais <em>file descriptor</em>, souvent abrégé <em>fd</em>) est un petit numéro qui désigne un canal ouvert, comme un numéro de guichet ou un ticket de vestiaire : on ne manipule pas le canal directement, on donne juste son numéro. Trois descripteurs existent toujours au démarrage : <strong>0</strong> = entrée standard (stdin, d'où on lit), <strong>1</strong> = sortie standard (stdout, où on écrit à l'écran), <strong>2</strong> = sortie d'erreur (stderr). Pour afficher normalement, on écrit donc vers le descripteur 1.</p>
+
+<h3>2. La convention des appels système Linux</h3>
+<p>Comme au guichet, chaque appel système attend ses informations dans des cases précises. Sur Linux 64 bits, la règle est fixe : le <strong>numéro</strong> de l'appel va dans le registre <code>rax</code>, puis les arguments vont, dans l'ordre, dans <code>rdi</code>, <code>rsi</code>, <code>rdx</code>, <code>r10</code>, <code>r8</code>, <code>r9</code>. Pour <code>write</code>, cela donne : <code>rdi</code> = le descripteur, <code>rsi</code> = l'adresse des octets à envoyer, <code>rdx</code> = le nombre d'octets. On remplit le formulaire, puis on sonne avec <code>syscall</code>.</p>
+<pre class="pseudo">mov rax, 1         ; numero de l'appel : write = 1
+mov rdi, 1         ; 1er argument : descripteur 1 = sortie standard (stdout, l'ecran)
+mov rsi, adresse   ; 2e argument : OU se trouvent les octets a ecrire (leur adresse en memoire)
+mov rdx, longueur  ; 3e argument : COMBIEN d'octets ecrire
+syscall            ; sonne au guichet : le noyau ecrit les octets</pre>
+
+<h3>3. Un libellé de texte dans la section .data</h3>
+<p>Le texte à afficher (un « Total : » par exemple) est connu d'avance : on le range dans la section <strong>.data</strong>, réservée aux données initialisées. Une <strong>étiquette</strong> (un nom qu'on colle devant une donnée, comme <code>lbl_total</code>) permet de retrouver son adresse.</p>
+<pre class="pseudo">section .data
+    lbl_total db "Total   : "      ; db = "define byte(s)" : pose ces caracteres en memoire, un octet chacun
+    lbl_len   equ $ - lbl_total    ; equ = definit une constante ; ici la LONGUEUR de la chaine</pre>
+<p>La directive <code>db</code> (« <em>define byte</em> ») dépose les caractères en mémoire, un octet par caractère (rappel : chaque caractère a un code, on le verra en leçon 4). La directive <code>equ</code> définit une <strong>constante symbolique</strong> (un nom fixe calculé une fois à l'assemblage). Le symbole <code>$</code> représente l'<strong>adresse courante</strong> (là où on en est dans la mémoire) ; <code>$ - lbl_total</code> vaut donc « adresse d'ici moins adresse du début » = exactement le nombre d'octets de la chaîne. Résultat : on obtient la <strong>longueur</strong> automatiquement, sans la compter à la main (et sans risque d'erreur si on modifie le texte).</p>
+
+<h3>4. Charger une ADRESSE, pas un contenu</h3>
+<pre class="pseudo">    mov rax, 1                ; write
+    mov rdi, 1                ; stdout
+    lea rsi, [lbl_total]      ; lea = "load effective address" : met l'ADRESSE du libelle dans rsi
+    mov rdx, lbl_len          ; met la longueur (constante calculee) dans rdx
+    syscall                   ; le noyau ecrit lbl_len octets pris a l'adresse rsi</pre>
+<div class="tip"><code>lea</code> (« <em>load effective address</em> », charger l'adresse) met dans <code>rsi</code> l'<strong>adresse</strong> du libellé, c'est-à-dire OÙ il se trouve, et non son contenu. C'est la différence entre donner à quelqu'un l'adresse d'une maison (« va au 12 rue des Lilas ») et lui donner la maison elle-même. <code>write</code> a besoin de l'adresse (rsi) ET de la longueur (rdx) : il ignore les chaînes « terminées par un zéro » que connaît le C ; il écrit <strong>exactement</strong> <code>rdx</code> octets, ni plus ni moins. La longueur est donc indispensable.</p></div>
+
+<h3>5. Fabriquer une petite routine réutilisable</h3>
+<p>Afficher un libellé, on va le faire des dizaines de fois. Plutôt que de recopier les mêmes lignes, on les range dans une <strong>routine</strong> (aussi appelée <em>sous-programme</em> ou fonction) : un bloc de code nommé qu'on peut appeler quand on veut. L'instruction <code>call</code> saute vers la routine en mémorisant l'endroit d'où l'on vient (sur la <strong>pile</strong>) ; l'instruction <code>ret</code> revient exactement à cet endroit. La <strong>pile</strong> (en anglais <em>stack</em>) est une zone de mémoire organisée comme une pile d'assiettes : on empile la dernière chose au sommet, on la reprend en premier ; le processeur y range notamment l'adresse de retour d'un <code>call</code>.</p>
+<pre class="pseudo">; write_str : affiche rdx octets pris a l'adresse rsi (rsi et rdx doivent etre remplis par l'appelant)
+write_str:
+    mov rax, 1             ; write
+    mov rdi, 1             ; stdout
+    syscall               ; ecrit les octets
+    ret                   ; revient a l'instruction qui suit le "call write_str"</pre>
+<p>Pour l'utiliser : on met l'adresse dans <code>rsi</code>, la longueur dans <code>rdx</code>, puis <code>call write_str</code>. On réutilisera cette même routine pour chaque libellé de <code>ludostat</code> (« Jeux », « Total », « Moyenne »).</p>
+
+<h3>6. Ce que write renvoie</h3>
+<div class="warn"><code>write</code> renvoie dans <code>rax</code> le nombre d'octets réellement écrits (ou un nombre négatif en cas d'erreur). Pour un petit affichage vers le terminal, tout part d'un seul coup ; pour de gros volumes ou un tube saturé, il faudrait boucler jusqu'à tout envoyer. Nos sorties étant courtes (un mot, un nombre), on ne s'en préoccupera pas ici — mais c'est bon à savoir : un appel système peut faire « moins que demandé ».</div>`,
+  exercises: [
+    { type: "qcm", q: "write porte le numéro…", opts: ["0", "1", "60", "2"], a: 1, exp: "sys_write = 1." },
+    { type: "qcm", q: "Le descripteur de la sortie standard est…", opts: ["0", "1", "2", "60"], a: 1, exp: "stdout = 1." },
+    { type: "qcm", q: "L'adresse des octets à écrire va dans…", opts: ["rdi", "rsi", "rdx", "rax"], a: 1, exp: "2e argument." },
+    { type: "qcm", q: "Le nombre d'octets va dans…", opts: ["rsi", "rdx", "rdi", "rbx"], a: 1, exp: "3e argument." },
+    { type: "qcm", q: "lea rsi, [lbl] charge…", opts: ["le contenu", "l'adresse du libellé", "la longueur", "0"], a: 1, exp: "Adresse, pas contenu." },
+    { type: "qcm", q: "$ - lbl_total vaut…", opts: ["0", "la longueur de la chaîne", "l'adresse de fin absolue à afficher", "1"], a: 1, exp: "Longueur à l'assemblage." },
+    { type: "qcm", q: "write écrit…", opts: ["jusqu'au premier 0", "exactement rdx octets", "une ligne", "tout le fichier"], a: 1, exp: "Longueur explicite." },
+    { type: "qcm", q: "L'ordre des arguments d'un syscall :", opts: ["rax, rbx, rcx", "rdi, rsi, rdx, r10, r8, r9", "pile seulement", "rsi, rdi"], a: 1, exp: "Convention Linux syscalls." },
+    { type: "qcm", q: "Le numéro de l'appel se met dans…", opts: ["rdi", "rax", "rsi", "rdx"], a: 1, exp: "rax = numéro." },
+    { type: "qcm", q: "write renvoie dans rax…", opts: ["rien", "le nombre d'octets écrits (ou une erreur négative)", "l'adresse", "1 toujours"], a: 1, exp: "Octets écrits." },
+    { type: "vf", q: "write a besoin de la longueur car il ignore les chaînes terminées par 0.", a: true, exp: "Il écrit rdx octets." },
+    { type: "qcm", q: "call write_str suppose déjà remplis…", opts: ["rax et rdi seuls", "rsi (adresse) et rdx (longueur)", "rbx", "la pile"], a: 1, exp: "Adresse + longueur." },
+    { type: "qcm", q: "Pour afficher vers un fichier au lieu du terminal, on change…", opts: ["rax", "rdi (le descripteur)", "rsi", "rdx"], a: 1, exp: "Descripteur cible." },
+    { type: "qcm", q: "equ (ou .set) sert à…", opts: ["réserver de la mémoire", "définir une constante à l'assemblage", "afficher", "lire"], a: 1, exp: "Constante symbolique." },
+    { type: "qcm", q: "Isoler write dans une routine permet…", opts: ["rien", "de la réutiliser pour chaque libellé", "d'accélérer le CPU", "d'éviter syscall"], a: 1, exp: "Réutilisation." }
+  ],
+  final: {
+    title: "Exercice final — Afficher une bannière",
+    intro: `<p>On veut afficher <code>Rapport ludostat\\n</code> puis quitter. La chaîne est déclarée :</p>
+<pre class="pseudo">section .data
+    ban db "Rapport ludostat", 10      ; 10 = saut de ligne
+    ban_len equ $ - ban</pre>`,
+    questions: [
+      { type: "qcm", q: "Le numéro d'appel pour afficher :", opts: ["0", "1 (write)", "60", "2"], a: 1, exp: "write." },
+      { type: "qcm", q: "Le descripteur :", opts: ["0", "1 (stdout)", "2", "10"], a: 1, exp: "Sortie standard." },
+      { type: "qcm", q: "L'adresse de la chaîne va dans :", opts: ["rdi", "rsi", "rdx", "rax"], a: 1, exp: "rsi." },
+      { type: "qcm", q: "La longueur va dans :", opts: ["rsi", "rdx", "rdi", "rbx"], a: 1, exp: "rdx = ban_len." },
+      { type: "qcm", q: "Le 10 dans la chaîne représente :", opts: ["le chiffre dix", "un saut de ligne (LF)", "un espace", "la fin"], a: 1, exp: "'\\n'." }
+    ],
+    solution: `<pre class="pseudo">section .data
+    ban db "Rapport ludostat", 10
+    ban_len equ $ - ban
+section .text
+    global _start
+_start:
+    mov rax, 1              ; write
+    mov rdi, 1              ; stdout
+    lea rsi, [ban]          ; adresse
+    mov rdx, ban_len        ; longueur (texte + le saut de ligne)
+    syscall
+    mov rax, 60             ; exit
+    xor rdi, rdi
+    syscall
+; -> affiche : Rapport ludostat</pre>
+<p>On charge le numéro (1), le descripteur (1), l'adresse et la longueur, puis <code>syscall</code>. Le saut de ligne <code>10</code> fait partie des octets écrits. Demain : lire l'entrée standard avec <code>read</code>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur ici…",
+  items: [
+  { id: "projasm-l02", title: "La routine write_str", level: 2,
+    statement: "Écris la routine write_str qui écrit sur la sortie standard les octets pointés par rsi, de longueur rdx (via write). Puis montre comment l'appeler pour afficher un libellé « Jeux    : » déclaré dans .data avec sa longueur.",
+    hints: [
+      "write_str : mov rax,1 ; mov rdi,1 ; syscall ; ret (rsi/rdx déjà prêts).",
+      "Déclare lbl db \"Jeux    : \" et lbl_len equ $ - lbl.",
+      "Appel : lea rsi,[lbl] ; mov rdx,lbl_len ; call write_str."
+    ],
+    solution: "section .data\n    lbl     db \"Jeux    : \"\n    lbl_len equ $ - lbl\nsection .text\n    global _start\n_start:\n    lea rsi, [lbl]         ; adresse du libelle\n    mov rdx, lbl_len       ; sa longueur\n    call write_str\n    mov rax, 60\n    xor rdi, rdi\n    syscall\n\n; write_str : rsi = adresse, rdx = longueur\nwrite_str:\n    mov rax, 1             ; write\n    mov rdi, 1             ; stdout\n    syscall\n    ret",
+    note: "write_str concentre l'affichage : l'appelant fournit l'adresse (rsi) et la longueur (rdx), la routine fait le syscall. On la réutilisera pour chaque libellé de ludostat (« Jeux », « Total », « Moyenne »). write écrit exactement rdx octets : la longueur, calculée par $ - lbl à l'assemblage, est donc essentielle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

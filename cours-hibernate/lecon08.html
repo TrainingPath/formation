@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "La relation N-1 : @ManyToOne (une location a un jeu et un membre)",
+  subtitle: "La clé étrangère du Niveau 4 devient une référence objet — et location.getJeu().getTitre() devient possible.",
+  theory: `
+<h3>1. Rappel du Niveau 4 : qui porte la clé étrangère ?</h3>
+<p>Une <strong>relation N-1</strong> (« plusieurs-vers-un ») relie plusieurs lignes d'une table à une seule ligne d'une autre. Dans ton schéma Merise, la règle était nette : dans une relation N-1, c'est le côté <strong>N</strong> qui porte la clé étrangère. PLUSIEURS locations concernent UN jeu et UN membre, donc la table <em>location</em> porte <em>jeu_id</em> et <em>membre_id</em> :</p>
+<pre class="pseudo">CREATE TABLE location (                    -- la table location (le côté "N" de la relation)
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,    -- clé primaire de la location
+  jeu_id BIGINT NOT NULL,                  -- FK vers jeu(id) : le jeu loué (obligatoire)
+  membre_id BIGINT NOT NULL,               -- FK vers membre(id) : le membre qui loue (obligatoire)
+  date_debut DATE NOT NULL,                -- date de début de la location
+  date_fin_prevue DATE,                    -- date de retour prévue (peut être vide → NULL)
+  FOREIGN KEY (jeu_id) REFERENCES jeu(id),       -- contrainte : jeu_id doit exister dans la table jeu
+  FOREIGN KEY (membre_id) REFERENCES membre(id)  -- contrainte : membre_id doit exister dans la table membre
+);                                         -- fin de la définition de la table</pre>
+<p>Côté Java, on ne veut PAS d'un attribut Long jeuId : on veut une vraie <strong>référence objet</strong> (un attribut de type Jeu qui pointe directement sur l'objet). C'est exactement la quatrième ligne du mapping de la leçon 1 : référence ↔ clé étrangère.</p>
+
+<h3>2. L'entité Location : @ManyToOne + @JoinColumn</h3>
+<pre class="pseudo">@Entity                                    // Location est une entité (mappée sur la table location)
+@Table(name = "location")                  // nom de la table : "location"
+public class Location {                    // début de la classe Location
+
+  @Id                                      // clé primaire
+  @GeneratedValue(strategy = GenerationType.IDENTITY)  // id auto-incrémenté par MySQL
+  private Long id;                         // l'identifiant de la location
+
+  @ManyToOne(fetch = FetchType.LAZY)       // PLUSIEURS locations → UN jeu (chargé à la demande = LAZY)
+  @JoinColumn(name = "jeu_id", nullable = false)   // la colonne FK jeu_id, obligatoire (NOT NULL)
+  private Jeu jeu;                         // référence OBJET vers le jeu loué (pas un simple Long)
+
+  @ManyToOne(fetch = FetchType.LAZY)       // PLUSIEURS locations → UN membre (LAZY)
+  @JoinColumn(name = "membre_id", nullable = false)  // la colonne FK membre_id, obligatoire
+  private Membre membre;                   // référence objet vers le membre qui loue
+
+  @Column(name = "date_debut", nullable = false)   // colonne date_debut, NOT NULL
+  private LocalDate dateDebut;             // la date de début de la location
+
+  protected Location() {}                 // constructeur sans argument : toujours obligatoire (leçon 3)
+}                                          // fin de la classe Location</pre>
+<p><strong>@ManyToOne</strong> se lit dans le sens de la classe qui le porte : « many Location vers one Jeu ». <strong>@JoinColumn(name = "jeu_id")</strong> désigne la colonne FK de ta table — sans elle, Hibernate déduirait <em>jeu_id</em> par convention, mais l'écrire documente le lien avec ton schéma. Le nullable = false reflète le NOT NULL du Niveau 4 : pas de location sans jeu.</p>
+
+<h3>3. Créer et naviguer : l'ORM traduit dans les deux sens</h3>
+<pre class="pseudo">tx.begin();                                 // ouvrir la transaction
+Jeu catan   = em.find(Jeu.class, 42L);      // → SELECT jeu WHERE id = 42
+Membre alice = em.find(Membre.class, 7L);   // → SELECT membre WHERE id = 7
+Location loc = new Location(LocalDate.now()); // créer une location datée d'aujourd'hui (transient)
+loc.setJeu(catan);                          // on pose des OBJETS, pas des ids
+loc.setMembre(alice);                       // idem pour le membre
+em.persist(loc);                            // planifier l'INSERT de la location
+tx.commit();                                // valider → l'INSERT part vers MySQL
+// → INSERT INTO location (jeu_id, membre_id, date_debut) VALUES (42, 7, ?)
+//   Hibernate a extrait les ids des objets référencés : la FK est posée.
+
+String titre = loc.getJeu().getTitre();     // navigation objet, sans écrire de JOIN à la main</pre>
+<p>À la lecture, même confort : depuis une Location chargée, <em>loc.getJeu()</em> te rend l'entité Jeu complète. Le JOIN que tu écrivais à la main au Niveau 4, c'est désormais un simple appel de getter.</p>
+
+<h3>4. getReference : poser une FK sans SELECT</h3>
+<p>Pour créer la location ci-dessus, a-t-on vraiment besoin de CHARGER le jeu et le membre ? Non : seuls leurs ids comptent pour l'INSERT. C'est le cas d'usage parfait de <strong>getReference</strong> (croisé leçon 5), qui rend un <strong>proxy</strong> — une doublure creuse qui ne connaît que son id et ne déclenchera un vrai SELECT qu'au premier accès à ses données :</p>
+<pre class="pseudo">Jeu refJeu = em.getReference(Jeu.class, 42L);         // AUCUN SELECT : on obtient un proxy porteur de l'id 42
+Membre refMembre = em.getReference(Membre.class, 7L); // idem : un proxy porteur de l'id 7
+loc.setJeu(refJeu);                                   // poser la future colonne jeu_id
+loc.setMembre(refMembre);                             // poser la future colonne membre_id
+em.persist(loc);    // → un seul INSERT, zéro SELECT préalable</pre>
+<p>getReference rend un proxy qui ne connaît que son id ; parfait pour poser une FK. Contrepartie : si l'id n'existe pas, tu ne le sauras qu'au moment de l'INSERT (violation de FK) ou du premier accès réel.</p>
+
+<h3>5. Le détail qui coûte cher : fetch EAGER par défaut</h3>
+<p>Le <strong>fetch</strong> (« stratégie de chargement ») décide QUAND une relation est lue en base : <strong>EAGER</strong> (« avide ») la charge tout de suite, <strong>LAZY</strong> (« paresseux ») attend le premier accès. Par défaut, <strong>@ManyToOne est EAGER</strong> : chaque chargement d'une Location charge AUSSI son jeu et son membre, immédiatement, que tu en aies besoin ou non. Sur une liste de 200 locations, l'addition grimpe vite. La recommandation professionnelle est unanime : écris <strong>fetch = FetchType.LAZY</strong> sur tous tes @ManyToOne, et charge la relation seulement quand il le faut — la leçon 12 dissèque lazy contre eager, et la leçon 18 les requêtes N+1 qui en découlent. Ailleurs : Eloquent appelle ça belongsTo, Django ForeignKey, EF Core une propriété de navigation ; et les findByJeu(...) de tes repositories Spring Data reposent exactement sur ce mapping.</p>
+<div class="warn">Le défaut EAGER de @ManyToOne est un piège historique de JPA : tout semble fonctionner, puis l'application ralentit parce que chaque Location traîne son Jeu et son Membre à chaque SELECT. Prends l'habitude DÈS AUJOURD'HUI d'écrire fetch = FetchType.LAZY sur chaque @ManyToOne.</div>
+<div class="tip">Quand tu connais déjà l'id de la cible, getReference évite un SELECT inutile : poser une FK ne nécessite pas de charger la ligne. C'est d'ailleurs ce que fait Spring Data avec getReferenceById(), le cousin de findById().</div>`,
+  exercises: [
+    { type: "qcm", q: "L'annotation JPA pour « plusieurs locations référencent un jeu » , placée dans Location :", opts: ["@ManyToOne", "@OneToMany", "@ManyToMany", "@JoinTable"], a: 0, exp: "Elle se lit depuis la classe porteuse : many Location vers one Jeu." },
+    { type: "input", q: "Quelle annotation précise le nom de la colonne de clé étrangère (ex. jeu_id) ?", a: ["@JoinColumn", "JoinColumn", "@joincolumn", "joincolumn"], ph: "@…", exp: "@JoinColumn(name = \"jeu_id\") : le pont explicite vers ta colonne du Niveau 4." },
+    { type: "qcm", q: "@JoinColumn(name = \"jeu_id\", nullable = false) traduit quelle règle du schéma ?", opts: ["jeu_id BIGINT NOT NULL, FOREIGN KEY vers jeu(id)", "Un index UNIQUE sur titre", "Une colonne calculée", "Un trigger MySQL"], a: 0, exp: "La FK NOT NULL du Niveau 4 : pas de location sans jeu." },
+    { type: "qcm", q: "Dans une relation N-1, qui porte la clé étrangère en base (rappel Merise) ?", opts: ["Le côté 1 (table jeu)", "Le côté N (table location)", "Une table de jointure obligatoire", "Les deux tables"], a: 1, exp: "PLUSIEURS locations → UN jeu : la FK vit dans location, et @ManyToOne vit dans Location." },
+    { type: "vf", q: "En JPA, la bonne pratique est de mapper la FK en attribut « private Long jeuId ».", a: false, exp: "On mappe une référence objet (private Jeu jeu) : sinon on perd la navigation et les jointures JPQL (leçon 13)." },
+    { type: "qcm", q: "Au persist d'une Location dont jeu et membre sont posés, Hibernate génère…", opts: ["INSERT INTO location (jeu_id, membre_id, date_debut) VALUES (?, ?, ?)", "Trois INSERT (location, jeu, membre)", "Un UPDATE de la table jeu", "Un CREATE TABLE"], a: 0, exp: "Il extrait les ids des objets référencés pour remplir les colonnes FK. Jeu et membre existaient déjà." },
+    { type: "qcm", q: "loc.getJeu().getTitre() est possible parce que…", opts: ["La FK est devenue une référence objet navigable", "MySQL stocke des objets Java", "Le titre est dupliqué dans la table location", "getTitre fait un appel HTTP"], a: 0, exp: "Le JOIN manuel du Niveau 4 devient un appel de getter : c'est tout l'intérêt du mapping relationnel." },
+    { type: "input", q: "Quelle méthode de l'EntityManager fournit un proxy permettant de poser une FK sans SELECT ?", a: ["getReference", "em.getReference", "getreference", "getReference()"], ph: "nom de la méthode…", exp: "getReference(Jeu.class, 42L) : un proxy qui ne connaît que son id — parfait pour l'INSERT." },
+    { type: "qcm", q: "Différence entre find et getReference pour poser une FK :", opts: ["find exécute un SELECT immédiat, getReference non", "getReference supprime la ligne", "find ne marche pas sur les entités", "Aucune différence"], a: 0, exp: "Pour un simple INSERT de location, le SELECT de find est superflu : l'id suffit." },
+    { type: "vf", q: "Le fetch par défaut de @ManyToOne est LAZY.", a: false, exp: "C'est EAGER — le piège historique de JPA. D'où la recommandation d'écrire LAZY partout." },
+    { type: "qcm", q: "La recommandation professionnelle sur chaque @ManyToOne :", opts: ["fetch = FetchType.LAZY", "fetch = FetchType.EAGER", "Aucun fetch, jamais", "cascade = ALL systématique"], a: 0, exp: "On charge la relation à la demande ; la leçon 12 détaille lazy/eager, la 18 le problème N+1." },
+    { type: "qcm", q: "Conséquence concrète du EAGER par défaut sur 200 locations chargées :", opts: ["Les 200 jeux et membres associés sont aussi chargés, utiles ou non", "Rien : EAGER est gratuit", "Les locations sont supprimées", "MySQL passe en lecture seule"], a: 0, exp: "Chaque Location traîne ses deux relations : c'est la lenteur invisible que show_sql révèle." },
+    { type: "qcm", q: "Si tu poses via getReference un id de jeu inexistant puis persistes la location…", opts: ["MySQL rejette l'INSERT : violation de contrainte de clé étrangère", "Hibernate crée le jeu manquant", "La location est insérée sans jeu", "Rien ne se passe"], a: 0, exp: "Les contraintes FK du Niveau 4 restent le gardien final (comme leçon 5 pour remove)." },
+    { type: "qcm", q: "Les équivalents de @ManyToOne dans les autres piles de la formation :", opts: ["belongsTo (Eloquent), ForeignKey (Django), propriété de navigation (EF Core)", "hasMany, hasOne, embedsMany", "GET, POST, PUT", "JOIN, UNION, HAVING"], a: 0, exp: "Le côté N qui référence le côté 1 : même concept dans chaque ORM." },
+    { type: "vf", q: "Un jeu peut avoir plusieurs locations, mais une location référence exactement un jeu : c'est pourquoi @ManyToOne se place dans Location.", a: true, exp: "L'annotation vit du côté N, exactement là où le Niveau 4 plaçait la FK." }
+  ],
+  final: {
+    title: "Exercice final — Louer Catan à Alice",
+    intro: `<p>Mission : enregistrer la location du jeu 42 (Catan) par le membre 7 (Alice) à la date du jour, SANS exécuter le moindre SELECT — tu connais déjà les deux ids.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mapping correct de la référence au jeu dans Location :", opts: ["@ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = \"jeu_id\", nullable = false) private Jeu jeu;", "@Column(name = \"jeu_id\") private Long jeu;", "@OneToMany private Jeu jeu;", "@JoinColumn private String jeu;"], a: 0, exp: "Référence objet + colonne FK explicite + LAZY recommandé." },
+      { type: "input", q: "Pour obtenir le jeu sans SELECT : Jeu ref = em.____(Jeu.class, 42L);", a: ["getReference", "getreference", ".getReference", "getReference()"], ph: "la méthode…", exp: "getReference rend un proxy porteur de l'id : aucun SQL avant un vrai accès." },
+      { type: "qcm", q: "Combien de requêtes SQL la version getReference exécute-t-elle au total ?", opts: ["Un seul INSERT", "Deux SELECT puis un INSERT", "Trois INSERT", "Un SELECT et un UPDATE"], a: 0, exp: "C'est tout l'intérêt : poser deux FK ne coûte qu'un INSERT." },
+      { type: "vf", q: "Avec em.find à la place de getReference, le résultat en base serait identique, mais avec deux SELECT en plus.", a: true, exp: "Même INSERT final ; find charge inutilement les lignes quand seul l'id compte." },
+      { type: "qcm", q: "Le INSERT généré ressemble à…", opts: ["INSERT INTO location (jeu_id, membre_id, date_debut) VALUES (42, 7, ?)", "INSERT INTO jeu (location_id) VALUES (?)", "UPDATE location SET jeu_id = 42", "INSERT INTO membre_jeu VALUES (7, 42)"], a: 0, exp: "La table location porte les deux FK, conformément au schéma du Niveau 4." }
+    ],
+    solution: `<pre class="pseudo">tx.begin();                                              // ouvrir la transaction
+Jeu refJeu       = em.getReference(Jeu.class, 42L);      // proxy porteur de l'id 42, 0 SELECT
+Membre refMembre = em.getReference(Membre.class, 7L);    // proxy porteur de l'id 7, 0 SELECT
+
+Location loc = new Location(LocalDate.now());            // créer la location (date du jour), transient
+loc.setJeu(refJeu);            // pose la future colonne jeu_id
+loc.setMembre(refMembre);      // pose la future colonne membre_id
+em.persist(loc);               // planifier l'INSERT de la location
+tx.commit();                   // valider l'écriture
+// → INSERT INTO location (jeu_id, membre_id, date_debut) VALUES (42, 7, ?)
+//   UNE seule requête. Avec em.find : même INSERT + 2 SELECT superflus.</pre>
+<p>La location connaît son jeu. Et dans l'autre sens ? Demain, on donne au Jeu la liste de ses locations avec @OneToMany — et tu découvriras pourquoi ce côté-là ne crée AUCUNE colonne, grâce à mappedBy.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l8", title: "Compléter l'entité Avis avec ses relations", level: 2,
+    statement: "À la leçon 3, tu avais mappé la table avis en ignorant ses deux clés étrangères jeu_id et membre_id (toutes deux NOT NULL). Rédige maintenant le code complet des deux relations dans l'entité Avis, puis justifie par écrit : le choix de l'annotation et son sens de lecture, le rôle exact de @JoinColumn, le choix du fetch (et le risque du défaut), et la manière de créer un Avis pour le jeu 42 et le membre 7 sans SELECT préalable.",
+    hints: [
+      "Un avis concerne UN jeu et UN membre ; un jeu reçoit PLUSIEURS avis : dans quel sens se lit l'annotation depuis la classe Avis ?",
+      "Le NOT NULL du Niveau 4 doit se retrouver dans le mapping : quel attribut de @JoinColumn le porte ?",
+      "Pour créer sans SELECT : quelle méthode de la leçon 5/8 fournit juste un porteur d'id ?"
+    ],
+    solution: "@Entity\n@Table(name = \"avis\")\npublic class Avis {\n  // ... id, note, commentaire, dateAvis (leçon 3) ...\n\n  @ManyToOne(fetch = FetchType.LAZY)\n  @JoinColumn(name = \"jeu_id\", nullable = false)\n  private Jeu jeu;\n\n  @ManyToOne(fetch = FetchType.LAZY)\n  @JoinColumn(name = \"membre_id\", nullable = false)\n  private Membre membre;\n}\n\nJustifications :\n- @ManyToOne : PLUSIEURS avis pointent vers UN jeu (idem membre) ;\n  l'annotation vit côté N, là où le Niveau 4 plaçait la FK.\n- @JoinColumn(name = ...) : relie l'attribut objet à la colonne FK exacte\n  du schéma ; nullable = false reflète le NOT NULL (pas d'avis orphelin).\n- fetch = LAZY : le défaut EAGER chargerait jeu ET membre à chaque\n  lecture d'avis — sur une page listant 50 avis, c'est l'avalanche\n  de SELECT que la leçon 18 appellera le problème N+1.\n- Création sans SELECT :\n  Avis a = new Avis(5, \"Excellent\", LocalDateTime.now());\n  a.setJeu(em.getReference(Jeu.class, 42L));\n  a.setMembre(em.getReference(Membre.class, 7L));\n  em.persist(a);   // → un seul INSERT, FK posées via les proxys",
+    note: "Avec cette entité, les quatre tables du Niveau 4 commencent à former un graphe d'objets navigable — la matière première des requêtes JPQL (leçon 13) et des findByJeu(...) que Spring Data générera pour toi. Le duo @ManyToOne/@JoinColumn a son miroir exact dans belongsTo d'Eloquent et ForeignKey de Django." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

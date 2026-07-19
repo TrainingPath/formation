@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 3</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Git, branches et première CI (dotnet, dès le départ)",
+  subtitle: "Le garde-fou avant le métier : chaque commit est vérifié sur une machine neutre.",
+  theory: `
+<h3>1. Un dépôt propre dès le premier commit</h3>
+<p>Rappel des mots-clés. Un <strong>commit</strong> est un instantané enregistré du code, comme une sauvegarde nommée dans un jeu vidéo. Une <strong>branche</strong> est une ligne de travail parallèle (voir leçon 1). Le <strong>remote</strong> (« dépôt distant », ici <em>origin</em>) est la copie du dépôt hébergée sur un serveur, que toute l'équipe partage — le classeur commun. <strong>push</strong> veut dire « envoyer ses commits vers ce serveur ».</p>
+<pre class="pseudo">git init                                                          # crée un dépôt Git vide dans le dossier courant
+# .gitignore .NET : bin/, obj/, *.user, appsettings.*.local.json, .vs/   # fichiers à NE PAS suivre (générés ou sensibles)
+git add . && git commit -m "feat: squelette ASP.NET Core + Compose"   # ajoute tous les fichiers puis enregistre un 1er instantané (-m = message)
+git branch -M main && git remote add origin ... && git push -u origin main   # renomme la branche en "main", relie au serveur distant, puis envoie le code</pre>
+<p>Les messages sont <strong>normés</strong> (<code>feat:</code> pour une nouveauté, <code>fix:</code> pour une correction, <code>chore:</code> pour une tâche d'entretien, <code>test:</code> pour des tests) : l'historique se lit comme un journal, et un jour il génère automatiquement le <strong>changelog</strong> — la liste des changements d'une version (cours CI/CD leçon 1).</p>
+
+<h3>2. Le workflow de CI</h3>
+<p>Un <strong>workflow</strong> de CI est la recette, écrite en YAML, que le robot d'intégration continue exécute. Il tourne sur un <strong>runner</strong> : une machine neutre et jetable louée par GitHub (<code>ubuntu-latest</code> = la dernière version du système Linux Ubuntu). Un <strong>job</strong> est un groupe d'étapes (<code>steps</code>) ; chaque étape est soit une action réutilisable (<code>uses</code>) soit une commande (<code>run</code>).</p>
+<pre class="pseudo"># .github/workflows/ci.yml
+name: CI                                          # nom du pipeline, affiché dans l'interface GitHub
+on:                                               # ÉVÉNEMENTS qui déclenchent le pipeline
+  push: { branches: [main] }                      #   à chaque envoi de code sur main
+  pull_request: { branches: [main] }              #   et à chaque pull request visant main
+jobs:                                             # la liste des travaux à effectuer
+  verifier:                                       # un job nommé "verifier"
+    runs-on: ubuntu-latest                        # sur une machine Linux Ubuntu neuve et jetable
+    steps:                                        # les étapes, exécutées dans l'ordre
+      - uses: actions/checkout@v4                 # récupère le code du dépôt sur la machine
+      - uses: actions/setup-dotnet@v4             # installe le SDK .NET (avec cache des paquets)
+        with: { dotnet-version: "10.0.x" }        #   version 10.x du SDK
+      - run: dotnet restore                       # télécharge les paquets NuGet dont dépend le projet
+      - run: dotnet format --verify-no-changes    # vérifie le format ; échoue si un fichier n'est pas conforme
+      - run: dotnet build --no-restore -c Release # compile le projet en mode Release (optimisé)
+      - run: dotnet test --no-build -c Release     # lance les tests xUnit sur le binaire déjà compilé</pre>
+<p>Un <strong>paquet NuGet</strong> est une bibliothèque de code prête à l'emploi (du code écrit par d'autres qu'on réutilise) ; <strong>restore</strong> les télécharge. Le <strong>cache</strong> NuGet (via <code>setup-dotnet</code>) évite de les retélécharger à chaque exécution — un pipeline rapide est un pipeline réellement utilisé. Les options <code>--no-restore</code> et <code>--no-build</code> évitent de refaire un travail déjà fait à l'étape précédente.</p>
+
+<h3>3. dotnet format : le style tranché une fois pour toutes</h3>
+<p><strong>Formater</strong>, c'est mettre en forme le code (espaces, retours à la ligne, alignements) selon des règles communes, écrites dans un fichier <code>.editorconfig</code>. L'outil <code>dotnet format</code> applique ces règles à la place des humains.</p>
+<pre class="pseudo">dotnet format                     # reformate les fichiers en local (les corrige)
+dotnet format --verify-no-changes # ne corrige rien mais ÉCHOUE si un fichier n'est pas au format (usage en CI)</pre>
+<p>Le style n'est donc plus un sujet de discussion en revue : la machine le tranche selon le <code>.editorconfig</code>. Les humains relisent la <strong>logique</strong> (ce que fait le code), pas les espaces.</p>
+
+<h3>4. La protection de main</h3>
+<p>Sur GitHub, on peut <strong>verrouiller</strong> la branche <code>main</code> pour qu'aucune modification n'y entre sans passer par les contrôles. Les réglages ci-dessous sont des cases à cocher dans l'interface (ce n'est pas du code) :</p>
+<pre class="pseudo">GitHub -> Settings -> Branches -> main :
+✔ Require a pull request before merging (+ 1 approbation)
+✔ Require status checks to pass : verifier
+✔ Require branches to be up to date</pre>
+<p>« Require status checks » impose que le job <code>verifier</code> soit vert ; « up to date » impose que la branche soit à jour avec <code>main</code> avant la fusion, pour éviter qu'une PR verte mais périmée ne casse <code>main</code> après le merge.</p>
+
+<h3>5. Pourquoi AVANT le métier</h3>
+<div class="warn">Si le pipeline arrive après trois semaines de code, on découvre d'un coup 200 problèmes de format et 40 tests à écrire : décourageant, souvent abandonné. Posé au premier commit, il ne juge jamais qu'un tout petit incrément — indolore. La CI n'est pas un juge de fin de parcours, c'est un filet permanent.</div>
+<div class="tip">À partir de maintenant, un commit qui casse <code>dotnet test</code> ou le format est rouge <strong>immédiatement</strong> et ne peut pas entrer dans main. La première fonctionnalité métier, demain, naîtra donc déjà sous surveillance.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les messages de commit sont…", opts: ["Libres", "Normés (feat:, fix:, chore:…)", "Absents", "En majuscules"], a: 1, exp: "Historique lisible + changelog." },
+    { type: "qcm", q: "La CI se déclenche sur…", opts: ["La prod", "push et pull_request vers main", "Un cron seul", "Rien"], a: 1, exp: "Chaque commit vérifié." },
+    { type: "qcm", q: "bin/ et obj/ sont dans .gitignore car…", opts: ["C'est le code source", "Ce sont des artefacts de build (régénérables)", "C'est secret", "Par erreur"], a: 1, exp: "On ne versionne pas le build." },
+    { type: "qcm", q: "setup-dotnet + cache NuGet…", opts: ["Ralentit", "Évite de retélécharger les paquets", "Chiffre", "Est inutile"], a: 1, exp: "Pipeline rapide = adopté." },
+    { type: "qcm", q: "dotnet format sert à…", opts: ["Compiler", "Trancher le format automatiquement (.editorconfig)", "Déployer", "Chiffrer"], a: 1, exp: "Le style n'est plus débattu." },
+    { type: "qcm", q: "dotnet format --verify-no-changes en CI…", opts: ["Reformate", "Échoue si un fichier n'est pas au format", "Ignore", "Déploie"], a: 1, exp: "dotnet format (sans option) reformate." },
+    { type: "qcm", q: "La protection de main exige…", opts: ["Rien", "PR + status checks verts + revue", "Un mot de passe", "Un tag"], a: 1, exp: "main reste sain." },
+    { type: "qcm", q: "Poser la CI au premier commit…", opts: ["Est prématuré", "Rend chaque vérification indolore (petit incrément)", "Est impossible", "Ralentit tout"], a: 1, exp: "Filet permanent." },
+    { type: "qcm", q: "Un commit qui casse dotnet test…", opts: ["Passe quand même", "Est rouge et bloqué avant main", "Est ignoré", "Casse la prod"], a: 1, exp: "Barrière mécanique." },
+    { type: "qcm", q: "dotnet restore fait…", opts: ["Déployer", "Restaurer les paquets NuGet", "Chiffrer", "Tester"], a: 1, exp: "Avant build/test." },
+    { type: "vf", q: "Le pipeline existe avant la première fonctionnalité métier.", a: true, exp: "Le fil du Niveau 8." },
+    { type: "qcm", q: "La revue humaine porte désormais sur…", opts: ["Les espaces", "La logique (le format est automatisé)", "Rien", "Le CSS"], a: 1, exp: "dotnet format libère la revue." },
+    { type: "qcm", q: "-c Release construit…", opts: ["En debug", "En configuration Release (optimisée)", "Rien", "Le CSS"], a: 1, exp: "Comme en prod." },
+    { type: "qcm", q: "« Require branches up to date » évite…", opts: ["Les conflits", "Qu'une PR verte mais périmée casse main après merge", "Le lint", "Les tests"], a: 1, exp: "main toujours cohérente." },
+    { type: "vf", q: "Un pipeline posé tardivement révèle 200 problèmes d'un coup — décourageant.", a: true, exp: "D'où : dès le jour 1." }
+  ],
+  final: {
+    title: "Exercice final — Le garde-fou en place",
+    intro: `<p>Git normé + CI + protection de main.</p>`,
+    questions: [
+      { type: "qcm", q: "La CI vérifie à chaque commit :", opts: ["dotnet format + build + test", "juste la compilation", "le CSS", "rien"], a: 0, exp: "Format + tests." },
+      { type: "qcm", q: "Le style du code est tranché par :", opts: ["dotnet format (machine)", "des débats en revue", "le chef", "personne"], a: 0, exp: "Automatisé." },
+      { type: "qcm", q: "main est protégée par :", opts: ["PR + status checks + revue", "la bonne volonté", "un mot de passe", "rien"], a: 0, exp: "Mécanique." },
+      { type: "qcm", q: "Poser la CI dès le jour 1 :", opts: ["rend chaque check indolore", "est prématuré", "ralentit", "est impossible"], a: 0, exp: "Petits incréments." },
+      { type: "vf", q: "Un commit rouge (test KO) ne peut pas entrer dans main.", a: true, exp: "Barrière de branche." }
+    ],
+    solution: `<pre class="pseudo"># .github/workflows/ci.yml
+on: { push: {branches:[main]}, pull_request: {branches:[main]} }   # déclencheurs : push et PR vers main
+jobs:                                                             # les travaux du pipeline
+  verifier:                                                       # un seul job de vérification
+    steps:                                                        # ses étapes, dans l'ordre
+      - uses: actions/checkout@v4                                 # récupère le code
+      - uses: actions/setup-dotnet@v4                             # installe le SDK .NET
+        with: { dotnet-version: "10.0.x" }                        #   version 10.x
+      - run: dotnet restore                                       # télécharge les paquets NuGet
+      - run: dotnet format --verify-no-changes                    # échoue si le format n'est pas propre
+      - run: dotnet build --no-restore -c Release                 # compile en Release
+      - run: dotnet test --no-build -c Release                    # lance les tests
+
+# Protection de main : PR + verifier vert + 1 revue</pre>
+<p>Le garde-fou est là. Demain : le schéma versionné (migrations EF Core) migré en conteneur.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow de CI…",
+  items: [
+  { id: "proj6cs-l3", title: "La première CI + la protection de branche", level: 2,
+    statement: "Écris le ci.yml de départ (checkout, setup-dotnet 8, restore, dotnet format --verify-no-changes, build, test) et la liste des règles de protection de main. Explique en 3-4 lignes pourquoi poser ce pipeline AVANT le métier change tout, et ce que dotnet format retire de la revue humaine.",
+    hints: [
+      "actions/setup-dotnet@v4 (cache NuGet) ; --no-restore/--no-build pour éviter de refaire le travail.",
+      "Protection : require PR, require status checks (verifier), 1 approbation, up to date.",
+      "Avant le métier = chaque vérification ne juge qu'un petit incrément, jamais 3 semaines d'un coup."
+    ],
+    solution: "# .github/workflows/ci.yml\nname: CI\non:\n  push: { branches: [main] }\n  pull_request: { branches: [main] }\njobs:\n  verifier:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-dotnet@v4\n        with: { dotnet-version: \"10.0.x\" }\n      - run: dotnet restore\n      - name: Format\n        run: dotnet format --verify-no-changes\n      - name: Build\n        run: dotnet build --no-restore -c Release\n      - name: Tests\n        run: dotnet test --no-build -c Release\n\n# Protection de main (Settings -> Branches -> main)\n#  - Require a pull request before merging (+ 1 approbation)\n#  - Require status checks to pass : verifier\n#  - Require branches to be up to date before merging\n#  - Include administrators (personne ne contourne)\n\n# POURQUOI AVANT LE METIER\n# Un pipeline pose au premier commit ne juge jamais qu'un tout petit increment :\n# indolore, donc adopte. Pose apres trois semaines, il revele 200 problemes de\n# format et 40 tests manquants d'un coup -> decourageant, souvent abandonne.\n# La CI est un filet PERMANENT, pas un juge de fin de parcours.\n#\n# CE QUE dotnet format RETIRE DE LA REVUE\n# Le style (espaces, usings, accolades) est tranche par la machine selon le\n# .editorconfig. Les humains ne discutent plus de mise en forme : ils relisent\n# la LOGIQUE. La revue gagne en valeur, et les diffs restent propres (pas de\n// bruit de reformatage).",
+    note: "Ce workflow tient en une douzaine de lignes mais il change la culture du projet : à partir de là, la qualité n'est plus une intention mais une propriété vérifiée à chaque commit. Le cache NuGet et les options --no-restore/--no-build évitent de refaire trois fois le même travail — un pipeline lent se contourne, un pipeline rapide se respecte. La vitesse protège l'adoption." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "La couche de persistance de la Ludothèque (synthèse)",
+  subtitle: "Dix-neuf leçons remontent d'un coup : entités, contexte, Fluent API et requêtes clés, assemblés en une seule couche.",
+  theory: `
+<h3>1. La vue d'ensemble : ce qu'est devenue la Ludothèque</h3>
+<p>Il est temps de reculer et de regarder la cathédrale entière. Depuis la leçon 1, on a bâti pièce par pièce la <strong>couche de persistance</strong> (la partie du programme chargée de ranger et relire les données en base) de la Ludothèque : les <strong>entités</strong> (les classes qui représentent les tables : Jeu, Membre, Location, Avis, Categorie), le <strong>LudothequeContext</strong> qui les expose, la <strong>configuration Fluent</strong> qui gouverne le mapping (la mise en correspondance classe ↔ table), et les <strong>requêtes</strong> qui alimentent l'application. C'est exactement la couche que consommera ton API ASP.NET Core au Niveau 6. Aucune notion neuve aujourd'hui : on assemble, on relit, on consolide.</p>
+<pre class="pseudo">Ludotheque.Data/
+  Entities/        Jeu · Membre · Location · Avis · Categorie   (POCO)
+  Configurations/  JeuConfiguration · MembreConfiguration · ...  (Fluent)
+  LudothequeContext.cs      (DbSet + OnModelCreating)
+  Migrations/               (dotnet ef migrations add / database update)
+Consommée par : Ludotheque.Api (contrôleurs, services) — Niveau 6</pre>
+
+<h3>2. Les entités : cinq POCO et leurs relations</h3>
+<p>Nos classes restent des <strong>POCO</strong> (Plain Old CLR Objects : de simples objets métier, sans dépendance à EF Core). Elles portent leurs propriétés scalaires et leurs <strong>navigations</strong> (les propriétés qui pointent vers les objets liés) : références (côté « N ») et collections (côté « un »). On relit ici les quatre types de relations construits aux leçons 8 à 11.</p>
+<pre class="pseudo">public class Jeu {                                          // entité Jeu : le moule d'une ligne de la table Jeux
+    public int Id { get; set; }                            // clé primaire du jeu
+    public string Titre { get; set; }                      // titre du jeu
+    public decimal Prix { get; set; }                      // prix (montant décimal)
+    public bool EstDisponible { get; set; }                // le jeu est-il disponible à la location ?
+    public int Stock { get; set; }                         // nombre d'exemplaires en stock
+    public List&lt;Location&gt; Locations { get; set; } = new();   // 1-N : un jeu a plusieurs locations (collection)
+    public List&lt;Avis&gt; Avis { get; set; } = new();           // 1-N : un jeu a plusieurs avis
+    public List&lt;Categorie&gt; Categories { get; set; } = new(); // N-N : un jeu a plusieurs catégories (et inversement)
+}
+public class Membre {                                      // entité Membre : une ligne de la table Membres
+    public int Id { get; set; }                            // clé primaire du membre
+    public string Pseudo { get; set; }                     // pseudonyme du membre
+    public string Email { get; set; }                      // email (rendu unique par un index en config)
+    public DateTime DateInscription { get; set; }          // date d'inscription
+    public List&lt;Location&gt; Locations { get; set; } = new();   // 1-N : un membre a plusieurs locations
+}
+public class Location {                                     // N-1 (jeu, membre) : entité Location, le côté « plusieurs »
+    public int Id { get; set; }                            // clé primaire de la location
+    public DateTime DateDebut { get; set; }                // date de début de la location
+    public DateTime? DateRetour { get; set; }              // date de retour (nullable : null tant que non rendu)
+    public decimal Prix { get; set; }                      // prix de cette location
+    public int JeuId { get; set; }      public Jeu Jeu { get; set; }        // FK JeuId + navigation vers le jeu loué
+    public int MembreId { get; set; }   public Membre Membre { get; set; }  // FK MembreId + navigation vers le membre
+}
+public class Avis {                                         // N-1 (jeu, membre) : entité Avis
+    public int Id { get; set; }        public int Note { get; set; }        // clé primaire + note attribuée au jeu
+    public string Commentaire { get; set; }  public DateTime DateAvis { get; set; }  // texte de l'avis + date de rédaction
+    public int JeuId { get; set; }     public int MembreId { get; set; }    // FK vers le jeu et FK vers le membre
+}</pre>
+
+<h3>3. Le LudothequeContext final : DbSet + OnModelCreating</h3>
+<p>Le contexte (leçons 2, 3, 7) expose <strong>un DbSet par entité</strong> (un DbSet = la table vue comme une collection d'objets C#) et centralise la configuration. Comme le OnModelCreating grossirait avec 5 entités, on a sorti chaque config dans une classe <strong>IEntityTypeConfiguration</strong> (leçon 7) et on les enregistre toutes en une ligne.</p>
+<pre class="pseudo">public class LudothequeContext : DbContext                          // le contexte : notre session de travail avec la base
+{
+    public LudothequeContext(DbContextOptions&lt;LudothequeContext&gt; options)   // constructeur recevant les options de config…
+        : base(options) { }                 // injecté par AddDbContext (leçon 2)   // …transmises à la classe de base DbContext
+
+    public DbSet&lt;Jeu&gt; Jeux { get; set; }                            // expose la table Jeux comme une collection d'objets
+    public DbSet&lt;Membre&gt; Membres { get; set; }                      // table Membres
+    public DbSet&lt;Location&gt; Locations { get; set; }                  // table Locations
+    public DbSet&lt;Avis&gt; Avis { get; set; }                           // table Avis
+    public DbSet&lt;Categorie&gt; Categories { get; set; }                // table Categories
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)   // EF appelle cette méthode pour construire le modèle
+    {
+        modelBuilder.ApplyConfigurationsFromAssembly(               // enregistre d'un coup toutes les configs Fluent…
+            typeof(LudothequeContext).Assembly);   // scanne toutes les configs   // …trouvées dans l'assembly du contexte
+    }
+}</pre>
+
+<h3>4. La config Fluent : le mapping en un coup d'œil</h3>
+<p>Chaque configuration (leçon 7) est la <strong>carte d'identité SQL</strong> de son entité : contraintes de colonnes, index, précision décimale, et les relations (leçons 8-11). On relit ci-dessous les décisions clés — dont l'<strong>OnDelete(Restrict)</strong> qui empêche de supprimer un jeu encore loué, et l'index unique sur l'email d'un membre.</p>
+<pre class="pseudo">public class JeuConfiguration : IEntityTypeConfiguration&lt;Jeu&gt; {         // config Fluent dédiée à l'entité Jeu
+    public void Configure(EntityTypeBuilder&lt;Jeu&gt; builder) {             // méthode où l'on décrit le mapping du Jeu
+        builder.Property(j =&gt; j.Titre).IsRequired().HasMaxLength(200);  // Titre obligatoire (NOT NULL), 200 caractères max
+        builder.Property(j =&gt; j.Prix).HasColumnType("decimal(8,2)");    // Prix stocké en decimal(8,2) : précision monétaire
+        builder.Property(j =&gt; j.EstDisponible).HasDefaultValue(true);   // valeur par défaut true côté base
+        builder.HasMany(j =&gt; j.Locations).WithOne(l =&gt; l.Jeu)           // un Jeu a plusieurs Locations, chacune a un Jeu (1-N)…
+               .HasForeignKey(l =&gt; l.JeuId)                             // …reliées par la clé étrangère JeuId
+               .OnDelete(DeleteBehavior.Restrict);     // pas de suppression en cascade   // interdit de supprimer un jeu encore loué
+        builder.HasMany(j =&gt; j.Categories).WithMany(c =&gt; c.Jeux)        // relation N-N entre Jeu et Categorie…
+               .UsingEntity(join =&gt; join.ToTable("JeuCategorie"));  // N-N   // …matérialisée par la table de jointure JeuCategorie
+    }
+}
+public class MembreConfiguration : IEntityTypeConfiguration&lt;Membre&gt; {   // config Fluent dédiée à l'entité Membre
+    public void Configure(EntityTypeBuilder&lt;Membre&gt; builder) {          // méthode de mapping du Membre
+        builder.HasIndex(m =&gt; m.Email).IsUnique();      // email unique   // index unique : pas deux membres avec le même email
+        builder.Property(m =&gt; m.Pseudo).IsRequired().HasMaxLength(50);   // Pseudo obligatoire, 50 caractères max
+    }
+}</pre>
+
+<h3>5. Les requêtes clés : le catalogue complet des gestes</h3>
+<p>Toute l'application se ramène à un petit vocabulaire de requêtes, chacune vue en détail dans une leçon. Voici le récapitulatif que tu garderas sous les yeux au Niveau 6. Une ligne pour la culture générale : cette architecture (entités POCO + contexte + config + requêtes) est <strong>universelle</strong> — c'est l'@Entity + EntityManager d'Hibernate, le Model + Eloquent de Laravel, le models.py + ORM de Django. Un ORM appris, tous compris.</p>
+<pre class="pseudo">// LIRE
+ctx.Jeux.FindAsync(5)                                    // lit un jeu par sa clé primaire (leçon 5)
+ctx.Jeux.Where(j =&gt; j.EstDisponible).OrderBy(j =&gt; j.Titre)  // filtre les disponibles puis trie par titre (leçon 13)
+ctx.Jeux.Include(j =&gt; j.Avis).ThenInclude(...)           // charge les jeux avec leurs avis (et au-delà) : relations (leçon 12)
+ctx.Jeux.Select(j =&gt; new JeuDto { ... })                 // projette vers un DTO léger pour l'affichage (leçon 14)
+ctx.Avis.GroupBy(a =&gt; a.JeuId).Select(g =&gt; new { g.Key, g.Count() })  // regroupe par jeu et compte : agrégats (leçon 14)
+query.Skip((p-1)*t).Take(t)                              // saute puis prend une page : pagination (leçon 16)
+ctx.Jeux.AsNoTracking().ToListAsync()                    // lecture seule sans suivi : plus rapide (leçon 18)
+ctx.Jeux.FromSqlInterpolated($"...{x}...")               // SQL natif paramétré, donc sûr (leçon 15)
+// ÉCRIRE
+ctx.Jeux.Add(jeu); await ctx.SaveChangesAsync();         // insère un jeu ; SaveChanges est atomique (leçons 5, 17)
+jeu.Prix = 4.5m; await ctx.SaveChangesAsync();           // modifie une propriété : le tracker génère l'UPDATE (leçon 6)
+using var tx = ctx.Database.BeginTransactionAsync();     // transaction explicite : enchaînements multi-unités (leçon 17)</pre>
+<div class="warn">Cette couche ne « fait » rien toute seule : elle est <strong>consommée</strong>. Ne mets jamais de logique de présentation (formatage, HTTP) dans les entités ni dans le contexte, et ne laisse jamais un DbContext vivre au-delà d'une requête HTTP (scoped, leçon 2). La persistance est une couche — garde-la étanche des couches web et métier.</div>
+<div class="tip">Fabrique-toi une fiche recto-verso : au recto le schéma (5 entités + relations), au verso le catalogue de requêtes ci-dessus. C'est ta carte de la Ludothèque — et, à un renommage près, celle de n'importe quel projet EF Core que tu rencontreras.</div>`,
+  exercises: [
+    { type: "qcm", q: "La « couche de persistance » de la Ludothèque regroupe…", opts: ["Les vues HTML et le CSS", "Les entités, le LudothequeContext, la config Fluent et les requêtes", "Les contrôleurs ASP.NET Core", "Uniquement les migrations"], a: 1, exp: "C'est la couche que consommera l'API du Niveau 6 : mapping objets ↔ tables + accès aux données." },
+    { type: "qcm", q: "Les entités Jeu, Membre, Location, Avis sont des POCO, c'est-à-dire…", opts: ["Des classes couplées à SQL Server", "des objets métier propres, sans dépendance à EF Core", "des DTO", "des contrôleurs"], a: 1, exp: "Plain Old CLR Objects : propriétés et navigations, aucune ligne d'infrastructure dedans." },
+    { type: "input", q: "Combien de DbSet le LudothequeContext expose-t-il pour les cinq entités du fil rouge ?", a: ["5", "cinq", "un par entité"], ph: "Nombre…", exp: "Un DbSet par entité : Jeux, Membres, Locations, Avis, Categories." },
+    { type: "qcm", q: "La relation entre Location et Jeu est de type…", opts: ["N-N", "1-1", "N-1 (une location a UN jeu)", "aucune"], a: 2, exp: "Location porte JeuId : plusieurs locations pour un jeu, côté « N » vers le jeu." },
+    { type: "qcm", q: "La relation entre Jeu et Categorie est…", opts: ["N-1", "1-N", "N-N (un jeu a plusieurs catégories et inversement)", "1-1"], a: 2, exp: "Many-to-many via une table de jointure (JeuCategorie), leçon 10." },
+    { type: "qcm", q: "Pour éviter un OnModelCreating géant avec 5 entités, on…", opts: ["Écrit tout dans une seule méthode", "Sort une classe IEntityTypeConfiguration par entité et appelle ApplyConfigurationsFromAssembly", "Supprime la Fluent API", "Met tout en data annotations"], a: 1, exp: "Une config par entité + un scan d'assembly : le contexte reste lisible (leçon 7)." },
+    { type: "vf", q: "OnDelete(DeleteBehavior.Restrict) sur Jeu-Locations empêche de supprimer un jeu encore référencé par des locations.", a: true, exp: "Pas de suppression en cascade : la base refuse d'orpheliner des locations, comme ta contrainte FK du Niveau 4." },
+    { type: "qcm", q: "HasIndex(m =&gt; m.Email).IsUnique() sur Membre garantit…", opts: ["Un tri par email", "Que deux membres ne partagent pas le même email", "Un chiffrement de l'email", "Une clé primaire composée"], a: 1, exp: "Index unique : contrainte d'unicité posée en Fluent (impossible en annotation), leçon 7." },
+    { type: "input", q: "Quelle méthode du DbSet récupère une entité par sa clé primaire ?", a: ["FindAsync", "Find", "FindAsync()", "Find()"], ph: "Nom de la méthode…", exp: "FindAsync(id) : accès direct par clé, avec cache du contexte (leçon 5)." },
+    { type: "qcm", q: "Pour afficher un catalogue en lecture seule le plus vite possible, on combine…", opts: ["Include + BeginTransaction", "AsNoTracking + projection DTO + pagination", "FromSqlRaw + concaténation", "Trois SaveChanges"], a: 1, exp: "La checklist perf de la leçon 18 : pas de suivi, colonnes minimales, jamais tout le catalogue." },
+    { type: "qcm", q: "La bonne durée de vie du LudothequeContext dans l'API ASP.NET Core :", opts: ["Singleton (une instance pour toute l'appli)", "Scoped : une instance par requête HTTP", "Transient : une par appel de méthode", "Statique et partagée"], a: 1, exp: "Scoped via AddDbContext (leçon 2) : le contexte est léger et non thread-safe." },
+    { type: "vf", q: "On peut mettre du formatage HTTP et de la logique de présentation directement dans l'entité Jeu.", a: false, exp: "La persistance est une couche étanche : les entités restent des POCO métier, la présentation vit dans la couche web." },
+    { type: "qcm", q: "Louer un jeu (INSERT location + UPDATE stock) doit être…", opts: ["Trois SaveChanges séparés", "Atomique : un seul SaveChanges (transaction implicite) ou BeginTransaction", "Sans transaction", "Un FromSqlRaw"], a: 1, exp: "Leçon 17 : un seul SaveChanges suffit et est déjà atomique ; BeginTransaction pour les enchaînements multi-unités." },
+    { type: "qcm", q: "Cette architecture (POCO + contexte + config + requêtes) se retrouve…", opts: ["Seulement dans EF Core", "Dans tous les ORM : @Entity/EntityManager (Hibernate), Model/Eloquent, models.py (Django)", "Uniquement en C#", "Nulle part ailleurs"], a: 1, exp: "Un ORM appris, tous compris : les noms changent, la structure de couche est universelle." },
+    { type: "vf", q: "La couche de persistance de la Ludothèque est exactement celle que consommera le projet full-stack du Niveau 6.", a: true, exp: "Le Niveau 6 branche une API ASP.NET Core et un front dessus : cette couche est le socle réutilisé tel quel." }
+  ],
+  final: {
+    title: "Exercice final — Assembler la couche complète",
+    intro: `<p>On reconstitue mentalement toute la couche de persistance : de l'entité au SaveChanges, en passant par la config et les requêtes. Chaque question relie une pièce à sa leçon d'origine.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre de construction logique de la couche est…", opts: ["Migrations → entités → contexte → requêtes", "Entités POCO → contexte (DbSet) → config Fluent → migrations → requêtes", "Requêtes → config → entités", "Contexte → requêtes → entités"], a: 1, exp: "On modélise (entités), on expose (contexte), on gouverne (Fluent), on synchronise (migrations), on consomme (requêtes)." },
+      { type: "qcm", q: "Pour la page « détail d'un jeu » (jeu + ses avis + ses catégories), tu écris…", opts: ["Une boucle sur jeu.Avis (N+1)", "ctx.Jeux.Include(j =&gt; j.Avis).Include(j =&gt; j.Categories).AsSplitQuery().First(...)", "FromSqlRaw concaténé", "Trois requêtes séparées non reliées"], a: 1, exp: "Include des deux collections + AsSplitQuery (leçon 19) pour éviter l'explosion cartésienne." },
+      { type: "vf", q: "Pour la liste paginée du catalogue (affichage seul), une projection DTO + Skip/Take + AsNoTracking implicite est la bonne recette.", a: true, exp: "Projection = pas de suivi, colonnes minimales ; Skip/Take = pagination. La combinaison des leçons 14, 16 et 18." },
+      { type: "input", q: "Quelle méthode enregistre toutes les IEntityTypeConfiguration d'un coup dans OnModelCreating ?", a: ["ApplyConfigurationsFromAssembly", "ApplyConfigurationsFromAssembly()"], ph: "Nom de la méthode…", exp: "modelBuilder.ApplyConfigurationsFromAssembly(...) scanne l'assembly et applique chaque config (leçon 7)." },
+      { type: "qcm", q: "Après avoir modifié une config Fluent (nouvel index), pour que la base suive, il faut…", opts: ["Rien, EF met à jour tout seul", "Générer et appliquer une migration (add + database update)", "Redémarrer SQL Server", "Vider le change tracker"], a: 1, exp: "OnModelCreating ne touche que le modèle en mémoire : la migration synchronise la base (leçons 4-7)." }
+    ],
+    solution: `<pre class="pseudo">LA COUCHE DE PERSISTANCE DE LA LUDOTHÈQUE — carte complète
+
+ENTITÉS (POCO)         Jeu · Membre · Location · Avis · Categorie
+  relations            Location→Jeu/Membre (N-1) · Jeu→Locations/Avis (1-N)
+                       Jeu↔Categorie (N-N) · [Membre→Profil (1-1) si besoin]
+
+CONTEXTE               LudothequeContext : DbSet par entité (ctor injecté)
+                       OnModelCreating → ApplyConfigurationsFromAssembly
+
+CONFIG FLUENT          1 IEntityTypeConfiguration par entité :
+                       Prix decimal(8,2) · Titre required/200 · Email unique
+                       relations HasMany/WithOne · OnDelete(Restrict) · N-N
+
+MIGRATIONS             dotnet ef migrations add / database update
+
+REQUÊTES CLÉS
+  Lire   : Find · Where/OrderBy · Include/ThenInclude · Select DTO
+           GroupBy+agrégats · Skip/Take · AsNoTracking · FromSqlInterpolated
+  Écrire : Add + SaveChanges (atomique) · update par tracker · BeginTransaction
+
+RÈGLES : DbContext scoped · couche étanche · perf = pas de N+1,
+         AsNoTracking, projection, pagination, index
+Ailleurs : Hibernate/JPA, Eloquent, Django — même structure de couche.</pre>
+<p>La Ludothèque a désormais une couche de persistance complète, propre et performante. Il ne reste qu'une étape : l'examen récapitulatif qui balaie les vingt leçons — puis la passerelle vers le projet full-stack du Niveau 6.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l20", title: "Plan complet de la couche Ludotheque.Data", level: 3,
+    statement: "Rédige le dossier d'architecture de la couche de persistance Ludotheque.Data, telle que tu la livrerais à l'équipe avant d'attaquer le projet full-stack du Niveau 6. Ton document doit contenir : (1) la liste des entités avec leurs propriétés principales et le type de CHAQUE relation (N-1, 1-N, N-N) en justifiant ; (2) le squelette du LudothequeContext (DbSet, constructeur injecté, OnModelCreating) ; (3) trois décisions de config Fluent importantes et leur raison (précision décimale, index unique, comportement de suppression) ; (4) le catalogue des requêtes clés de l'application (lire un catalogue paginé, détailler un jeu avec ses avis, louer un jeu de façon atomique), en précisant à chaque fois la technique de perf ou de sécurité employée.",
+    hints: [
+      "Pour chaque relation, pars de la FK : où vit-elle ? Location.JeuId → N-1 vers Jeu ; côté Jeu, la collection Locations → 1-N ; deux collections croisées Jeu/Categorie → N-N avec table de jointure.",
+      "Contexte : constructeur DbContextOptions injecté (leçon 2), un DbSet par entité, et ApplyConfigurationsFromAssembly plutôt qu'un OnModelCreating monolithique.",
+      "Requêtes : catalogue → projection DTO + Skip/Take + AsNoTracking ; détail → Include/ThenInclude (+ AsSplitQuery si plusieurs collections) ; louer → un seul SaveChanges atomique, concurrence gérée."
+    ],
+    solution: "DOSSIER — COUCHE Ludotheque.Data\n\n1. ENTITÉS ET RELATIONS\n   Jeu(Id, Titre, Prix, EstDisponible, Stock)\n     → Locations : 1-N (la FK JeuId vit dans Location)\n     → Avis : 1-N (Avis.JeuId)\n     → Categories : N-N (deux collections croisées, table JeuCategorie)\n   Membre(Id, Pseudo, Email, DateInscription)\n     → Locations : 1-N (Location.MembreId)\n   Location(Id, DateDebut, DateRetour?, Prix, JeuId, MembreId)\n     → Jeu, Membre : N-1 chacune (les deux FK sont ici)\n   Avis(Id, Note, Commentaire, DateAvis, JeuId, MembreId) : N-1 vers Jeu/Membre\n   Categorie(Id, Nom) → Jeux : N-N\n   Justif : la FK est toujours du côté « N » ; une collection = le côté « un » ;\n   deux collections croisées sans FK simple = N-N à table de jointure.\n\n2. CONTEXTE\n   public class LudothequeContext : DbContext {\n       public LudothequeContext(DbContextOptions<LudothequeContext> o) : base(o) {}\n       public DbSet<Jeu> Jeux { get; set; }\n       public DbSet<Membre> Membres { get; set; }\n       public DbSet<Location> Locations { get; set; }\n       public DbSet<Avis> Avis { get; set; }\n       public DbSet<Categorie> Categories { get; set; }\n       protected override void OnModelCreating(ModelBuilder mb) {\n           mb.ApplyConfigurationsFromAssembly(typeof(LudothequeContext).Assembly);\n       }\n   }\n   Durée de vie : scoped (AddDbContext), une instance par requête HTTP.\n\n3. TROIS DÉCISIONS FLUENT\n   a) Prix : HasColumnType(\"decimal(8,2)\") → évite l'avertissement de\n      troncature et fixe la précision monétaire (leçon 7).\n   b) Membre.Email : HasIndex(...).IsUnique() → unicité impossible à poser\n      en annotation, garantie côté base.\n   c) Jeu→Locations : OnDelete(DeleteBehavior.Restrict) → interdit de\n      supprimer un jeu encore loué (pas de cascade destructrice).\n\n4. REQUÊTES CLÉS\n   - Catalogue paginé (affichage) :\n     ctx.Jeux.Select(j => new JeuDto { ... }).OrderBy(...).Skip((p-1)*20).Take(20)\n     Perf : projection (zéro suivi, colonnes minimales) + pagination.\n   - Détail d'un jeu avec avis et catégories :\n     ctx.Jeux.Include(j => j.Avis).Include(j => j.Categories)\n             .AsSplitQuery().FirstAsync(j => j.Id == id)\n     Perf : AsSplitQuery contre l'explosion cartésienne (deux collections).\n   - Louer un jeu (atomique) :\n     Add(location) ; jeu.Stock-- ; if (Stock==0) EstDisponible=false ;\n     await SaveChangesAsync()  → une seule transaction implicite.\n     Concurrence : UPDATE ... AND Stock > 0 ou rowversion (DbUpdateConcurrencyException).\n   Sécurité : toute recherche libre passe par FromSqlInterpolated ou LINQ\n   (paramètres), jamais de concaténation.",
+    note: "Ce dossier EST le livrable d'entrée du Niveau 6 : ton API ASP.NET Core injectera ce LudothequeContext dans ses contrôleurs et appellera ces requêtes. Le rédiger, c'est prouver que tu tiens la couche entière dans ta tête — la compétence exacte qu'un lead attend d'un développeur avant de lui confier la persistance d'un vrai projet. En Java (Spring Data JPA) ou en Python (Django), tu produirais le même document, à la syntaxe près." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

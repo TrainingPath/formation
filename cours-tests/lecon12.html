@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "TDD en pratique : un kata complet",
+  subtitle: "Quatre cycles chrono en main : le prix de location avec remises, piloté du premier test au dernier refactor.",
+  theory: `
+<h3>1. Le kata et la liste de tests</h3>
+<p>Un <strong>kata</strong> est un exercice qu'on refait pour ancrer un geste — ici, le cycle TDD. Le nôtre : <code>calcul_prix_location(prix_jour, jours, premium=False)</code> pour la Ludothèque. Les règles : prix = prix_jour x jours ; <strong>remise de 10 pour cent</strong> à partir de 7 jours ; les membres <strong>premium</strong> ont 5 pour cent de plus (sur le prix déjà remisé) ; une durée inférieure à 1 jour lève <code>ValueError</code>. Avant le premier test, on pose la <strong>liste de tests</strong> — le plan de bataille :</p>
+<pre class="pseudo">LISTE DE TESTS (a cocher au fil des cycles)
+[ ] 3 jours a 2 euros → 6.00           (nominal)
+[ ] 1 jour → 2.00                      (triangulation)
+[ ] 7 jours → 12.60                    (remise duree, palier)
+[ ] 6 jours → 12.00                    (juste sous le palier)
+[ ] premium 3 jours → 5.70             (remise membre)
+[ ] premium 7 jours → 11.97            (cumul des remises)
+[ ] 0 jour → ValueError                (erreur)</pre>
+
+<h3>2. Cycle 1 — le nominal, puis la triangulation</h3>
+<p>Premier test, RED (<code>NameError</code>), GREEN naïf, triangulation :</p>
+<pre class="pseudo">def test_trois_jours_plein_tarif():                   # cycle 1, 1er test : 3 jours a 2 euros
+    assert calcul_prix_location(2.00, 3) == 6.00      # RED
+
+def calcul_prix_location(prix_jour, jours):           # on cree la fonction avec le strict minimum
+    return 6.00                                       # GREEN naif
+
+def test_un_jour_plein_tarif():                       # 2e test pour TRIANGULER : 1 jour a 2 euros
+    assert calcul_prix_location(2.00, 1) == 2.00      # RED a nouveau
+
+def calcul_prix_location(prix_jour, jours):           # on reecrit avec la vraie formule
+    return prix_jour * jours                          # GREEN, generalise</pre>
+<p>Deux cases cochées. Rien à refactorer pour l'instant : on enchaîne.</p>
+
+<h3>3. Cycle 2 — la remise durée, des deux côtés du palier</h3>
+<pre class="pseudo">def test_sept_jours_remise_duree():                   # cycle 2 : a partir de 7 jours, remise de 10%
+    assert calcul_prix_location(2.00, 7) == 12.60     # RED : le code rend 14.00
+
+def calcul_prix_location(prix_jour, jours):           # on ajoute la regle de la remise duree
+    prix = prix_jour * jours                          # prix de base : jours x prix par jour
+    if jours &gt;= 7:                                     # SI la location dure 7 jours ou plus...
+        prix = prix * 0.90                            # ...on garde 90% du prix (soit -10%)
+    return prix                                       # GREEN
+
+def test_six_jours_sans_remise():                     # test du palier PAR EN DESSOUS : 6 jours
+    assert calcul_prix_location(2.00, 6) == 12.00     # vert direct : verrouille le palier</pre>
+<p>Le test « 6 jours » passe du premier coup : il ne pilote pas de code neuf, il <strong>verrouille la limite</strong> du palier — précieux contre les régressions futures (un <code>&gt;</code> remplacé par <code>&gt;=</code> par mégarde le rendrait rouge).</p>
+
+<h3>4. Cycle 3 — premium, cumul, et le premier vrai refactor</h3>
+<pre class="pseudo">def test_premium_trois_jours():                       # cycle 3 : un membre premium beneficie de -5%
+    assert calcul_prix_location(2.00, 3, premium=True) == 5.70    # RED
+
+def test_premium_sept_jours_cumule_les_remises():     # test du CUMUL des deux remises
+    assert calcul_prix_location(2.00, 7, premium=True) == 11.97   # 12.60 x 0.95
+
+def calcul_prix_location(prix_jour, jours, premium=False):   # premium=False = valeur par defaut si non precise
+    prix = prix_jour * jours                          # prix de base
+    if jours &gt;= 7:                                     # remise duree (10%)...
+        prix = prix * 0.90                            # ...appliquee en premier
+    if premium:                                       # SI le membre est premium...
+        prix = prix * 0.95                            # ...-5% en plus, sur le prix DEJA remise
+    return round(prix, 2)                             # GREEN</pre>
+<p>REFACTOR : les nombres magiques prennent un nom, et les tests se regroupent en <code>parametrize</code> (leçon 7) — la liste de cas devient un tableau lisible :</p>
+<pre class="pseudo">REMISE_DUREE, SEUIL_DUREE, REMISE_PREMIUM = 0.90, 7, 0.95   # on nomme les 3 nombres magiques (constantes lisibles)
+
+@pytest.mark.parametrize("jours, premium, attendu", [   # rejoue UN test avec plusieurs jeux de valeurs
+    (3, False,  6.00), (1, False,  2.00),               # chaque tuple = (jours, premium, resultat attendu)
+    (7, False, 12.60), (6, False, 12.00),               # les deux cotes du palier de duree
+    (3, True,   5.70), (7, True,  11.97),               # les cas premium, dont le cumul (11.97)
+])
+def test_prix_location(jours, premium, attendu):        # le test recoit chaque tuple, un a la fois
+    assert calcul_prix_location(2.00, jours, premium) == attendu   # verifie que le calcul donne bien "attendu"</pre>
+
+<h3>5. Cycle 4 — l'erreur, et le bilan du kata</h3>
+<pre class="pseudo">def test_duree_nulle_refusee():                       # cycle 4 : louer 0 jour doit etre refuse
+    with pytest.raises(ValueError):                   # RED
+        calcul_prix_location(2.00, 0)                 # cet appel DOIT lever ValueError
+
+def calcul_prix_location(prix_jour, jours, premium=False):   # version finale de la fonction
+    if jours &lt; 1:                                     # SI la duree est inferieure a 1 jour...
+        raise ValueError("duree de location invalide")   # ...on leve une erreur et on stoppe la fonction
+    ...                                               # GREEN : 7 tests verts</pre>
+<p>Bilan : sept cases cochées, une fonction courte née <strong>entièrement pilotée</strong> par les tests, une couverture totale sans y avoir pensé, et un tableau de cas qui documente le barème. Refais ce kata de zéro dans quelques jours, chrono en main : c'est la répétition qui installe le réflexe. En une ligne : le même kata se déroule à l'identique en JUnit, xUnit ou PHPUnit.</p>
+<div class="warn">La tentation permanente du kata : écrire les <strong>trois if d'un coup</strong> dès le premier cycle « puisqu'on connaît les règles ». Résiste : sans test rouge pour chaque règle, tu ne sauras jamais quels comportements sont réellement vérifiés — tu retombes dans le code d'abord.</div>
+<div class="tip">Garde la liste de tests sur papier à côté du clavier et raye au fur et à mesure. Une idée de cas en cours de route (remises cumulées, arrondi) ? Ajoute une ligne à la liste au lieu de t'interrompre : le cycle en cours reste minuscule.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un kata, en programmation, c'est…", opts: ["Un exercice qu'on refait pour ancrer un geste, ici le cycle TDD", "Un framework de test japonais", "Un type de bug", "Une option de pytest"], a: 0, exp: "Comme au judo : la répétition installe le réflexe." },
+    { type: "qcm", q: "La toute première chose à poser avant le premier test du kata :", opts: ["Le code de la fonction", "La liste de tests — le plan des cas à couvrir", "La base de données", "Le README"], a: 1, exp: "On la coche au fil des cycles et on y ajoute les idées en route." },
+    { type: "qcm", q: "Au cycle 1, après le GREEN naïf return 6.00, on écrit le test « 1 jour → 2.00 » pour…", opts: ["Faire joli", "Trianguler : forcer le code à se généraliser en prix_jour * jours", "Tester la base", "Mesurer la couverture"], a: 1, exp: "Deux cas rendent le codage en dur impossible : la vraie logique émerge." },
+    { type: "qcm", q: "Le test « 6 jours → 12.00 » passe vert du premier coup. Son rôle :", opts: ["Aucun, on le supprime", "Détecter une panne réseau", "Verrouiller la limite du palier contre les régressions futures", "Accélérer la suite"], a: 2, exp: "Si quelqu'un change le seuil par mégarde, ce test devient rouge." },
+    { type: "input", q: "À 2 euros par jour, le prix attendu pour 7 jours avec la remise durée de 10 pour cent :", a: ["12.60", "12,60", "12.6"], ph: "montant…", exp: "14.00 moins 10 pour cent = 12.60 — le cas qui pilote le cycle 2." },
+    { type: "qcm", q: "La remise premium du kata s'applique…", opts: ["Sur le prix déjà remisé : les remises se cumulent en cascade", "À la place de la remise durée", "Uniquement sans remise durée", "Sur le prix par jour uniquement"], a: 0, exp: "12.60 x 0.95 = 11.97 : le test du cumul le prouve noir sur blanc." },
+    { type: "vf", q: "Puisqu'on connaît toutes les règles d'avance, on peut écrire les trois if d'un coup au premier cycle.", a: false, exp: "Sans un test rouge par règle, impossible de savoir ce qui est réellement vérifié." },
+    { type: "qcm", q: "Au refactor du cycle 3, les tests individuels deviennent…", opts: ["Des commentaires", "Un tableau @pytest.mark.parametrize", "Des fixtures scope session", "Du code de production"], a: 1, exp: "Le refactor s'applique aussi aux tests : la leçon 7 rejoint le kata." },
+    { type: "qcm", q: "0.90, 7 et 0.95 sont remplacés par des constantes nommées parce que…", opts: ["Python l'exige", "C'est plus rapide à exécuter", "Les nombres magiques cachent le sens : REMISE_DUREE se lit, 0.90 se devine", "pytest refuse les décimaux"], a: 2, exp: "Un refactor classique : nommer ce qui était implicite." },
+    { type: "qcm", q: "Le cas « 0 jour » se teste avec…", opts: ["assert == 0", "pytest.raises(ValueError)", "un print", "time.sleep"], a: 1, exp: "La leçon 4 au service du kata : l'erreur attendue est un comportement à part entière." },
+    { type: "vf", q: "À la fin du kata, la couverture de la fonction est totale sans qu'on l'ait visée.", a: true, exp: "Chaque ligne est née pour faire passer un test : la couverture est un sous-produit du TDD." },
+    { type: "qcm", q: "Une idée de cas surgit en plein cycle (l'arrondi, par exemple). Le bon geste :", opts: ["Tout arrêter pour la coder", "L'ajouter à la liste de tests et finir le cycle en cours", "L'oublier", "Ouvrir un débogueur"], a: 1, exp: "La liste absorbe les idées ; le cycle en cours reste minuscule." },
+    { type: "qcm", q: "Quel test deviendrait rouge si un dev remplaçait jours &gt;= 7 par jours &gt; 7 ?", opts: ["test_sept_jours_remise_duree (7 jours → 12.60)", "test_un_jour_plein_tarif", "test_duree_nulle_refusee", "Aucun"], a: 0, exp: "À 7 jours pile, la remise disparaîtrait : le test du palier sonne l'alarme." },
+    { type: "vf", q: "Ce kata ne peut se dérouler qu'en Python.", a: false, exp: "Même déroulé en JUnit, xUnit ou PHPUnit : le TDD est indépendant du langage." },
+    { type: "input", q: "Le prix attendu pour un membre premium sur 7 jours à 2 euros par jour (cumul des remises) :", a: ["11.97", "11,97"], ph: "montant…", exp: "14.00 x 0.90 = 12.60, puis x 0.95 = 11.97." }
+  ],
+  final: {
+    title: "Exercice final — Le kata rejoué de tête",
+    intro: `<p>Ferme les yeux, rejoue les quatre cycles : chaque question vérifie un moment clé du déroulé.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre exact des artefacts au tout début du kata :", opts: ["Code, puis tests, puis liste", "Liste de tests, puis premier test rouge, puis code minimal", "Base de données, puis code", "Refactor, puis tests"], a: 1, exp: "Le plan, le rouge, le vert : la discipline avant la vitesse." },
+      { type: "qcm", q: "Le GREEN du tout premier test (3 jours → 6.00) a le droit d'être…", opts: ["return 6.00 codé en dur", "la fonction complète avec les trois if", "une requête SQL", "un mock"], a: 0, exp: "Minimal d'abord ; la triangulation du test suivant forcera la formule." },
+      { type: "vf", q: "Un test qui passe vert du premier coup (comme « 6 jours ») est forcément inutile.", a: false, exp: "Il verrouille la limite du palier : c'est une assurance anti-régression." },
+      { type: "input", q: "L'exception attendue pour une durée de 0 jour :", a: ["ValueError", "valueerror"], ph: "NomDeLException", exp: "if jours &lt; 1: raise ValueError — piloté par pytest.raises." },
+      { type: "qcm", q: "Le refactor final du kata a produit…", opts: ["Plus de if", "Des constantes nommées et un tableau parametrize", "Une base MySQL", "Un fichier de config"], a: 1, exp: "Nettoyage du code ET des tests, comportement inchangé, suite verte." }
+    ],
+    solution: `<pre class="pseudo">KATA calcul_prix_location — le derouler complet
+Cycle 1 : nominal (RED NameError → GREEN naif → triangulation)
+Cycle 2 : remise duree — palier teste DES DEUX COTES (7 et 6 jours)
+Cycle 3 : premium + cumul (11.97) → REFACTOR constantes + parametrize
+Cycle 4 : ValueError pour duree &lt; 1 (pytest.raises)
+
+Resultat : 7 cas verts, fonction courte, couverture totale native,
+tableau de cas qui documente le bareme. A refaire chrono en main.</pre>
+<p>Tu sais piloter du code neuf par les tests. Mais que faire du code qui existe déjà — sans le moindre test ? Prochaine leçon : apprivoiser le legacy.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l12", title: "Ton kata : les frais de retard en TDD", level: 3,
+    statement: "À toi de dérouler un kata complet. Règles des frais de retard de la Ludothèque : 0,50 € par jour de retard ; gratuit les 2 premiers jours (délai de grâce) ; plafonné à 10 € ; un retard négatif ou nul rend 0. Rédige d'abord ta liste de tests (5 à 7 cas, valeurs calculées à la main), puis déroule au moins trois cycles red-green-refactor par écrit : pour chaque cycle, le test, la raison du rouge, le code minimal, et le moment où tu généralises. Termine par le refactor final (constantes nommées + parametrize) et coche ta liste.",
+    hints: [
+      "Le délai de grâce crée un palier : teste 2 jours (gratuit), 3 jours (0,50 : seul le 3e jour compte ? ou 1,50 ? — décide et fixe la règle par un test).",
+      "Le plafond crée un second palier : calcule à la main le nombre de jours où on l'atteint et teste pile dessus.",
+      "Ton premier GREEN a le droit d'être return 0 : c'est le cas « retour à temps » qui démarre le kata en douceur."
+    ],
+    solution: "Règle fixée par mes tests : les jours de grâce ne comptent pas\n(3 jours de retard = 1 jour facturé = 0,50 €).\n\nLISTE DE TESTS\n[x] 0 jour → 0.00           [x] 2 jours (grace) → 0.00\n[x] 3 jours → 0.50          [x] 5 jours → 1.50\n[x] 22 jours → 10.00 (pile au plafond : 20 x 0.50)\n[x] 30 jours → 10.00        [x] -2 jours → 0.00\n\nCycle 1 : test_retour_a_temps (0 → 0.00)\n  RED : NameError. GREEN : return 0.00\nCycle 2 : test_trois_jours (3 → 0.50)\n  RED : return 0.00 ne suffit plus.\n  GREEN : return max(jours - 2, 0) * 0.50\n  (généralise ET absorbe le délai de grâce + le cas négatif)\n  Vert direct ensuite : 2 jours → 0.00 et -2 jours → 0.00,\n  deux verrous de palier gratuits.\nCycle 3 : test_pile_au_plafond (22 → 10.00)\n  RED : le code rend 10.00 ? Non : 20 x 0.50 = 10.00... vert ?\n  Je teste 30 jours → RED (14.00). GREEN :\n  return min(max(jours - 2, 0) * 0.50, 10.00)\n\nREFACTOR final :\nGRACE_JOURS, PRIX_JOUR_RETARD, PLAFOND = 2, 0.50, 10.00\n+ @pytest.mark.parametrize avec les 7 cas, ids parlants.\npytest → 7 verts, liste entièrement cochée.",
+    note: "Tu viens de vivre le vrai TDD : au cycle 3, un test attendu rouge est passé vert (22 jours), et c'est le cas suivant qui a piloté le plafond — le kata t'apprend à écouter tes tests plutôt que ton plan. Ce barème complet rejoindra le capstone Ludothèque, et le cours CI/CD le rejouera à chaque push." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie (Identity)",
+  subtitle: "Les bons réflexes de sécurité dès le premier compte, pas en fin de parcours.",
+  theory: `
+<h3>1. ASP.NET Core Identity et les trois rôles</h3>
+<p><strong>Identity</strong> est la brique de sécurité toute faite d'ASP.NET Core : elle gère les comptes utilisateurs, leurs <strong>rôles</strong> (des étiquettes de droits) et la connexion. L'<strong>authentification</strong> répond à « qui es-tu ? » ; l'<strong>autorisation</strong> (leçon 10) à « as-tu le droit ? ». La Ludothèque a trois profils : <strong>Client</strong>, <strong>Vendeur</strong>, <strong>Admin</strong>. On branche Identity puis on le <em>durcit</em> (on renforce ses réglages).</p>
+<pre class="pseudo">builder.Services.AddIdentity&lt;Utilisateur, IdentityRole&gt;(o => {   // active Identity : gère comptes (Utilisateur) et rôles
+    o.Password.RequiredLength = 12;            // NIST : la longueur prime — impose 12 caractères minimum
+    o.Password.RequireNonAlphanumeric = false; // pas d'obligation de caractère spécial (la longueur compte plus)
+    o.User.RequireUniqueEmail = true;          // un email ne peut servir qu'à un seul compte
+    o.Lockout.MaxFailedAccessAttempts = 5;     // anti-brute-force : verrouille après 5 tentatives ratées
+}).AddEntityFrameworkStores&lt;LudothequeContext&gt;();   // range les comptes dans NOTRE base, via EF Core
+// rôles semés au démarrage : await roleManager.CreateAsync(new IdentityRole("Vendeur"));   // crée le rôle "Vendeur" au lancement de l'app</pre>
+<p>Le <strong>brute-force</strong> est une attaque qui essaie des milliers de mots de passe à la suite ; le <strong>verrouillage</strong> (lockout) bloque le compte après quelques échecs, la rendant inutile. « NIST » désigne les recommandations officielles américaines sur les mots de passe (la longueur protège plus que les caractères exotiques).</p>
+
+<h3>2. Le hachage, géré par Identity</h3>
+<p><strong>Hacher</strong> un mot de passe, c'est le passer dans une transformation à sens unique : on peut vérifier qu'un mot de passe saisi correspond, mais jamais retrouver l'original — même en volant la base. Le <strong>sel</strong> (« salt ») est une valeur aléatoire ajoutée pour que deux mots de passe identiques aient des empreintes différentes. <strong>PBKDF2</strong> est l'algorithme utilisé, volontairement lent pour décourager les attaques.</p>
+<pre class="pseudo">await _userManager.CreateAsync(user, motDePasse);   // crée le compte : le mot de passe est haché (PBKDF2 salé), jamais stocké en clair
+await _signInManager.PasswordSignInAsync(email, mdp, isPersistent: false, lockoutOnFailure: true);   // tente la connexion (isPersistent=false : session non mémorisée)
+// lockoutOnFailure : verrouille le compte après N échecs   // compte les tentatives ratées et déclenche le verrou</pre>
+
+<h3>3. Durcir les cookies</h3>
+<p>Un <strong>cookie</strong> est un petit jeton que le navigateur renvoie à chaque requête pour prouver « c'est toujours moi » après la connexion. Mal protégé, il peut être volé. On le durcit contre deux attaques : le <strong>XSS</strong> (un script malveillant injecté dans la page) et le <strong>CSRF</strong> (une requête déclenchée à l'insu de l'utilisateur depuis un autre site).</p>
+<pre class="pseudo">builder.Services.ConfigureApplicationCookie(o => {
+    o.Cookie.HttpOnly = true;                  // inaccessible au JS (anti-XSS)
+    o.Cookie.SecurePolicy = CookieSecurePolicy.Always;   // HTTPS uniquement
+    o.Cookie.SameSite = SameSiteMode.Lax;      // anti-CSRF de base
+    o.ExpireTimeSpan = TimeSpan.FromHours(8);
+});</pre>
+<p><strong>HTTPS</strong> est la version chiffrée du web (le cadenas du navigateur) : le cookie n'est envoyé que sur ce canal sûr, jamais en clair.</p>
+
+<h3>4. Brancher le pipeline</h3>
+<pre class="pseudo">app.UseAuthentication();   // AVANT
+app.UseAuthorization();    // l'ordre compte : authentifier puis autoriser</pre>
+<p>Le <strong>pipeline</strong> est la chaîne de middlewares que traverse chaque requête. On identifie d'abord (<code>UseAuthentication</code>), on décide des droits ensuite (<code>UseAuthorization</code>) : inverser les deux reviendrait à vérifier un billet avant même de savoir qui se présente.</p>
+
+<h3>5. Sécurité par conception</h3>
+<div class="warn">Au Niveau 6, la sécurité des sessions arrivait en fin de parcours. Ici, dès le premier utilisateur : Identity hache le mot de passe (PBKDF2 salé, jamais de clair), politique NIST (RequiredLength = 12), verrouillage anti-brute-force, cookies durcis. Sécuriser au moment où l'on crée la fonctionnalité coûte quelques lignes de config ; le faire après coup coûte un audit.</div>
+<div class="tip">L'ordre <code>UseAuthentication()</code> puis <code>UseAuthorization()</code> est impératif : on ne peut autoriser qu'après avoir identifié. Identity fournit gratuitement l'essentiel — notre travail est de le durcir et de câbler les rôles.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le mot de passe est stocké…", opts: ["En clair", "Haché par Identity (PBKDF2 salé)", "En base64", "Chiffré réversible"], a: 1, exp: "Jamais récupérable en clair." },
+    { type: "qcm", q: "Les trois rôles sont…", opts: ["Admin, root, user", "Client, Vendeur, Admin", "Lecteur, écrivain", "Aucun"], a: 1, exp: "Profils métier." },
+    { type: "qcm", q: "RequiredLength = 12 applique…", opts: ["Rien", "La politique NIST (longueur prime)", "Un chiffrement", "Un cache"], a: 1, exp: "Longueur >= 12." },
+    { type: "qcm", q: "lockoutOnFailure protège contre…", opts: ["Le XSS", "Le brute-force (verrouillage après N échecs)", "Le CSRF", "Le N+1"], a: 1, exp: "MaxFailedAccessAttempts." },
+    { type: "qcm", q: "HttpOnly sur le cookie…", opts: ["Le rend lisible en JS", "L'empêche d'être lu par JavaScript (anti-XSS)", "Le chiffre", "L'accélère"], a: 1, exp: "Vol de session bloqué." },
+    { type: "qcm", q: "CookieSecurePolicy.Always…", opts: ["Transmet en HTTP", "Transmet le cookie uniquement en HTTPS", "Rien", "Le supprime"], a: 1, exp: "Pas d'interception en clair." },
+    { type: "qcm", q: "SameSite=Lax offre…", opts: ["Une protection CSRF de base", "Rien", "Du chiffrement", "Un cache"], a: 0, exp: "Défense en profondeur." },
+    { type: "qcm", q: "L'ordre dans le pipeline :", opts: ["UseAuthorization avant UseAuthentication", "UseAuthentication avant UseAuthorization", "Peu importe", "Aucun des deux"], a: 1, exp: "Identifier puis autoriser." },
+    { type: "qcm", q: "CreateAsync(user, mdp) …", opts: ["Stocke le clair", "Crée l'utilisateur avec mot de passe haché", "Chiffre réversible", "Déploie"], a: 1, exp: "Identity hache." },
+    { type: "qcm", q: "Identity fournit gratuitement…", opts: ["Rien", "Utilisateurs, rôles, hachage, cookies", "Le métier", "La base"], a: 1, exp: "On branche, on durcit." },
+    { type: "vf", q: "Sécuriser dès la création coûte moins cher que rétrofiter.", a: true, exp: "Par conception." },
+    { type: "qcm", q: "MD5/SHA1 pour un mot de passe :", opts: ["Recommandés", "À proscrire (trop rapides, cassés)", "Obligatoires", "Idéaux"], a: 1, exp: "PBKDF2/argon2/bcrypt." },
+    { type: "qcm", q: "AddEntityFrameworkStores relie Identity à…", opts: ["Le CSS", "La base via le DbContext", "Le cache", "L'URL"], a: 1, exp: "Stockage des comptes." },
+    { type: "qcm", q: "Les rôles sont créés…", opts: ["À la main en base", "Semés au démarrage (RoleManager)", "Jamais", "Dans le cookie"], a: 1, exp: "Reproductible." },
+    { type: "vf", q: "Un cookie HttpOnly ne peut pas être volé par un script XSS.", a: true, exp: "Inaccessible au JS." }
+  ],
+  final: {
+    title: "Exercice final — L'authentification durcie",
+    intro: `<p>Comptes + hachage + cookies + politique.</p>`,
+    questions: [
+      { type: "qcm", q: "Le mot de passe :", opts: ["haché par Identity (PBKDF2)", "en clair", "en base64", "en MD5"], a: 0, exp: "Non réversible, salé." },
+      { type: "qcm", q: "Les cookies de session :", opts: ["HttpOnly + Secure + SameSite", "aucun réglage", "lisibles en JS", "en HTTP"], a: 0, exp: "Durcis." },
+      { type: "qcm", q: "La politique de mot de passe :", opts: ["RequiredLength = 12 + lockout", "8 max", "aucune", "1 chiffre"], a: 0, exp: "NIST + anti-brute-force." },
+      { type: "qcm", q: "L'ordre du pipeline :", opts: ["UseAuthentication puis UseAuthorization", "l'inverse", "peu importe", "aucun"], a: 0, exp: "Identifier puis autoriser." },
+      { type: "vf", q: "Ces réflexes sont posés dès le premier compte, pas en fin de parcours.", a: true, exp: "Par conception." }
+    ],
+    solution: `<pre class="pseudo">builder.Services.AddIdentity<Utilisateur, IdentityRole>(o => {   // active Identity
+  o.Password.RequiredLength = 12;                  // 12 caractères minimum (NIST)
+  o.User.RequireUniqueEmail = true;                // un email = un compte
+  o.Lockout.MaxFailedAccessAttempts = 5;           // verrouillage anti-brute-force
+}).AddEntityFrameworkStores<LudothequeContext>();  // stocke les comptes via EF Core
+
+builder.Services.ConfigureApplicationCookie(o => {              // durcissement du cookie de session
+  o.Cookie.HttpOnly = true; o.Cookie.SecurePolicy = CookieSecurePolicy.Always;   // pas de JS (anti-XSS) + HTTPS seul
+  o.Cookie.SameSite = SameSiteMode.Lax;            // anti-CSRF de base
+});
+app.UseAuthentication(); app.UseAuthorization();   // l'ordre compte : identifier PUIS autoriser</pre>
+<p>L'auth est durcie. Demain : l'autorisation par rôle ET par ressource (Policies, anti-IDOR).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta configuration de sécurité…",
+  items: [
+  { id: "proj6cs-l9", title: "L'authentification durcie dès le premier compte", level: 2,
+    statement: "Écris la config Identity (rôles, politique de mot de passe, lockout), le durcissement des cookies (ConfigureApplicationCookie), et l'ordre du pipeline (UseAuthentication/UseAuthorization). Explique en 2-3 lignes pourquoi hacher (et pas chiffrer) et pourquoi l'ordre du pipeline compte.",
+    hints: [
+      "AddIdentity + RequiredLength=12 + Lockout ; CreateAsync hache automatiquement.",
+      "ConfigureApplicationCookie : HttpOnly, SecurePolicy.Always, SameSite.Lax.",
+      "UseAuthentication() AVANT UseAuthorization()."
+    ],
+    solution: "// Program.cs\nbuilder.Services.AddIdentity<Utilisateur, IdentityRole>(o => {\n    o.Password.RequiredLength = 12;            // NIST : la longueur prime\n    o.Password.RequireNonAlphanumeric = false;\n    o.User.RequireUniqueEmail = true;\n    o.Lockout.MaxFailedAccessAttempts = 5;     // anti-brute-force\n}).AddEntityFrameworkStores<LudothequeContext>();\n\nbuilder.Services.ConfigureApplicationCookie(o => {\n    o.Cookie.HttpOnly = true;                  // inaccessible au JS (anti-XSS)\n    o.Cookie.SecurePolicy = CookieSecurePolicy.Always;   // HTTPS uniquement\n    o.Cookie.SameSite = SameSiteMode.Lax;      // anti-CSRF de base\n    o.ExpireTimeSpan = TimeSpan.FromHours(8);\n});\n\n// inscription : await _userManager.CreateAsync(user, motDePasse);  // hache par Identity\n// connexion : await _signInManager.PasswordSignInAsync(email, mdp, false, lockoutOnFailure: true);\n\napp.UseAuthentication();   // 1) identifier\napp.UseAuthorization();    // 2) autoriser -- l'ordre est IMPERATIF\n\n// POURQUOI HACHER (PAS CHIFFRER), POURQUOI L'ORDRE\n// Hacher = transformation a SENS UNIQUE : meme la base volee, les mots de passe\n// ne se retrouvent pas. Chiffrer serait reversible (avec la cle) -- inutile ici,\n// on n'a jamais besoin de RELIRE le mot de passe, seulement de le VERIFIER. Identity\n// utilise PBKDF2 sale, volontairement lent, pour ruiner le brute-force.\n// ORDRE : UseAuthorization s'appuie sur l'identite etablie par UseAuthentication.\n// Inverser les deux ferait echouer l'autorisation (aucun utilisateur connu au moment\n// de decider) -- une faille beante. Identifier PUIS autoriser, toujours.",
+    note: "La distinction hacher / chiffrer est fondamentale : on ne chiffre jamais un mot de passe, on le hache — Identity le fait avec PBKDF2 salé. Le durcissement (RequiredLength, lockout, cookies) tient en quelques lignes de config posées dès le premier compte. Et l'ordre UseAuthentication → UseAuthorization est un piège classique en ASP.NET : inversé, l'autorisation ne voit aucun utilisateur et laisse tout passer ou tout bloquer." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "La relation N-N : belongsToMany et la table pivot",
+  subtitle: "Un jeu a plusieurs catégories, une catégorie a plusieurs jeux : la table pivot entre en scène.",
+  theory: `
+<h3>1. Le N-N du Niveau 4 : la table pivot</h3>
+<p>Un jeu appartient à plusieurs catégories (« stratégie » ET « famille »), et chaque catégorie regroupe plusieurs jeux. C'est une relation <strong>N-N</strong> (plusieurs-à-plusieurs). Au Niveau 4, tu as appris qu'un N-N se résout par une <strong>table d'association</strong> : <em>categorie_jeu</em>, deux clés étrangères, pas de vie propre.</p>
+<pre class="pseudo">jeux            categorie_jeu             categories
+id | titre      categorie_id | jeu_id     id | nom
+3  | Catan             1     |   3        1  | Stratégie
+7  | Dixit             4     |   3        4  | Famille
+                       4     |   7</pre>
+<p>Eloquent appelle cette table le <strong>pivot</strong> (analogie : le cahier de liaison entre deux classes — il note juste qui est relié à qui, sans contenu propre). Convention de nommage : les deux modèles au <strong>singulier snake_case, en ordre alphabétique</strong>, joints par un underscore : categorie_jeu (c avant j). Respecte-la et Eloquent trouve la table tout seul.</p>
+
+<h3>2. Déclarer belongsToMany… des deux côtés</h3>
+<pre class="pseudo">// app/Models/Jeu.php
+public function categories()                          // "un jeu a plusieurs catégories"
+{
+    return $this-&gt;belongsToMany(Categorie::class);    // N-N via le pivot categorie_jeu (deviné)
+}
+
+// app/Models/Categorie.php
+public function jeux()                                // "une catégorie a plusieurs jeux"
+{
+    return $this-&gt;belongsToMany(Jeu::class);          // même pivot, sens inverse
+}</pre>
+<p>Contrairement au duo belongsTo/hasMany, le N-N est <strong>symétrique</strong> : belongsToMany des deux côtés. Il n'y a <strong>pas de modèle CategorieJeu</strong> : le pivot est géré par la relation. Si ta table pivot déroge à la convention, précise : <em>belongsToMany(Categorie::class, 'categorie_jeu', 'jeu_id', 'categorie_id')</em>. En JPA c'est @ManyToMany (+ @JoinTable), en Django un ManyToManyField, en EF Core une collection de navigation des deux côtés.</p>
+<pre class="pseudo">$jeu = Jeu::find(3);                   // charge le jeu n°3
+foreach ($jeu-&gt;categories as $cat) {   // propriété : Collection de Categorie
+    echo $cat-&gt;nom;                    // Stratégie, Famille
+}
+// SQL : SELECT c.* FROM categories c
+//       JOIN categorie_jeu cj ON cj.categorie_id = c.id
+//       WHERE cj.jeu_id = 3</pre>
+
+<h3>3. attach, detach : écrire dans le pivot</h3>
+<p>On n'insère jamais à la main dans categorie_jeu : la relation s'en charge.</p>
+<pre class="pseudo">$jeu-&gt;categories()-&gt;attach(4);          // INSERT (jeu_id=3, categorie_id=4) dans le pivot
+$jeu-&gt;categories()-&gt;attach([1, 4]);     // attache plusieurs catégories d'un coup
+
+$jeu-&gt;categories()-&gt;detach(4);          // DELETE cette ligne du pivot (le lien seulement)
+$jeu-&gt;categories()-&gt;detach();           // détache TOUTES les catégories
+
+$jeu-&gt;categories()-&gt;toggle([1, 4]);     // attache si absent, détache si présent (bascule)</pre>
+<p>Remarque la syntaxe : <strong>categories() avec parenthèses</strong> (on agit sur la relation), comme associate() à la leçon 8. Et contrairement à associate, <strong>pas de save() ensuite</strong> : attach/detach écrivent immédiatement dans le pivot.</p>
+
+<h3>4. sync : « voici la liste finale »</h3>
+<p>Le formulaire d'édition d'un jeu envoie les cases cochées : [1, 4]. Plutôt que calculer quoi attacher/détacher, <strong>sync()</strong> fait converger le pivot vers la liste exacte (analogie : tu ne notes pas les changements un par un, tu dis « la liste finale des invités, c'est ça » et sync ajuste tout) :</p>
+<pre class="pseudo">$jeu-&gt;categories()-&gt;sync([1, 4]);       // fait converger le pivot vers EXACTEMENT [1, 4]
+// attache ce qui manque, détache ce qui est en trop, ne touche pas au reste
+
+$jeu-&gt;categories()-&gt;syncWithoutDetaching([4]);   // ajoute 4 sans rien détacher</pre>
+<p>sync() est LE réflexe des formulaires à cases à cocher — retiens-le, il tombera à l'examen et au Niveau 6.</p>
+
+<h3>5. Le pivot enrichi : withPivot et withTimestamps</h3>
+<p>Parfois le pivot porte des colonnes en plus. Exemple Ludothèque : la table <em>jeu_membre</em> des <strong>favoris</strong>, avec une colonne <em>priorite</em>. Il faut déclarer ces colonnes pour les lire :</p>
+<pre class="pseudo">// Membre.php
+public function favoris()
+{
+    return $this-&gt;belongsToMany(Jeu::class, 'jeu_membre')   // N-N via le pivot jeu_membre
+                -&gt;withPivot('priorite')                     // déclare la colonne pivot "priorite" (pour la lire)
+                -&gt;withTimestamps();                         // gère created_at / updated_at du pivot
+}
+
+foreach ($membre-&gt;favoris as $jeu) {                        // parcourt les jeux favoris du membre
+    echo $jeu-&gt;titre . ' — priorité ' . $jeu-&gt;pivot-&gt;priorite;   // titre + valeur du pivot via ->pivot
+}
+
+$membre-&gt;favoris()-&gt;attach(3, ['priorite' =&gt; 1]);           // attache le jeu 3 avec priorite = 1
+$membre-&gt;favoris()-&gt;updateExistingPivot(3, ['priorite' =&gt; 2]);   // met à jour la priorite du lien existant</pre>
+<p>L'attribut magique <strong>-&gt;pivot</strong> expose la ligne d'association. Si le pivot devient une vraie entité (avec statut, règles…), c'est le signe qu'il mérite son propre modèle — comme Location, qui est en réalité un N-N enrichi entre jeux et membres promu au rang de modèle.</p>
+<div class="warn">attach() n'est pas idempotent : attacher deux fois la catégorie 4 crée DEUX lignes dans le pivot (sauf contrainte d'unicité en base). Pour un formulaire rejoué ou un import, préfère sync() ou syncWithoutDetaching(), et pose une contrainte UNIQUE sur le couple de clés dans la migration — réflexe Niveau 4.</div>
+<div class="tip">Ne crée un modèle pour la table d'association que si elle a une vie propre : categorie_jeu (deux FK, rien d'autre) reste un pivot piloté par belongsToMany ; locations (dates, retards, règles métier) mérite son modèle Location avec deux belongsTo. Ce critère de promotion vaut dans tous les ORM — @JoinTable vs entité dédiée chez JPA.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une relation N-N entre jeux et categories exige…", opts: ["Une colonne categorie_id dans jeux", "Une table pivot portant les deux clés étrangères", "Deux colonnes JSON", "Un index FULLTEXT"], a: 1, exp: "Le N-N du Niveau 4 : table d'association categorie_jeu." },
+    { type: "qcm", q: "Le nom conventionnel du pivot entre Jeu et Categorie :", opts: ["jeu_categorie", "jeux_categories", "categorie_jeu", "pivot_jeu_cat"], a: 2, exp: "Singuliers snake_case en ordre alphabétique : c avant j." },
+    { type: "input", q: "Quelle méthode Eloquent déclare une relation N-N ?", a: ["belongsToMany", "belongstomany", "belongsToMany()"], ph: "nom de la méthode…", exp: "belongsToMany(Categorie::class), des deux côtés de la relation." },
+    { type: "vf", q: "Le N-N se déclare belongsToMany dans les DEUX modèles concernés.", a: true, exp: "Relation symétrique — contrairement au duo belongsTo/hasMany." },
+    { type: "qcm", q: "Faut-il créer un modèle CategorieJeu pour le pivot ?", opts: ["Oui, toujours", "Non : le pivot est géré par belongsToMany, sauf s'il devient une vraie entité", "Oui, mais vide", "Seulement en production"], a: 1, exp: "Un pivot nu n'a pas de modèle ; s'il s'enrichit de règles métier, on le promeut (cf. Location)." },
+    { type: "qcm", q: "$jeu->categories()->attach(4) exécute…", opts: ["Un INSERT dans la table pivot, immédiatement", "Rien avant save()", "Un UPDATE de jeux", "Un DELETE"], a: 0, exp: "attach écrit tout de suite — pas de save() ensuite, contrairement à associate." },
+    { type: "qcm", q: "Pour retirer la catégorie 4 d'un jeu sans supprimer la catégorie elle-même :", opts: ["$jeu->categories()->detach(4)", "Categorie::destroy(4)", "$jeu->delete()", "detachAll()"], a: 0, exp: "detach supprime la ligne du pivot ; les deux entités survivent." },
+    { type: "input", q: "Quelle méthode fait converger le pivot vers une liste exacte d'ids (cases cochées d'un formulaire) ?", a: ["sync", "sync()", "->sync()"], ph: "nom de la méthode…", exp: "sync([1, 4]) : attache le manquant, détache le surplus." },
+    { type: "qcm", q: "$jeu->categories()->sync([1, 4]) alors que le jeu a les catégories 1 et 2 :", opts: ["Erreur", "Ajoute 4, garde 1 et 2", "Garde 1, ajoute 4, détache 2", "Détache tout"], a: 2, exp: "La liste finale EST [1, 4] : sync calcule le différentiel." },
+    { type: "qcm", q: "Pour ajouter des catégories sans jamais en retirer :", opts: ["syncWithoutDetaching([...])", "attachOnly()", "sync(null)", "merge()"], a: 0, exp: "Variante de sync qui n'exécute aucun detach." },
+    { type: "vf", q: "attach() appelé deux fois avec le même id crée deux lignes dans le pivot (sans contrainte UNIQUE en base).", a: true, exp: "attach n'est pas idempotent : pour du rejouable, sync() ou syncWithoutDetaching() + contrainte UNIQUE." },
+    { type: "qcm", q: "Pour lire une colonne supplémentaire du pivot (ex : priorite), il faut…", opts: ["Rien, c'est automatique", "La déclarer avec ->withPivot('priorite')", "Un modèle Pivot obligatoire", "Du SQL brut uniquement"], a: 1, exp: "Puis lecture via $jeu->pivot->priorite." },
+    { type: "input", q: "Quel attribut magique expose la ligne d'association sur chaque modèle lié (ex : $jeu->…->priorite) ?", a: ["pivot", "->pivot", "$jeu->pivot"], ph: "attribut…", exp: "->pivot : la ligne du pivot qui relie les deux modèles." },
+    { type: "qcm", q: "L'équivalent de belongsToMany chez Hibernate/JPA :", opts: ["@OneToOne", "@ManyToOne", "@ManyToMany (avec @JoinTable)", "@ElementCollection"], a: 2, exp: "Et ManyToManyField chez Django : mêmes concepts, pivot compris." },
+    { type: "qcm", q: "Location relie jeux et membres avec dates et règles métier : c'est…", opts: ["Un pivot nu à garder en belongsToMany", "Un N-N enrichi promu en vrai modèle avec deux belongsTo", "Une erreur de conception", "Une relation 1-1"], a: 1, exp: "Le critère de promotion : le pivot a une vie propre → modèle dédié (leçon 8)." }
+  ],
+  final: {
+    title: "Exercice final — Les étiquettes du catalogue",
+    intro: `<p>Le formulaire d'édition d'un jeu affiche les catégories en cases à cocher, et les membres épinglent leurs favoris. Le pivot n'aura plus de secret.</p>`,
+    questions: [
+      { type: "qcm", q: "Le formulaire du jeu 3 renvoie les catégories cochées [2, 5]. La bonne écriture :", opts: ["$jeu->categories()->attach([2, 5])", "$jeu->categories()->sync([2, 5])", "$jeu->categories()->detach()", "Categorie::sync($jeu)"], a: 1, exp: "sync = liste finale : idempotent, rejouable, exactement le besoin des checkboxes." },
+      { type: "input", q: "Quelle méthode ajoute la ligne (jeu 3, catégorie 4) dans le pivot sans toucher au reste ?", a: ["attach", "attach()", "->attach()"], ph: "nom de la méthode…", exp: "$jeu->categories()->attach(4) — écrit immédiatement dans categorie_jeu." },
+      { type: "vf", q: "Après detach(4), la catégorie 4 est supprimée de la table categories.", a: false, exp: "Seule la ligne du PIVOT disparaît : le lien, pas les entités." },
+      { type: "qcm", q: "Les favoris avec priorité (pivot jeu_membre + colonne priorite) exigent dans la relation :", opts: ["withPivot('priorite')", "hasMany(Priorite::class)", "$fillable = ['priorite']", "Un trigger MySQL"], a: 0, exp: "withPivot déclare la colonne, ->pivot->priorite la lit." },
+      { type: "qcm", q: "La convention de nommage du pivot entre Membre et Jeu serait…", opts: ["membre_jeu", "jeu_membre", "jeux_membres", "pivot_mj"], a: 1, exp: "Ordre alphabétique des singuliers : jeu avant membre." }
+    ],
+    solution: `<pre class="pseudo">N-N = table pivot (categorie_jeu : singuliers, ordre alphabétique)
+
+Déclarer : belongsToMany(Categorie::class)   — des DEUX côtés, pas de modèle pivot
+Lire     : $jeu-&gt;categories                  — Collection (JOIN généré)
+Écrire   : attach(4) / attach([1,4], [...]) — INSERT immédiat, non idempotent
+           detach(4) / detach()             — retire du pivot seulement
+           sync([1,4])                      — liste finale (checkboxes !)
+           syncWithoutDetaching / toggle
+Enrichi  : withPivot('priorite') + withTimestamps → $jeu-&gt;pivot-&gt;priorite
+
+Ailleurs : @ManyToMany + @JoinTable (JPA) · ManyToManyField (Django)</pre>
+<p>Il reste deux configurations plus rares à couvrir : le 1-1 et les relations « à travers » un modèle intermédiaire. Leçon 11 : hasOne et hasManyThrough.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l10", title: "Pivot nu ou vrai modèle ? L'arbitrage", level: 2,
+    statement: "La Ludothèque a deux associations N-N : jeux-categories (pivot nu categorie_jeu) et jeux-membres pour les locations (dates, retard, pénalités). Rédige l'analyse qui justifie deux traitements différents : pour chacune, décris les colonnes de la table d'association, décide entre belongsToMany avec pivot et vrai modèle avec deux belongsTo, écris les déclarations de relations retenues, puis formule le critère général de décision que tu appliqueras à tout futur N-N (par exemple : les favoris avec priorité, de quel côté tombent-ils ?).",
+    hints: [
+      "Compare les colonnes : categorie_jeu n'a que deux FK ; locations a des dates, un statut implicite (rendu ou non), des règles.",
+      "Un pivot piloté par belongsToMany peut-il porter des méthodes métier (estEnRetard()) ? Non — et c'est là que bascule la décision.",
+      "Pour les favoris avec UNE colonne priorite : withPivot suffit-il, ou faut-il déjà promouvoir ? Pense au coût de chaque option."
+    ],
+    solution: "1) jeux ↔ categories : pivot categorie_jeu (categorie_id, jeu_id)\n   Aucune donnée propre, aucune règle → PIVOT NU.\n   // Jeu.php\n   public function categories() { return $this->belongsToMany(Categorie::class); }\n   // Categorie.php\n   public function jeux() { return $this->belongsToMany(Jeu::class); }\n\n2) jeux ↔ membres via locations (jeu_id, membre_id, date_location,\n   date_retour, timestamps) + règles : retard, pénalité, stock.\n   La ligne d'association A une vie propre → VRAI MODÈLE.\n   // Location.php\n   public function jeu()    { return $this->belongsTo(Jeu::class); }\n   public function membre() { return $this->belongsTo(Membre::class); }\n   // et Jeu/Membre : hasMany(Location::class)\n   Un modèle Location peut porter estEnRetard(), des scopes, des events —\n   impossible sur un pivot anonyme.\n\nCRITÈRE GÉNÉRAL : si la table d'association ne contient que les deux FK\n(± timestamps), pivot nu belongsToMany. Dès qu'elle porte des attributs\nQUE LE MÉTIER MANIPULE (dates, statut) ou des règles, on la promeut en\nmodèle. Cas intermédiaire des favoris (priorite seule) : withPivot\nsuffit tant que priorite reste une donnée passive ; le jour où « favori »\ngagne des règles (notifications, limite de 10), promotion en modèle.",
+    note: "Cet arbitrage est un grand classique de conception : JPA le pose en @ManyToMany vs entité d'association avec deux @ManyToOne, Django en ManyToManyField vs modèle through. Ta table locations du Niveau 4 était déjà une entité d'association promue sans que tu le saches — au Niveau 6, tu sauras nommer ce choix dans ton dossier de conception." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

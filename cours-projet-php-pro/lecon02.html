@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le squelette Laravel dans Docker Compose",
+  subtitle: "Aucune installation sur la machine : l'app et sa base naissent en conteneurs.",
+  theory: `
+<h3>1. Un projet Laravel minimal</h3>
+<p>On crée le projet (<code>composer create-project laravel/laravel</code>), mais on ne l'exécute <strong>pas</strong> sur le poste : on le construit et on le lance dans des conteneurs. En production, Laravel tourne derrière <strong>PHP-FPM</strong> + <strong>Nginx</strong> — on reproduit ce duo dès le dev.</p>
+<p><strong>PHP-FPM</strong> (<em>FastCGI Process Manager</em>) est le moteur qui exécute le code PHP et fabrique la page à renvoyer ; <strong>Nginx</strong> est le <strong>serveur web</strong> placé devant lui : il reçoit les requêtes du navigateur, sert directement les fichiers simples (images, CSS) et transmet le reste à PHP-FPM — comme un accueil qui oriente les visiteurs vers le bon bureau. Reproduire ce duo dès le développement évite les mauvaises surprises le jour de la mise en production.</p>
+
+<h3>2. Le Docker Compose de développement</h3>
+<p>Le fichier <code>compose.yaml</code> décrit tous les conteneurs et la façon dont ils s'assemblent. Chaque <strong>service</strong> est un conteneur (ici trois : l'app, le serveur web, la base). Une <strong>image</strong> est le « moule » figé — téléchargé tout prêt, comme <code>nginx:alpine</code>, ou construit via un Dockerfile — à partir duquel on démarre un conteneur. Un <strong>port</strong> est une « porte » numérotée par laquelle on entre dans un conteneur : <code>8080:80</code> relie la porte 8080 de ta machine à la porte 80 du serveur web. Un <strong>volume</strong> est un espace de stockage externe qui survit à l'arrêt du conteneur, indispensable pour ne pas perdre les données de la base. Le <strong>healthcheck</strong> est une petite sonde répétée qui vérifie qu'un service est vraiment prêt à répondre. Enfin, le <strong>DNS interne</strong> de Compose est un annuaire qui traduit le nom d'un service (<code>bdd</code>) en adresse réseau : les conteneurs se parlent par leur nom, sans jamais coder d'adresse IP en dur.</p>
+<pre class="pseudo">services:                       # liste des conteneurs à lancer ensemble
+  app:                          # 1er conteneur : PHP-FPM, le moteur qui exécute le code de l'app
+    build: .                    # construit son image depuis le Dockerfile du dossier courant (.)
+    env_file: .env              # charge les variables (mots de passe…) depuis le fichier .env
+    depends_on:                 # cet "app" dépend d'un autre service…
+      bdd: { condition: service_healthy }   # …il attendra le service "bdd" jusqu'à ce qu'il soit PRÊT
+  web:                          # 2e conteneur : Nginx, le serveur web placé DEVANT PHP
+    image: nginx:alpine         # utilise une image toute prête (nginx, version légère "alpine")
+    ports: ["8080:80"]          # relie le port 8080 de ta machine au port 80 du conteneur
+    volumes: ["./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro"]   # injecte le fichier de config nginx (ro = lecture seule)
+    depends_on: [app]           # ne démarre qu'après le conteneur "app"
+  bdd:                          # 3e conteneur : la base de données
+    image: mysql:8.4            # image officielle de MySQL, version 8.4
+    environment:                # variables d'environnement lues par MySQL au démarrage
+      MYSQL_DATABASE: ludotheque       # crée automatiquement une base nommée "ludotheque"
+      MYSQL_USER: ludo_app             # crée un utilisateur applicatif "ludo_app"
+      MYSQL_PASSWORD: \${DB_PASSWORD}          # son mot de passe, injecté depuis .env (jamais écrit en dur)
+      MYSQL_ROOT_PASSWORD: \${DB_ROOT_PASSWORD}   # mot de passe du super-utilisateur "root", injecté aussi
+    volumes: ["donnees-mysql:/var/lib/mysql"]   # range les fichiers de la base dans un volume qui SURVIT aux redémarrages
+    healthcheck:                # sonde de santé : comment savoir si MySQL est réellement prêt
+      test: ["CMD","mysqladmin","ping","-h","localhost"]   # commande testée : "pinguer" MySQL en local
+      interval: 5s              # réessaie toutes les 5 secondes
+      retries: 10               # abandonne après 10 échecs consécutifs
+volumes: { donnees-mysql: {} }</pre>
+
+<h3>3. La configuration lit l'environnement</h3>
+<pre class="pseudo"># .env (Laravel) — fichier de configuration, gardé HORS du dépôt Git
+DB_CONNECTION=mysql             # type de base de données utilisé : MySQL
+DB_HOST=bdd                     # adresse de la base : "bdd", le nom du service, résolu par le DNS interne
+DB_DATABASE=ludotheque          # nom de la base à laquelle se connecter
+DB_USERNAME=ludo_app            # identifiant de connexion
+DB_PASSWORD=...                 # mot de passe (une vraie valeur secrète ici, masquée par ... dans le cours)
+# config/database.php lit ces variables via env() — jamais d'IP en dur</pre>
+
+<h3>4. Une route de santé</h3>
+<p>Une <strong>route</strong> associe une URL (par exemple <code>/health</code>) au code à exécuter quand on la visite — comme une entrée d'annuaire reliant une adresse à une action. Le <strong>JSON</strong> est un format de texte standard pour échanger des données entre programmes (<code>{"statut":"ok"}</code> se lit « la clé statut vaut ok »). <strong>curl</strong> est un petit outil en ligne de commande qui envoie une requête à une URL et affiche la réponse, pour tester sans navigateur. Les nombres comme <strong>503</strong> sont des <em>codes HTTP</em> : le langage par lequel un serveur dit si tout va bien (200) ou non (503 = service indisponible).</p>
+<pre class="pseudo">// routes/web.php — on déclare une "route" : une URL et le code exécuté quand on la visite
+Route::get('/health', function () {                     // quand on ouvre /health en GET, exécute cette fonction
+    try { DB::select('select 1'); return response()->json(['statut' => 'ok']); }   // ESSAIE d'interroger la base (select 1) ; si ok, renvoie {"statut":"ok"} en JSON
+    catch (\\Throwable $e) { return response()->json(['statut' => 'ko'], 503); }    // EN CAS d'erreur (base injoignable), renvoie {"statut":"ko"} avec le code HTTP 503
+});                                                      // fin de la déclaration de la route
+// $ docker compose up -d && curl localhost:8080/health -> {"statut":"ok"}   // on lance tout puis on teste : réponse attendue {"statut":"ok"}</pre>
+
+<h3>5. Pourquoi le healthcheck</h3>
+<div class="warn">MySQL « démarré » n'est pas MySQL « prêt » : le conteneur répond avant que la base accepte les connexions. Sans <code>condition: service_healthy</code>, l'app tente de se connecter trop tôt et les migrations plantent. Le healthcheck + <code>depends_on</code> font attendre l'app que <code>mysqladmin ping</code> réussisse.</div>
+<div class="tip">Résultat : <code>docker compose up</code> et tout le monde a exactement le même environnement (même PHP 8.5, même MySQL 8.4, même Nginx). Fini « ça marche sur mon poste » — le poste n'exécute plus rien, ce sont les conteneurs qui travaillent (cours Docker).</div>`,
+  exercises: [
+    { type: "qcm", q: "Le projet Laravel, on le lance…", opts: ["Sur le poste", "Dans des conteneurs (docker compose up)", "En prod direct", "Jamais"], a: 1, exp: "Aucune installation locale." },
+    { type: "qcm", q: "En prod, Laravel tourne derrière…", opts: ["Rien", "PHP-FPM + Nginx", "Un navigateur", "Apache seul obligatoire"], a: 1, exp: "On reproduit ce duo en dev." },
+    { type: "qcm", q: "L'app trouve MySQL via…", opts: ["Une IP en dur", "DB_HOST=bdd (DNS Compose)", "localhost", "Un fichier hosts"], a: 1, exp: "Réseau interne Compose." },
+    { type: "qcm", q: "condition: service_healthy garantit…", opts: ["Que le conteneur existe", "Que MySQL est PRÊT (pas juste démarré)", "Le CSS", "Rien"], a: 1, exp: "mysqladmin ping." },
+    { type: "qcm", q: "Le volume donnees-mysql sert à…", opts: ["Le code", "Persister les données de la base", "Les logs", "Le cache"], a: 1, exp: "Sinon tout est perdu au down." },
+    { type: "qcm", q: "La config de la base vient de…", opts: ["Valeurs en dur dans le code", "Variables d'environnement (.env -> config)", "Un QCM", "La RAM"], a: 1, exp: "Par environnement." },
+    { type: "qcm", q: "On vérifie que l'app tourne avec…", opts: ["Un ping DNS", "curl /health -> statut ok", "Un reboot", "Rien"], a: 1, exp: "Route de santé." },
+    { type: "qcm", q: "MySQL 'démarré' vs 'prêt' :", opts: ["C'est pareil", "Le conteneur répond avant d'accepter les connexions", "Prêt d'abord", "Sans importance"], a: 1, exp: "D'où le healthcheck." },
+    { type: "qcm", q: "config/database.php lit les secrets via…", opts: ["Des constantes", "env() (variables d'environnement)", "Un QCM", "Le cache"], a: 1, exp: "Config externalisée." },
+    { type: "qcm", q: "Nginx sert…", opts: ["La base", "Le PHP-FPM (l'app)", "Le CSS seul", "Rien"], a: 1, exp: "Serveur web devant PHP." },
+    { type: "vf", q: "Grâce aux conteneurs, tous les développeurs ont le même environnement.", a: true, exp: "Reproductibilité (cours Docker)." },
+    { type: "qcm", q: "Le projet se crée avec…", opts: ["npm install", "composer create-project laravel/laravel", "pip install", "make"], a: 1, exp: "Composer." },
+    { type: "qcm", q: "La route /health interroge…", opts: ["Le CSS", "La base (select 1) -> 200 ou 503", "Le registre", "Le DNS"], a: 1, exp: "Traverse jusqu'à la base." },
+    { type: "qcm", q: "Le poste du développeur exécute désormais…", opts: ["PHP et MySQL", "Docker (les conteneurs font le travail)", "Rien", "Un IDE seul"], a: 1, exp: "Environnement conteneurisé." },
+    { type: "vf", q: "Aucune adresse IP de la base n'est écrite en dur.", a: true, exp: "Le nom de service suffit." }
+  ],
+  final: {
+    title: "Exercice final — Le squelette qui tourne en conteneurs",
+    intro: `<p>App (PHP-FPM) + Nginx + base, en conteneurs, vérifiés.</p>`,
+    questions: [
+      { type: "qcm", q: "compose.yaml définit :", opts: ["app (PHP-FPM) + web (nginx) + bdd (mysql, healthcheck)", "l'app seule", "la base seule", "rien"], a: 0, exp: "Trois services." },
+      { type: "qcm", q: "L'app attend la base grâce à :", opts: ["depends_on + condition: service_healthy", "un sleep", "la chance", "un cron"], a: 0, exp: "Prête, pas juste démarrée." },
+      { type: "qcm", q: "La connexion à MySQL utilise :", opts: ["DB_HOST=bdd (DNS interne)", "une IP", "localhost", "un tunnel"], a: 0, exp: "Réseau Compose." },
+      { type: "qcm", q: "On valide le démarrage par :", opts: ["curl /health = statut ok", "un screenshot", "l'absence d'erreur visuelle", "rien"], a: 0, exp: "Preuve vérifiable." },
+      { type: "vf", q: "La config de la base vient de l'environnement, pas du code.", a: true, exp: ".env -> config/database.php." }
+    ],
+    solution: `<pre class="pseudo"># compose.yaml : app (PHP-FPM) + web (nginx) + bdd (healthcheck, volume)
+# .env : DB_HOST=bdd, DB_DATABASE=ludotheque... ; config/database.php lit env()
+# routes/web.php : Route::get('/health', ... DB::select('select 1') ...)
+
+$ docker compose up -d
+$ curl localhost:8080/health   -> {"statut":"ok"}</pre>
+<p>Le squelette tourne en conteneurs. Demain : Git propre et la première CI (Composer).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton compose et ta config…",
+  items: [
+  { id: "proj6php-l2", title: "Le Compose de développement commenté", level: 2,
+    statement: "Écris le compose.yaml de dev (services app PHP-FPM, web Nginx, bdd MySQL) et l'extrait .env correspondant, en commentant : le healthcheck (pourquoi 'prêt' ≠ 'démarré'), le volume (persistance), l'injection de la config par l'environnement, et la résolution du nom 'bdd'. Termine par la commande qui prouve que l'app répond.",
+    hints: [
+      "app : build ., env_file, depends_on avec condition: service_healthy ; web : nginx, ports.",
+      "bdd : mysql:8.4, environment (mots de passe via \\${...}), volume nommé, healthcheck mysqladmin ping.",
+      "Preuve : curl localhost:8080/health -> {\"statut\":\"ok\"}."
+    ],
+    solution: "# compose.yaml (developpement)\nservices:                                # liste des conteneurs a lancer ensemble\n  app:                                   # 1er conteneur : PHP-FPM (le code de l'app)\n    build: .                             # construit son image depuis le Dockerfile du dossier courant\n    env_file: .env                       # charge les variables depuis le fichier .env\n    depends_on:                          # depend d'un autre service...\n      bdd: { condition: service_healthy }   # ...attend que MySQL soit PRET (pas juste demarre)\n  web:                                   # 2e conteneur : Nginx (serveur web devant PHP)\n    image: nginx:alpine                  # image toute prete de nginx (version legere alpine)\n    ports: [\"8080:80\"]                   # relie le port 8080 de la machine au port 80 du conteneur\n    volumes: [\"./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro\"]   # injecte la config nginx (ro = lecture seule)\n    depends_on: [app]                    # ne demarre qu'apres le conteneur app\n  bdd:                                   # 3e conteneur : la base de donnees\n    image: mysql:8.4                     # image officielle MySQL 8.4\n    environment:                         # variables lues par MySQL au demarrage\n      MYSQL_DATABASE: ludotheque         # cree la base \"ludotheque\"\n      MYSQL_USER: ludo_app               # cree l'utilisateur applicatif\n      MYSQL_PASSWORD: ${DB_PASSWORD}         # son mot de passe, injecte (jamais en dur)\n      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}   # mot de passe root, injecte aussi\n    volumes: [\"donnees-mysql:/var/lib/mysql\"] # persiste les donnees dans un volume nomme\n    healthcheck:                         # sonde de sante du service\n      test: [\"CMD\",\"mysqladmin\",\"ping\",\"-h\",\"localhost\"]   # commande testee : pinguer MySQL\n      interval: 5s                       # reessaie toutes les 5 secondes\n      retries: 10                        # abandonne apres 10 echecs\nvolumes: { donnees-mysql: {} }           # declare le volume nomme utilise plus haut\n\n# .env (Laravel)\nDB_CONNECTION=mysql                      # type de base : MySQL\nDB_HOST=bdd                              # DNS interne du reseau Compose (pas d'IP)\nDB_DATABASE=ludotheque                   # nom de la base\nDB_USERNAME=ludo_app                     # identifiant de connexion\nDB_PASSWORD=...                          # mot de passe (secret ; reel dans le vrai .env)\n\n# POURQUOI\n# - healthcheck : MySQL repond avant d'accepter les connexions ; sans lui, l'app\n#   (et php artisan migrate) se connecte trop tot et plante au boot.\n# - volume : sans lui, 'docker compose down' effacerait toutes les donnees.\n# - environnement : la meme image tourne en dev/staging/prod, seule la config change.\n# - 'bdd' : le DNS interne resout le nom de service ; aucune IP en dur.\n\n# Preuve : docker compose up -d && curl localhost:8080/health -> {\"statut\":\"ok\"}",
+    note: "Ce compose est le socle de tout le cours : à partir d'ici, plus rien ne s'installe sur le poste. Le trio PHP-FPM + Nginx + MySQL reproduit dès le développement l'architecture de production — pas de mauvaise surprise au déploiement. Le healthcheck est le détail que tout le monde oublie et qui provoque les « ça plante un boot sur deux » : dépendre de l'état 'healthy' plutôt que 'started' rend le démarrage déterministe." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Relations entre modèles",
+  subtitle: "Un visiteur écrit plusieurs signatures : relier les tables comme des objets.",
+  theory: `
+<h3>1. Les clés étrangères</h3>
+<p>Dans le monde réel, les données sont liées : un <strong>visiteur</strong> écrit plusieurs <strong>signatures</strong>. En SQL, on matérialise le lien par une <strong>clé étrangère</strong> (en anglais <em>foreign key</em>, souvent abrégée FK) : la table signatures reçoit une colonne <code>visiteur_id</code> qui contient l'id du visiteur concerné — un peu comme un numéro de dossier qui renvoie vers une fiche. Dans la migration :</p>
+<pre class="pseudo">Schema::create('signatures', function (Blueprint $table) {   // cree la table signatures
+    $table->id();                                     // cle primaire de la signature
+    $table->foreignId('visiteur_id')->constrained();  // colonne cle etrangere vers visiteurs.id
+    $table->text('contenu');                          // le texte de la signature
+    $table->timestamps();                             // dates de creation/modification
+});                                                    // fin de la table</pre>
+<p><code>constrained()</code> ajoute la <strong>contrainte d'intégrité</strong> (une règle qui garantit la cohérence) : impossible de créer une signature pointant vers un visiteur inexistant.</p>
+<h3>2. hasMany : « un visiteur A PLUSIEURS signatures »</h3>
+<pre class="pseudo">class Visiteur extends Model                           // modele Visiteur
+{
+    public function signatures()                       // methode-relation nommee "signatures"
+    {
+        return $this->hasMany(Signature::class);       // hasMany = "a plusieurs" Signature
+    }
+}</pre>
+<h3>3. belongsTo : « une signature APPARTIENT À un visiteur »</h3>
+<pre class="pseudo">class Signature extends Model                          // modele Signature
+{
+    public function visiteur()                         // methode-relation nommee "visiteur"
+    {
+        return $this->belongsTo(Visiteur::class);      // belongsTo = "appartient a" un Visiteur
+    }
+}</pre>
+<p>Les deux méthodes forment les deux sens de la même relation <strong>1-N</strong> (« un-à-plusieurs » : un visiteur, plusieurs signatures). Convention : Eloquent devine la colonne <code>visiteur_id</code> à partir du nom <code>Visiteur</code>.</p>
+<h3>4. Utiliser la relation</h3>
+<pre class="pseudo">$visiteur = Visiteur::find(1);   // on charge le visiteur d'id 1
+$visiteur->signatures;           // ->signatures (sans parentheses) = la Collection de ses signatures
+$visiteur->signatures->count();  // on compte ses signatures
+
+$signature = Signature::find(7); // on charge la signature d'id 7
+$signature->visiteur->pseudo;    // on remonte vers son auteur et on lit son pseudo
+
+// Creer une signature liee :
+$visiteur->signatures()->create(['contenu' => 'Encore bravo !']);   // cree une signature ; visiteur_id est rempli tout seul</pre>
+<p>Note la nuance : <code>-&gt;signatures</code> (propriété, sans parenthèses) donne les résultats ; <code>-&gt;signatures()</code> (méthode, avec parenthèses) donne une requête qu'on peut affiner : <code>$visiteur-&gt;signatures()-&gt;where('publie', true)-&gt;get()</code>.</p>
+<h3>5. Le problème N+1 et eager loading</h3>
+<p>Afficher 100 signatures avec leur auteur : si tu fais <code>Signature::all()</code> puis <code>$s-&gt;visiteur-&gt;pseudo</code> dans la boucle, Eloquent exécute 1 requête pour les signatures <strong>+ 100 requêtes</strong> pour les visiteurs ! C'est le fameux problème <strong>N+1</strong> (une requête, plus N requêtes de trop). Solution : le chargement anticipé (en anglais <strong>eager loading</strong>) qui charge tout d'avance :</p>
+<pre class="pseudo">$signatures = Signature::with('visiteur')->get();   // with('visiteur') = charge les visiteurs d'avance : 2 requetes en tout</pre>
+<div class="warn">Le N+1 est LE piège de performance n°1 des ORM, tous langages confondus. Réflexe : dès qu'une boucle affiche une relation, ajoute with().</div>
+<div class="tip">Il existe aussi belongsToMany pour les relations N-N (ex. des articles et des tags) avec une table intermédiaire (« pivot »). Retiens surtout le couple hasMany/belongsTo : il couvre 80 % des besoins.</div>`,
+  exercises: [
+    { type: "qcm", q: "Comment matérialise-t-on « une signature appartient à un visiteur » dans la TABLE signatures ?", opts: ["Une colonne visiteur_id (clé étrangère) pointant vers visiteurs.id", "Une copie du visiteur entier", "Un fichier séparé", "Un index"], a: 0, exp: "La clé étrangère : le lien relationnel de base." },
+    { type: "qcm", q: "Dans une migration, que fait $table->foreignId('visiteur_id')->constrained() ?", opts: ["Un simple entier", "Une colonne FK + la contrainte d'intégrité vers la table visiteurs", "Une clé primaire", "Un champ texte"], a: 1, exp: "constrained() déduit la table visée du nom de colonne." },
+    { type: "qcm", q: "Quelle relation déclare-t-on dans Visiteur pour accéder à SES signatures ?", opts: ["belongsTo(Signature::class)", "hasMany(Signature::class)", "hasOne", "manyToMany"], a: 1, exp: "Un visiteur A PLUSIEURS signatures → hasMany." },
+    { type: "qcm", q: "Et dans Signature, pour remonter à son visiteur ?", opts: ["hasMany(Visiteur::class)", "belongsTo(Visiteur::class)", "hasVisiteur()", "parent()"], a: 1, exp: "La signature APPARTIENT À un visiteur → belongsTo (côté qui porte la FK)." },
+    { type: "qcm", q: "Quelle colonne Eloquent devine-t-il pour la relation belongsTo(Visiteur::class) ?", opts: ["id_visiteur", "visiteur_id", "fk_visiteur", "visiteur"], a: 1, exp: "nomdumodele_id : encore la convention plutôt que la configuration." },
+    { type: "qcm", q: "Différence entre $visiteur->signatures et $visiteur->signatures() ?", opts: ["Aucune", "Sans parenthèses : les résultats (Collection) ; avec : une requête à affiner", "Avec parenthèses c'est plus rapide", "Sans parenthèses ça plante"], a: 1, exp: "->signatures()->where(...)->get() permet de filtrer la relation." },
+    { type: "qcm", q: "Comment créer une signature directement rattachée à $visiteur ?", opts: ["Signature::create() sans plus", "$visiteur->signatures()->create(['contenu' => '...'])", "$visiteur->addSignature()", "INSERT INTO"], a: 1, exp: "Eloquent remplit visiteur_id automatiquement." },
+    { type: "qcm", q: "Qu'est-ce que le problème N+1 ?", opts: ["Une erreur de calcul", "1 requête pour la liste + 1 requête PAR élément pour sa relation : N+1 requêtes au lieu de 2", "Un dépassement mémoire", "Une boucle infinie"], a: 1, exp: "Invisible sur 5 lignes, catastrophique sur 10 000." },
+    { type: "qcm", q: "Comment éviter le N+1 en affichant les signatures avec leur visiteur ?", opts: ["Signature::with('visiteur')->get()", "Signature::all()->fast()", "Une boucle for", "Un cache navigateur"], a: 0, exp: "with() = eager loading : Eloquent charge la relation en une seule requête supplémentaire." },
+    { type: "qcm", q: "Avec with('visiteur'), combien de requêtes pour 100 signatures et leurs auteurs ?", opts: ["101", "2", "100", "1 par auteur distinct"], a: 1, exp: "Une pour les signatures, une pour tous les visiteurs concernés." },
+    { type: "qcm", q: "Que se passe-t-il si on tente d'insérer une signature avec visiteur_id = 999 (inexistant) et une contrainte constrained() ?", opts: ["Ça passe", "La base refuse : violation de contrainte d'intégrité", "Le visiteur 999 est créé", "La colonne devient NULL"], a: 1, exp: "L'intégrité référentielle protège la cohérence des données." },
+    { type: "qcm", q: "Quelle relation pour « un article a plusieurs tags ET un tag concerne plusieurs articles » ?", opts: ["hasMany des deux côtés", "belongsToMany avec une table pivot", "belongsTo", "hasOne"], a: 1, exp: "Relation N-N : la table intermédiaire article_tag fait le pont." },
+    { type: "qcm", q: "Dans une vue : {{ $signature->visiteur->pseudo }}. Que se passe-t-il si visiteur_id est NULL ?", opts: ["Affiche « NULL »", "Erreur « property on null » : penser à visiteur?->pseudo ou vérifier", "Le pseudo du premier visiteur", "Rien, jamais d'erreur"], a: 1, exp: "L'opérateur nullsafe ?-> (PHP 8) évite le crash." },
+    { type: "vf", q: "hasMany et belongsTo décrivent la même relation 1-N, vue de chaque côté.", a: true, exp: "Visiteur hasMany Signature ⇔ Signature belongsTo Visiteur." },
+    { type: "vf", q: "Le problème N+1 se produit uniquement avec Laravel.", a: false, exp: "Tous les ORM y sont exposés (Hibernate/JPA, EF Core…). Le concept te resservira partout." }
+  ],
+  final: {
+    title: "Exercice final — Visiteurs et signatures reliés",
+    intro: `<p>Le livre d'or version relationnelle. Analyse chaque ligne :</p>
+<pre class="pseudo">class Visiteur extends Model                                    // modele Visiteur
+{
+    protected $fillable = ['pseudo'];                           // colonne remplissable
+    public function signatures() { return $this->hasMany(Signature::class); }   // un visiteur a plusieurs signatures
+}
+
+class Signature extends Model                                   // modele Signature
+{
+    protected $fillable = ['contenu', 'visiteur_id'];           // colonnes remplissables
+    public function visiteur() { return $this->belongsTo(Visiteur::class); }    // une signature appartient a un visiteur
+}
+
+// Controleur :
+$signatures = Signature::with('visiteur')->latest()->get();     // charge signatures + visiteurs (eager) triees recentes
+
+{{-- Vue : --}}
+@foreach ($signatures as $s)                                    {{-- pour chaque signature $s... --}}
+    &lt;p&gt;{{ $s->contenu }} — signé {{ $s->visiteur->pseudo }}&lt;/p&gt;  {{-- ...affiche le texte et le pseudo de l'auteur --}}
+@endforeach                                                     {{-- fin de la boucle --}}</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de requêtes SQL ce code exécute-t-il pour 200 signatures ?", opts: ["201", "2, grâce à with('visiteur')", "200", "400"], a: 1, exp: "Eager loading : une pour signatures, une pour les visiteurs." },
+      { type: "qcm", q: "Sans le with('visiteur'), le code fonctionnerait-il ?", opts: ["Non, erreur", "Oui, mais avec 200 requêtes supplémentaires (N+1) : lent", "Non, pseudo serait vide", "Oui, strictement identique"], a: 1, exp: "Le lazy loading charge la relation à la demande, requête par requête." },
+      { type: "qcm", q: "Quelle colonne de la table signatures rend la relation possible ?", opts: ["pseudo", "visiteur_id", "signature_id", "id"], a: 1, exp: "La clé étrangère, devinée par convention." },
+      { type: "qcm", q: "Comment afficher uniquement les signatures du visiteur $v, triées des plus récentes aux plus anciennes ?", opts: ["$v->signatures()->latest()->get()", "$v->signatures->latest()", "Signature::all()->filter(...)", "$v->latest()"], a: 0, exp: "La forme méthode () permet de chaîner latest() avant l'exécution." },
+      { type: "vf", q: "$v->signatures()->create(['contenu' => 'Génial !']) remplit visiteur_id tout seul.", a: true, exp: "Créer via la relation = clé étrangère automatique." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 11 :
+// 1. FK en migration : foreignId('xxx_id')->constrained().
+// 2. 1-N : hasMany (cote parent) + belongsTo (cote enfant/FK).
+// 3. ->relation = resultats ; ->relation() = requete affinable.
+// 4. N+1 : le piege des ORM. Antidote : with('relation').
+// 5. N-N : belongsToMany + table pivot.</pre>
+<p>Nos données sont bien structurées… mais on accepte encore n'importe quoi dans les formulaires. Demain : la validation.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code PHP/Laravel ici…",
+  items: [
+  { id: "laravel-relations-album", title: "Albums et photos", level: 3,
+    statement: "Un site de famille : un <code>Album</code> contient plusieurs <code>Photo</code>. Écris (1) les deux méthodes de relation dans les modèles ; (2) la ligne de migration qui crée la clé étrangère dans la table <code>photos</code> ; (3) le code du contrôleur qui charge tous les albums AVEC leurs photos sans problème N+1 ; (4) la ligne qui ajoute une photo <code>['fichier' => 'noel.jpg']</code> à l'album <code>$album</code> via la relation.",
+    hints: [
+      "Album hasMany Photo ; Photo belongsTo Album.",
+      "La FK : $table->foreignId('album_id')->constrained(); dans la migration de photos.",
+      "Sans N+1 : Album::with('photos')->get(). L'ajout : $album->photos()->create([...])."
+    ],
+    solution: "// app/Models/Album.php\npublic function photos()\n{\n    return $this->hasMany(Photo::class);      // un album A PLUSIEURS photos\n}\n\n// app/Models/Photo.php\npublic function album()\n{\n    return $this->belongsTo(Album::class);    // la photo APPARTIENT À un album\n}\n\n// migration create_photos_table\n$table->foreignId('album_id')->constrained(); // FK + intégrité référentielle\n\n// Contrôleur : eager loading, 2 requêtes quel que soit le volume\n$albums = Album::with('photos')->get();\n\n// Ajouter une photo à $album (album_id rempli automatiquement)\n$album->photos()->create(['fichier' => 'noel.jpg']);",
+    note: "Vérifie mentalement le sens : la table qui porte la clé étrangère (photos) est TOUJOURS du côté belongsTo." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

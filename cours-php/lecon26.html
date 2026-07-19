@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 26</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 26,
+  title: "PDO avancé : transactions et jointures",
+  subtitle: "Grouper plusieurs écritures en un tout, et relier des tables entre elles.",
+  theory: `
+<h3>1. Le problème du « tout ou rien »</h3>
+<p>Un emprunt à la Ludothèque = DEUX écritures : créer une ligne dans <code>emprunts</code> ET diminuer le <code>stock</code> du jeu. Si la 1re réussit mais la 2e échoue (coupure, erreur), la base est INCOHÉRENTE : un emprunt existe sans avoir décompté le stock. Il faut que les deux se fassent ENSEMBLE, ou pas du tout.</p>
+<div class="tip">Analogie : un virement bancaire = débiter un compte ET créditer l'autre. On n'accepte JAMAIS que l'un se fasse sans l'autre.</div>
+
+<h3>2. La transaction : un groupe d'opérations indivisible</h3>
+<p>Une <strong>transaction</strong> encadre plusieurs requêtes pour qu'elles forment UN bloc atomique (« atomique » = indivisible). On ouvre avec <code>beginTransaction()</code>, on VALIDE avec <code>commit()</code>, ou on ANNULE tout avec <code>rollBack()</code>.</p>
+<pre class="pseudo">try {                                              // zone surveillée
+    \$pdo->beginTransaction();                       // OUVRE la transaction (rien n'est écrit définitivement)
+    \$pdo->prepare("INSERT INTO emprunts (jeu_id, membre_id) VALUES (?, ?)") // 1re écriture
+        ->execute([\$jeuId, \$membreId]);             // exécutée mais pas encore validée
+    \$pdo->prepare("UPDATE jeux SET stock = stock - 1 WHERE id = ?") // 2e écriture
+        ->execute([\$jeuId]);                        // décrémente le stock
+    \$pdo->commit();                                 // VALIDE : les deux deviennent définitives d'un coup
+} catch (Exception \$e) {                            // au moindre pépin…
+    \$pdo->rollBack();                               // ANNULE tout : la base revient à l'état d'avant
+    error_log(\$e->getMessage());                     // journalise le détail (jamais à l'écran)
+}                                                  // fin</pre>
+<div class="warn">Sans transaction, chaque requête est validée immédiatement : impossible de revenir en arrière. Avec, tant que <code>commit()</code> n'est pas appelé, un <code>rollBack()</code> efface tout comme si rien n'était arrivé.</div>
+
+<h3>3. Les clés : primaire et étrangère</h3>
+<p>Une <strong>clé primaire</strong> (PRIMARY KEY) est l'identifiant UNIQUE d'une ligne (souvent <code>id</code>). Une <strong>clé étrangère</strong> (FOREIGN KEY) est une colonne qui POINTE vers la clé primaire d'une AUTRE table : c'est le fil qui relie les tables.</p>
+<pre class="pseudo">-- Table jeux : chaque jeu a un id unique
+-- id (PK) | titre
+-- Table emprunts : chaque emprunt RÉFÉRENCE un jeu et un membre
+-- id (PK) | jeu_id (FK vers jeux.id) | membre_id (FK vers membres.id) | date_emprunt
+-- jeu_id « pointe » vers la ligne du jeu concerné : la relation est encodée par ce nombre</pre>
+
+<h3>4. La jointure : lire plusieurs tables d'un coup</h3>
+<p>Une <strong>jointure</strong> (JOIN) combine des lignes de plusieurs tables reliées, en associant clé étrangère et clé primaire. Analogie : reconstituer une fiche complète en agrafant ensemble des feuilles rangées dans des classeurs différents.</p>
+<pre class="pseudo">SELECT emprunts.id, membres.nom, jeux.titre        -- on choisit des colonnes de 3 tables
+FROM emprunts                                      -- table de départ
+JOIN membres ON emprunts.membre_id = membres.id    -- relie chaque emprunt à SON membre
+JOIN jeux    ON emprunts.jeu_id    = jeux.id;       -- et à SON jeu (via les clés étrangères)
+-- résultat : une ligne lisible « emprunt 1 · Léa · Catan », clés remplacées par les vraies infos</pre>
+<p>La condition <code>ON</code> dit COMMENT relier : « la ligne d'emprunt dont le membre_id égale l'id d'un membre ». C'est là que la clé étrangère rencontre la clé primaire.</p>
+
+<h3>5. INNER JOIN vs LEFT JOIN</h3>
+<pre class="pseudo">-- INNER JOIN (le JOIN par défaut) : garde SEULEMENT les lignes qui ont une correspondance
+SELECT m.nom, e.id FROM membres m
+INNER JOIN emprunts e ON e.membre_id = m.id;       -- un membre SANS emprunt n'apparaît pas
+
+-- LEFT JOIN : garde TOUS les membres, même sans emprunt (colonnes de droite à NULL)
+SELECT m.nom, e.id FROM membres m
+LEFT JOIN emprunts e ON e.membre_id = m.id;         -- Zoé, 0 emprunt → e.id vaut NULL
+-- « m » et « e » sont des ALIAS de table (raccourcis) définis juste après le nom</pre>
+<div class="tip">INNER = intersection (seulement ce qui correspond des deux côtés). LEFT = tout le côté GAUCHE, complété par la droite quand elle existe. Choisis selon que tu veux « seulement les liés » ou « tous, liés ou non ».</div>
+
+<h3>6. Agréger : COUNT, SUM et GROUP BY</h3>
+<pre class="pseudo">-- Compter les emprunts PAR membre :
+SELECT membres.nom, COUNT(emprunts.id) AS nb        -- COUNT = compte les lignes ; AS nb = renomme la colonne
+FROM membres
+LEFT JOIN emprunts ON emprunts.membre_id = membres.id  -- LEFT pour inclure ceux à 0 emprunt
+GROUP BY membres.id                                 -- REGROUPE les lignes par membre avant de compter
+ORDER BY nb DESC;                                    -- du plus emprunteur au moins
+-- résultat : « Léa · 3 », « Tom · 1 », « Zoé · 0 »</pre>
+<p><code>GROUP BY</code> rassemble les lignes qui partagent une valeur, puis les fonctions d'agrégation (<code>COUNT</code>, <code>SUM</code>, <code>AVG</code>, <code>MAX</code>) calculent un résultat PAR groupe. La sécurité reste identique : toute valeur externe passe par une requête préparée (leçon 19).</p>`,
+  exercises: [
+    { type: "qcm", q: "Une transaction sert à…", opts: ["Accélérer une requête", "Grouper plusieurs écritures pour qu'elles réussissent ENSEMBLE ou soient toutes annulées (tout ou rien)", "Trier des données", "Chiffrer la base"], a: 1, exp: "L'atomicité : indivisible, comme un virement bancaire." },
+    { type: "qcm", q: "On ouvre une transaction avec…", opts: ["commit()", "beginTransaction()", "rollBack()", "query()"], a: 1, exp: "Puis commit() pour valider ou rollBack() pour annuler." },
+    { type: "qcm", q: "<code>commit()</code> …", opts: ["Annule tout", "VALIDE définitivement toutes les écritures de la transaction d'un seul coup", "Ouvre la transaction", "Ferme la connexion"], a: 1, exp: "Avant commit, rien n'est définitif." },
+    { type: "qcm", q: "<code>rollBack()</code> …", opts: ["Valide", "ANNULE toutes les écritures : la base revient à l'état d'avant beginTransaction()", "Trie", "Ajoute une ligne"], a: 1, exp: "Le filet de sécurité en cas d'erreur." },
+    { type: "qcm", q: "Pourquoi encadrer un emprunt (INSERT + UPDATE stock) dans une transaction ?", opts: ["Pour la vitesse", "Pour éviter une base incohérente : sans les DEUX, on aurait un emprunt sans stock décompté", "C'est décoratif", "Pour trier"], a: 1, exp: "Tout ou rien : la cohérence est garantie." },
+    { type: "qcm", q: "Une clé primaire est…", opts: ["Un mot de passe", "L'identifiant UNIQUE d'une ligne (souvent id)", "Une colonne texte", "Un index de fichier"], a: 1, exp: "PRIMARY KEY distingue chaque ligne sans ambiguïté." },
+    { type: "qcm", q: "Une clé étrangère (FOREIGN KEY) est…", opts: ["Une clé de chiffrement", "Une colonne qui POINTE vers la clé primaire d'une AUTRE table, encodant la relation", "Un mot de passe", "Un doublon"], a: 1, exp: "jeu_id pointe vers jeux.id : le fil entre les tables." },
+    { type: "qcm", q: "Une jointure (JOIN) sert à…", opts: ["Supprimer des tables", "COMBINER des lignes de plusieurs tables reliées, en associant clé étrangère et clé primaire", "Trier", "Chiffrer"], a: 1, exp: "On reconstitue une fiche complète à partir de plusieurs tables." },
+    { type: "qcm", q: "La clause <code>ON</code> d'un JOIN indique…", opts: ["Le tri", "COMMENT relier les tables : la condition d'égalité entre les clés (ex : emprunts.jeu_id = jeux.id)", "Le nombre de lignes", "Le format"], a: 1, exp: "C'est là que la FK rencontre la PK." },
+    { type: "qcm", q: "Différence INNER JOIN vs LEFT JOIN ?", opts: ["Aucune", "INNER ne garde que les lignes AYANT une correspondance ; LEFT garde TOUTES celles de gauche, complétées à NULL si pas de correspondance", "LEFT est plus rapide", "INNER trie"], a: 1, exp: "Intersection vs tout le côté gauche." },
+    { type: "qcm", q: "Un membre SANS emprunt apparaît avec…", opts: ["INNER JOIN", "LEFT JOIN (ses colonnes d'emprunt sont à NULL) ; l'INNER l'exclurait", "aucune jointure possible", "GROUP BY seul"], a: 1, exp: "LEFT inclut le côté gauche même sans correspondance." },
+    { type: "qcm", q: "Dans <code>FROM membres m</code>, le <code>m</code> est…", opts: ["Une colonne", "Un ALIAS de table : un raccourci pour écrire m.nom au lieu de membres.nom", "Une clé", "Une erreur"], a: 1, exp: "Les alias raccourcissent les requêtes multi-tables." },
+    { type: "qcm", q: "<code>COUNT(emprunts.id)</code> avec <code>GROUP BY membres.id</code> …", opts: ["Compte toutes les lignes", "Compte les emprunts PAR membre, car GROUP BY regroupe d'abord les lignes par membre", "Additionne les id", "Trie"], a: 1, exp: "GROUP BY + fonction d'agrégation = un résultat par groupe." },
+    { type: "qcm", q: "Dans une jointure, une valeur venant de l'utilisateur (ex : filtre WHERE membre_id = ?) doit…", opts: ["Être concaténée", "Passer par une requête PRÉPARÉE, comme toujours (leçon 19)", "Être ignorée", "Être en clair"], a: 1, exp: "La sécurité anti-injection ne change pas avec les jointures." },
+    { type: "vf", q: "Tant que commit() n'a pas été appelé, un rollBack() annule toutes les écritures de la transaction.", a: true, exp: "Rien n'est définitif avant le commit : d'où le « tout ou rien »." }
+  ],
+  final: {
+    title: "Exercice final — Emprunter un jeu en toute cohérence",
+    intro: `<p>Emprunter = enregistrer l'emprunt ET décrémenter le stock, mais seulement si le stock est > 0. Le tout dans une transaction :</p>
+<pre class="pseudo">function emprunter(PDO \$pdo, int \$jeuId, int \$membreId): bool { // renvoie true si l'emprunt a réussi
+    try {                                                       // zone surveillée
+        \$pdo->beginTransaction();                               // (1) ouvre le bloc « tout ou rien »
+        \$stock = \$pdo->prepare("SELECT stock FROM jeux WHERE id = ?"); // lit le stock actuel
+        \$stock->execute([\$jeuId]);                              // requête préparée (anti-injection)
+        if ((int) \$stock->fetchColumn() &lt;= 0) {                 // (2) plus d'exemplaire dispo ?
+            \$pdo->rollBack();                                    // annule : rien n'a été écrit
+            return false;                                        // emprunt refusé
+        }                                                       // fin du test stock
+        \$pdo->prepare("INSERT INTO emprunts (jeu_id, membre_id, date_emprunt) VALUES (?, ?, NOW())") // écriture 1
+            ->execute([\$jeuId, \$membreId]);                     // enregistre l'emprunt
+        \$pdo->prepare("UPDATE jeux SET stock = stock - 1 WHERE id = ?") // écriture 2
+            ->execute([\$jeuId]);                                // décrémente le stock
+        \$pdo->commit();                                         // (3) VALIDE les deux d'un coup
+        return true;                                            // succès
+    } catch (Exception \$e) {                                    // (4) au moindre incident
+        \$pdo->rollBack();                                       // annule TOUT
+        error_log(\$e->getMessage());                             // journalise (pas à l'écran)
+        return false;                                           // échec propre
+    }                                                          // fin try/catch
+}                                                              // fin de la fonction</pre>`,
+    questions: [
+      { type: "qcm", q: "(1) Pourquoi ouvrir une transaction ici ?", opts: ["Pour la vitesse", "Parce que l'INSERT et l'UPDATE doivent réussir ENSEMBLE : sinon un emprunt existerait sans stock décompté", "Pour trier", "C'est facultatif et inutile"], a: 1, exp: "Cohérence garantie : les deux écritures sont indivisibles." },
+      { type: "qcm", q: "(2) Que se passe-t-il si le stock vaut 0 ?", opts: ["On emprunte quand même", "rollBack() annule et la fonction renvoie false : aucune écriture n'a lieu", "commit() est appelé", "Erreur fatale"], a: 1, exp: "On refuse proprement avant toute écriture définitive." },
+      { type: "qcm", q: "(3) Que garantit <code>commit()</code> à la fin ?", opts: ["Rien", "Que l'INSERT et l'UPDATE deviennent définitifs SIMULTANÉMENT — l'un ne peut exister sans l'autre", "Que le stock remonte", "La suppression de l'emprunt"], a: 1, exp: "La validation atomique des deux écritures." },
+      { type: "qcm", q: "(4) Rôle du <code>rollBack()</code> dans le catch ?", opts: ["Valider", "Annuler tout ce qui a été fait dans la transaction si une exception survient, laissant la base intacte", "Réessayer", "Afficher l'erreur au visiteur"], a: 1, exp: "Le filet de sécurité : la base revient à l'état d'avant." },
+      { type: "qcm", q: "Pour lister « qui a emprunté quoi », quelle requête ?", opts: ["Trois SELECT séparés", "Un JOIN : SELECT membres.nom, jeux.titre FROM emprunts JOIN membres ON ... JOIN jeux ON ...", "Un UPDATE", "GROUP BY seul"], a: 1, exp: "La jointure reconstitue la fiche lisible en une requête." }
+    ],
+    solution: `<pre class="pseudo">-- Lister les emprunts en cours avec noms et titres (jointures) :
+SELECT e.id, m.nom, j.titre, e.date_emprunt          -- colonnes de trois tables
+FROM emprunts e                                      -- table de départ (alias e)
+JOIN membres m ON e.membre_id = m.id                 -- relie chaque emprunt à son membre
+JOIN jeux    j ON e.jeu_id    = j.id                 -- et à son jeu
+ORDER BY e.date_emprunt DESC;                         -- les plus récents d'abord
+
+-- Classement des membres par nombre d'emprunts (agrégation) :
+SELECT m.nom, COUNT(e.id) AS nb                      -- nom + total d'emprunts (renommé nb)
+FROM membres m
+LEFT JOIN emprunts e ON e.membre_id = m.id           -- LEFT : inclut ceux à 0 emprunt
+GROUP BY m.id                                        -- un total PAR membre
+ORDER BY nb DESC;                                     -- du plus actif au moins
+
+-- À retenir :
+-- · transaction (begin / commit / rollBack) = tout ou rien   // cohérence
+-- · FK ↔ PK reliées par JOIN ... ON                           // relier les tables
+-- · INNER (les liés) vs LEFT (tous à gauche) + GROUP BY/COUNT // filtrer et agréger
+-- · valeurs externes TOUJOURS en requête préparée             // sécurité maintenue</pre>
+<p>Tu écris de façon cohérente et tu lis à travers plusieurs tables. Demain, on expose ces données au monde : une mini-API REST en JSON.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code PHP ici…",
+  items: [
+  { id: "php-pdo-tx", title: "Transférer un exemplaire entre deux jeux (transaction)", level: 3,
+    statement: "Écris une fonction qui, dans une <strong>transaction</strong>, retire 1 au stock d'un jeu et l'ajoute au stock d'un autre (comme un virement). Si l'une des deux requêtes échoue, tout est annulé. Utilise des requêtes préparées.",
+    hints: [
+      "Ouvre avec $pdo->beginTransaction(); et enveloppe le tout dans try/catch.",
+      "Deux UPDATE préparés : \"UPDATE jeux SET stock = stock - 1 WHERE id = ?\" et \"... stock = stock + 1 ...\".",
+      "En cas de succès : $pdo->commit(); dans le catch : $pdo->rollBack(); return false;"
+    ],
+    solution: "<?php                                          // ouverture PHP\nfunction transfererStock(PDO $pdo, int $source, int $cible): bool { // vire 1 exemplaire de source vers cible\n    try {                                       // zone surveillée\n        $pdo->beginTransaction();                // OUVRE la transaction (tout ou rien)\n        $retrait = $pdo->prepare(\"UPDATE jeux SET stock = stock - 1 WHERE id = ? AND stock > 0\"); // retire si dispo\n        $retrait->execute([$source]);            // exécute le retrait (préparé = anti-injection)\n        if ($retrait->rowCount() === 0) {        // aucune ligne modifiée = stock insuffisant\n            $pdo->rollBack();                    // annule : rien n'a bougé\n            return false;                        // transfert refusé\n        }                                       // fin du test\n        $ajout = $pdo->prepare(\"UPDATE jeux SET stock = stock + 1 WHERE id = ?\"); // ajoute à la cible\n        $ajout->execute([$cible]);               // exécute l'ajout\n        $pdo->commit();                          // VALIDE les deux écritures d'un coup\n        return true;                             // succès\n    } catch (Exception $e) {                     // au moindre incident\n        $pdo->rollBack();                        // ANNULE tout : base intacte\n        error_log($e->getMessage());             // journalise le détail (jamais à l'écran)\n        return false;                            // échec propre\n    }                                           // fin try/catch\n}                                              // fin de la fonction\n\n// $ok = transfererStock($pdo, 1, 2);          // déplace un exemplaire du jeu 1 vers le jeu 2\n?>",
+    note: "La transaction garantit qu'on ne se retrouve jamais avec un stock retiré d'un côté sans l'ajout de l'autre : soit les deux UPDATE réussissent (commit), soit aucun (rollBack)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

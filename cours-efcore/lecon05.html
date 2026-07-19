@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Créer et lire : Add, SaveChanges, Find, First",
+  subtitle: "Du new Jeu() à la ligne dans la table — et retour.",
+  theory: `
+<h3>1. Add : déclarer une intention, pas écrire en base</h3>
+<p>Les tables de la Ludothèque existent (merci les migrations). Remplissons-les. Première surprise : <strong>Add ne touche pas la base</strong>. Il confie simplement l'objet au contexte, qui le note dans son carnet interne — le <strong>change tracker</strong> (le « suiveur de changements », un carnet de brouillon qui retient tout ce que tu modifies) — avec l'état <strong>Added</strong> : « à insérer plus tard ».</p>
+<pre class="pseudo">using var ctx = new LudothequeContext();                                    // crée le contexte (session de travail) ; "using" le libérera à la fin
+
+var catan = new Jeu { Nom = "Catan", Prix = 39.90m, DureeMinutes = 90 };    // crée un objet Jeu en mémoire (rien en base encore)
+ctx.Jeux.Add(catan);          // état : Added — RIEN n'est parti vers SQL Server   // note l'objet dans le change tracker, à insérer plus tard
+Console.WriteLine(catan.Id);  // 0 : pas encore d'identité                        // l'Id vaut 0 tant que SQL Server ne l'a pas généré
+
+ctx.Jeux.AddRange(                                                          // note plusieurs objets d'un coup (toujours zéro SQL)…
+    new Jeu { Nom = "Azul", Prix = 34.50m, DureeMinutes = 45 },             // …premier jeu ajouté au change tracker
+    new Jeu { Nom = "7 Wonders", Prix = 44.00m, DureeMinutes = 30 });       // …second jeu ajouté au change tracker</pre>
+<p><strong>AddRange</strong> fait la même chose pour une collection entière : trois jeux notés « Added » d'un coup, toujours zéro requête SQL.</p>
+
+<h3>2. SaveChanges : le moment où tout part</h3>
+<p><strong>SaveChanges()</strong> est le facteur : il parcourt le carnet, traduit chaque entité <em>Added</em> en <strong>INSERT</strong>, ouvre la connexion, exécute le tout — et récupère au passage les <strong>Id auto-générés</strong> par la colonne IDENTITY de SQL Server pour les réinjecter dans tes objets C#.</p>
+<pre class="pseudo">int nb = ctx.SaveChanges();   // 3 INSERT exécutés, retourne 3   // envoie tout le carnet en base ; nb = nombre de lignes affectées
+Console.WriteLine(catan.Id);  // 1 (ou l'Id réel) : rempli par SQL Server !   // l'Id généré par IDENTITY est revenu dans l'objet
+// après SaveChanges, les entités passent à l'état Unchanged                 // le change tracker les considère désormais "à jour"</pre>
+<p>Ce va-et-vient de l'Id est précieux : tu peux créer une Location qui référence <em>catan.Id</em> juste après, sans jamais requêter la base pour « retrouver » le jeu inséré. Côté Java, c'est le duo <em>em.persist()</em> + flush de JPA/Hibernate ; Eloquent condense tout en <em>Jeu::create()</em>, Django en <em>Jeu.objects.create()</em>.</p>
+
+<h3>3. Find : la lecture par clé primaire</h3>
+<p>Pour lire, commençons par le cas roi : « donne-moi l'entité d'Id 3 ». C'est le travail de <strong>Find</strong>, et il a une particularité unique : il regarde <strong>d'abord dans le change tracker</strong>. Si l'entité y est déjà (lue ou ajoutée dans ce contexte), il la retourne <em>sans aucune requête SQL</em> — comme chercher un contact d'abord dans son carnet avant d'appeler les renseignements. Sinon seulement, il interroge la base. Absent des deux ? Il retourne <strong>null</strong>.</p>
+<pre class="pseudo">Jeu j1 = ctx.Jeux.Find(3);    // SELECT … WHERE Id = 3 (1re fois)                // 1re recherche : va chercher en base par clé primaire
+Jeu j2 = ctx.Jeux.Find(3);    // AUCUN SQL : servi depuis le change tracker     // l'objet est déjà suivi → retourné sans requête
+Jeu j3 = ctx.Jeux.Find(999);  // null : introuvable                             // aucune ligne d'Id 999 → Find retourne null</pre>
+<p>Limite assumée : <strong>Find ne prend qu'une clé primaire</strong>. Pas de prédicat, pas de « trouve-moi par nom ». C'est le cousin direct de <em>em.find()</em> chez JPA.</p>
+
+<h3>4. First, Single, ToList : lire avec des conditions</h3>
+<p>Dès que le critère n'est pas la clé, on passe aux méthodes à <strong>prédicat</strong> (une condition, une petite fonction qui répond « vrai ou faux » pour chaque ligne). Quatre variantes, deux questions : que faire si <em>aucun</em> résultat ? que faire s'il y en a <em>plusieurs</em> ?</p>
+<pre class="pseudo">// First : le premier qui matche ; EXCEPTION si aucun
+Jeu a = ctx.Jeux.First(j =&gt; j.Prix &lt; 40);                    // renvoie le 1er jeu à moins de 40 € ; lève une exception si aucun
+
+// FirstOrDefault : pareil, mais NULL si aucun (absence normale)
+Jeu b = ctx.Jeux.FirstOrDefault(j =&gt; j.Nom == "Catan");      // renvoie le jeu "Catan", ou null s'il n'existe pas
+if (b == null) { /* jeu inconnu : cas prévu */ }             // on gère proprement le cas où le jeu est absent
+
+// Single / SingleOrDefault : exige AU PLUS UN résultat,
+// exception s'il y en a deux (garantit l'unicité)
+Membre m = ctx.Membres.Single(x =&gt; x.Email == "lea@ludo.be");   // renvoie LE membre unique à cet email ; exception si 0 ou 2+
+
+// ToList : TOUS les résultats, matérialisés en List&lt;Jeu&gt;
+List&lt;Jeu&gt; courts = ctx.Jeux.Where(j =&gt; j.DureeMinutes &lt;= 45).ToList();   // exécute le SELECT et met tous les jeux courts dans une liste</pre>
+<p>Règle de choix : <em>First</em> quand l'absence serait un bug, <em>FirstOrDefault</em> quand elle est un cas métier, <em>Single</em> quand plus d'un résultat révélerait une incohérence (un email = un membre).</p>
+
+<h3>5. Voir le SQL : LogTo et l'exécution différée</h3>
+<p>Point capital : <em>ctx.Jeux.Where(…)</em> tout seul <strong>n'exécute rien</strong>. EF Core construit une requête en mémoire, et le SQL ne part vers SQL Server qu'au moment de la <strong>matérialisation</strong> (le moment où la requête se transforme réellement en objets) : ToList, First, Single, un foreach… C'est l'<strong>exécution différée</strong> : la requête est préparée maintenant mais lancée plus tard. Pour le voir de tes yeux, branche <strong>LogTo</strong> dans ton contexte :</p>
+<pre class="pseudo">protected override void OnConfiguring(DbContextOptionsBuilder options)   // méthode de configuration du contexte
+{
+    options.UseSqlServer(chaineConnexion)                                // choisit le provider SQL Server + la chaîne de connexion
+           .LogTo(Console.WriteLine, LogLevel.Information);              // affiche chaque commande SQL dans la console
+}
+
+// Console après un SaveChanges d'insertion :
+// Executed DbCommand (5ms) [Parameters=[@p0='Catan' …, @p1=39.90 …]]        // durée + valeurs passées en PARAMÈTRES (@p0, @p1)
+//   INSERT INTO [Jeux] ([Nom], [Prix], [DureeMinutes])                      // l'INSERT généré par EF Core
+//   OUTPUT INSERTED.[Id]                                                    // demande à SQL Server de renvoyer l'Id qu'il a généré
+//   VALUES (@p0, @p1, @p2);                                                 // les valeurs, injectées via les paramètres</pre>
+<p>Deux leçons dans ce log : les valeurs passent en <strong>paramètres</strong> (@p0, @p1 — bonjour la protection anti-injection vue au Niveau 4), et la clause <strong>OUTPUT INSERTED.[Id]</strong> est le mécanisme exact par lequel SQL Server renvoie l'Id que tu retrouves dans <em>catan.Id</em>.</p>
+<div class="warn">Tant que <strong>SaveChanges()</strong> n'a pas été appelé, Add et AddRange n'ont RIEN écrit en base : ferme le contexte avant, et tes jeux n'auront jamais existé. Symétriquement, <em>First</em> lève une exception sur un résultat vide — choisis <em>FirstOrDefault</em> quand l'absence est un cas normal.</div>
+<div class="tip">Garde LogTo actif pendant tout le cours (en développement) : lire le SQL généré après chaque manipulation est LE réflexe qui transforme EF Core en boîte transparente — et il te servira encore aux leçons 18-19 sur la performance.</div>`,
+  exercises: [
+    { type: "qcm", q: "Immédiatement après ctx.Jeux.Add(catan)…", opts: ["Un INSERT est exécuté dans SQL Server", "L'entité est notée Added dans le change tracker, sans SQL", "catan.Id contient déjà sa valeur définitive", "La connexion à la base s'ouvre"], a: 1, exp: "Add déclare une intention ; seul SaveChanges déclenche le SQL." },
+    { type: "input", q: "La méthode qui envoie réellement les changements en attente vers SQL Server :", a: ["SaveChanges", "SaveChanges()", "ctx.SaveChanges()"], ph: "…", exp: "Elle traduit chaque entité Added en INSERT et retourne le nombre de lignes affectées." },
+    { type: "qcm", q: "Après SaveChanges, catan.Id vaut 1 alors que tu ne l'as jamais assigné. Pourquoi ?", opts: ["EF Core génère l'Id aléatoirement en mémoire", "C'est la position du jeu dans le DbSet", "SQL Server a renvoyé l'Id IDENTITY via OUTPUT INSERTED, et EF Core l'a réinjecté", "Add avait déjà calculé l'Id"], a: 2, exp: "Le log LogTo le montre : OUTPUT INSERTED.[Id] rapatrie la valeur générée par la base." },
+    { type: "qcm", q: "Pour insérer une liste de dix jeux d'un coup, le plus direct :", opts: ["ctx.Jeux.AddRange(liste) puis SaveChanges", "dix appels à SaveChanges", "ctx.Jeux.Insert(liste)", "un BULK INSERT écrit à la main"], a: 0, exp: "AddRange note toute la collection en Added ; un seul SaveChanges envoie les INSERT." },
+    { type: "vf", q: "SaveChanges retourne le nombre de lignes affectées en base.", a: true, exp: "Pratique pour vérifier : 3 jeux ajoutés → SaveChanges retourne 3." },
+    { type: "input", q: "La méthode de lecture qui cherche D'ABORD dans le change tracker avant d'interroger la base :", a: ["Find", "Find()"], ph: "…", exp: "Unique en son genre : si l'entité est déjà suivie, aucun SQL n'est émis." },
+    { type: "qcm", q: "ctx.Jeux.Find(999) alors qu'aucun jeu n'a l'Id 999 :", opts: ["Lève une exception", "Retourne un Jeu vide", "Crée le jeu 999", "Retourne null"], a: 3, exp: "Find retourne null quand la clé est introuvable — à toi de tester." },
+    { type: "vf", q: "Find accepte n'importe quel prédicat, par exemple Find(j =&gt; j.Nom == « Catan »).", a: false, exp: "Find ne fonctionne QUE par clé primaire. Pour un prédicat : First, FirstOrDefault, Single ou Where." },
+    { type: "qcm", q: "Différence entre First et FirstOrDefault quand AUCUNE ligne ne correspond :", opts: ["First retourne null, FirstOrDefault lève une exception", "First lève une exception, FirstOrDefault retourne null", "Les deux retournent null", "Les deux lèvent une exception"], a: 1, exp: "First = l'absence est un bug ; FirstOrDefault = l'absence est un cas métier prévu." },
+    { type: "qcm", q: "Single(x =&gt; x.Email == « lea@ludo.be ») trouve DEUX membres avec cet email :", opts: ["Il retourne le premier des deux", "Il retourne null", "Il lève une exception : l'unicité attendue est violée", "Il fusionne les deux membres"], a: 2, exp: "C'est tout l'intérêt de Single : détecter une incohérence là où First l'aurait masquée." },
+    { type: "qcm", q: "ctx.Jeux.Where(j =&gt; j.Prix &lt; 40) sans rien derrière…", opts: ["Exécute le SELECT immédiatement", "Charge toute la table en mémoire", "Ne déclenche AUCUNE requête : l'exécution est différée", "Lève une exception de compilation"], a: 2, exp: "Le SQL ne part qu'à la matérialisation : ToList, First, foreach… (approfondi en leçons 13-14)." },
+    { type: "qcm", q: "La méthode qui matérialise TOUS les résultats d'une requête en List&lt;Jeu&gt; :", opts: ["Materialize()", "Fetch()", "Execute()", "ToList()"], a: 3, exp: "ToList déclenche le SELECT et remplit la liste — c'est un point de matérialisation classique." },
+    { type: "qcm", q: "Pour afficher dans la console le SQL généré par EF Core, on configure…", opts: ["LogTo sur le DbContextOptionsBuilder", "un trigger SQL Server", "le mode debug de Visual Studio", "un fichier logs.sql à la racine"], a: 0, exp: "options.LogTo(Console.WriteLine, LogLevel.Information) : chaque DbCommand devient visible." },
+    { type: "vf", q: "Dans le SQL loggé, les valeurs comme « Catan » apparaissent en paramètres (@p0…), ce qui protège de l'injection SQL.", a: true, exp: "EF Core paramètre systématiquement — le même bon réflexe que tes requêtes préparées du Niveau 4." },
+    { type: "qcm", q: "L'équivalent du duo Add + SaveChanges dans les autres écosystèmes :", opts: ["em.persist() chez JPA, Jeu::create chez Eloquent, objects.create chez Django", "git commit chez GitHub", "SELECT INTO chez SQL Server", "npm install chez Node"], a: 0, exp: "Même idée partout : l'ORM traduit un objet en INSERT et rapatrie la clé générée." }
+  ],
+  final: {
+    title: "Exercice final — Une soirée d'inventaire",
+    intro: `<p>Soirée d'inventaire à la Ludothèque : tu ajoutes trois jeux, puis tu vérifies quelques lectures. Chaque question suit le fil du code.</p>`,
+    questions: [
+      { type: "qcm", q: "Tu exécutes Add sur trois jeux puis tu fermes le programme SANS SaveChanges. En base :", opts: ["Les trois jeux sont là", "Aucun jeu : rien n'est jamais parti vers SQL Server", "Seul le premier jeu est inséré", "Les jeux sont là mais sans Id"], a: 1, exp: "Sans SaveChanges, les entités Added ne quittent jamais le change tracker." },
+      { type: "qcm", q: "Après SaveChanges, tu appelles ctx.Jeux.Find(catan.Id). Combien de requêtes SQL ?", opts: ["Zéro : catan est déjà dans le change tracker", "Une : SELECT WHERE Id = …", "Deux : une pour l'Id, une pour l'entité", "Impossible à prévoir"], a: 0, exp: "Find sert l'entité depuis le carnet du contexte sans repasser par la base." },
+      { type: "vf", q: "Pour chercher un jeu par son nom, FirstOrDefault(j =&gt; j.Nom == « Azul ») est un bon choix si le nom peut être inconnu.", a: true, exp: "Prédicat autorisé, null en cas d'absence : exactement le contrat voulu." },
+      { type: "qcm", q: "ctx.Jeux.First(j =&gt; j.Prix &gt; 500) alors qu'aucun jeu ne dépasse 500 € :", opts: ["Retourne null", "Retourne le jeu le plus cher", "Lève une InvalidOperationException", "Retourne un Jeu avec Prix = 0"], a: 2, exp: "First sans résultat = exception. FirstOrDefault aurait rendu null." },
+      { type: "input", q: "La configuration du contexte qui affiche chaque commande SQL dans la console (nom de la méthode) :", a: ["LogTo", "LogTo()"], ph: "options.UseSqlServer(…).…", exp: "LogTo(Console.WriteLine) : le réflexe transparence, à garder en développement." }
+    ],
+    solution: `<pre class="pseudo">Écrire  : Add / AddRange   → état Added, ZÉRO SQL
+          SaveChanges()    → INSERT paramétrés + OUTPUT INSERTED.[Id]
+                             → catan.Id rempli, entités → Unchanged
+Lire    : Find(id)         → change tracker d'abord, PK uniquement, null si absent
+          First(p)         → premier résultat, EXCEPTION si aucun
+          FirstOrDefault(p)→ premier résultat, NULL si aucun
+          Single(p)        → unicité exigée, exception si deux
+          ToList()         → tout, matérialisé (le SQL part ICI)
+Voir    : LogTo            → chaque DbCommand affiché, valeurs en @p0, @p1…</pre>
+<p>Créer et lire, c'est acquis. Reste le plus subtil : modifier et supprimer — et là, le <strong>change tracker</strong> que tu viens d'entrevoir passe au premier plan. C'est la leçon 6.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l5", title: "Autopsie d'un log LogTo", level: 2,
+    statement: "Ton contexte a LogTo activé. Tu exécutes : var jeu = new Jeu { Nom = « Pandemic », Prix = 42.50m }; ctx.Jeux.Add(jeu); ctx.SaveChanges(); Console.WriteLine(jeu.Id); — et la console affiche :\n\ninfo: Executed DbCommand (7ms) [Parameters=[@p0='Pandemic' (Size = 100), @p1=42.50 (Precision = 18) (Scale = 2)], CommandType='Text']\nINSERT INTO [Jeux] ([Nom], [Prix])\nOUTPUT INSERTED.[Id]\nVALUES (@p0, @p1);\n\npuis 12 s'affiche. Explique PAR ÉCRIT chaque élément de ce log : pourquoi une seule commande alors qu'il y a eu trois instructions C#, à quoi correspondent @p0 et @p1 et pourquoi les valeurs ne sont pas écrites en dur dans le SQL, ce que fait la clause OUTPUT INSERTED.[Id], et le chemin exact par lequel 12 arrive dans jeu.Id.",
+    hints: [
+      "Repère quelle instruction C# a réellement déclenché le SQL : Add, SaveChanges ou WriteLine ? Les deux autres n'ont rien envoyé.",
+      "@p0='Pandemic' : compare avec les requêtes préparées vues au Niveau 4 — que se passerait-il si le nom du jeu contenait une apostrophe ou du SQL malveillant ?",
+      "OUTPUT INSERTED.[Id] est la version SQL Server moderne de « rends-moi la valeur IDENTITY que tu viens de générer » — qui consomme cette valeur côté C# ?"
+    ],
+    solution: "1. Une seule commande pour trois instructions\nAdd n'a fait que noter l'entité en état Added dans le change tracker : zéro SQL. C'est SaveChanges qui a tout déclenché : il a parcouru le carnet, trouvé une entité Added, généré et exécuté CE seul INSERT. WriteLine, lui, n'a fait que lire une propriété déjà remplie en mémoire.\n\n2. Les paramètres @p0 et @p1\n@p0 reçoit 'Pandemic' (nvarchar, Size 100) et @p1 reçoit 42.50 (decimal 18,2) : les types viennent du mapping de l'entité Jeu. Les valeurs ne sont jamais concaténées dans le texte SQL : elles voyagent séparément, comme dans les requêtes préparées du Niveau 4. Un nom contenant une apostrophe ou un fragment SQL malveillant resterait une simple donnée — c'est la protection native contre l'injection SQL.\n\n3. OUTPUT INSERTED.[Id]\nLa colonne Id est IDENTITY : c'est SQL Server qui choisit la valeur au moment de l'insertion. La clause OUTPUT INSERTED.[Id] demande, dans le même aller-retour que l'INSERT, de renvoyer cette valeur générée (le rôle historique de SCOPE_IDENTITY(), en mieux intégré).\n\n4. Le chemin de la valeur 12\nSQL Server insère la ligne, génère Id = 12, le renvoie via OUTPUT ; EF Core lit ce résultat, réinjecte 12 dans la propriété jeu.Id de l'objet C#, puis bascule l'entité de Added à Unchanged. Le WriteLine final affiche donc 12 sans aucune requête supplémentaire : l'objet mémoire et la ligne SQL sont désormais synchronisés.",
+    note: "Savoir lire ce log, c'est exactement ce qu'on attend de toi en entreprise quand une API ASP.NET Core se comporte bizarrement : le SQL ne ment jamais. Hibernate offre le même miroir avec show_sql, Django avec connection.queries — et ce réflexe de lecture te servira directement aux leçons 18-19 sur la performance." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

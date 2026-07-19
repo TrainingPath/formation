@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "JWT en détail",
+  subtitle: "Trois blocs séparés par des points — et deux malentendus à dissiper d'urgence.",
+  theory: `
+<h3>1. L'anatomie : header.payload.signature</h3>
+<p>Avant de disséquer, posons les mots. Une <strong>API</strong> (<em>Application Programming Interface</em>, « interface de programmation ») est la porte d'entrée qu'un <strong>serveur</strong> (l'ordinateur qui détient les données) offre aux autres programmes. Le <strong>client</strong> (l'application qui demande — par exemple le navigateur d'Aïcha) envoie une <strong>requête</strong> (une demande) et reçoit une <strong>réponse</strong>. Le style <strong>REST</strong> organise ces échanges autour de <strong>ressources</strong> (les membres, les jeux…) manipulées via le protocole <strong>HTTP</strong> (la « langue » commune du web) et ses <strong>méthodes</strong> comme <code>GET</code> (lire une ressource) ou <code>POST</code> (en créer/envoyer une). Depuis la leçon précédente, on sait qu'après s'être connectée, Aïcha reçoit un <strong>token</strong> (« jeton ») : une carte d'identité numérique qu'elle joint à chaque requête pour prouver qui elle est. Le format standard de ce jeton, c'est le <strong>JWT</strong>.</p>
+<p>Un <strong>JWT</strong> (JSON Web Token) est une chaîne en <strong>trois parties</strong> séparées par des points, chacune encodée en <strong>base64url</strong> (une façon d'écrire n'importe quelle donnée avec seulement des lettres, des chiffres et quelques symboles sans danger dans une URL) :</p>
+<pre class="pseudo">eyJhbGciOi…  .  eyJzdWIiOi…  .  SflKxwRJSM…
+   HEADER          PAYLOAD         SIGNATURE
+ (algorithme)   (les claims)    (le sceau du serveur)</pre>
+<p>Le <strong>header</strong> (« en-tête ») dit quel algorithme signe le token. Le <strong>payload</strong> (« charge utile », le contenu) porte les informations utiles. La <strong>signature</strong> est le sceau qui rend le tout digne de confiance. Dans les exemples, on l'écrit tronqué (<code>eyJhbGciOi…</code>) : un vrai JWT fait plusieurs centaines de caractères.</p>
+
+<h3>2. Encodé n'est PAS chiffré</h3>
+<p>Premier malentendu, le plus dangereux : base64url est un simple <strong>encodage</strong> (une réécriture, comme traduire un mot en morse — la forme change, pas le secret), réversible par n'importe qui en une ligne de code. Ce n'est PAS un <strong>chiffrement</strong> (qui, lui, rend le contenu illisible sans une clé). <strong>Tout le monde peut lire le payload</strong> d'un JWT — il suffit de le décoder. Voici le payload du token d'Aïcha, décodé — c'est du <strong>JSON</strong> (un format texte qui représente les données sous forme de paires « nom : valeur » entre accolades) :</p>
+<pre class="pseudo">{                        # début de l'objet JSON (le payload décodé)
+  "sub": "12",           # claim "sub" (subject) : l'identifiant de l'utilisateur — ici le membre 12
+  "role": "membre",      # claim métier : le rôle d'Aïcha, servira aux permissions (leçon 17)
+  "iat": 1783678800,     # claim "iat" (issued at) : date d'émission, en secondes depuis 1970
+  "exp": 1783682400      # claim "exp" (expiration) : après cet instant, le token est refusé (401)
+}                        # fin de l'objet JSON</pre>
+<p>Conséquence directe : <strong>jamais de secret dans un payload</strong> — pas de mot de passe, pas de numéro de carte, rien de confidentiel. Le JWT prouve <em>qui tu es</em>, il ne cache rien.</p>
+
+<h3>3. Les claims : standard et métier</h3>
+<p>Les champs du payload s'appellent des <strong>claims</strong> (« déclarations » : chaque claim est une affirmation que le token porte sur son propriétaire). Trois claims standard à connaître : <code>sub</code> (<em>subject</em> — l'identifiant de l'utilisateur, ici le membre 12, Aïcha), <code>iat</code> (<em>issued at</em> — date d'émission), <code>exp</code> (<em>expiration</em> — après cet instant, le token est refusé avec un <strong>401</strong>, le <strong>code de statut</strong> HTTP <code>401 Unauthorized</code> qui signifie « tu n'es pas — ou plus — authentifié » ; un code de statut est le nombre que le serveur met dans sa réponse pour dire comment ça s'est passé). On y ajoute des claims <strong>métier</strong> : ici <code>role: "membre"</code>, que la leçon 17 utilisera pour les permissions.</p>
+
+<h3>4. La signature : le sceau d'intégrité</h3>
+<p>Second malentendu : si tout le monde peut lire le payload, pourquoi faire confiance au token ? Grâce à la <strong>signature</strong>. Le serveur la calcule à partir du header, du payload et de sa <strong>clé secrète</strong> (que lui seul connaît). À chaque requête, il recalcule et compare :</p>
+<pre class="pseudo">signature = HMAC-SHA256( header + "." + payload , CLÉ_SECRÈTE )   # empreinte calculée sur header+payload avec la clé secrète
+
+Un fraudeur change  "role": "membre"  en  "role": "admin"  ?
+→ le payload change → la signature ne correspond plus
+→ 401 Unauthorized. Sans la clé secrète, impossible de re-signer.</pre>
+<p><strong>HMAC-SHA256</strong> est une fonction qui mélange un texte et une clé secrète pour produire une empreinte unique et impossible à reconstituer à l'envers : sans la clé, on ne peut pas fabriquer la bonne signature. La signature garantit donc l'<strong>intégrité</strong> : le contenu n'a pas été modifié depuis que le serveur l'a émis. Lisible par tous, falsifiable par personne.</p>
+
+<h3>5. Le cycle de vie : access + refresh</h3>
+<p>Un JWT volé est utilisable jusqu'à son <code>exp</code> — le serveur, <strong>stateless</strong> (« sans état » : il ne garde aucune mémoire des tokens déjà émis, il juge chaque token isolément), ne tient pas de liste noire. La parade standard : un <strong>access token court</strong> (15 minutes à 1 heure) pour les requêtes, et un <strong>refresh token long</strong> (des jours) qui sert uniquement à obtenir un nouvel access token sans re-taper son mot de passe. On l'envoie à un <strong>endpoint</strong> (« point d'accès » : une URL précise de l'API) dédié, <code>/auth/refresh</code> :</p>
+<pre class="pseudo">POST /auth/login                    → { "access": "eyJ…", "refresh": "eyJ…" }   # on se connecte : le serveur renvoie les DEUX tokens
+… l'access expire (15 min – 1 h) …                                            # au bout d'un moment l'access token n'est plus valide
+POST /auth/refresh  { "refresh": "eyJ…" }  → { "access": "eyJ…" }  (nouveau)     # on envoie le refresh pour recevoir un access tout neuf
+
+# DRF : rest_framework_simplejwt fournit ces deux endpoints tout faits
+# Spring Security (jwt) · Laravel Sanctum/JWT · ASP.NET JwtBearer : même logique</pre>
+<p>Reste la question du <strong>stockage côté client</strong> : un token accessible en JavaScript est volable par une faille <strong>XSS</strong> (<em>Cross-Site Scripting</em> : du code JavaScript malveillant injecté dans une page, qui s'exécute dans le navigateur de la victime). Les stratégies de stockage et les attaques XSS sont approfondies dans le cours <em>Sécurité applicative</em> — retiens ici que le token le plus sûr est celui qui expire vite.</p>
+<div class="warn">Le payload d'un JWT est <strong>lisible par tous</strong> : base64url encode, il ne chiffre pas. Un secret placé dans un token est un secret publié.</div>
+<div class="tip">Colle un JWT (de test !) dans un décodeur comme jwt.io pour voir ses trois parties : rien ne vaut la dissection pour comprendre. Ne colle jamais un token de production dans un site tiers.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un JWT est composé de…", opts: ["Deux parties séparées par un tiret", "Trois parties séparées par des points", "Un seul bloc chiffré", "Quatre lignes XML"], a: 1, exp: "header.payload.signature, chacun en base64url." },
+    { type: "qcm", q: "Le payload d'un JWT est…", opts: ["Chiffré, illisible sans la clé", "Encodé en base64url, lisible par tous", "Compressé en zip", "Vide"], a: 1, exp: "Encoder n'est pas chiffrer : n'importe qui peut le décoder." },
+    { type: "qcm", q: "Peut-on mettre un mot de passe dans le payload d'un JWT ?", opts: ["Oui, il est signé", "Oui, si le token est court", "Non : le payload est lisible par quiconque détient le token", "Oui, en majuscules"], a: 2, exp: "Jamais de secret dans un payload." },
+    { type: "qcm", q: "Le claim sub contient…", opts: ["La date d'expiration", "L'identifiant du sujet (l'utilisateur)", "L'algorithme de signature", "Le nom du serveur"], a: 1, exp: "Pour Aïcha : sub = 12, son id de membre." },
+    { type: "qcm", q: "Le claim exp sert à…", opts: ["Indiquer l'expiration : après, le token est refusé", "Exporter le token", "Expliquer l'erreur", "Chiffrer le payload"], a: 0, exp: "Token expiré → 401, il faut le renouveler." },
+    { type: "qcm", q: "La signature d'un JWT garantit…", opts: ["La confidentialité du payload", "La vitesse de l'API", "La compression", "L'intégrité : le contenu n'a pas été modifié"], a: 3, exp: "Toute modification invalide la signature." },
+    { type: "qcm", q: "Un fraudeur change role: « membre » en « admin » dans son token. Résultat ?", opts: ["Il devient admin", "La signature ne correspond plus : 401", "Le serveur re-signe pour lui", "Le token devient plus long"], a: 1, exp: "Sans la clé secrète du serveur, impossible de re-signer." },
+    { type: "qcm", q: "La clé secrète qui signe les tokens est connue…", opts: ["Du serveur uniquement", "De tous les clients", "Du navigateur", "De personne"], a: 0, exp: "C'est elle qui rend la signature infalsifiable." },
+    { type: "qcm", q: "L'access token est volontairement…", opts: ["Éternel", "Court (15 min à 1 h)", "Stocké dans l'URL", "Identique pour tous les membres"], a: 1, exp: "Un token volé expire vite : dégâts limités." },
+    { type: "qcm", q: "Le refresh token sert à…", opts: ["Rafraîchir la page", "Vider le cache", "Obtenir un nouvel access token sans re-saisir le mot de passe", "Signer les requêtes GET"], a: 2, exp: "POST /auth/refresh → nouvel access token." },
+    { type: "vf", q: "Base64url est un chiffrement qui protège le contenu du payload.", a: false, exp: "C'est un encodage réversible par tous : lisible, pas secret." },
+    { type: "vf", q: "Le serveur peut vérifier un JWT sans rien stocker : recalculer la signature suffit.", a: true, exp: "C'est ce qui rend le JWT stateless." },
+    { type: "vf", q: "Un token accessible en JavaScript peut être volé par une faille XSS.", a: true, exp: "D'où les access tokens courts — le cours Sécurité applicative approfondit XSS et stockage." },
+    { type: "input", q: "Quel claim standard porte la date d'expiration du token ?", a: ["exp"], ph: "Trois lettres…", exp: "exp — passé cet instant, le serveur répond 401." },
+    { type: "input", q: "Quel claim standard identifie l'utilisateur (le « sujet ») du token ?", a: ["sub"], ph: "Trois lettres…", exp: "sub = subject : pour Aïcha, l'id 12." }
+  ],
+  final: {
+    title: "Exercice final — Dissection d'un token",
+    intro: `<p>On te tend le token d'Aïcha : <code>eyJhbGciOi….eyJzdWIiOi….SflKxwRJSM…</code>. Dissèque-le.</p>`,
+    questions: [
+      { type: "qcm", q: "La deuxième partie (eyJzdWIiOi…) est…", opts: ["La signature", "Le payload, avec les claims", "Le header", "La clé secrète"], a: 1, exp: "header.PAYLOAD.signature : sub, role, iat, exp." },
+      { type: "qcm", q: "Le décodage du payload donne { sub: 12, role: « membre », exp: … }. Qui peut lire ces informations ?", opts: ["Le serveur seul", "Aïcha seule", "Quiconque détient le token", "Personne"], a: 2, exp: "Base64url se décode en une ligne : aucun secret là-dedans." },
+      { type: "vf", q: "Si Aïcha modifie role en « gestionnaire » dans son token, le serveur le détecte à la vérification de signature.", a: true, exp: "Payload modifié = signature invalide = 401." },
+      { type: "qcm", q: "L'access token d'Aïcha expire au bout d'une heure. Pour continuer sans se reconnecter, son application…", opts: ["Prolonge le claim exp elle-même", "Envoie le refresh token à POST /auth/refresh", "Réutilise l'ancien token", "Passe en HTTP"], a: 1, exp: "Le refresh token long sert exactement à ça." },
+      { type: "input", q: "Quel code de statut reçoit une requête portant un token expiré ?", a: ["401"], ph: "Un nombre…", exp: "401 Unauthorized : la preuve d'identité n'est plus valide." }
+    ],
+    solution: `<pre class="pseudo">JWT = header.payload.signature   (base64url = ENCODÉ, pas chiffré)          # 3 parties séparées par des points
+                                                                            # (encoder n'est pas chiffrer : ça se relit)
+payload d'Aïcha : { "sub": "12", "role": "membre", "iat": …, "exp": … }     # le contenu décodé du token, en JSON
+  → lisible par tous : JAMAIS de secret dedans                              # base64url se décode en une ligne
+signature = HMAC(header.payload, clé secrète du serveur)                    # le sceau d'intégrité, clé connue du serveur seul
+  → intégrité : toute modification = 401                                    # payload modifié = signature invalide = 401
+
+Cycle de vie : access court (15 min – 1 h) + refresh long                   # deux tokens complémentaires
+  login → les deux tokens · access expiré → POST /auth/refresh              # renouvellement sans re-saisir le mot de passe
+Stockage client : gare au XSS (cours Sécurité applicative)                  # un token lisible en JavaScript est volable</pre>
+<p>Ton API sait désormais QUI parle : sub 12, Aïcha, rôle membre. Demain, la vraie question : a-t-elle le DROIT de faire ce qu'elle demande ?</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l16", title: "Le rapport d'incident JWT", level: 3,
+    statement: "Un stagiaire de la Ludothèque propose trois « améliorations » : (1) stocker l'email et le mot de passe hashé du membre dans le payload « pour éviter une requête en base », (2) passer l'expiration des access tokens de 1 heure à 30 jours « pour le confort », (3) supprimer la vérification de signature côté serveur « puisque le payload dit déjà qui est l'utilisateur ». Rédige la réponse technique qui refuse chacune des trois propositions, en expliquant précisément le risque, puis rappelle en conclusion ce qu'un JWT garantit et ce qu'il ne garantit PAS.",
+    hints: [
+      "Proposition 1 : qui peut lire un payload base64url ? Que devient une donnée sensible qui y est placée ?",
+      "Proposition 2 : que se passe-t-il si un token est volé, sachant que le serveur stateless ne tient pas de liste noire ?",
+      "Proposition 3 : sans vérification de signature, qu'est-ce qui empêche un client d'écrire lui-même role: « admin » ?"
+    ],
+    solution: "RÉPONSE AUX TROIS PROPOSITIONS\n\n1) Email + mot de passe hashé dans le payload : REFUSÉ.\n   Le payload est encodé en base64url, pas chiffré : quiconque détient\n   le token (proxy, log, extension navigateur) le décode en une ligne.\n   Placer une donnée sensible dans un payload revient à la publier.\n   Règle : le payload ne contient que des claims non confidentiels\n   (sub, role, iat, exp).\n\n2) Access token de 30 jours : REFUSÉ.\n   Le serveur est stateless : il ne peut pas révoquer un token émis,\n   il le juge valide jusqu'à exp. Un token volé serait donc utilisable\n   30 jours. La bonne architecture : access court (15 min - 1 h) pour\n   limiter les dégâts + refresh token long pour le confort de\n   l'utilisateur (POST /auth/refresh, pas de nouvelle saisie du mot\n   de passe).\n\n3) Supprimer la vérification de signature : REFUSÉ, faille critique.\n   Sans vérification, n'importe quel client peut forger un token avec\n   role: « admin » — le payload est modifiable par tous, c'est la\n   signature (calculée avec la clé secrète que seul le serveur\n   connaît) qui garantit son intégrité. La vérifier à CHAQUE requête\n   est non négociable.\n\nCONCLUSION\nUn JWT garantit : l'intégrité (contenu non modifié depuis l'émission)\net l'authenticité (émis par notre serveur), jusqu'à son expiration.\nUn JWT ne garantit PAS : la confidentialité de son contenu (lisible\npar tous), ni sa non-compromission (un token volé est valide jusqu'à\nexp — d'où les durées courtes).",
+    note: "Ce type de revue critique est exactement ce qu'on attendra de toi dans les capstones : SimpleJWT (Django), Spring Security, Sanctum ou JwtBearer appliquent tous ces règles par défaut, et c'est souvent en les « améliorant » qu'on les casse. Le vol de token par XSS et les stratégies de stockage côté navigateur sont traités en profondeur dans le cours Sécurité applicative." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

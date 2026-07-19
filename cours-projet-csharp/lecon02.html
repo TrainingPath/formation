@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Mise en place : ASP.NET Core + connexion SQL Server",
+  subtitle: "Créer le projet et le brancher sur la base de la Ludothèque.",
+  theory: `
+<h3>1. Créer le projet</h3>
+<p>On commence dans le <strong>terminal</strong> (une fenêtre où l'on tape des commandes texte au lieu de cliquer). <code>dotnet</code> est l'outil en ligne de commande de .NET : on lui donne des ordres courts pour créer, compiler ou lancer un projet. Les lignes suivantes sont des commandes shell (le « # » n'est pas tapé : c'est mon commentaire d'explication) :</p>
+<pre class="pseudo">dotnet new webapi -n Ludotheque.Api                        # crée un nouveau projet d'API web nommé Ludotheque.Api
+cd Ludotheque.Api                                          # "change directory" : entre dans le dossier du projet créé
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer # ajoute le paquet EF Core + le pilote qui parle à SQL Server
+dotnet add package Microsoft.EntityFrameworkCore.Design    # ajoute les outils de conception (pour générer les migrations)</pre>
+<p>Une <strong>API</strong> (Application Programming Interface) est une porte d'entrée par laquelle d'autres programmes viennent demander des services — comme un guichet automatique entre le client et la banque. Le <strong>template</strong> <code>webapi</code> est un modèle de projet tout prêt qui démarre déjà. Un <strong>package</strong> (ou paquet) est une bibliothèque de code écrite par d'autres, qu'on ajoute à son projet pour ne pas réinventer la roue ; ici on ajoute EF Core et son <strong>fournisseur</strong> (le module qui sait dialoguer précisément avec SQL Server).</p>
+
+<h3>2. La chaîne de connexion</h3>
+<p>La <strong>chaîne de connexion</strong> (connection string) est une phrase qui contient toutes les informations pour joindre la base de données : où elle se trouve, son nom, et comment s'identifier — comme une adresse postale complète avec le code de la porte. On la range dans <code>appsettings.json</code>, le fichier de <strong>configuration</strong> de l'application (JSON = un format texte simple pour ranger des réglages sous forme de « clé : valeur »).</p>
+<pre class="pseudo">// appsettings.json                                        // ce commentaire indique juste de quel fichier il s'agit
+"ConnectionStrings": {                                      // section regroupant les chaînes de connexion aux bases
+  "Default": "Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True"  // serveur local, base "Ludotheque", authentification Windows
+}                                                           // fin de la section ConnectionStrings</pre>
+<p>Elle pointe le serveur SQL Server et la base <code>Ludotheque</code>. <code>localhost</code> signifie « cette machine-ci » (l'ordinateur où l'on développe). En développement, on peut utiliser l'<strong>authentification Windows</strong> (<code>Trusted_Connection=True</code>) : c'est le compte Windows déjà ouvert qui sert de laissez-passer, ce qui évite d'écrire un mot de passe.</p>
+
+<h3>3. Enregistrer le DbContext</h3>
+<p>Il faut maintenant dire à l'application « voici comment joindre la base ». Cela se fait dans <code>Program.cs</code>, le fichier de <strong>démarrage</strong> qui s'exécute en tout premier :</p>
+<pre class="pseudo">// Program.cs                                               // fichier de démarrage de l'application
+builder.Services.AddDbContext&lt;AppDbContext&gt;(o =&gt;          // enregistre notre AppDbContext dans le conteneur d'injection
+    o.UseSqlServer(builder.Configuration.GetConnectionString("Default")));  // en lui disant : utilise SQL Server via la chaîne "Default"</pre>
+<p>Le <strong>DbContext</strong> (ici <code>AppDbContext</code>) est l'objet d'EF Core qui représente la base de données côté code. On l'enregistre dans le <strong>conteneur d'injection de dépendances</strong> — imaginez un magasin central d'objets réutilisables : au lieu que chaque classe fabrique elle-même son DbContext, elle le demande au conteneur, qui le lui fournit tout prêt. <code>AddDbContext</code> place l'objet dans ce magasin ; <code>UseSqlServer</code> précise quelle base et quelle adresse utiliser.</p>
+
+<h3>4. Un premier endpoint de vie</h3>
+<p>Un <strong>endpoint</strong> (« point d'accès ») est une adresse web que l'application sait traiter, associée à une action. Créons-en un minuscule pour vérifier que tout démarre :</p>
+<pre class="pseudo">// Program.cs (endpoint minimal)                            // toujours dans le fichier de démarrage
+app.MapGet("/ping", () =&gt; "pong");                          // à l'adresse /ping (requête GET), l'appli répond le texte "pong"</pre>
+<p><code>MapGet</code> associe une adresse (ici <code>/ping</code>) à une petite fonction qui renvoie <code>"pong"</code>. On lance l'application avec <code>dotnet run</code>, on visite <code>/ping</code> dans le navigateur : si « pong » s'affiche, c'est la preuve que l'application vit. C'est l'équivalent d'un « allô, tu m'entends ? ».</p>
+
+<h3>5. Où vont les secrets ?</h3>
+<p>Un <strong>secret</strong> est une information sensible (mot de passe de la base, clé de sécurité) qu'il ne faut jamais laisser traîner dans le code partagé. Une <strong>clé JWT</strong> est un mot de passe technique servant à signer les jetons de connexion des utilisateurs (vu plus tard). « <strong>Commiter</strong> » veut dire enregistrer un fichier dans l'historique du projet (via l'outil de sauvegarde Git) : y mettre un secret reviendrait à publier son code de carte bancaire.</p>
+<div class="warn">La chaîne de connexion de développement peut rester dans <code>appsettings.json</code>, mais les <strong>secrets</strong> (mot de passe SQL, clé JWT) ne doivent jamais y être commités. On utilise <code>dotnet user-secrets</code> en développement (un coffre-fort local, hors du projet partagé), et des <strong>variables d'environnement</strong> en production — des réglages fournis par le serveur lui-même au moment du lancement (leçons 19-20).</div>
+<div class="tip">ASP.NET Core lit la configuration en <strong>couches</strong> qui se recouvrent (d'abord appsettings.json, puis appsettings.{Environnement}.json, puis les variables d'environnement) : quand une même valeur existe à plusieurs endroits, la plus spécifique l'emporte, comme une note manuscrite qui corrige un formulaire imprimé. Le serveur web (<strong>Kestrel</strong>, celui qui écoute les requêtes venant d'Internet) est intégré, comme Spring Boot.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Créer une API :", opts: ["dotnet new webapi -n Ludotheque.Api", "npm create api", "python api", "new project"], a: 0, exp: "Template webapi." },
+    { type: "qcm", q: "Le paquet pour SQL Server :", opts: ["EntityFrameworkCore.SqlServer", "System.Data", "Newtonsoft", "Dapper only"], a: 0, exp: "Provider EF Core." },
+    { type: "qcm", q: "La chaîne de connexion se met dans…", opts: ["Un contrôleur", "appsettings.json (ConnectionStrings)", "Une vue", "Un test"], a: 1, exp: "Configuration." },
+    { type: "qcm", q: "Enregistrer le DbContext :", opts: ["builder.Services.AddDbContext<AppDbContext>(...)", "new AppDbContext()", "static", "rien"], a: 0, exp: "Injection de dépendances." },
+    { type: "qcm", q: "UseSqlServer(...) indique…", opts: ["Le port", "Le fournisseur de base (SQL Server)", "Le rôle", "Le thème"], a: 1, exp: "Provider." },
+    { type: "qcm", q: "Les secrets ne doivent pas…", opts: ["Exister", "Être commités dans appsettings versionné", "Être chiffrés", "Être longs"], a: 1, exp: "Hors du dépôt." },
+    { type: "qcm", q: "En développement, gérer les secrets :", opts: ["dotnet user-secrets", "en clair partout", "dans le HTML", "dans un log"], a: 0, exp: "User Secrets." },
+    { type: "qcm", q: "L'endpoint /ping sert à…", opts: ["Se connecter à SQL Server", "Vérifier que l'application démarre", "Trier", "Chiffrer"], a: 1, exp: "Signe de vie." },
+    { type: "qcm", q: "Lancer l'application :", opts: ["dotnet run", "npm start", "python app.py", "run api"], a: 0, exp: "dotnet run." },
+    { type: "qcm", q: "La config est lue en couches, la plus spécifique…", opts: ["Est ignorée", "L'emporte (ex. variables d'env)", "Est en premier", "Est aléatoire"], a: 1, exp: "Override." },
+    { type: "vf", q: "Le DbContext est injecté grâce au conteneur de DI.", a: true, exp: "Injection intégrée." },
+    { type: "qcm", q: "Le serveur web intégré s'appelle…", opts: ["Tomcat", "Kestrel", "Apache", "Nginx"], a: 1, exp: "Kestrel." },
+    { type: "vf", q: "En production, les secrets viennent de variables d'environnement.", a: true, exp: "Pas dans le code." },
+    { type: "qcm", q: "Trusted_Connection=True utilise…", opts: ["Un mot de passe en clair", "l'authentification Windows (en dev)", "Aucune auth", "Un token JWT"], a: 1, exp: "Auth intégrée." },
+    { type: "qcm", q: "appsettings.Development.json…", opts: ["Est en prod", "Surcharge appsettings.json en développement", "Est ignoré", "Contient le HTML"], a: 1, exp: "Config par environnement." }
+  ],
+  final: {
+    title: "Exercice final — Brancher l'application",
+    intro: `<p>On configure la connexion et on prouve que ça démarre.</p>`,
+    questions: [
+      { type: "qcm", q: "Où mettre la chaîne de connexion :", opts: ["appsettings.json (ConnectionStrings)", "dans un contrôleur", "dans le HTML", "dans un test"], a: 0, exp: "Config." },
+      { type: "qcm", q: "Enregistrer EF Core :", opts: ["AddDbContext<AppDbContext>(o => o.UseSqlServer(...))", "new AppDbContext()", "static db", "rien"], a: 0, exp: "DI + provider." },
+      { type: "qcm", q: "Les secrets en dev :", opts: ["dotnet user-secrets", "en clair dans Git", "dans le HTML", "dans un log"], a: 0, exp: "User Secrets." },
+      { type: "qcm", q: "Prouver le démarrage :", opts: ["Visiter /ping", "Redémarrer le PC", "Lire la base", "Rien"], a: 0, exp: "Endpoint de vie." },
+      { type: "vf", q: "Kestrel est le serveur web intégré d'ASP.NET Core.", a: true, exp: "Serveur inclus." }
+    ],
+    solution: `<pre class="pseudo">// appsettings.json                                         // repère : fichier de configuration
+"ConnectionStrings": {                                      // section des chaînes de connexion
+  "Default": "Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True"  // serveur, base et authentification
+}                                                           // fin de la section
+
+// Program.cs                                               // fichier de démarrage
+builder.Services.AddDbContext&lt;AppDbContext&gt;(o =&gt;           // enregistre le DbContext dans le conteneur d'injection
+    o.UseSqlServer(builder.Configuration.GetConnectionString("Default")));  // utilise SQL Server via la chaîne "Default"
+
+app.MapGet("/ping", () =&gt; "pong");                          // adresse /ping : répond "pong" (preuve de vie)</pre>
+<p>L'application vit et parle à SQL Server. Demain : créer le schéma via EF Core.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta configuration…",
+  items: [
+  { id: "projcsharp-l2", title: "Configurer et vérifier la connexion", level: 2,
+    statement: "Écris la section ConnectionStrings d'appsettings.json pour la base SQL Server 'Ludotheque', la ligne de Program.cs enregistrant le DbContext avec UseSqlServer, et un endpoint minimal GET /ping renvoyant « pong ».",
+    hints: [
+      "\"ConnectionStrings\": { \"Default\": \"Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True\" }.",
+      "builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlServer(builder.Configuration.GetConnectionString(\"Default\"))).",
+      "app.MapGet(\"/ping\", () => \"pong\")."
+    ],
+    solution: "// appsettings.json                    // fichier de configuration\n\"ConnectionStrings\": {                  // section des chaines de connexion\n  \"Default\": \"Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True\"   // serveur, base et authentification Windows\n}\n\n// Program.cs                          // fichier de demarrage\nbuilder.Services.AddDbContext<AppDbContext>(o =>            // enregistre le DbContext dans le conteneur d'injection\n    o.UseSqlServer(builder.Configuration.GetConnectionString(\"Default\")));   // utilise SQL Server via la chaine Default\n\napp.MapGet(\"/ping\", () => \"pong\");     // adresse /ping : repond pong (preuve de vie)",
+    note: "La chaîne de connexion branche EF Core sur SQL Server ; AddDbContext l'enregistre dans le conteneur de DI pour l'injecter partout. L'endpoint /ping confirme que Kestrel répond. En production, la chaîne et les secrets viendront de variables d'environnement, pas d'appsettings versionné." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

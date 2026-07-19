@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Valider les données : les DataAnnotations",
+  subtitle: "Ne jamais faire confiance aux données entrantes — et laisser le framework s'en charger.",
+  theory: `
+<h3>1. Le problème</h3>
+<p><strong>Valider</strong>, c'est vérifier qu'une donnée respecte des règles avant de l'accepter. Actuellement, POST /api/taches accepte un titre vide, une priorité « banane » ou une description de 3 Mo. Toute donnée venant du client est <strong>suspecte</strong> (le client appartient à l'utilisateur, qui peut être malveillant) : elle doit être validée <strong>côté serveur</strong>.</p>
+<h3>2. Les DataAnnotations : des règles déclaratives</h3>
+<p>Les <strong>DataAnnotations</strong> sont des attributs (des étiquettes, leçon 4) que l'on pose sur les propriétés pour déclarer leurs règles. « Déclaratif » veut dire « on décrit la règle, le framework se charge de l'appliquer » :</p>
+<pre class="pseudo">using System.ComponentModel.DataAnnotations;      // importe les attributs de validation
+
+public class TacheDto                              // l'objet reçu du client (voir §4)
+{
+    [Required(ErrorMessage = "Le titre est obligatoire")]  // règle : le titre DOIT être présent (+ message sur mesure)
+    [StringLength(100, MinimumLength = 3)]         // règle : entre 3 et 100 caractères
+    public string Titre { get; set; } = "";        // la propriété validée
+
+    [Range(1, 5)]                                  // règle : valeur entre 1 et 5 inclus
+    public int Priorite { get; set; }              // la priorité de la tâche
+
+    [EmailAddress]                                 // règle : format d'e-mail valide (si présent)
+    public string? EmailRappel { get; set; }       // e-mail facultatif (? = nullable)
+}</pre>
+<p>Les annotations utiles : <code>[Required]</code>, <code>[StringLength(max, MinimumLength = min)]</code>, <code>[Range(min, max)]</code>, <code>[EmailAddress]</code>, <code>[RegularExpression(...)]</code>, <code>[Url]</code>.</p>
+<h3>3. [ApiController] valide automatiquement</h3>
+<p>Grâce à l'attribut <code>[ApiController]</code> (leçon 4), si le modèle reçu viole une règle, la méthode <strong>n'est même pas appelée</strong> : le framework renvoie directement un <strong>400 Bad Request</strong> avec le détail :</p>
+<pre class="pseudo">{
+  "errors": {
+    "Titre": ["Le titre est obligatoire"],
+    "Priorite": ["The field Priorite must be between 1 and 5."]
+  },
+  "status": 400
+}</pre>
+<p>Zéro if à écrire dans le contrôleur. Les règles sont déclarées UNE fois, sur le modèle.</p>
+<h3>4. Le DTO : valider le bon objet</h3>
+<p>Un <strong>DTO</strong> (Data Transfer Object, « objet de transfert de données ») est un objet dédié à l'échange avec le client. Pourquoi <code>TacheDto</code> et pas l'entité <code>Tache</code> directement ? Parce que le client ne doit pas pouvoir envoyer <code>Id</code>, <code>CreeLe</code> ou <code>MembreId</code> de son choix ! Le <strong>DTO d'entrée</strong> ne contient QUE les champs que le client a le droit de fournir (une « liste blanche ») ; le contrôleur construit l'entité :</p>
+<pre class="pseudo">[HttpPost]                                        // POST api/taches
+public async Task&lt;ActionResult&lt;Tache&gt;&gt; Creer(TacheDto dto)  // on reçoit le DTO validé, pas l'entité
+{
+    var tache = new Tache {                        // le SERVEUR construit l'entité à partir du DTO
+        Titre = dto.Titre,                         // on recopie les champs autorisés
+        Priorite = dto.Priorite,                   // idem
+        // Id, CreeLe, MembreId : décidés par le SERVEUR (jamais par le client)
+    };
+    _context.Taches.Add(tache);                    // marqué « à insérer »
+    await _context.SaveChangesAsync();             // INSERT réel
+    return CreatedAtAction(nameof(ParId), new { id = tache.Id }, tache);  // 201 + Location
+}</pre>
+<h3>5. Valider ≠ tout sécuriser</h3>
+<p>La validation garantit la <strong>forme</strong> (longueur, format, bornes). Les règles <strong>métier</strong> (« pas plus de 10 tâches en cours ») restent dans le service (leçon 7). Et la validation côté client (JavaScript) n'est qu'un confort : seule celle du serveur fait foi.</p>
+<div class="warn">Ne jamais exposer l'entité EF directement en entrée d'API : un client malin enverrait {"id":1,"titre":"pwned"} et écraserait des champs que tu ne voulais pas ouvrir. C'est l'équivalent .NET du « mass assignment ».</div>
+<div class="tip">Les mêmes DataAnnotations serviront aux formulaires Razor Pages (leçon 18) : déclare une fois, valide partout.</div>`,
+  exercises: [
+    { type: "qcm", q: "Où DOIT se faire la validation qui fait foi ?", opts: ["Dans le navigateur (JS)", "Côté serveur : le client peut contourner tout le reste", "Dans la base uniquement", "Nulle part"], a: 1, exp: "Le client appartient à l'utilisateur — potentiellement hostile." },
+    { type: "qcm", q: "Comment rendre le titre obligatoire ?", opts: ["[NotNull]", "[Required] sur la propriété", "if (titre == null) partout", "required SQL"], a: 1, exp: "L'annotation déclarative remplace les if répétitifs." },
+    { type: "qcm", q: "Quelle annotation limite un texte entre 3 et 100 caractères ?", opts: ["[Length(3,100)]", "[StringLength(100, MinimumLength = 3)]", "[Range(3,100)]", "[MaxMin(3,100)]"], a: 1, exp: "StringLength pour les chaînes ; Range pour les nombres." },
+    { type: "qcm", q: "Et pour contraindre un entier entre 1 et 5 ?", opts: ["[StringLength]", "[Range(1, 5)]", "[Between(1,5)]", "[Int(1,5)]"], a: 1, exp: "Range borne les valeurs numériques." },
+    { type: "qcm", q: "Avec [ApiController], que se passe-t-il si le modèle reçu est invalide ?", opts: ["La méthode s'exécute quand même", "400 automatique avec le détail des erreurs ; la méthode n'est pas appelée", "500", "Le champ est corrigé"], a: 1, exp: "La validation automatique : zéro plomberie dans le contrôleur." },
+    { type: "qcm", q: "Quel code HTTP signale des données invalides ?", opts: ["404", "400 Bad Request", "204", "301"], a: 1, exp: "Avec le détail par champ dans le corps de la réponse." },
+    { type: "qcm", q: "Qu'est-ce qu'un DTO d'entrée ?", opts: ["Une table", "Un objet dédié qui ne contient QUE les champs que le client a le droit de fournir", "Un doublon inutile", "Un attribut"], a: 1, exp: "Data Transfer Object : la frontière entre le monde extérieur et tes entités." },
+    { type: "qcm", q: "Pourquoi ne pas recevoir l'entité Tache directement dans le POST ?", opts: ["C'est plus lent", "Le client pourrait fournir Id, CreeLe, MembreId… et écraser des champs réservés au serveur", "EF Core l'interdit", "Le JSON ne le permet pas"], a: 1, exp: "L'équivalent .NET du « mass assignment » : le DTO est la liste blanche." },
+    { type: "qcm", q: "Qui décide de la valeur de CreeLe à la création ?", opts: ["Le client dans son JSON", "Le serveur, en construisant l'entité", "Le hasard", "SQLite"], a: 1, exp: "Identité, dates système, propriétaire : TOUJOURS le serveur." },
+    { type: "qcm", q: "La règle « maximum 10 tâches en cours par membre » se déclare :", opts: ["En DataAnnotation", "Dans le service : c'est une règle MÉTIER, pas une règle de forme", "Dans le DTO", "En SQL"], a: 1, exp: "Annotations = forme ; service = métier. Deux niveaux complémentaires." },
+    { type: "qcm", q: "Un email facultatif mais valide s'il est fourni :", opts: ["[Required][EmailAddress]", "string? + [EmailAddress]", "[Email(optional)]", "Impossible"], a: 1, exp: "Le nullable rend facultatif ; l'annotation valide le format quand présent." },
+    { type: "qcm", q: "Un contenu validé ([StringLength(500)] OK) peut-il rester dangereux ?", opts: ["Non, il est validé", "Oui : il peut contenir du HTML/script — l'échappement à l'AFFICHAGE reste indispensable (leçon 18)", "Non, si HTTPS", "Oui, mais seulement en SQLite"], a: 1, exp: "Validation en entrée + échappement en sortie : deux remparts." },
+    { type: "qcm", q: "Où réutiliseras-tu les mêmes DataAnnotations plus tard ?", opts: ["Nulle part", "Dans les formulaires Razor Pages (leçon 18)", "Dans le .csproj", "Dans les logs"], a: 1, exp: "Déclare une fois, valide partout." },
+    { type: "vf", q: "Avec [ApiController], il faut vérifier ModelState.IsValid à la main dans chaque méthode.", a: false, exp: "C'est automatique : modèle invalide → 400 avant même l'appel de la méthode." },
+    { type: "vf", q: "La validation JavaScript côté client peut remplacer la validation serveur.", a: false, exp: "Elle n'est qu'un confort d'interface : le serveur revérifie TOUJOURS." }
+  ],
+  final: {
+    title: "Exercice final — Le POST blindé",
+    intro: `<p>Le POST du gestionnaire de tâches, version blindée :</p>
+<pre class="pseudo">public class CreerTacheDto                          // DTO d'entrée : la liste blanche des champs autorisés
+{
+    [Required, StringLength(100, MinimumLength = 3)]  // titre obligatoire, entre 3 et 100 caractères
+    public string Titre { get; set; } = "";
+
+    [Range(1, 5)]                                   // priorité entre 1 et 5
+    public int Priorite { get; set; } = 3;          // défaut = 3 (valeur sûre si le champ est absent)
+
+    [StringLength(500)]                             // description : 500 caractères maximum
+    public string? Description { get; set; }         // facultative (nullable)
+}
+
+$ curl -i -X POST .../api/taches -H "Content-Type: application/json" \\   # on envoie un POST volontairement invalide
+       -d '{"titre":"OK","priorite":9}'                                    # "OK" = 2 caractères (< 3) ET priorité 9 (> 5)
+HTTP/1.1 400 Bad Request                                                    # rejeté avant même d'entrer dans la méthode
+{"errors":{"Titre":["...minimum length of 3..."],                          # erreur 1 : titre trop court
+           "Priorite":["...must be between 1 and 5."]}}                     # erreur 2 : priorité hors bornes</pre>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi la requête échoue-t-elle sur DEUX champs ?", opts: ["Un seul champ est faux", "« OK » fait 2 caractères (< 3) ET 9 est hors [1,5] : toutes les erreurs sont rapportées d'un coup", "Le JSON est mal formé", "Il manque la description"], a: 1, exp: "Le client corrige tout en un aller-retour : bonne conception d'API." },
+      { type: "qcm", q: "La méthode Creer du contrôleur s'est-elle exécutée ?", opts: ["Oui, puis a échoué", "Non : [ApiController] a rejeté le modèle avant l'appel", "Oui, partiellement", "Impossible à savoir"], a: 1, exp: "Ton code ne voit QUE des données valides." },
+      { type: "qcm", q: "Le client omet complètement la priorité. Que se passe-t-il ?", opts: ["400", "La valeur par défaut 3 s'applique : 3 est dans [1,5], c'est valide", "500", "priorite = 0 → 400"], a: 1, exp: "Le défaut C# (= 3) donne une valeur sûre au champ absent." },
+      { type: "qcm", q: "Un client envoie {\"titre\":\"Valide\",\"id\":42,\"creeLe\":\"1999-01-01\"}. Que deviennent id et creeLe ?", opts: ["Ils écrasent les valeurs", "Ignorés : le DTO ne les connaît pas — le serveur garde la main sur ces champs", "400", "500"], a: 1, exp: "Le DTO-liste-blanche au travail." },
+      { type: "vf", q: "Grâce à cette validation, la règle métier « max 10 tâches en cours » est aussi couverte.", a: false, exp: "Non : les annotations valident la FORME. Les règles métier vivent dans le service (leçon 7)." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 12 :
+// 1. Toute donnée entrante est suspecte : validation SERVEUR obligatoire.
+// 2. DataAnnotations : Required, StringLength, Range, EmailAddress…
+// 3. [ApiController] → 400 automatique + détail par champ.
+// 4. DTO d'entrée = liste blanche : jamais l'entité EF en entrée d'API.
+// 5. Id, dates, propriétaire : décidés par le serveur.
+// 6. Forme (annotations) ≠ métier (service) : deux niveaux.</pre>
+<p>Les entrées sont propres. Demain : et quand ça casse quand même ? Gérer les erreurs proprement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

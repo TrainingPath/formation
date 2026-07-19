@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 4</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 4,
+  title: "CSRF : les jetons et SameSite",
+  subtitle: "Un site tiers déclenche une action à l'insu de l'utilisateur connecté.",
+  theory: `
+<h3>1. Le mécanisme</h3>
+<p>Le <strong>CSRF</strong> (Cross-Site Request Forgery, « falsification de requête entre sites ») exploite un détail du fonctionnement des cookies : le <strong>cookie de session</strong> — le « bracelet d'entrée » qui prouve que tu es connecté — est renvoyé <strong>automatiquement</strong> par le navigateur à chaque requête vers ton site, quelle que soit la page qui déclenche cette requête. La victime, connectée à la Ludothèque, visite un site piège qui contient ceci :</p>
+<pre class="pseudo">&lt;!-- sur le site du pirate --&gt;
+&lt;form action="https://ludotheque.example.com/acheter/999/" method="post" id="p"&gt;   &lt;!-- formulaire cache pointant vers TA ludotheque --&gt;
+  ... &lt;/form&gt;
+&lt;script&gt;document.getElementById('p').submit()&lt;/script&gt;   &lt;!-- ce JS soumet le formulaire tout seul, sans clic de la victime --&gt;
+&lt;!-- le navigateur envoie la requete AVEC le cookie de session de la victime -> un achat declenche a son insu --&gt;</pre>
+
+<h3>2. Ce qui rend l'attaque possible</h3>
+<p>L'<strong>origine</strong> d'une page, c'est le trio protocole + domaine + port (par exemple <code>https://ludotheque.example.com</code>). Le navigateur joint le cookie de session à <strong>toute</strong> requête vers ce domaine, <em>même si la page qui la déclenche provient d'une autre origine</em> (le site pirate). L'attaquant n'a donc rien à lire ni à voler : il lui suffit de faire <strong>agir</strong> le navigateur de la victime, qui présente tout seul le bon cookie.</p>
+
+<h3>3. La parade n°1 : le jeton anti-CSRF</h3>
+<p>Un <strong>jeton</strong> (token) est une longue valeur secrète et imprévisible. Le serveur en glisse un, unique et lié à la session, dans chaque formulaire légitime, puis exige de le retrouver à la réception. Le site pirate, lui, ne peut ni le deviner ni le lire : la <strong>politique de même origine</strong> du navigateur l'empêche de lire le contenu d'un autre site. Sans le bon jeton, la requête forgée est refusée. C'est, en somme, un mot de passe à usage unique glissé dans chaque formulaire.</p>
+<pre class="pseudo">&lt;form method="post" action="/acheter/999/"&gt;
+  {% csrf_token %}    {# insere un jeton imprevisible, lie a la session de l'utilisateur #}
+  ...&lt;/form&gt;
+# le serveur verifie le jeton a chaque POST
+# le site pirate ne peut PAS le connaitre (politique de meme origine) -> requete forgee refusee</pre>
+
+<h3>4. La parade n°2 : SameSite sur les cookies</h3>
+<p>L'attribut <strong>SameSite</strong> d'un cookie indique au navigateur dans quels cas il a le droit de l'envoyer. Réglé sur <code>Lax</code> ou <code>Strict</code>, il empêche le cookie de partir lors d'une requête déclenchée depuis un autre site — ce qui coupe l'attaque CSRF à la racine.</p>
+<pre class="pseudo">SESSION_COOKIE_SAMESITE = "Lax"    # le cookie de session ne part PAS sur un POST venu d'un autre site
+CSRF_COOKIE_SAMESITE = "Lax"       # meme regle pour le cookie qui porte le jeton CSRF
+# Lax    : bloque l'envoi cross-site SAUF navigation de premier niveau (clic sur un lien)
+# Strict : bloque TOUT envoi cross-site (plus sur, parfois genant pour les liens entrants)</pre>
+
+<h3>5. Le cas des API à jeton</h3>
+<p>Une <strong>API</strong> (porte prévue pour que des programmes se parlent) s'authentifie souvent autrement qu'avec un cookie : par un <strong>jeton Bearer</strong> placé à la main dans l'en-tête HTTP <code>Authorization</code> (par exemple un <strong>JWT</strong>, un jeton signé étudié plus loin). Comme ce jeton n'est PAS envoyé automatiquement par le navigateur, le CSRF classique ne s'applique pas.</p>
+<pre class="pseudo">Session + cookie   -> envoye automatiquement -> vulnerable au CSRF -> jeton requis (formulaires web)
+Jeton Bearer (JWT dans l'en-tete Authorization) -> PAS de cookie automatique
+                   -> pas de CSRF classique (mais bien securiser le STOCKAGE du jeton cote client)</pre>
+<div class="warn">Ne jamais utiliser <strong>GET</strong> pour une action qui modifie l'état (louer, acheter, supprimer). Un GET s'exécute par un simple lien, une image (<code>&lt;img src="/supprimer/5"&gt;</code>), un préchargement. Les actions se font en <strong>POST</strong> — et les POST portent le jeton CSRF.</div>
+<div class="tip">Toutes les piles ont leur protection intégrée : Django <code>{% csrf_token %}</code>, Spring Security (activé par défaut), C# <code>[ValidateAntiForgeryToken]</code>, Laravel <code>@csrf</code>. Le rôle du développeur : ne pas la désactiver « pour que ça marche », et poser SameSite sur les cookies.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le CSRF exploite…", opts: ["Une injection", "Le cookie de session envoyé automatiquement à chaque requête", "Un mot de passe faible", "Le HTML"], a: 1, exp: "Requête forgée depuis un autre site." },
+    { type: "qcm", q: "Dans une attaque CSRF, la victime est…", opts: ["Anonyme", "Connectée à la Ludothèque et visite un site piège", "L'administrateur du pirate", "Un robot"], a: 1, exp: "Sa session est détournée." },
+    { type: "qcm", q: "L'attaquant CSRF cherche à…", opts: ["Lire la base", "Faire AGIR la victime à son insu (louer, acheter…)", "Voler le mot de passe", "Chiffrer"], a: 1, exp: "Pas de lecture, une action." },
+    { type: "qcm", q: "La parade n°1 :", opts: ["HTTPS", "Le jeton anti-CSRF, imprévisible et lié à la session", "Un cookie de plus", "Cacher le formulaire"], a: 1, exp: "Le site pirate ne le connaît pas." },
+    { type: "qcm", q: "Pourquoi le site pirate ne peut pas forger le jeton ?", opts: ["Il est trop long", "La politique de même origine l'empêche de le lire", "Il est chiffré", "Le hasard"], a: 1, exp: "Same-origin policy." },
+    { type: "qcm", q: "SameSite=Lax fait que le cookie…", opts: ["Part partout", "Ne part pas sur un POST cross-site", "Est supprimé", "Est chiffré"], a: 1, exp: "Barrière complémentaire." },
+    { type: "qcm", q: "SameSite=Strict :", opts: ["Bloque tout envoi cross-site (plus sûr)", "N'a aucun effet", "Est moins sûr que Lax", "Chiffre le cookie"], a: 0, exp: "Parfois gênant pour les liens entrants." },
+    { type: "qcm", q: "Une API à jeton Bearer (JWT en en-tête)…", opts: ["Est vulnérable au CSRF classique", "Ne l'est pas : pas de cookie automatique", "N'a pas de sécurité", "Doit désactiver le jeton"], a: 1, exp: "Rien ne part tout seul." },
+    { type: "qcm", q: "Une action qui modifie l'état doit être en…", opts: ["GET", "POST (avec jeton CSRF)", "HEAD", "OPTIONS"], a: 1, exp: "Jamais GET pour modifier." },
+    { type: "qcm", q: "<img src=\"/supprimer/5\"> sur une page piège, si /supprimer est en GET…", opts: ["Ne fait rien", "Déclenche la suppression avec le cookie de la victime", "Affiche une image", "Est bloqué par HTTPS"], a: 1, exp: "Le GET s'exécute tout seul." },
+    { type: "vf", q: "Utiliser GET pour louer un jeu est acceptable.", a: false, exp: "Danger CSRF : les actions en POST." },
+    { type: "qcm", q: "En Laravel, la protection :", opts: ["@csrf", "@auth", "@if", "@include"], a: 0, exp: "Intégrée." },
+    { type: "qcm", q: "Le rôle du développeur vis-à-vis du CSRF :", opts: ["Tout réécrire", "Ne pas désactiver la protection intégrée + poser SameSite", "L'ignorer", "Chiffrer les cookies"], a: 1, exp: "Ne pas se saboter." },
+    { type: "qcm", q: "Spring Security et le CSRF :", opts: ["Désactivé par défaut", "Activé par défaut pour les formulaires", "Inexistant", "Manuel obligatoire"], a: 1, exp: "Protection d'office." },
+    { type: "vf", q: "Le jeton CSRF et SameSite sont deux protections complémentaires.", a: true, exp: "Défense en profondeur." }
+  ],
+  final: {
+    title: "Exercice final — Verrouiller les actions",
+    intro: `<p>L'API accepte des POST sans jeton et les cookies n'ont pas SameSite.</p>`,
+    questions: [
+      { type: "qcm", q: "Le formulaire « acheter » doit porter :", opts: ["{% csrf_token %} (ou l'équivalent de la pile)", "un GET", "rien", "un mot de passe caché"], a: 0, exp: "Jeton vérifié au POST." },
+      { type: "qcm", q: "Les cookies de session reçoivent :", opts: ["SESSION_COOKIE_SAMESITE = 'Lax'", "un timeout de 10 ans", "rien", "HttpOnly seulement"], a: 0, exp: "Barrière cross-site." },
+      { type: "qcm", q: "Une action de modification doit être :", opts: ["Un POST", "un GET", "un lien", "une image"], a: 0, exp: "Jamais GET." },
+      { type: "qcm", q: "Pour une API JWT en en-tête :", opts: ["Pas de CSRF classique, mais sécuriser le stockage du jeton", "désactiver toute sécurité", "un cookie obligatoire", "rien"], a: 0, exp: "Modèle différent." },
+      { type: "vf", q: "Un site tiers ne peut pas connaître le jeton CSRF de la victime.", a: true, exp: "Same-origin policy." }
+    ],
+    solution: `<pre class="pseudo"># 1. Formulaires : jeton (rappel capstone)
+&lt;form method="post" action="/acheter/999/"&gt;{% csrf_token %}...&lt;/form&gt;   # chaque POST porte alors le jeton
+
+# 2. Cookies : SameSite (settings.py)
+SESSION_COOKIE_SAMESITE = "Lax"   # le cookie de session ne part pas sur un POST cross-site
+CSRF_COOKIE_SAMESITE = "Lax"      # idem pour le cookie qui porte le jeton CSRF
+
+# 3. Actions de modification : POST uniquement (jamais GET)   # un GET se declenche via une simple image ou un lien
+# 4. API JWT en-tete Authorization : pas de cookie auto -> pas de CSRF classique   # le jeton n'est pas envoye tout seul</pre>
+<p>Les actions sont verrouillées. Demain : blinder l'entrée — l'authentification.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta défense anti-CSRF…",
+  items: [
+  { id: "secu-l4", title: "Le piège de l'image", level: 2,
+    statement: "Explique par écrit (schéma + code) une attaque CSRF concrète contre la Ludothèque SI la route de suppression d'un jeu était en GET : la page piège, ce que fait le navigateur de la victime, pourquoi ça marche. Puis écris les trois corrections (POST + jeton, SameSite, la vérification que TON capstone n'a aucune action d'état en GET).",
+    hints: [
+      "Une balise <img src> suffit à déclencher un GET, sans que la victime clique.",
+      "Le cookie de session part automatiquement : le serveur croit que c'est la victime.",
+      "Corriger : la route en POST + jeton, SameSite, et auditer les urls.py."
+    ],
+    solution: "# L'ATTAQUE (si /supprimer-jeu/<id>/ était en GET)\n# Sur une page piège que la victime (un admin connecté) visite :\n<img src=\"https://ludotheque.example.com/supprimer-jeu/12/\">\n# Le navigateur charge « l'image » -> envoie un GET vers la Ludothèque\n# AVEC le cookie de session admin (envoi automatique). Le serveur voit\n# une requête authentifiée d'admin -> supprime le jeu 12. La victime\n# n'a rien cliqué, rien vu. C'est ça, le CSRF.\n\n# POURQUOI ÇA MARCHE : le cookie part tout seul + l'action est en GET\n# (donc déclenchable par une simple balise, sans formulaire ni JS).\n\n# CORRECTION 1 — l'action en POST + jeton\n<form method=\"post\" action=\"{% url 'supprimer_jeu' jeu.id %}\">\n  {% csrf_token %}<button>Supprimer</button>\n</form>\n# une <img> ne peut pas faire de POST ; un POST cross-site n'a pas le jeton.\n\n# CORRECTION 2 — SameSite sur le cookie de session\nSESSION_COOKIE_SAMESITE = \"Lax\"   # le cookie ne part pas sur un POST cross-site\n\n# CORRECTION 3 — AUDIT : aucune action d'état en GET\n# parcourir urls.py : toute route qui CRÉE/MODIFIE/SUPPRIME doit être\n# servie en POST (ou PUT/DELETE pour une API), jamais en GET.\ngrep -n \"supprimer\\|delete\\|louer\\|acheter\" catalogue/urls.py\n# -> vérifier que la vue impose request.method == 'POST'",
+    note: "Le piège de l'<img> est le CSRF dans sa forme la plus pure : aucune interaction de la victime, juste un GET qui modifie l'état. La leçon fondamentale précède même le jeton : les actions d'état ne sont JAMAIS en GET. Le jeton et SameSite protègent les POST légitimes ; le choix du verbe HTTP ferme la porte aux GET forgés. Trois barrières, une seule règle de conception." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

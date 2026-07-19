@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Middleware, Gates et Policies (autorisation)",
+  subtitle: "Décider qui a le droit de faire quoi.",
+  theory: `
+<h3>1. De l'identité aux droits</h3>
+<p>On sait <em>qui</em> est connecté (leçon 10). L'<strong>autorisation</strong> décide maintenant de <em>ce qu'il a le droit de faire</em>, selon son <strong>rôle</strong> — l'étiquette qui définit sa catégorie d'utilisateur. Ici trois rôles : le <strong>client</strong> loue et achète des jeux, le <strong>vendeur</strong> gère le stock, l'<strong>administrateur</strong> gère tout. C'est la différence entre « je sais qui tu es » (authentification) et « voici les portes que tu peux ouvrir » (autorisation).</p>
+
+<h3>2. Les Gates : une règle nommée</h3>
+<p>Une <strong>Gate</strong> (« porte » en anglais) est une <strong>règle d'autorisation portant un nom</strong>, par exemple « gerer-catalogue ». On la définit une fois, puis on la réutilise partout par son nom — comme une consigne affichée à un poste de contrôle. On les déclare au démarrage de l'application, dans un fichier appelé <em>Service Provider</em> (le « fournisseur de services » qui met en place les réglages au lancement).</p>
+<pre class="pseudo">// AppServiceProvider (méthode boot) : on déclare les règles au démarrage
+Gate::define('gerer-catalogue', fn (User \$u) =>          // définit une règle nommée « gerer-catalogue »
+    in_array(\$u->role, [Role::VENDEUR, Role::ADMINISTRATEUR]));  // vraie si le rôle est vendeur OU admin
+
+Gate::define('gerer-comptes', fn (User \$u) =>            // définit la règle « gerer-comptes »
+    \$u->role === Role::ADMINISTRATEUR);                  // vraie seulement si l'utilisateur est administrateur</pre>
+<p><code>Gate::define('nom', ...)</code> enregistre la règle. Le morceau <code>fn (User \$u) => …</code> est une <strong>fonction fléchée</strong> (aussi dite <em>closure</em>) : une mini-fonction sans nom, jetable, qui reçoit l'utilisateur <code>\$u</code> et renvoie <em>vrai</em> ou <em>faux</em>. <code>in_array(valeur, liste)</code> vérifie si une valeur figure <strong>dans</strong> une liste (ici, si le rôle est parmi ceux autorisés). L'opérateur <code>===</code> compare de façon <strong>stricte</strong> (même valeur ET même type), plus sûr que <code>==</code>. Le résultat de la règle est un <strong>booléen</strong> : une valeur qui ne peut être que <em>vrai</em> ou <em>faux</em>.</p>
+
+<h3>3. Appliquer une Gate</h3>
+<pre class="pseudo">// sur une route : le portier « can » exige la règle
+Route::post('/jeux', [JeuController::class, 'store'])   // POST /jeux → méthode store() du contrôleur…
+    ->middleware('can:gerer-catalogue');                // …autorisé seulement si la règle gerer-catalogue est vraie
+
+// dans le code PHP
+if (Gate::allows('gerer-comptes')) { ... }             // teste la règle : renvoie vrai/faux
+\$this->authorize('gerer-catalogue');                   // dans un contrôleur : stoppe avec une erreur 403 si refusé</pre>
+<p><code>middleware('can:gerer-catalogue')</code> place la règle en <strong>portier</strong> de la route : personne ne l'exécute sans satisfaire la règle. <code>Gate::allows('nom')</code> teste la règle depuis le code et renvoie un booléen. <code>\$this->authorize('nom')</code> fait le contrôle à l'intérieur d'un contrôleur : si l'utilisateur n'a pas le droit, Laravel interrompt tout et renvoie une erreur <strong>403</strong> (le code « interdit »). <code>\$this</code> désigne « l'objet courant » (ici le contrôleur lui-même).</p>
+
+<h3>4. Les Policies : autoriser sur un objet</h3>
+<p>Une <strong>Policy</strong> (« politique ») regroupe les règles liées à un <strong>modèle</strong> précis — un modèle étant la représentation, en code, d'une chose de la base (un utilisateur, une location…). Elle sert à vérifier la <strong>propriété</strong> (<em>ownership</em> en anglais) : un client ne peut agir que sur <em>ses propres</em> locations, pas celles des autres.</p>
+<pre class="pseudo">class LocationPolicy {                                  // regroupe les règles liées au modèle Location
+    public function voir(User \$u, Location \$loc): bool {  // peut-il VOIR cette location ? renvoie un booléen (bool)
+        return \$u->id === \$loc->client_id;             // vrai seulement si la location lui appartient
+    }
+}
+// usage : \$this->authorize('voir', \$location);        // Laravel appelle la méthode voir() de la Policy</pre>
+<p>Le mot <code>class</code> définit une <strong>classe</strong> : un modèle réutilisable regroupant des données et des fonctions. Une fonction rangée dans une classe s'appelle une <strong>méthode</strong> ; <code>public</code> signifie qu'on peut l'appeler de l'extérieur. Le <code>: bool</code> après la parenthèse annonce que la méthode renvoie un booléen. <code>\$loc->client_id</code> lit la propriété <code>client_id</code> de la location (le numéro du client propriétaire) : on la compare à l'id de l'utilisateur connecté.</p>
+
+<h3>5. Défense en profondeur</h3>
+<pre class="pseudo">// 1. par route      → middleware 'can:...'    (bloque à l'entrée)
+// 2. dans le contrôleur → $this->authorize(...) (revérifie avant d'agir)
+// 3. par propriété  → Policy sur l'objet       (vérifie que c'est bien le sien)</pre>
+<div class="tip">La <strong>défense en profondeur</strong>, c'est empiler plusieurs verrous : middleware sur la route, vérification dans le code, propriété via Policy. Si une couche est contournée, une autre protège encore. Et jamais de confiance dans le <strong>frontend</strong> (le navigateur du visiteur) : cacher un bouton n'empêche pas d'appeler directement l'adresse de la route.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'autorisation décide…", opts: ["Qui est connecté", "Ce que l'utilisateur a le droit de faire", "Le mot de passe", "Le stock"], a: 1, exp: "Les droits." },
+    { type: "qcm", q: "Une règle d'autorisation nommée :", opts: ["Une Gate", "Une migration", "Une vue", "Un scope"], a: 0, exp: "Gate::define." },
+    { type: "qcm", q: "Appliquer une Gate à une route :", opts: ["middleware('can:gerer-catalogue')", "middleware('css')", "public()", "rien"], a: 0, exp: "can:." },
+    { type: "qcm", q: "Une Policy regroupe les règles…", opts: ["De routage", "Liées à un modèle (objet)", "De CSS", "De migration"], a: 1, exp: "Autour d'un modèle." },
+    { type: "qcm", q: "Vérifier la propriété d'une location :", opts: ["$u->id === $loc->client_id", "toujours true", "$u->role", "rien"], a: 0, exp: "Ownership." },
+    { type: "qcm", q: "Autoriser dans un contrôleur (403 sinon) :", opts: ["$this->authorize('gerer-catalogue')", "if(true)", "abort(200)", "rien"], a: 0, exp: "authorize()." },
+    { type: "qcm", q: "Gérer le catalogue est réservé…", opts: ["Au client", "Au vendeur et à l'admin", "À tous", "À personne"], a: 1, exp: "Deux rôles." },
+    { type: "qcm", q: "Gérer les comptes est réservé…", opts: ["Au client", "Au vendeur", "À l'administrateur", "À tous"], a: 2, exp: "Admin." },
+    { type: "qcm", q: "Gate::allows('x') renvoie…", opts: ["Un modèle", "true/false selon la règle", "Une vue", "Une route"], a: 1, exp: "Booléen." },
+    { type: "qcm", q: "La « défense en profondeur » combine…", opts: ["Une seule règle", "Middleware + code + Policy", "Le frontend seul", "Rien"], a: 1, exp: "Plusieurs couches." },
+    { type: "vf", q: "Cacher un bouton dans le frontend ne suffit pas à sécuriser.", a: true, exp: "Vérifier côté serveur." },
+    { type: "qcm", q: "Les Gates se définissent souvent dans…", opts: ["Une vue Blade", "Un Service Provider (boot)", "Une migration", "Le CSS"], a: 1, exp: "AppServiceProvider." },
+    { type: "vf", q: "Le rôle ne suffit pas toujours : parfois il faut vérifier la propriété.", a: true, exp: "Policies." },
+    { type: "qcm", q: "un client ne doit voir que…", opts: ["Toutes les locations", "Ses propres locations", "Celles des admins", "Aucune"], a: 1, exp: "Propriété." },
+    { type: "qcm", q: "L'autorisation doit être vérifiée…", opts: ["Côté frontend", "Côté serveur", "Nulle part", "Par l'utilisateur"], a: 1, exp: "Serveur." }
+  ],
+  final: {
+    title: "Exercice final — Cloisonner les actions",
+    intro: `<p>On applique les droits des trois rôles.</p>`,
+    questions: [
+      { type: "qcm", q: "Définir la règle « gérer le catalogue » :", opts: ["Gate::define('gerer-catalogue', fn($u) => in_array($u->role, [Role::VENDEUR, Role::ADMINISTRATEUR]))", "un scope", "une vue", "rien"], a: 0, exp: "Gate." },
+      { type: "qcm", q: "Protéger POST /jeux :", opts: ["->middleware('can:gerer-catalogue')", "public", "abort(200)", "rien"], a: 0, exp: "Middleware can." },
+      { type: "qcm", q: "Un client voit ses locations via…", opts: ["une Policy (propriété)", "toutes les locations", "un CSS", "rien"], a: 0, exp: "Ownership." },
+      { type: "qcm", q: "Gérer les comptes :", opts: ["réservé à l'administrateur", "à tous", "au client", "au vendeur"], a: 0, exp: "Admin." },
+      { type: "vf", q: "Combiner route + code + Policy = défense en profondeur.", a: true, exp: "Couches multiples." }
+    ],
+    solution: `<pre class="pseudo">Gate::define('gerer-catalogue', fn (User \$u) =>          // règle : gérer le catalogue
+    in_array(\$u->role, [Role::VENDEUR, Role::ADMINISTRATEUR]));  // autorisée aux vendeurs et admins
+Gate::define('gerer-comptes', fn (User \$u) =>            // règle : gérer les comptes
+    \$u->role === Role::ADMINISTRATEUR);                  // réservée à l'administrateur
+
+Route::post('/jeux', [JeuController::class, 'store'])   // route de création d'un jeu…
+    ->middleware('can:gerer-catalogue');                // …protégée par la règle gerer-catalogue
+
+// propriété : un client n'agit que sur SES locations
+class LocationPolicy {                                  // règles liées au modèle Location
+    public function voir(User \$u, Location \$loc): bool {  // a-t-il le droit de voir cette location ?
+        return \$u->id === \$loc->client_id;             // oui, seulement si elle est la sienne
+    }
+}</pre>
+<p>Les rôles sont cloisonnés. Demain : le cœur métier — louer un jeu.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes Gates / Policies…",
+  items: [
+  { id: "projphp-l11", title: "Protéger la gestion du stock", level: 3,
+    statement: "Définis une Gate 'gerer-stock' autorisant les rôles vendeur et administrateur, applique-la à la route POST /vendeur/stock, et dans le contrôleur ajoute la vérification $this->authorize('gerer-stock') avant d'agir.",
+    hints: [
+      "Gate::define('gerer-stock', fn (User $u) => in_array($u->role, [Role::VENDEUR, Role::ADMINISTRATEUR])).",
+      "Route::post('/vendeur/stock', ...)->middleware('can:gerer-stock').",
+      "Dans la méthode : $this->authorize('gerer-stock'); puis appeler le StockService."
+    ],
+    solution: "// AppServiceProvider@boot : on déclare la règle au démarrage\nGate::define('gerer-stock', fn (User $u) =>                          // règle nommée « gerer-stock »\n    in_array($u->role, [Role::VENDEUR, Role::ADMINISTRATEUR], true));  // vraie si vendeur ou admin (true = comparaison stricte)\n\n// route\nRoute::post('/vendeur/stock', [VendeurController::class, 'ajouterStock'])  // POST /vendeur/stock → ajouterStock()\n    ->middleware('can:gerer-stock');                                // portier : exige la règle gerer-stock\n\n// contrôleur\npublic function ajouterStock(Request $request, StockService $service) {  // reçoit la requête et le service métier\n    $this->authorize('gerer-stock');                                // 2e verrou : erreur 403 si l'utilisateur n'a pas le droit\n    $service->ajouterStockLocation($request->jeu_id, $request->quantite);  // délègue l'ajout de stock au StockService\n    return redirect('/vendeur');                                    // retourne à l'espace vendeur (motif PRG)\n}",
+    note: "Deux niveaux protègent la même action : le middleware 'can:gerer-stock' sur la route et $this->authorize dans la méthode. Si l'un est mal configuré, l'autre défend encore — défense en profondeur. La gestion du stock reste inaccessible au simple client, quel que soit le chemin d'accès." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

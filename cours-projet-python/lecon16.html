@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Les espaces client, vendeur et administrateur",
+  subtitle: "Trois profils, trois interfaces cloisonnées.",
+  theory: `
+<h3>1. Un espace par rôle</h3>
+<p><strong>Cloisonner</strong>, c'est séparer les interfaces pour que chaque profil ne voie que ce qui le concerne. Chaque rôle a donc son <strong>espace</strong> (un ensemble de pages qui lui sont réservées) : <strong>/client/</strong> (ses locations et achats), <strong>/vendeur/</strong> (stocks, retours, retards), <strong>/gestion/</strong> (comptes, promotions). Chaque vue porte la protection du bon rôle (leçon 11) : le cloisonnement est garanti côté serveur, pas seulement par le menu.</p>
+
+<h3>2. L'espace client : « mes » données</h3>
+<pre class="pseudo">@login_required                              # accès réservé aux connectés
+def espace_client(request):                  # page personnelle du client
+    return render(request, "client/espace.html", {   # rend le template de l'espace client…
+        "locations": Location.objects.de_client(request.user)   # …ses locations (filtrées sur request.user)…
+                             .en_cours().select_related("jeu"),   # …en cours, jeu préchargé (JOIN)
+        "achats": Achat.objects.filter(client=request.user)   # …et ses achats (les siens seulement)…
+                               .select_related("jeu"),   # …jeu préchargé
+    })</pre>
+<p>La combinaison des QuerySets métier (leçon 5) et de <code>request.user</code> (l'identité posée par la session) garantit le <strong>droit par ressource</strong> : chaque requête ne ramène que les données du client connecté. Même en devinant des identifiants, impossible de voir celles d'un autre.</p>
+
+<h3>3. L'espace vendeur : stocks, retours, retards</h3>
+<pre class="pseudo">@user_passes_test(est_vendeur)               # réservé aux vendeurs (et admins)
+def espace_vendeur(request):                 # tableau de bord du vendeur
+    return render(request, "vendeur/espace.html", {   # rend le template de l'espace vendeur…
+        "jeux": Jeu.objects.select_related("categorie").order_by("titre"),   # …tous les jeux, triés, catégorie préchargée
+        "retards": Location.objects.en_retard()   # …les locations en retard (QuerySet leçon 5)…
+                           .select_related("jeu", "client"),   # …jeu ET client préchargés (double JOIN)
+    })</pre>
+<p>Le retour d'un jeu appelle <code>services.rendre</code> (leçon 12). L'espace se contente d'<strong>orchestrer</strong> — enchaîner les appels aux services et présenter le résultat — sans jamais <em>décider</em> lui-même (le contrôle du stock, la transaction… restent dans le service).</p>
+
+<h3>4. L'espace administrateur : les comptes</h3>
+<pre class="pseudo">@user_passes_test(est_admin)                 # réservé à l'administrateur
+def promouvoir(request, user_id):            # promeut un utilisateur au rôle vendeur
+    if request.method != "POST":             # on n'accepte que le POST…
+        return redirect("espace_admin")      # …sinon retour à l'espace admin
+    user = get_object_or_404(User, pk=user_id)   # charge l'utilisateur, ou 404
+    user.groups.add(Group.objects.get(name=ROLE_VENDEUR))   # l'ajoute au groupe Vendeur
+    messages.success(request, f"{user.email} est maintenant vendeur")   # message de succès
+    return redirect("espace_admin")          # Post-Redirect-Get : retour à l'espace admin</pre>
+
+<h3>5. Le menu qui suit le rôle</h3>
+<pre class="pseudo">{# base.html — context processor ou template tags #}
+{% if user.is_authenticated %}               {# si l'utilisateur est connecté… #}
+  &lt;a href="{% url 'espace_client' %}"&gt;Mon espace&lt;/a&gt;   {# lien vers son espace personnel #}
+  {% if est_vendeur %}&lt;a href="{% url 'espace_vendeur' %}"&gt;Vendeur&lt;/a&gt;{% endif %}   {# lien vendeur, affiché si vendeur #}
+  {% if est_admin %}&lt;a href="{% url 'espace_admin' %}"&gt;Gestion&lt;/a&gt;{% endif %}   {# lien gestion, affiché si admin #}
+{% endif %}                                   {# fin du if #}</pre>
+<div class="warn">L'URL <code>/gestion/</code> plutôt que <code>/admin/</code> : ce dernier est pris par l'admin Django. Et surtout : le menu adapté est du <strong>confort</strong> — chaque vue garde son décorateur, un vendeur qui tape /gestion/ est refusé côté serveur.</div>
+<div class="tip">Trois espaces, zéro logique métier nouvelle : ils orchestrent les services des leçons 6, 12 et 13. Une architecture en couches paie exactement ici.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'espace /vendeur/ permet de…", opts: ["Gérer les comptes", "Gérer stocks, retours et retards", "Louer pour soi seulement", "Rien"], a: 1, exp: "Le métier du vendeur." },
+    { type: "qcm", q: "L'espace client liste…", opts: ["Toutes les locations", "Les locations/achats du connecté seulement", "Les comptes", "Les logs"], a: 1, exp: "Filtre par request.user." },
+    { type: "vf", q: "Un client peut voir l'espace d'un autre en changeant l'URL.", a: false, exp: "Le filtre s'appuie sur la session, pas l'URL." },
+    { type: "qcm", q: "espace_vendeur est protégé par…", opts: ["@user_passes_test(est_vendeur)", "@login_required seul", "rien", "du CSS"], a: 0, exp: "Rôle exigé." },
+    { type: "qcm", q: "La liste des retards vient de…", opts: ["Location.objects.en_retard() (leçon 5)", "un for en Python", "un fichier", "l'admin"], a: 0, exp: "QuerySet métier réutilisé." },
+    { type: "qcm", q: "Le retour d'un jeu dans l'espace vendeur appelle…", opts: ["services.rendre (leçon 12)", "du SQL dans la vue", "un template", "rien"], a: 0, exp: "L'espace orchestre." },
+    { type: "qcm", q: "Promouvoir un client en vendeur :", opts: ["user.groups.add(groupe Vendeur)", "user.role = 2", "un UPDATE brut", "un cookie"], a: 0, exp: "Via les groupes." },
+    { type: "qcm", q: "Qui peut promouvoir ?", opts: ["L'administrateur", "Le client lui-même", "Le vendeur", "Tout le monde"], a: 0, exp: "Gestion des comptes = admin." },
+    { type: "qcm", q: "La promotion se fait en…", opts: ["POST", "GET", "PUT", "par email"], a: 0, exp: "Une écriture = POST (+ csrf)." },
+    { type: "qcm", q: "L'URL de l'espace admin est /gestion/ car…", opts: ["C'est joli", "/admin/ est pris par l'admin Django", "Le hasard", "C'est obligatoire"], a: 1, exp: "Collision évitée." },
+    { type: "qcm", q: "Le menu qui masque « Gestion » aux non-admins est…", opts: ["La sécurité", "Du confort ; la barrière est le décorateur", "Suffisant", "Interdit"], a: 1, exp: "Les deux vont ensemble." },
+    { type: "vf", q: "Un vendeur qui tape /gestion/ à la main y accède.", a: false, exp: "Refus côté serveur." },
+    { type: "qcm", q: "select_related(\"jeu\", \"client\") sur les retards évite…", opts: ["Le N+1 sur deux relations", "Le tri", "Le CSRF", "Les tests"], a: 0, exp: "JOIN double." },
+    { type: "qcm", q: "Les espaces introduisent…", opts: ["Beaucoup de métier nouveau", "Zéro logique métier nouvelle (orchestration)", "Une 2e base", "Un autre langage"], a: 1, exp: "Les services font tout." },
+    { type: "vf", q: "Les trois espaces correspondent aux trois profils définis dans le modèle Merise.", a: true, exp: "De la conception à l'interface." }
+  ],
+  final: {
+    title: "Exercice final — Cloisonner les espaces",
+    intro: `<p>On met en place les trois espaces et leurs protections.</p>`,
+    questions: [
+      { type: "qcm", q: "espace_client est protégé par :", opts: ["@login_required", "@user_passes_test(est_admin)", "rien", "le menu"], a: 0, exp: "Connecté suffit — ce sont SES données." },
+      { type: "qcm", q: "Ses données sont filtrées par :", opts: ["request.user", "?client= dans l'URL", "un champ caché", "l'IP"], a: 0, exp: "Session." },
+      { type: "qcm", q: "espace_vendeur exige :", opts: ["est_vendeur (qui inclut l'admin)", "est_admin seul", "rien", "un mot de passe en URL"], a: 0, exp: "Matrice des droits." },
+      { type: "qcm", q: "La promotion passe par :", opts: ["user.groups.add(...) en POST, vue admin", "un lien GET", "le client lui-même", "un UPDATE SQL manuel"], a: 0, exp: "Écriture protégée." },
+      { type: "vf", q: "Les espaces réutilisent les services et QuerySets déjà écrits.", a: true, exp: "L'architecture paie." }
+    ],
+    solution: `<pre class="pseudo">@login_required                              # connecté suffit
+def espace_client(request):                  # espace du client
+    return render(request, "client/espace.html", {   # rend le template avec…
+        "locations": Location.objects.de_client(request.user)   # …ses locations…
+                             .en_cours().select_related("jeu"),   # …en cours, jeu préchargé
+        "achats": Achat.objects.filter(client=request.user)   # …et ses achats…
+                               .select_related("jeu"),   # …jeu préchargé
+    })
+
+@user_passes_test(est_vendeur)               # vendeur (ou admin)
+def espace_vendeur(request): ...             # tableau de bord vendeur
+
+@user_passes_test(est_admin)                 # admin seulement
+def promouvoir(request, user_id): ...   # POST + groups.add</pre>
+<p>Chacun chez soi. Demain : prouver que le métier est juste, avec les tests.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton espace et ses protections…",
+  items: [
+  { id: "projpython-l16", title: "L'espace vendeur complet", level: 3,
+    statement: "Écris les deux vues de l'espace vendeur : espace_vendeur (GET : jeux triés + locations en retard, relations préchargées) et rendre_vue(request, location_id) (POST : appelle services.rendre, attrape DejaRendue en message d'erreur, redirige vers l'espace). Les deux sont réservées aux vendeurs/admins.",
+    hints: [
+      "@user_passes_test(est_vendeur) sur les deux vues.",
+      "try: services.rendre(location_id) except DejaRendue as e: messages.error(request, str(e))",
+      "Toujours redirect(\"espace_vendeur\") à la fin du POST (Post-Redirect-Get)."
+    ],
+    solution: "@user_passes_test(est_vendeur)   # réservé aux vendeurs (et admins)\ndef espace_vendeur(request):   # tableau de bord du vendeur\n    return render(request, \"vendeur/espace.html\", {   # rend le template avec…\n        \"jeux\": Jeu.objects.select_related(\"categorie\").order_by(\"titre\"),   # …tous les jeux, triés\n        \"retards\": (Location.objects.en_retard()   # …et les locations en retard…\n                     .select_related(\"jeu\", \"client\")),   # …jeu et client préchargés (double JOIN)\n    })\n\n@user_passes_test(est_vendeur)   # même protection pour l'action de retour\ndef rendre_vue(request, location_id):   # enregistre le retour d'une location\n    if request.method != \"POST\":   # on n'accepte que le POST…\n        return redirect(\"espace_vendeur\")   # …sinon retour à l'espace\n    try:   # on tente le retour\n        location = services.rendre(location_id)   # délègue au service (transaction, stock)\n        messages.success(request,   # message de succès…\n            f\"{location.jeu.titre} rendu, stock mis à jour\")   # …avec le titre du jeu\n    except Location.DoesNotExist:   # location inexistante…\n        raise Http404   # …page 404\n    except DejaRendue as e:   # déjà rendue…\n        messages.error(request, str(e))   # …message d'erreur métier\n    return redirect(\"espace_vendeur\")   # Post-Redirect-Get : retour à l'espace vendeur",
+    note: "rendre_vue ne touche ni au stock ni aux dates : tout passe par services.rendre (leçon 12), transaction comprise. Le vendeur voit les retards grâce au QuerySet en_retard() de la leçon 5 — écrit il y a onze leçons, utilisé tel quel. C'est la récompense d'une architecture en couches : la dernière semaine assemble, elle ne réinvente pas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

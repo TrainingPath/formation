@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "L'image de production : multi-stage (aspnet), non-root, scan",
+  subtitle: "Fabriquer l'artefact qui partira en prod — léger, non-root, scanné.",
+  theory: `
+<h3>1. Le Dockerfile multi-stage</h3>
+<p>Un <strong>Dockerfile</strong> est une recette : la liste des étapes pour fabriquer une <strong>image</strong>, c'est-à-dire un modèle figé contenant l'application et tout ce qu'il lui faut. Un <strong>conteneur</strong> est une instance en marche de cette image (l'image est le moule, le conteneur le gâteau). « <strong>Multi-stage</strong> » (« multi-étapes ») veut dire qu'on fabrique en deux temps, à partir de deux images de départ différentes.</p>
+<pre class="pseudo">FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build   # étage "build" : part de l'image SDK (compilateur + outils .NET)
+WORKDIR /src                               # se placer dans le dossier de travail /src (créé si besoin)
+COPY *.sln .                               # copier le fichier solution (la liste des projets)
+COPY src/Ludotheque/*.csproj src/Ludotheque/   # copier d'abord le .csproj (liste des paquets) — pour le cache
+RUN dotnet restore                         # couche cache des paquets
+COPY . .                                   # copier ensuite tout le reste du code source
+RUN dotnet publish src/Ludotheque -c Release -o /app --no-restore   # compiler en mode Release, sortie dans /app
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0   # runtime : PAS le SDK
+WORKDIR /app                               # se placer dans /app (l'application publiée)
+COPY --from=build /app .                   # ne récupérer QUE l'app publiée de l'étage build
+USER app                                   # non-root (fourni par l'image aspnet)
+EXPOSE 8080                                # déclarer que le conteneur écoute sur le port 8080
+ENTRYPOINT ["dotnet","Ludotheque.dll"]     # commande lancée au démarrage du conteneur</pre>
+<p>Décodons les mots-clés. <code>FROM</code> choisit l'image de base dont on part. Le <strong>SDK</strong> (<em>Software Development Kit</em>) contient le compilateur et les outils pour <strong>construire</strong> (compiler) l'application ; le <strong>runtime</strong> ne contient que de quoi la <strong>faire tourner</strong>. <code>WORKDIR</code> choisit le dossier de travail, <code>COPY</code> y copie des fichiers, <code>RUN</code> exécute une commande pendant la fabrication. <code>dotnet restore</code> télécharge les paquets (bibliothèques externes), <code>dotnet publish -c Release</code> compile une version optimisée pour la prod. <code>EXPOSE</code> annonce le port réseau utilisé, et <code>ENTRYPOINT</code> est la commande lancée au démarrage du conteneur.</p>
+<p>On copie les <code>.csproj</code> et on lance <code>restore</code> AVANT de copier tout le code : Docker met chaque instruction en <strong>cache de couches</strong> (chaque étape produit une « couche » réutilisable). Tant que la liste des paquets ne change pas, cette couche coûteuse est réutilisée telle quelle — les constructions suivantes sont bien plus rapides.</p>
+
+<h3>2. Pourquoi multi-stage</h3>
+<p>L'intérêt du multi-stage : on jette l'outillage lourd de fabrication et on ne garde que le résultat.</p>
+<pre class="pseudo">// L'étage 'build' contient le SDK complet (compilateur, outils) : ~800 Mo
+// L'étage final ne garde que le runtime aspnet + l'app publiée : bien plus léger
+// -> image plus petite, surface d'attaque réduite (pas de compilateur en prod)</pre>
+
+<h3>3. Non-root : le moindre privilège</h3>
+<p><strong>root</strong> est le super-utilisateur, tout-puissant sur un système. Faire tourner l'app en <strong>non-root</strong> (avec l'utilisateur <code>app</code>, sans privilèges) applique le principe du <strong>moindre privilège</strong> : ne donner que le strict nécessaire, pour qu'une faille fasse le moins de dégâts possible.</p>
+<pre class="pseudo">// l'image aspnet:10.0 fournit un utilisateur 'app' non-root prêt à l'emploi
+// USER app : une faille applicative n'obtient que les droits de 'app', pas root
+// (cours Sécurité : moindre privilège ; cours Docker : non-root)</pre>
+
+<h3>4. Le scan d'image (trivy)</h3>
+<p><strong>trivy</strong> est un scanner de sécurité : il inspecte une image à la recherche de <strong>CVE</strong> — des failles connues et répertoriées publiquement (<em>Common Vulnerabilities and Exposures</em>) dans les briques logicielles qu'elle embarque.</p>
+<pre class="pseudo"># ci.yml — job image
+  image:                                    # un job nomme "image"
+    needs: [tests, qualite, securite]       # ne demarre qu'apres ces trois jobs (tous verts)
+    steps:                                  # la liste de ses etapes
+      - run: docker build -t ludotheque:ci .   # construire l'image a partir du Dockerfile
+      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci   # scanner ; echoue si faille CRITICAL</pre>
+<p>Une faille <strong>critique</strong> dans une couche de base bloque la construction : on ne publie jamais une image vulnérable.</p>
+
+<h3>5. Dev vs prod</h3>
+<div class="warn">Le compose de développement peut monter le code et utiliser le SDK (rechargement à chaud) ; la <strong>production</strong> utilise cette image immuable construite par la CI (publish -c Release, runtime seul). On ne déploie jamais l'environnement de dev : on déploie un artefact figé, scanné, non-root, qu'on peut redéployer à l'identique (rollback — leçon 20).</div>
+<div class="tip">L'image de prod réunit d'un coup le cours Docker (multi-stage, non-root) et le cours Sécurité (moindre privilège, scan CVE). L'image <code>aspnet</code> (runtime) est bien plus légère que le <code>sdk</code>, et fournit un utilisateur non-root prêt à l'emploi. Vérifiée par trivy à chaque build : l'artefact qui part en prod est un <strong>objet de confiance</strong>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un Dockerfile multi-stage sépare…", opts: ["Rien", "La construction (sdk) du runtime final (aspnet)", "Deux bases", "Le CSS"], a: 1, exp: "build puis runtime." },
+    { type: "qcm", q: "L'étage final contient…", opts: ["Le SDK complet", "Le runtime aspnet + l'app publiée", "La base", "Le compilateur"], a: 1, exp: "Léger, sûr." },
+    { type: "qcm", q: "Le multi-stage réduit…", opts: ["La lisibilité", "La taille et la surface d'attaque", "La vitesse d'exécution", "Rien"], a: 1, exp: "Pas de compilateur en prod." },
+    { type: "qcm", q: "USER app signifie…", opts: ["root", "Un utilisateur non privilégié (fourni par aspnet)", "Un admin", "Personne"], a: 1, exp: "Moindre privilège." },
+    { type: "qcm", q: "Sans USER, une faille applicative donne…", opts: ["Rien", "Les droits root dans le conteneur", "Un cache", "Un rôle"], a: 1, exp: "D'où non-root." },
+    { type: "qcm", q: "trivy scanne…", opts: ["Le code source", "L'image (CVE des couches)", "Le CSS", "La base"], a: 1, exp: "Failles connues." },
+    { type: "qcm", q: "Une CVE critique…", opts: ["Est publiée quand même", "Bloque la construction (job rouge)", "Est ignorée", "Chiffre l'image"], a: 1, exp: "Jamais d'image vulnérable." },
+    { type: "qcm", q: "Le job image dépend de…", opts: ["Rien", "needs: [tests, qualite, securite]", "La prod", "main"], a: 1, exp: "Après les verts." },
+    { type: "qcm", q: "En prod on déploie…", opts: ["L'env de dev", "L'image immuable de la CI", "Les sources", "Un zip"], a: 1, exp: "Artefact figé." },
+    { type: "qcm", q: "dotnet publish -c Release produit…", opts: ["Le code source", "L'app compilée optimisée pour la prod", "Un test", "Un cache"], a: 1, exp: "Sortie /app." },
+    { type: "vf", q: "Une image immuable permet de revenir en arrière facilement.", a: true, exp: "Rollback (leçon 20)." },
+    { type: "qcm", q: "aspnet:10.0 (runtime) vs sdk:10.0 :", opts: ["Identiques", "Le runtime n'a pas le compilateur (plus léger)", "sdk est plus léger", "Rien"], a: 1, exp: "Surface réduite." },
+    { type: "qcm", q: "COPY *.csproj puis restore avant COPY . . sert à…", opts: ["Rien", "Mettre les paquets en couche cache (build rapide)", "Chiffrer", "Déployer"], a: 1, exp: "Cache Docker." },
+    { type: "qcm", q: "L'image de prod réunit…", opts: ["Merise + SQL", "Docker (multi-stage, non-root) + Sécurité (scan)", "Le CSS", "Rien"], a: 1, exp: "Deux cours d'outillage." },
+    { type: "vf", q: "L'artefact de prod est un objet de confiance (scanné, non-root, léger).", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — L'image de prod durcie",
+    intro: `<p>Multi-stage + non-root + scan.</p>`,
+    questions: [
+      { type: "qcm", q: "L'image finale utilise :", opts: ["le runtime aspnet:10.0", "le sdk:10.0 complet", "la base", "les sources"], a: 0, exp: "Léger." },
+      { type: "qcm", q: "Le conteneur tourne en :", opts: ["utilisateur non-root (USER app)", "root", "admin", "personne"], a: 0, exp: "Moindre privilège." },
+      { type: "qcm", q: "La sécurité de l'image est vérifiée par :", opts: ["trivy (CVE critiques bloquantes)", "un coup d'œil", "rien", "le CSS"], a: 0, exp: "Scan." },
+      { type: "qcm", q: "En prod on déploie :", opts: ["l'image immuable de la CI", "l'env de dev", "les sources", "un zip"], a: 0, exp: "Artefact figé." },
+      { type: "vf", q: "L'image runtime (aspnet) est plus légère que l'image SDK.", a: true, exp: "Pas de compilateur." }
+    ],
+    solution: `<pre class="pseudo">FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build   # etage build (SDK complet)
+... dotnet restore ; dotnet publish -c Release -o /app   # restaurer les paquets puis compiler en Release
+FROM mcr.microsoft.com/dotnet/aspnet:10.0         # etage final : runtime seul (leger)
+COPY --from=build /app .                          # ne recuperer que l'app publiee
+USER app                                          # tourner en utilisateur non-root
+ENTRYPOINT ["dotnet","Ludotheque.dll"]            # commande de demarrage du conteneur
+
+# ci.yml job image : build -> trivy (CRITICAL) -> smoke test</pre>
+<p>L'artefact est un objet de confiance. Demain : le pipeline complet et la protection de branche.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Dockerfile de production…",
+  items: [
+  { id: "proj6cs-l17", title: "L'image de production multi-stage, non-root, scannée", level: 3,
+    statement: "Écris le Dockerfile multi-stage (build SDK publish -> runtime aspnet, utilisateur non-root) et le job CI 'image' (build + trivy CRITICAL). Explique en 3-4 lignes ce que le multi-stage retire de l'image de prod et pourquoi non-root change tout en cas de faille.",
+    hints: [
+      "build : mcr.microsoft.com/dotnet/sdk:10.0, dotnet publish -c Release ; final : dotnet/aspnet:10.0.",
+      "COPY *.csproj + restore avant COPY . . (cache) ; USER app (non-root).",
+      "ci.yml : needs [tests, qualite, securite] ; trivy --exit-code 1 --severity CRITICAL."
+    ],
+    solution: "# Dockerfile (production)\nFROM mcr.microsoft.com/dotnet/sdk:10.0 AS build   # etage build : image SDK (compilateur + outils)\nWORKDIR /src                               # dossier de travail /src\nCOPY *.sln .                               # copier le fichier solution (liste des projets)\nCOPY src/Ludotheque/*.csproj src/Ludotheque/   # copier d'abord le .csproj (pour le cache)\nRUN dotnet restore                         # couche cache des paquets\nCOPY . .                                   # copier ensuite tout le reste du code\nRUN dotnet publish src/Ludotheque -c Release -o /app --no-restore   # compiler en Release vers /app\n\nFROM mcr.microsoft.com/dotnet/aspnet:10.0   # runtime : PAS le SDK\nWORKDIR /app                               # dossier de travail /app\nCOPY --from=build /app .                   # ne recuperer que l'app publiee de l'etage build\nUSER app                                   # non-root (fourni par l'image aspnet)\nEXPOSE 8080                                # le conteneur ecoute sur le port 8080\nENTRYPOINT [\"dotnet\",\"Ludotheque.dll\"]   # commande lancee au demarrage\n\n# ci.yml — job image\n  image:                                   # un job nomme \"image\"\n    needs: [tests, qualite, securite]      # demarre apres ces trois jobs (tous verts)\n    runs-on: ubuntu-latest                 # machine sur laquelle il tourne\n    steps:                                 # ses etapes\n      - uses: actions/checkout@v4          # recuperer le code du depot\n      - run: docker build -t ludotheque:ci .   # construire l'image a partir du Dockerfile\n      - run: trivy image --exit-code 1 --severity CRITICAL ludotheque:ci   # scanner ; echoue si faille CRITICAL\n\n# CE QUE LE MULTI-STAGE RETIRE, POURQUOI NON-ROOT\n# L'etage build embarque le SDK complet (compilateur, outils, cache NuGet) : ~800 Mo\n// inutiles en production et formant une surface d'attaque (un compilateur present\n// aide un intrus). L'etage final copie seulement l'app publiee sur le runtime aspnet\n// (bien plus leger) -> image petite, rapide a deployer, moins exposee.\n# NON-ROOT : par defaut un conteneur tourne en root. Si l'app est compromise (RCE),\n// l'attaquant herite de root DANS le conteneur -> evasion facilitee. L'image aspnet\n// fournit un utilisateur 'app' non-root : la meme faille ne donne que des droits\n// sans privileges, le rayon de destruction est confine.",
+    note: "L'image de production est le point de convergence des trois cours d'outillage : Docker (multi-stage, image minimale), Sécurité (moindre privilège via non-root, scan CVE) et CI/CD (build automatisé, gate sur trivy). Copier les .csproj et faire restore avant de copier le reste est un réflexe qui exploite le cache de couches Docker. L'image aspnet fournit un utilisateur non-root prêt à l'emploi — un standard minimal d'une livraison responsable." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

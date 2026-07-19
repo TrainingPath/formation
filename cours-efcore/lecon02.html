@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le DbContext : configuration et connexion SQL Server",
+  subtitle: "Le chef d'orchestre entre tes objets C# et ta base Ludotheque.",
+  theory: `
+<h3>1. Les paquets NuGet : outiller le projet</h3>
+<p>EF Core est découpé en <strong>paquets NuGet</strong> (des briques logicielles téléchargeables, comme des applications qu'on installe sur un téléphone). Pour parler à <strong>SQL Server</strong>, il faut le <strong>fournisseur</strong> (provider) dédié : <strong>Microsoft.EntityFrameworkCore.SqlServer</strong>. Un provider est l'adaptateur qui sait parler le dialecte SQL d'un moteur précis — il tire automatiquement le cœur d'EF Core avec lui. Pour les migrations de la leçon 4, ajoute dès maintenant <strong>Microsoft.EntityFrameworkCore.Design</strong> (et <strong>Microsoft.EntityFrameworkCore.Tools</strong> si tu utilises la console du gestionnaire de package de Visual Studio).</p>
+<pre class="pseudo">dotnet add package Microsoft.EntityFrameworkCore.SqlServer   # installe le provider SQL Server (+ le cœur d'EF Core)
+dotnet add package Microsoft.EntityFrameworkCore.Design      # installe l'outillage nécessaire aux migrations (leçon 4)
+
+// Un provider par SGBD : il suffirait de changer de paquet
+// pour viser MySQL (Pomelo), PostgreSQL (Npgsql) ou SQLite.</pre>
+
+<h3>2. LudothequeContext : hériter de DbContext</h3>
+<p>Le <strong>DbContext</strong> est LA classe centrale d'EF Core : il représente une <strong>session de travail</strong> avec la base — pense à un guichet ouvert le temps d'une opération. Il ouvre la connexion, suit les changements de tes objets (comme un carnet de brouillon qui note tout ce que tu modifies), traduit tes requêtes LINQ en SQL et exécute le SaveChanges. Pour la Ludothèque, on crée une classe <strong>LudothequeContext</strong> qui hérite de DbContext et expose (dès la leçon 3) un <strong>DbSet</strong> par table — un DbSet étant la table vue comme une collection d'objets C#.</p>
+<pre class="pseudo">public class LudothequeContext : DbContext        // notre contexte hérite de DbContext (le ": DbContext" = "est un" DbContext)
+{
+    public DbSet&lt;Jeu&gt; Jeux { get; set; }          // expose la table Jeux comme une collection d'objets Jeu (détaillé leçon 3)
+    // Membres, Locations, Avis suivront (leçons 8 à 11)
+}</pre>
+<p>Un DbContext est un objet <strong>léger et à courte durée de vie</strong> : on le crée, on travaille, on le libère. Il n'est <strong>pas thread-safe</strong> (« sûr en multitâche ») : jamais une même instance partagée entre plusieurs threads (plusieurs fils d'exécution en parallèle).</p>
+
+<h3>3. Projet console : OnConfiguring + UseSqlServer</h3>
+<p>Dans un petit projet console (parfait pour expérimenter pendant ce cours), la configuration la plus directe consiste à <strong>surcharger</strong> (redéfinir) la méthode <strong>OnConfiguring</strong> et à appeler <strong>UseSqlServer</strong> avec la <strong>chaîne de connexion</strong> (l'adresse + les identifiants pour joindre ta base) du Niveau 4.</p>
+<pre class="pseudo">public class LudothequeContext : DbContext                              // notre session de travail avec la base
+{
+    public DbSet&lt;Jeu&gt; Jeux { get; set; }                               // la table Jeux vue comme une collection d'objets
+
+    protected override void OnConfiguring(DbContextOptionsBuilder options)  // EF appelle cette méthode pour se configurer
+    {
+        options.UseSqlServer(                                          // on choisit le provider SQL Server…
+            "Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True");  // …avec la chaîne de connexion vers la base
+    }
+}
+
+// Utilisation :
+using var context = new LudothequeContext();                          // crée le contexte ; "using" le libérera automatiquement à la fin
+Console.WriteLine(context.Jeux.Count());                              // compte les jeux en base et affiche le nombre (EF génère un SELECT COUNT(*))</pre>
+<p>Décortiquons la chaîne : <em>Server</em> désigne l'instance SQL Server, <em>Database</em> la base Ludotheque, <em>Trusted_Connection=True</em> active l'authentification Windows (celle de SSMS au Niveau 4), et <em>TrustServerCertificate=True</em> accepte le certificat auto-signé du serveur local — acceptable en développement uniquement.</p>
+
+<h3>4. Projet ASP.NET Core : AddDbContext + appsettings.json</h3>
+<p>En ASP.NET Core, tu as appris l'<strong>injection de dépendances</strong> (un système qui te livre les objets dont tu as besoin au lieu de les fabriquer toi-même, comme un serveur qui t'apporte ton plat plutôt que de te faire aller en cuisine) : on ne « new » pas ses services, on les demande. Le contexte suit la règle. La chaîne de connexion vit dans <strong>appsettings.json</strong> (jamais en dur dans le code), et <strong>AddDbContext</strong> enregistre LudothequeContext dans le conteneur avec une durée de vie <strong>scoped</strong> : une instance par requête HTTP, détruite à la fin de la requête. Exactement la bonne durée de vie pour une session de base de données.</p>
+<pre class="pseudo">// appsettings.json
+{                                                                     // fichier de configuration au format JSON
+  "ConnectionStrings": {                                             // section réservée aux chaînes de connexion
+    "Ludotheque": "Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True"  // notre chaîne, nommée "Ludotheque"
+  }
+}
+
+// Program.cs
+builder.Services.AddDbContext&lt;LudothequeContext&gt;(options =&gt;          // enregistre le contexte dans le conteneur d'injection de dépendances
+    options.UseSqlServer(                                            // configure le provider SQL Server…
+        builder.Configuration.GetConnectionString("Ludotheque")));   // …en lisant la chaîne "Ludotheque" depuis appsettings.json
+
+// Puis dans un contrôleur : le contexte arrive par le constructeur
+public JeuxController(LudothequeContext context) { _context = context; }  // l'injection livre l'instance ; on la garde dans un champ privé</pre>
+<p>Règle simple : <strong>OnConfiguring</strong> pour un exercice console vite monté, <strong>AddDbContext</strong> partout ailleurs — testable, configurable par environnement, aligné sur l'injection de dépendances.</p>
+
+<h3>5. Voir le SQL généré : LogTo, ton meilleur réflexe</h3>
+<p>Conseil central de tout ce cours : <strong>regarde toujours le SQL que génère EF Core</strong>. La méthode <strong>LogTo</strong> branche la <strong>journalisation</strong> (le fait d'écrire un journal de tout ce qui se passe) sur la console — chaque requête LINQ affiche le SQL réellement envoyé à SQL Server, comme un mouchard qui te montre ce qui part sous le capot. Prends l'habitude dès aujourd'hui : c'est elle qui te fera repérer les requêtes monstrueuses bien avant la leçon performance. Côté autres piles, le rôle du DbContext est tenu par la <strong>Session/SessionFactory</strong> d'Hibernate, et la configuration de connexion vit dans <em>config/database.php</em> chez Laravel ou <em>settings.py</em> (DATABASES) chez Django.</p>
+<pre class="pseudo">protected override void OnConfiguring(DbContextOptionsBuilder options)                                  // méthode de configuration du contexte
+{
+    options.UseSqlServer("Server=localhost;Database=Ludotheque;Trusted_Connection=True;TrustServerCertificate=True")  // provider + chaîne de connexion
+           .LogTo(Console.WriteLine, LogLevel.Information);                                             // branche la journalisation : chaque SQL sera écrit dans la console
+}
+
+// Sortie console lors de context.Jeux.Count() :
+// Executed DbCommand (12ms)                                                                            // EF indique la durée réelle de la commande
+// SELECT COUNT(*) FROM [Jeux] AS [j]                                                                   // le SQL exact qu'EF a généré et envoyé à SQL Server</pre>
+<div class="warn">Ne mets <strong>jamais</strong> une chaîne de connexion en dur dans du code destiné à la production, et encore moins dans un dépôt Git : appsettings.json par environnement, variables d'environnement ou secrets. TrustServerCertificate=True est un confort de développement local, pas un réglage de production.</div>
+<div class="tip">Active LogTo dès maintenant et garde la console ouverte pendant tout le cours : chaque leçon (CRUD, Include, LINQ, pagination…) prendra un autre relief quand tu verras le SQL défiler en direct. C'est l'équivalent du show_sql d'Hibernate ou du DEBUG des requêtes Django.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le paquet NuGet indispensable pour utiliser EF Core avec SQL Server :", opts: ["Microsoft.EntityFrameworkCore.SqlServer", "System.Data.OleDb", "Microsoft.AspNetCore.Mvc", "Newtonsoft.Json"], a: 0, exp: "Le provider SQL Server, qui embarque le cœur d'EF Core." },
+    { type: "qcm", q: "À quoi serviront les paquets .Design et .Tools ?", opts: ["À chiffrer la base", "À générer les pages HTML", "Aux migrations et aux commandes d'outillage (leçon 4)", "À accélérer LINQ"], a: 2, exp: "dotnet ef et Add-Migration s'appuient dessus." },
+    { type: "input", q: "Quelle méthode appelle-t-on sur DbContextOptionsBuilder pour cibler SQL Server ?", a: ["UseSqlServer", "UseSqlServer()"], ph: "Use…", exp: "UseSqlServer(chaîne) : chaque SGBD a son UseXxx." },
+    { type: "qcm", q: "En ASP.NET Core, on enregistre le contexte dans le conteneur avec…", opts: ["new LudothequeContext()", "builder.Services.AddDbContext", "OnConfiguring", "AppDomain.Load"], a: 1, exp: "AddDbContext branche le contexte sur l'injection de dépendances." },
+    { type: "vf", q: "La durée de vie par défaut d'un contexte enregistré via AddDbContext est scoped.", a: true, exp: "Une instance par requête HTTP, libérée en fin de requête." },
+    { type: "qcm", q: "Scoped signifie concrètement…", opts: ["Une instance unique pour toute l'application", "Une instance par appel de méthode", "Une nouvelle instance à chaque injection", "Une instance par requête HTTP"], a: 3, exp: "Pile la bonne granularité pour une session de base de données." },
+    { type: "qcm", q: "Où doit vivre la chaîne de connexion d'une application ASP.NET Core ?", opts: ["Dans appsettings.json, section ConnectionStrings", "En dur dans le contrôleur", "Dans un commentaire du code", "Dans le HTML de la page"], a: 0, exp: "Configurable par environnement, hors du code compilé." },
+    { type: "input", q: "Quelle méthode affiche le SQL généré par EF Core dans la console ?", a: ["LogTo", "LogTo()"], ph: "Nom de la méthode…", exp: "LogTo(Console.WriteLine) : le réflexe central du cours." },
+    { type: "vf", q: "OnConfiguring est l'approche recommandée pour une application ASP.NET Core en production.", a: false, exp: "En ASP.NET Core, on préfère AddDbContext + appsettings.json (DI, testabilité, environnements)." },
+    { type: "qcm", q: "TrustServerCertificate=True sert à…", opts: ["Chiffrer les mots de passe", "Accepter le certificat auto-signé du serveur local en développement", "Accélérer les requêtes", "Activer les migrations"], a: 1, exp: "Un confort de dev local, à ne pas transposer tel quel en production." },
+    { type: "qcm", q: "Trusted_Connection=True dans la chaîne de connexion signifie…", opts: ["Connexion sans mot de passe pour tous", "Connexion en lecture seule", "Authentification Windows (compte de la session)", "Connexion chiffrée de bout en bout"], a: 2, exp: "La même authentification intégrée que dans SSMS au Niveau 4." },
+    { type: "qcm", q: "L'équivalent Hibernate du couple DbContext/session EF Core est…", opts: ["Session et SessionFactory", "SqlDataReader", "EntityManagerFactoryBuilderPro", "Le fichier .htaccess"], a: 0, exp: "Mêmes responsabilités : session de travail, suivi, traduction en SQL." },
+    { type: "qcm", q: "Un DbContext doit être…", opts: ["Un singleton global gardé toute la vie de l'appli", "Partagé entre tous les threads", "Créé une fois par machine", "Léger, à courte durée de vie, non partagé entre threads"], a: 3, exp: "On le crée, on travaille, on le libère — jamais thread-safe." },
+    { type: "vf", q: "Une même instance de DbContext peut être utilisée par plusieurs threads en parallèle.", a: false, exp: "Le DbContext n'est pas thread-safe : une instance par unité de travail." },
+    { type: "qcm", q: "builder.Configuration.GetConnectionString(« Ludotheque ») lit…", opts: ["Une variable C# globale", "L'entrée Ludotheque de la section ConnectionStrings de la configuration", "Le registre Windows", "La table Jeux"], a: 1, exp: "appsettings.json, surchargé au besoin par environnement ou variables d'environnement." }
+  ],
+  final: {
+    title: "Exercice final — Un contexte bien branché",
+    intro: `<p>Vérifions que tu sais configurer le LudothequeContext dans les deux types de projets.</p>`,
+    questions: [
+      { type: "qcm", q: "La classe centrale d'EF Core, dont hérite LudothequeContext :", opts: ["DbSet", "SqlConnection", "DbContext", "Controller"], a: 2, exp: "La session de travail avec la base : connexion, suivi, SQL, SaveChanges." },
+      { type: "input", q: "Dans quel fichier place-t-on la chaîne de connexion en ASP.NET Core ?", a: ["appsettings.json", "appsettings"], ph: "Nom du fichier…", exp: "Section ConnectionStrings d'appsettings.json." },
+      { type: "qcm", q: "Pour un projet console d'expérimentation, la configuration la plus directe est…", opts: ["Surcharger OnConfiguring avec UseSqlServer", "Créer un serveur web", "Modifier le registre Windows", "Écrire un fichier web.config"], a: 0, exp: "OnConfiguring suffit pour un bac à sable ; AddDbContext dès que le projet grossit." },
+      { type: "vf", q: "LogTo(Console.WriteLine) permet de voir le SQL réellement envoyé à SQL Server.", a: true, exp: "Le réflexe à garder allumé pendant tout le cours." },
+      { type: "qcm", q: "Pourquoi scoped est-elle la bonne durée de vie pour un DbContext web ?", opts: ["Parce qu'un singleton serait trop rapide", "Parce que le contexte est thread-safe", "Parce que la base l'exige", "Parce qu'une session de base doit vivre le temps d'une requête HTTP puis disparaître"], a: 3, exp: "Courte durée de vie, pas de partage entre requêtes ni entre threads." }
+    ],
+    solution: `<pre class="pseudo">Paquets   : Microsoft.EntityFrameworkCore.SqlServer (+ .Design, .Tools)
+Contexte  : class LudothequeContext : DbContext  → session de travail
+Console   : override OnConfiguring → options.UseSqlServer(chaîne)
+ASP.NET   : AddDbContext&lt;LudothequeContext&gt; + appsettings.json
+            → injection de dépendances, durée de vie SCOPED (1 / requête HTTP)
+Chaîne    : Server=localhost;Database=Ludotheque;Trusted_Connection=True;
+            TrustServerCertificate=True   (dev local uniquement)
+Réflexe   : .LogTo(Console.WriteLine) → voir le SQL généré, TOUJOURS
+Ailleurs  : SessionFactory (Hibernate), config/database.php (Laravel),
+            DATABASES de settings.py (Django)</pre>
+<p>Ton contexte sait maintenant où est la base. Prochaine leçon : lui donner sa première entité — la classe <strong>Jeu</strong>, son DbSet, les conventions et les data annotations.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l2", title: "OnConfiguring ou AddDbContext ? Tranche et justifie", level: 1,
+    statement: "Ton équipe démarre deux projets pour la Ludothèque : (a) un petit utilitaire console qui importera un fichier de jeux une fois par mois, (b) l'API REST ASP.NET Core qui servira l'application mobile. Rédige une courte note technique qui recommande, pour chacun, OnConfiguring ou AddDbContext + appsettings.json. Justifie avec au moins quatre critères concrets (injection de dépendances, durée de vie, environnements dev/prod, testabilité, sécurité de la chaîne de connexion…), puis conclus par la règle générale que tu retiens.",
+    hints: [
+      "Pour l'API : qui crée le contexte à chaque requête HTTP ? Comment un contrôleur le reçoit-il ? Que vaut scoped ici ?",
+      "Pour la console : combien d'instances du contexte, quelle complexité mérite d'être évitée, et où finit la chaîne de connexion ?",
+      "Pense au passage dev → prod : que faut-il changer si la chaîne est dans le code compilé ? et si elle est dans appsettings.json ?"
+    ],
+    solution: "NOTE TECHNIQUE — configuration du LudothequeContext\n\n(a) Utilitaire console mensuel → OnConfiguring acceptable\n- une seule instance, créée et libérée dans le Main : pas besoin de conteneur DI ;\n- mise en route immédiate, zéro infrastructure ;\n- limite assumée : chaîne dans le code → à extraire (fichier de config ou variable\n  d'environnement) si l'outil doit tourner ailleurs que sur mon poste.\n\n(b) API REST ASP.NET Core → AddDbContext + appsettings.json, obligatoire\n- injection de dépendances : les contrôleurs reçoivent le contexte par constructeur,\n  cohérent avec toute l'architecture ASP.NET Core vue au Niveau 4 ;\n- durée de vie scoped : une instance par requête HTTP, jamais partagée entre\n  threads → conforme au fait que DbContext n'est pas thread-safe ;\n- environnements : appsettings.Development.json vs production, sans recompiler ;\n- testabilité : on peut substituer les options (autre provider, base de test) ;\n- sécurité : la chaîne sort du code source, donc du dépôt Git.\n\nRègle générale : OnConfiguring = bac à sable et démos ;\nAddDbContext = toute application réelle, a fortiori web.",
+    note: "Ce choix rejoue exactement le cours ASP.NET Core : services, conteneur, durées de vie (singleton/scoped/transient). Un développeur Spring ferait le même arbitrage entre une SessionFactory construite à la main et un bean injecté ; Laravel et Django tranchent d'office en centralisant la config base dans un fichier dédié. Tu retrouveras cette note quasi mot pour mot dans ton projet full-stack." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

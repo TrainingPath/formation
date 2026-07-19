@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Requêtes LINQ sur la base",
+  subtitle: "Ton LINQ de la leçon 18 de C#… traduit en SQL par EF Core.",
+  theory: `
+<h3>1. La bonne nouvelle du jour</h3>
+<p>Petit rappel : <strong>LINQ</strong> (Language Integrated Query, « langage de requête intégré au langage ») est la façon d'interroger des collections que tu as apprise à la leçon 18 de C# : <code>.Where(...)</code> pour filtrer, <code>.OrderBy(...)</code> pour trier, <code>.Select(...)</code> pour choisir. Un <strong>DbSet</strong> est l'objet d'EF Core qui représente une table de la base : ici <code>_context.Taches</code> = la table des tâches. La nouveauté du jour : quand tu écris du LINQ sur un DbSet, ton code n'est PAS exécuté en mémoire — EF Core le <strong>traduit en SQL</strong> (le langage que comprennent les bases de données) et c'est LA BASE qui fait tout le travail. Analogie : au lieu de rapporter tout le stock chez toi pour trier à la main, tu envoies ta liste de critères au magasinier (la base), qui te renvoie exactement ce que tu as demandé.</p>
+<pre class="pseudo">var enRetard = await _context.Taches                          // on part du DbSet Taches (= la table Taches)
+    .Where(t => !t.EstTerminee && t.Echeance < DateTime.Today) // garder : non terminées ET dont l'échéance est passée
+    .OrderBy(t => t.Echeance)                                 // trier de la plus urgente à la moins urgente
+    .ToListAsync();                                           // MATÉRIALISER : c'est ICI que la requête part en base
+
+// SQL généré (en gros) :                                     -- ce que la base reçoit réellement :
+// SELECT * FROM Taches                                       -- prends les colonnes de la table Taches
+// WHERE EstTerminee = 0 AND Echeance < '2026-07-04'          -- ne garde que celles qui remplissent la condition
+// ORDER BY Echeance                                          -- et trie-les par échéance</pre>
+<h3>2. L'exécution différée</h3>
+<p><code>Where</code> et <code>OrderBy</code> ne font que <strong>construire</strong> (préparer) la requête : à ce stade, rien n'est encore parti vers la base. La requête ne s'exécute vraiment qu'au moment d'un appel dit <strong>« matérialisant »</strong> (qui réclame le résultat concret) : <code>ToListAsync()</code> (« donne-moi la liste »), <code>FirstOrDefaultAsync()</code> (« le premier, ou null »), <code>CountAsync()</code> (« combien ? »), <code>AnyAsync()</code> (« en existe-t-il ? »)… C'est l'<strong>exécution différée</strong> : on empile les critères, puis un seul appel déclenche le voyage vers la base. (Rappel leçon 9 : le <code>await</code> rend l'appel <em>asynchrone</em> — le serveur n'attend pas bloqué pendant que la base travaille.)</p>
+<h3>3. La boîte à outils</h3>
+<p>Voici les outils les plus utiles. Chacun s'exécute EN BASE : très peu de données voyagent sur le réseau, car la base a déjà fait le tri.</p>
+<pre class="pseudo">// Compter EN BASE (aucune ligne transférée)
+int nb = await _context.Taches.CountAsync(t => !t.EstTerminee);   // COUNT(*) : la base ne renvoie qu'un nombre
+
+// Existe-t-il ? (plus efficace que Count > 0)
+bool existe = await _context.Taches.AnyAsync(t => t.Titre == "Sport");   // EXISTS : s'arrête à la 1re trouvée
+
+// La première correspondance (ou null)
+var t = await _context.Taches                                   // on interroge la table Taches
+    .FirstOrDefaultAsync(t => t.Titre.Contains("courses"));     // 1re tâche dont le titre contient "courses", sinon null
+
+// Trier puis limiter : le top 5
+var top = await _context.Taches                                 // table Taches
+    .OrderByDescending(t => t.CreeLe)                           // de la plus récente à la plus ancienne
+    .Take(5)                                                    // n'en garder que 5
+    .ToListAsync();                                             // exécuter la requête
+
+// Ne rapporter QUE certaines colonnes (projection)
+var titres = await _context.Taches                              // table Taches
+    .Select(t => t.Titre)                                       // ne demander QUE la colonne Titre
+    .ToListAsync();                                             // → une List&lt;string&gt; de titres</pre>
+<h3>4. Filtrer en base ou en mémoire : le piège de performance</h3>
+<p>Point crucial : tout ce qui est écrit AVANT l'appel matérialisant part en SQL (la base travaille) ; tout ce qui est écrit APRÈS s'exécute en mémoire C# (ton programme travaille). Placer un <code>Where</code> au mauvais endroit peut faire voyager des millions de lignes pour rien.</p>
+<pre class="pseudo">// ❌ CATASTROPHE : charge TOUTE la table, puis filtre en C#
+var mauvais = (await _context.Taches.ToListAsync())           // ToListAsync D'ABORD : toute la table arrive en mémoire
+              .Where(t => !t.EstTerminee).ToList();           // le Where s'exécute en C#, trop tard (déjà tout chargé)
+
+// ✔ BIEN : la base filtre, 12 lignes voyagent
+var bon = await _context.Taches                                // table Taches
+          .Where(t => !t.EstTerminee).ToListAsync();           // Where AVANT ToListAsync : la base filtre, peu de lignes voyagent</pre>
+<p>La règle : garder Where/OrderBy/Take AVANT le ToListAsync. Après, on est en mémoire.</p>
+<h3>5. Pagination : Skip et Take</h3>
+<p>La <strong>pagination</strong> consiste à découper un long résultat en « pages » (comme un livre) pour n'en afficher qu'un morceau à la fois. Deux outils : <code>Skip(n)</code> (« sauter » les n premiers éléments) et <code>Take(n)</code> (« prendre » les n suivants).</p>
+<pre class="pseudo">int page = 3, parPage = 10;                                    // on veut la page 3, à 10 éléments par page
+var resultats = await _context.Taches                          // table Taches
+    .OrderBy(t => t.Id)                                        // ordre stable OBLIGATOIRE avant de paginer
+    .Skip((page - 1) * parPage)    // sauter 20                // (3-1)*10 = 20 : on saute les 2 premières pages
+    .Take(parPage)                  // prendre 10              // prendre les 10 suivants : c'est la page 3
+    .ToListAsync();                                            // exécuter la requête → la liste de la page 3</pre>
+<div class="warn">Toujours un OrderBy avant Skip/Take : sans ordre stable, les pages peuvent se chevaucher ou perdre des lignes.</div>
+<div class="tip">Curieuse de voir le SQL généré ? Les logs de développement l'affichent (niveau Information de Microsoft.EntityFrameworkCore.Database.Command). Lis-le de temps en temps : c'est très formateur.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle différence entre LINQ sur une List<T> et LINQ sur un DbSet<T> ?", opts: ["Aucune", "Sur DbSet, la requête est traduite en SQL et exécutée PAR LA BASE", "DbSet est plus lent", "La syntaxe change complètement"], a: 1, exp: "Même syntaxe, moteur différent : la base fait le travail." },
+    { type: "qcm", q: "Quand la requête part-elle réellement vers la base ?", opts: ["Au Where", "À l'appel matérialisant : ToListAsync, CountAsync, FirstOrDefaultAsync…", "Au OrderBy", "À la compilation"], a: 1, exp: "L'exécution différée : on construit, puis on déclenche." },
+    { type: "qcm", q: "Comment compter les tâches non terminées SANS charger de lignes ?", opts: ["ToListAsync().Count", "CountAsync(t => !t.EstTerminee) : le COUNT s'exécute en base", "Une boucle for", "Length"], a: 1, exp: "Un nombre voyage, pas des lignes." },
+    { type: "qcm", q: "Pour savoir si AU MOINS une tâche s'appelle « Sport » :", opts: ["Count() > 0 chargé en mémoire", "AnyAsync(t => t.Titre == \"Sport\") : EXISTS, s'arrête à la première trouvée", "First()", "Contains(\"Sport\")"], a: 1, exp: "Any est l'outil « existence » le plus efficace." },
+    { type: "qcm", q: "Que renvoie FirstOrDefaultAsync si rien ne correspond ?", opts: ["Une exception", "null", "Une tâche vide", "0"], a: 1, exp: "Comme FirstOrDefault de la leçon 18 de C# — pense au test null." },
+    { type: "qcm", q: "Comment obtenir les 5 tâches les plus récentes ?", opts: ["Take(5) seul", "OrderByDescending(t => t.CreeLe).Take(5)", "Last(5)", "Skip(5)"], a: 1, exp: "Trier PUIS limiter." },
+    { type: "qcm", q: "Que fait Select(t => t.Titre) avant ToListAsync ?", opts: ["Renomme la colonne", "Projection : le SQL ne rapporte QUE la colonne Titre", "Trie par titre", "Filtre les titres vides"], a: 1, exp: "SELECT Titre FROM Taches — moins de données transférées." },
+    { type: "qcm", q: "(await _context.Taches.ToListAsync()).Where(...) : quel est le problème ?", opts: ["Erreur de syntaxe", "TOUTE la table est chargée en mémoire avant le filtre : le Where doit être AVANT le ToListAsync", "Le résultat est faux", "Aucun"], a: 1, exp: "Sur 100 000 lignes, la différence se mesure en secondes et en gigaoctets." },
+    { type: "qcm", q: "La formule de pagination pour la page n (taille p) :", opts: ["Take(n)", "Skip((n-1)*p).Take(p)", "Skip(p).Take(n)", "Page(n, p)"], a: 1, exp: "Page 3, taille 10 : Skip(20).Take(10)." },
+    { type: "qcm", q: "Pourquoi un OrderBy est-il indispensable avant Skip/Take ?", opts: ["Pour l'esthétique", "Sans ordre stable, les pages peuvent se chevaucher ou perdre des lignes entre deux requêtes", "EF Core le refuse sinon", "Pour le cache"], a: 1, exp: "La pagination n'a de sens que sur une séquence ordonnée." },
+    { type: "qcm", q: "Où voir le SQL généré par EF Core en développement ?", opts: ["Nulle part", "Dans les logs (Microsoft.EntityFrameworkCore.Database.Command en Information)", "Dans le navigateur", "Dans le .csproj"], a: 1, exp: "Lire le SQL généré t'apprendra énormément." },
+    { type: "qcm", q: "Titre.Contains(\"courses\") sur un DbSet se traduit en SQL par :", opts: ["Une boucle", "Un LIKE '%courses%'", "Une erreur", "Un JOIN"], a: 1, exp: "EF Core traduit les méthodes courantes de string en équivalents SQL." },
+    { type: "qcm", q: "Quelle requête écrire pour « les tâches terminées, triées par titre, page 2 par 20 » ?", opts: ["ToListAsync puis filtres", "Where(t => t.EstTerminee).OrderBy(t => t.Titre).Skip(20).Take(20).ToListAsync()", "FindAsync(2)", "Select puis Where"], a: 1, exp: "Filtre → tri → pagination → matérialisation : l'ordre canonique." },
+    { type: "vf", q: "Après un ToListAsync(), les Where suivants s'exécutent en mémoire C#.", a: true, exp: "La frontière est nette : avant = SQL, après = mémoire." },
+    { type: "vf", q: "LINQ sur DbSet nécessite d'apprendre une syntaxe totalement nouvelle.", a: false, exp: "C'est exactement le LINQ de la leçon 18 de C# — ton investissement paie." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau de bord des tâches",
+    intro: `<p>La méthode « tableau de bord » de l'API :</p>
+<pre class="pseudo">[HttpGet("tableau-de-bord")]                        // GET api/taches/tableau-de-bord
+public async Task&lt;object&gt; TableauDeBord()           // renvoie un objet anonyme (plusieurs chiffres d'un coup)
+{
+    return new {                                     // on construit l'objet-réponse à la volée
+        enCours   = await _context.Taches.CountAsync(t => !t.EstTerminee),   // COUNT des tâches non terminées
+        enRetard  = await _context.Taches                                    // sous-requête : les tâches en retard
+                        .Where(t => !t.EstTerminee && t.Echeance < DateTime.Today)  // non finies ET échéance passée
+                        .OrderBy(t => t.Echeance)                            // les plus urgentes d'abord
+                        .Take(5)                                             // au plus 5
+                        .Select(t => t.Titre)                                // seulement leurs titres
+                        .ToListAsync(),                                      // exécuter → List&lt;string&gt;
+        existeUrgente = await _context.Taches                                // sous-requête d'existence
+                        .AnyAsync(t => t.Priorite == "haute" && !t.EstTerminee)  // une tâche urgente non finie existe-t-elle ?
+    };
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de lignes complètes de la table la propriété enCours transfère-t-elle ?", opts: ["Toutes", "Zéro : COUNT s'exécute en base, seul un nombre voyage", "5", "Une"], a: 1, exp: "CountAsync = SELECT COUNT(*)." },
+      { type: "qcm", q: "Que transfère la requête enRetard, sur une table de 10 000 tâches ?", opts: ["10 000 lignes", "Au plus 5 TITRES (Where + Take + Select en base)", "10 000 titres", "5 tâches complètes"], a: 1, exp: "Filtre, tri, limite ET projection avant la matérialisation : le SQL fait tout." },
+      { type: "qcm", q: "Pourquoi AnyAsync plutôt que CountAsync(...) > 0 pour existeUrgente ?", opts: ["Question de style", "EXISTS s'arrête à la PREMIÈRE correspondance : plus efficace qu'un comptage complet", "Count est faux", "Any renvoie un nombre"], a: 1, exp: "Le bon outil pour la bonne question." },
+      { type: "qcm", q: "Le retour est un objet anonyme. Que reçoit le client ?", opts: ["Une erreur", "{\"enCours\":7,\"enRetard\":[\"...\"],\"existeUrgente\":true} : la sérialisation JSON gère aussi les types anonymes", "Du XML", "Trois réponses séparées"], a: 1, exp: "Pratique pour les agrégats sur mesure d'un tableau de bord." },
+      { type: "vf", q: "Déplacer le Take(5) APRÈS le ToListAsync() donnerait le même résultat final au client.", a: true, exp: "Même résultat… mais toutes les tâches en retard auraient voyagé pour être jetées ensuite. Correct ≠ efficace : garde Take avant la matérialisation." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 10 :
+// 1. LINQ sur DbSet = traduit en SQL, exécuté PAR la base.
+// 2. Rien ne part avant ToListAsync/CountAsync/AnyAsync/FirstOrDefaultAsync.
+// 3. Compter : CountAsync ; exister : AnyAsync ; premier : FirstOrDefaultAsync.
+// 4. Filtre/tri/Take/Select AVANT la matérialisation ; après = mémoire.
+// 5. Pagination : OrderBy + Skip((page-1)*taille) + Take(taille).</pre>
+<p>Nos tâches vivent seules. Demain : les relier à leurs propriétaires — les relations entre entités.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-linq-stats", title: "Les statistiques des membres", level: 2,
+    statement: "Écris une méthode d'API <code>[HttpGet(\"stats\")]</code> asynchrone qui renvoie un objet anonyme avec : <code>actifs</code> = le nombre de membres actifs (compté en base), <code>pseudosMineurs</code> = la liste des pseudos (seulement les pseudos !) des membres de moins de 18 ans triés par âge, et <code>page</code> = les membres actifs de la page 2 (10 par page, triés par pseudo). Toutes les opérations doivent s'exécuter EN BASE.",
+    hints: [
+      "actifs : await _context.Membres.CountAsync(m => m.EstActif);",
+      "pseudosMineurs : Where + OrderBy + Select(m => m.Pseudo) + ToListAsync.",
+      "page : Where + OrderBy + Skip(10) + Take(10) + ToListAsync."
+    ],
+    solution: "[HttpGet(\"stats\")]                                     // GET api/membres/stats\npublic async Task<object> Stats()                       // objet anonyme = plusieurs chiffres d'un coup\n{\n    return new                                          // on construit l'objet-reponse\n    {\n        // COUNT en base : un nombre voyage\n        actifs = await _context.Membres.CountAsync(m => m.EstActif),   // nombre de membres actifs\n\n        // filtre + tri + PROJECTION : seuls les pseudos voyagent\n        pseudosMineurs = await _context.Membres            // table Membres\n            .Where(m => m.Age < 18)                        // garder les mineurs\n            .OrderBy(m => m.Age)                           // trier par age croissant\n            .Select(m => m.Pseudo)                         // ne demander QUE le pseudo\n            .ToListAsync(),                                // executer -> List<string>\n\n        // pagination : page 2 -> Skip(10).Take(10)\n        page = await _context.Membres                      // table Membres\n            .Where(m => m.EstActif)                        // seulement les actifs\n            .OrderBy(m => m.Pseudo)      // ordre stable AVANT Skip/Take\n            .Skip(10)                                      // sauter la page 1 (10 membres)\n            .Take(10)                                      // prendre la page 2 (10 membres)\n            .ToListAsync(),                                // executer la requete\n    };\n}",
+    note: "Relis chaque requête en te demandant « qu'est-ce qui traverse le réseau ? » : un entier, des pseudos, dix membres. Penser en données transférées, c'est penser en pro." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

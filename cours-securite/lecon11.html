@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Valider les entrées : upload de fichiers et SSRF",
+  subtitle: "Ne jamais faire confiance à ce qui vient du monde extérieur.",
+  theory: `
+<h3>1. La règle d'or</h3>
+<p>Une <strong>entrée</strong> est toute donnée qui vient de l'extérieur de ton programme. <strong>Valider</strong> une entrée, c'est vérifier qu'elle a bien la forme attendue AVANT de l'utiliser. La règle d'or : toute entrée est <strong>hostile jusqu'à validation</strong> — formulaires, paramètres d'URL, en-têtes HTTP, corps JSON (les données envoyées par une API), fichiers, webhooks. La moitié des failles de ce cours (injection, XSS, IDOR) naît d'une entrée en laquelle on a fait confiance sans la vérifier.</p>
+
+<h3>2. Valider : liste d'autorisation, pas d'interdiction</h3>
+<p>Deux stratégies opposées. Une <strong>liste d'interdiction</strong> (blacklist) tente d'énumérer tout ce qui est mauvais pour le refuser — mais on en oublie toujours. Une <strong>liste d'autorisation</strong> (whitelist) fait l'inverse : elle n'accepte QUE ce qui est explicitement reconnu comme valide, et rejette tout le reste. La seconde est bien plus sûre : il est plus facile de décrire ce que l'on veut que de deviner tout ce qu'un attaquant pourrait inventer.</p>
+<pre class="pseudo">✘ liste d'interdiction : "refuser &lt;script&gt;" -> on oublie toujours un cas   # blacklist : incomplete par nature
+✔ liste d'AUTORISATION : "accepter uniquement ce format connu"                  # whitelist : on decrit le valide, on rejette le reste
+# type attendu, longueur bornee, valeurs dans un ensemble fini,                 # les criteres a verifier
+# format verifie (email, date). Le reste est refuse.                            # tout ce qui ne colle pas -> rejete</pre>
+
+<h3>3. L'upload de fichiers (avatar, import)</h3>
+<p>Un <strong>upload</strong> (téléversement) est l'envoi d'un fichier par un visiteur vers le serveur. C'est une entrée particulièrement dangereuse : un fichier peut contenir du code déguisé.</p>
+<pre class="pseudo">def valider_avatar(f):
+    if f.size > 2 * 1024 * 1024:                 # 1. taille max (ici 2 Mo) -> evite l'abus / la saturation
+        raise ValidationError("Fichier trop volumineux")   # on refuse au-dela de la limite
+    type_reel = magic.from_buffer(f.read(2048), mime=True)  # 2. lit le TYPE REEL d'apres le CONTENU (type MIME)
+    if type_reel not in {"image/png", "image/jpeg"}:        # on n'accepte que ces types (et non selon l'extension !)
+        raise ValidationError("Type non autorise")          # sinon on refuse
+# 3. stocker HORS racine web, nom genere (uuid), pas le nom d'origine   # -> non executable, non devinable
+# 4. servir via une vue controlee, jamais depuis un dossier executable  # sinon le "fichier" pourrait s'executer</pre>
+<p>Le <strong>type MIME</strong> est l'étiquette qui décrit la vraie nature d'un fichier (<code>image/png</code>, <code>text/csv</code>…), déduite de son <em>contenu</em> — pas de son nom. La <strong>racine web</strong> est le dossier public d'où le serveur sert les fichiers ; y déposer un upload, c'est risquer qu'il soit exécuté. Un <strong>UUID</strong> est un identifiant unique et imprévisible qu'on utilise comme nom de fichier pour qu'il ne soit ni devinable ni exécutable. Un fichier nommé <code>avatar.jpg</code> peut contenir du code : c'est le <strong>contenu</strong> (type MIME réel) qui compte, pas l'extension.</p>
+
+<h3>4. La SSRF (Server-Side Request Forgery)</h3>
+<p>La <strong>SSRF</strong> (« falsification de requête côté serveur ») survient quand l'utilisateur fournit une <strong>URL</strong> et que le <em>serveur</em> va la chercher lui-même. L'attaquant en profite pour faire viser au serveur des cibles qu'il ne pourrait pas atteindre depuis l'extérieur : le réseau interne, une base non exposée, ou les « métadonnées » du cloud.</p>
+<pre class="pseudo"># l'utilisateur fournit une URL que le SERVEUR va aller chercher
+def importer_depuis_url(url):
+    hote = urlparse(url).hostname                # urlparse extrait le nom d'hote contenu dans l'URL
+    if hote in {"localhost", "127.0.0.1"} or ip_est_privee(hote):   # on refuse le serveur lui-meme ET le reseau interne
+        raise ValidationError("URL non autorisee")   # pas le reseau interne !
+    # mieux : liste d'AUTORISATION de domaines connus a l'avance
+# sinon : l'attaquant fait viser au serveur son reseau interne,
+# les metadonnees cloud (169.254.169.254), des services non exposes.</pre>
+<p>Une <strong>IP privée</strong> (comme <code>127.0.0.1</code> ou <code>192.168.x.x</code>) désigne une machine du réseau local, invisible depuis Internet. L'adresse <code>169.254.169.254</code> est celle des <strong>métadonnées</strong> des serveurs cloud, qui peuvent contenir des clés d'accès — une cible SSRF de choix, à bloquer absolument.</p>
+
+<h3>5. Valider côté serveur, toujours</h3>
+<p>La validation faite en JavaScript dans le navigateur (« côté client ») améliore le confort d'usage, mais n'est PAS une sécurité : l'attaquant peut ignorer le navigateur et parler directement au serveur avec des outils comme <strong>curl</strong> ou <strong>Postman</strong>. Toute validation de sécurité doit donc être refaite côté serveur.</p>
+<pre class="pseudo">La validation JavaScript cote client = confort d'UX, PAS de la securite :   # elle guide l'utilisateur, rien de plus (UX = experience utilisateur)
+l'attaquant contourne le navigateur (curl, Postman). Toute validation de     # curl/Postman = outils qui parlent au serveur sans navigateur
+securite est REFAITE cote serveur. Le client valide pour l'utilisateur,      # deux roles distincts...
+le serveur valide contre l'attaquant.                                        # ...et le serveur est le seul juge de confiance</pre>
+<div class="warn">La SSRF est sournoise : on fait faire au serveur une requête qu'un attaquant ne pourrait pas faire depuis l'extérieur — vers le réseau interne, la base, les métadonnées du cloud. La liste d'autorisation de domaines (pas la liste d'interdiction d'IP, contournable) est la vraie parade.</div>
+<div class="tip">Toutes les piles ont des validateurs : Django Forms/DRF serializers, Java Bean Validation, C# DataAnnotations, Laravel Validation. Les utiliser systématiquement, en liste d'autorisation, et refaire la validation de sécurité côté serveur — même quand le front la fait déjà.</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle d'or des entrées :", opts: ["Faire confiance", "Toute entrée est hostile jusqu'à validation", "Valider une fois par mois", "Valider côté client seulement"], a: 1, exp: "Le socle." },
+    { type: "qcm", q: "Beaucoup de failles (injection, XSS, IDOR) naissent…", opts: ["Du réseau", "D'une entrée en laquelle on a fait confiance", "Du CSS", "Du hasard"], a: 1, exp: "Un fil commun." },
+    { type: "qcm", q: "Liste d'autorisation vs d'interdiction :", opts: ["Identiques", "Autoriser le connu (sûr) plutôt qu'interdire le mauvais (incomplet)", "Interdire est mieux", "Ni l'un ni l'autre"], a: 1, exp: "On oublie toujours un cas à interdire." },
+    { type: "qcm", q: "Pour un upload, le type se vérifie sur…", opts: ["L'extension", "Le contenu réel (type MIME)", "Le nom", "La taille seule"], a: 1, exp: "avatar.jpg peut mentir." },
+    { type: "qcm", q: "Un upload doit être stocké…", opts: ["Dans la racine web exécutable", "Hors racine web, nom généré (uuid)", "Avec son nom d'origine", "En base en clair"], a: 1, exp: "Pas exécutable, pas devinable." },
+    { type: "qcm", q: "Servir un upload depuis un dossier exécutable, c'est…", opts: ["Pratique", "Une porte dérobée potentielle", "Sécurisé", "Recommandé"], a: 1, exp: "Un fichier peut contenir du code." },
+    { type: "qcm", q: "La SSRF, c'est…", opts: ["Une injection SQL", "Faire faire au SERVEUR une requête vers une URL fournie", "Un XSS", "Un cookie"], a: 1, exp: "Server-Side Request Forgery." },
+    { type: "qcm", q: "La SSRF vise typiquement…", opts: ["Le CSS", "Le réseau interne, les métadonnées cloud, des services non exposés", "Le navigateur", "Les logs"], a: 1, exp: "Ce que l'attaquant ne peut atteindre lui-même." },
+    { type: "qcm", q: "La parade SSRF fiable :", opts: ["Liste d'interdiction d'IP", "Liste d'AUTORISATION de domaines", "HTTPS", "Un cookie"], a: 1, exp: "L'interdiction se contourne." },
+    { type: "qcm", q: "169.254.169.254 est…", opts: ["Un site public", "L'adresse des métadonnées cloud, cible SSRF classique", "Un DNS", "Un CDN"], a: 1, exp: "À bloquer." },
+    { type: "qcm", q: "La validation JavaScript côté client est…", opts: ["De la sécurité", "Du confort d'UX, contournable (curl, Postman)", "Suffisante", "Obligatoire seule"], a: 1, exp: "Refaire côté serveur." },
+    { type: "vf", q: "Si le front valide déjà, le serveur peut s'en passer.", a: false, exp: "L'attaquant contourne le front." },
+    { type: "qcm", q: "« Le client valide pour l'utilisateur, le serveur valide contre… »", opts: ["le CSS", "l'attaquant", "le réseau", "le cache"], a: 1, exp: "Deux publics différents." },
+    { type: "qcm", q: "Un validateur de pile (DRF, Bean Validation…) sert à…", opts: ["Décorer", "Appliquer systématiquement la validation, en liste d'autorisation", "Chiffrer", "Déployer"], a: 1, exp: "Outil dédié." },
+    { type: "vf", q: "La taille maximale d'un upload doit être bornée.", a: true, exp: "Anti-déni de service + abus." }
+  ],
+  final: {
+    title: "Exercice final — Sécuriser un upload et un import",
+    intro: `<p>Un upload d'avatar et un import par URL acceptent n'importe quoi.</p>`,
+    questions: [
+      { type: "qcm", q: "Valider l'avatar :", opts: ["Taille max + type MIME réel + stockage hors racine, nom uuid", "l'extension seule", "rien", "un antivirus seul"], a: 0, exp: "Le contenu compte." },
+      { type: "qcm", q: "Le nom du fichier stocké :", opts: ["Généré (uuid), pas le nom d'origine", "le nom d'origine", "avatar.php", "vide"], a: 0, exp: "Non devinable, non exécutable." },
+      { type: "qcm", q: "L'import par URL doit :", opts: ["Refuser localhost/IP privées, liste d'autorisation de domaines", "suivre toute URL", "n'importe quoi en HTTPS", "rien"], a: 0, exp: "Anti-SSRF." },
+      { type: "qcm", q: "La validation de sécurité se fait :", opts: ["Côté serveur, même si le front la fait aussi", "côté client seulement", "une fois", "jamais"], a: 0, exp: "Contre l'attaquant." },
+      { type: "vf", q: "Toute entrée extérieure est hostile jusqu'à validation.", a: true, exp: "La règle d'or." }
+    ],
+    solution: `<pre class="pseudo"># Upload
+def valider_avatar(f):
+    if f.size > 2*1024*1024: raise ValidationError("Trop volumineux")   # 1. taille bornee
+    if magic.from_buffer(f.read(2048), mime=True) not in {"image/png","image/jpeg"}:   # 2. type reel (contenu)
+        raise ValidationError("Type non autorise")                      # refus si type inattendu
+# stocker hors racine web, nom = uuid4(), servi par une vue controlee    # 3. non executable, non devinable
+
+# Import par URL (anti-SSRF)
+def importer(url):
+    h = urlparse(url).hostname                                          # nom d'hote de l'URL fournie
+    if h in {"localhost","127.0.0.1"} or ip_est_privee(h):             # bloquer le serveur local et le reseau interne
+        raise ValidationError("URL non autorisee")
+    # mieux : liste d'autorisation de domaines connus                  # n'autoriser que des domaines de confiance</pre>
+<p>Les entrées sont sous contrôle. Demain : le code des autres — les dépendances.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta validation d'entrées…",
+  items: [
+  { id: "secu-l11", title: "Le validateur d'upload complet", level: 3,
+    statement: "Écris le validateur d'upload complet pour une fonctionnalité « import de catalogue par fichier CSV » de la Ludothèque (réservée aux vendeurs) : validation taille + type réel + extension cohérente, stockage sécurisé (hors racine, nom généré), traitement ligne par ligne avec validation de chaque champ, et la note sur ce qui rend un import particulièrement risqué (injection de formule CSV, volume, encodage).",
+    hints: [
+      "Un CSV peut contenir une injection de formule (=cmd... ouvert dans Excel) : préfixer les cellules à risque.",
+      "Valider chaque LIGNE comme une entrée hostile (prix positif, catégorie existante...).",
+      "Borner le nombre de lignes (déni de service) et l'encodage attendu."
+    ],
+    solution: "# Import CSV du catalogue (vendeurs uniquement — contrôle d'accès l.7)\n@user_passes_test(est_vendeur)\ndef importer_catalogue(request):\n    f = request.FILES[\"fichier\"]\n\n    # 1. Fichier : taille, type réel, extension cohérente\n    if f.size > 5 * 1024 * 1024:\n        raise ValidationError(\"Fichier trop volumineux (5 Mo max)\")\n    type_reel = magic.from_buffer(f.read(2048), mime=True)\n    f.seek(0)\n    if type_reel not in {\"text/csv\", \"text/plain\"} or not f.name.endswith(\".csv\"):\n        raise ValidationError(\"Un fichier CSV est attendu\")\n\n    # 2. Traitement ligne par ligne — chaque champ = entrée hostile\n    lignes = list(csv.DictReader(io.TextIOWrapper(f, encoding=\"utf-8\")))\n    if len(lignes) > 10_000:                       # borne anti-DoS\n        raise ValidationError(\"Trop de lignes\")\n    for i, ligne in enumerate(lignes, 1):\n        form = JeuForm(ligne)                      # valide via le form du capstone\n        if not form.is_valid():\n            raise ValidationError(f\"Ligne {i} : {form.errors}\")\n        titre = ligne[\"titre\"]\n        if titre and titre[0] in \"=+-@\":           # 3. injection de formule CSV\n            titre = \"'\" + titre                    # préfixe protecteur (ré-export Excel)\n        # créer le jeu via l'ORM (pas de SQL brut -> anti-injection l.2)\n\n    # 4. Le fichier lui-même : stocké hors racine web, nom généré, ou pas stocké\n    return redirect(\"espace_vendeur\")",
+    note: "L'import de fichier cumule presque toutes les leçons : contrôle d'accès (vendeurs, l.7), validation stricte (l.11), anti-injection via l'ORM (l.2), et une menace propre au CSV — l'injection de formule, où une cellule commençant par = devient une commande quand la victime rouvre le fichier dans un tableur. Chaque LIGNE d'un import est une entrée hostile : la validation par le form réutilise exactement les règles métier du capstone." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Assembler, exécuter, tester — le projet complet",
+  subtitle: "Réunir toutes les briques en un seul fichier, l'assembler, le lancer et le mettre à l'épreuve.",
+  theory: `
+<h3>1. Le programme complet — données et analyse</h3>
+<p>Le grand jour : on réunit toutes les briques des sept leçons en un seul fichier, on l'assemble, on le lance, et on le met à l'épreuve. Le programme se lit en trois phases : <strong>lire</strong> l'entrée, <strong>analyser</strong> les nombres, <strong>afficher</strong> le rapport. Voici les données et les deux premières phases (syntaxe NASM) :</p>
+<pre class="pseudo">section .data
+    lbl_jeux  db "Jeux    : "        ; libelle de la ligne "Jeux"
+    lbl_jeux_len  equ $ - lbl_jeux   ; sa longueur (calculee a l'assemblage)
+    lbl_total db "Total   : "        ; libelle "Total"
+    lbl_total_len equ $ - lbl_total  ; sa longueur
+    lbl_moy   db "Moyenne : "        ; libelle "Moyenne"
+    lbl_moy_len   equ $ - lbl_moy    ; sa longueur
+    nl        db 10                  ; l'octet saut de ligne (code ASCII 10)
+section .bss
+    buf    resb 65536                ; tampon de lecture : 64 Kio non initialises
+    numbuf resb 32                   ; petit tampon pour convertir un nombre en texte
+section .text
+    global _start                    ; rend _start visible pour l'editeur de liens
+_start:
+    xor r13, r13                 ; --- lecture --- : r13 = total d'octets lus, mis a 0
+.read_loop:
+    xor rax, rax                 ; read (appel 0)
+    xor rdi, rdi                 ; stdin (descripteur 0)
+    lea rsi, [buf + r13]         ; ecrire a la suite dans le tampon
+    mov rdx, 65536               ; taille totale du tampon
+    sub rdx, r13                 ; rdx = place restante
+    syscall                      ; lit ; rax = octets lus cette fois
+    cmp rax, 0                   ; resultat <= 0 ?
+    jle .read_done               ; oui (0 = fin, <0 = erreur) : fin de lecture
+    add r13, rax                 ; sinon : cumule les octets lus
+    cmp r13, 65536               ; tampon plein ?
+    jl .read_loop                ; non : on relit
+.read_done:
+    xor r12, r12                 ; --- analyse --- : somme = 0
+    xor r14, r14                 ; nombre de jeux = 0
+    xor rbx, rbx                 ; index dans le tampon = 0
+    xor r15, r15                 ; accumulateur atoi = 0
+    xor r8, r8                   ; drapeau "dans un nombre" = 0
+.parse:
+    cmp rbx, r13                 ; atteint la fin des donnees ?
+    jge .parse_end               ; oui : fin du parcours
+    movzx rax, byte [buf + rbx]  ; charge l'octet courant (complete de zeros)
+    cmp al, 48                   ; < '0' ?
+    jb .sep                      ; -> separateur
+    cmp al, 57                   ; > '9' ?
+    ja .sep                      ; -> separateur
+    imul r15, r15, 10            ; chiffre : accumulateur x 10 (Horner)
+    sub al, 48                   ; code -> valeur 0..9
+    movzx rax, al                ; re-etend proprement sur 64 bits
+    add r15, rax                 ; ajoute le chiffre
+    mov r8, 1                    ; leve le drapeau
+    jmp .next                    ; octet suivant
+.sep:
+    cmp r8, 0                    ; etait-on dans un nombre ?
+    je .next                     ; non : rien a faire
+    add r12, r15                 ; oui : fin d'un nombre -> somme += courant
+    inc r14                      ; un jeu de plus
+    xor r15, r15                 ; remet l'accumulateur a 0
+    xor r8, r8                   ; baisse le drapeau
+.next:
+    inc rbx                      ; avance d'un octet
+    jmp .parse                   ; recommence
+.parse_end:
+    cmp r8, 0                    ; finissait-on sur un chiffre ?
+    je .report                   ; non : rien a rattraper
+    add r12, r15                 ; oui : comptabilise le dernier nombre
+    inc r14                      ; et le compte</pre>
+
+<h3>2. La partie affichage (le rapport)</h3>
+<pre class="pseudo">.report:                         ; --- rapport ---
+    lea rsi, [lbl_jeux]          ; adresse du libelle "Jeux"
+    mov rdx, lbl_jeux_len        ; sa longueur
+    call write_str              ; affiche "Jeux    : "
+    mov rax, r14                ; valeur = nombre de jeux
+    call print_num              ; affiche ce nombre
+    call print_nl               ; saut de ligne
+
+    lea rsi, [lbl_total]        ; libelle "Total"
+    mov rdx, lbl_total_len      ; sa longueur
+    call write_str              ; affiche "Total   : "
+    mov rax, r12                ; valeur = total
+    call print_num              ; affiche le total
+    call print_nl               ; saut de ligne
+
+    lea rsi, [lbl_moy]          ; libelle "Moyenne"
+    mov rdx, lbl_moy_len        ; sa longueur
+    call write_str              ; affiche "Moyenne : "
+    xor rax, rax                ; moyenne = 0 par defaut
+    cmp r14, 0                  ; y a-t-il au moins un jeu ?
+    je .show_moy                ; non (0 jeu) : ne PAS diviser
+    mov rax, r12                ; oui : dividende = total
+    xor rdx, rdx                ; nettoie rdx avant div
+    div r14                     ; moyenne = total / nombre
+.show_moy:
+    call print_num              ; affiche la moyenne
+    call print_nl               ; saut de ligne
+
+    mov rax, 60                  ; exit
+    xor rdi, rdi                 ; code de retour 0 (succes)
+    syscall                      ; termine proprement le programme</pre>
+
+<h3>3. Les trois routines réutilisées</h3>
+<pre class="pseudo">write_str:                       ; rsi = adresse, rdx = longueur
+    mov rax, 1                  ; write
+    mov rdi, 1                  ; stdout
+    syscall                     ; ecrit rdx octets
+    ret                         ; retour a l'appelant
+print_nl:                        ; affiche un simple saut de ligne
+    lea rsi, [nl]               ; adresse de l'octet nl (10)
+    mov rdx, 1                  ; longueur = 1 octet
+    mov rax, 1                  ; write
+    mov rdi, 1                  ; stdout
+    syscall                     ; ecrit le saut de ligne
+    ret                         ; retour
+print_num:                       ; rax = valeur non signee a afficher
+    lea r9, [numbuf + 31]       ; ecrit a reculons depuis la fin de numbuf
+    mov r10, 10                 ; diviseur = 10
+    test rax, rax               ; la valeur est-elle 0 ?
+    jnz .l                      ; non : on extrait les chiffres
+    dec r9                      ; cas 0 : recule d'une case...
+    mov byte [r9], 48           ; ...et ecrit le caractere '0'
+    jmp .w                      ; puis on affiche
+.l:
+    test rax, rax               ; reste-t-il des chiffres ?
+    jz .w                       ; non : on affiche
+    xor rdx, rdx                ; nettoie rdx avant div
+    div r10                     ; rax = quotient, rdx = reste (chiffre)
+    add dl, 48                  ; reste -> chiffre ASCII
+    dec r9                      ; recule d'une case
+    mov [r9], dl                ; ecrit le chiffre
+    jmp .l                      ; recommence avec le quotient
+.w:
+    lea rdx, [numbuf + 31]      ; adresse de fin du tampon
+    sub rdx, r9                 ; longueur = nombre de chiffres ecrits
+    mov rsi, r9                 ; adresse du premier chiffre
+    mov rax, 1                  ; write
+    mov rdi, 1                  ; stdout
+    syscall                     ; affiche le nombre
+    ret                         ; retour</pre>
+
+<h3>4. Assembler et lancer</h3>
+<p>Rappel (leçon 1) : <strong>assembler</strong> traduit le texte en code machine (<code>.o</code>), <strong>lier</strong> avec <code>ld</code> produit l'exécutable. Deux outils au choix — NASM ou GNU <code>as</code> — pour le même résultat :</p>
+<pre class="pseudo"># avec NASM :
+nasm -f elf64 ludostat.asm -o ludostat.o &amp;&amp; ld ludostat.o -o ludostat
+# avec GNU as (memes instructions, mais en tete .intel_syntax noprefix) :
+as ludostat.s -o ludostat.o &amp;&amp; ld ludostat.o -o ludostat
+
+# on lui donne des prix par un tube, et il repond :
+printf '44\\n12\\n39\\n20\\n' | ./ludostat
+#   Jeux    : 4        (\\n = un saut de ligne : chaque prix sur sa ligne)
+#   Total   : 115
+#   Moyenne : 28</pre>
+<div class="tip">Ce programme (vérifié à l'assemblage et à l'exécution) fait, en pur assembleur et sans aucune bibliothèque, ce qu'un script ferait en quelques lignes — mais on voit <strong>exactement</strong> chaque octet lu, chaque division, chaque appel système. C'est là toute la valeur de l'exercice : comprendre la machine sous le capot, là où les langages habituels cachent tout.</div>
+
+<h3>5. Mettre à l'épreuve : les cas limites</h3>
+<pre class="pseudo">printf '10 20   30\\n40' | ./ludostat   # espaces multiples + dernier nombre sans \\n -> 4 jeux, total 100, moyenne 25
+printf '7\\n' | ./ludostat              # un seul nombre -> 1 jeu, total 7, moyenne 7
+printf '' | ./ludostat                 # entree VIDE -> 0 jeu, total 0, moyenne 0 (et surtout : pas de plantage)
+echo $?                                # affiche le code de retour du dernier programme -> 0 (succes)</pre>
+<div class="warn">On teste les <strong>cas limites</strong> : espaces multiples entre les nombres, dernier nombre sans saut de ligne (le piège de la leçon 5), et entrée totalement vide (le piège de la division par zéro de la leçon 7). Un utilitaire n'est « fini » que lorsqu'il se comporte correctement sur les entrées <strong>inhabituelles</strong>, pas seulement sur le cas idéal. Félicitations — tu as écrit un vrai programme système, de bout en bout, en assembleur, en comprenant chaque instruction ! 🎉</div>`,
+  exercises: [
+    { type: "qcm", q: "Le programme complet enchaîne…", opts: ["seulement un write", "lecture (read) → analyse (parse) → rapport (write)", "un seul syscall", "de l'affichage seulement"], a: 1, exp: "Trois phases." },
+    { type: "qcm", q: "On lie ludostat avec…", opts: ["gcc", "ld (pas de libc)", "make", "cmake"], a: 1, exp: "Programme système." },
+    { type: "qcm", q: "Le point d'entrée est…", opts: ["main", "_start", "printf", "start"], a: 1, exp: "Sans libc." },
+    { type: "qcm", q: "printf '44\\n12\\n39\\n20\\n' | ./ludostat affiche un total de…", opts: ["100", "115", "95", "4"], a: 1, exp: "44+12+39+20." },
+    { type: "qcm", q: "…et une moyenne de…", opts: ["29", "28", "30", "27"], a: 1, exp: "115/4 entier." },
+    { type: "qcm", q: "Sur une entrée vide, le programme…", opts: ["plante", "affiche 0 jeu, total 0, moyenne 0", "boucle", "renvoie une erreur"], a: 1, exp: "Robuste." },
+    { type: "qcm", q: "Le code de sortie en cas de succès est…", opts: ["1", "0", "60", "115"], a: 1, exp: "exit(0)." },
+    { type: "qcm", q: "buf et numbuf sont déclarés dans…", opts: [".text", ".bss", ".data", ".code"], a: 1, exp: "Mémoire non initialisée." },
+    { type: "qcm", q: "Les libellés sont dans…", opts: [".bss", ".data", ".text", ".stack"], a: 1, exp: "Données initialisées." },
+    { type: "qcm", q: "La moyenne est protégée par…", opts: ["rien", "cmp r14, 0 avant la division", "un try/catch", "un second read"], a: 1, exp: "Évite SIGFPE." },
+    { type: "vf", q: "Un utilitaire n'est fini que lorsqu'il gère aussi les entrées inhabituelles.", a: true, exp: "Cas limites." },
+    { type: "qcm", q: "ludostat s'enchaîne dans un pipe car…", opts: ["il ouvre un fichier", "il lit stdin et écrit stdout (un filtre)", "il utilise gcc", "il a une GUI"], a: 1, exp: "Filtre Unix." },
+    { type: "qcm", q: "La syntaxe GNU as équivalente à NASM s'active avec…", opts: [".att_syntax", ".intel_syntax noprefix", "global main", "extern printf"], a: 1, exp: "Intel sous as." },
+    { type: "qcm", q: "print_num, write_str, print_nl sont…", opts: ["des macros", "des routines réutilisées par le rapport", "des sections", "des syscalls"], a: 1, exp: "Briques factorisées." },
+    { type: "qcm", q: "L'intérêt pédagogique du projet :", opts: ["remplacer un script", "voir chaque octet, division et appel système explicitement", "aller plus vite qu'en C", "éviter les tests"], a: 1, exp: "Sous le capot." }
+  ],
+  final: {
+    title: "Exercice final — Diagnostiquer un rapport faux",
+    intro: `<p>Sur l'entrée <code>5 5 5</code>, un programme affiche « Jeux : 3, Total : 15, Moyenne : 0 ». Le total est bon, mais la moyenne est fausse. Où est le bug ?</p>`,
+    questions: [
+      { type: "qcm", q: "La moyenne attendue :", opts: ["0", "5 (15/3)", "3", "15"], a: 1, exp: "15/3 = 5." },
+      { type: "qcm", q: "Moyenne 0 alors que total et nombre sont bons suggère…", opts: ["un bug de read", "la division n'a pas été faite (ou rax laissé à 0)", "un overflow", "un bug d'affichage du total"], a: 1, exp: "Branche de division sautée à tort." },
+      { type: "qcm", q: "Cause probable :", opts: ["cmp r14, 0 mal placé → on saute toujours la division", "buf trop petit", "read cassé", "libellé faux"], a: 0, exp: "Saut inconditionnel vers l'affichage." },
+      { type: "qcm", q: "Avant div r14, il faut aussi :", opts: ["rax = 0", "rdx = 0 et rax = total", "r10 = 0", "rien"], a: 1, exp: "Dividende rdx:rax." },
+      { type: "qcm", q: "La correction :", opts: ["supprimer la division", "ne sauter la division que si r14 == 0, sinon rax=total puis div", "diviser par 0", "afficher le total"], a: 1, exp: "Logique de branche correcte." }
+    ],
+    solution: `<pre class="pseudo">    xor rax, rax             ; moyenne par défaut = 0
+    cmp r14, 0
+    je .show_moy             ; SEULEMENT si aucun jeu
+    mov rax, r12             ; total (15)
+    xor rdx, rdx             ; nettoyer avant div
+    div r14                  ; 15 / 3 = 5
+.show_moy:
+    call print_num           ; -> "5"</pre>
+<p>Le bug venait d'un saut vers l'affichage qui court-circuitait la division même quand <code>r14 ≠ 0</code>. En ne sautant que pour <code>r14 == 0</code> et en préparant <code>rdx:rax</code>, la moyenne redevient correcte (5). Ton utilitaire <code>ludostat</code> est complet, robuste et testé — bravo, projet terminé ! 🎉</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur ici…",
+  items: [
+  { id: "projasm-l08", title: "Ajouter une ligne « Max » au rapport", level: 3,
+    statement: "Décris (en assembleur commenté) comment étendre ludostat pour afficher aussi le plus grand prix (« Max     : »). Indique où, dans la boucle d'analyse, mettre à jour un registre max, et comment l'afficher dans le rapport. On garde le max dans un registre callee-saved libre (ex. rbp ou une variable).",
+    hints: [
+      "Initialise max à 0 avant la boucle.",
+      "Quand un nombre se termine (dans la branche séparateur ET après la boucle), compare-le au max : s'il est plus grand, remplace.",
+      "Affiche-le comme les autres lignes : write_str du libellé, print_num de la valeur, print_nl."
+    ],
+    solution: "; --- initialisation (avant la boucle) ---\n;   on reserve un registre/variable 'max' initialise a 0\n;   (ex. via la pile ou un registre callee-saved sauvegarde au prologue)\n;\n; --- a chaque fin de nombre (branche .sep ET apres la boucle) ---\n;   apres  add r12, r15  /  inc r14 :\n;       cmp r15, max        ; le nombre courant depasse-t-il le max ?\n;       jbe .pas_max\n;       mov max, r15        ; nouveau maximum\n;   .pas_max:\n;\n; --- dans le rapport ---\n;   lea rsi, [lbl_max]       ; \"Max     : \"\n;   mov rdx, lbl_max_len\n;   call write_str\n;   mov rax, max\n;   call print_num\n;   call print_nl\n;\n; donnees :  lbl_max db \"Max     : \"  /  lbl_max_len equ $ - lbl_max",
+    note: "Étendre un programme assembleur suit toujours le même réflexe : ajouter l'état (le registre max, initialisé), le mettre à jour au bon endroit (chaque fois qu'un nombre se termine, y compris le dernier après la boucle), puis l'afficher avec les briques existantes (write_str/print_num/print_nl). Comme le nombre final est traité hors boucle, il faut penser à comparer max là aussi — le même piège que pour la somme." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Modifier et supprimer : update, delete, get_or_create",
+  subtitle: "Un objet ou mille lignes : à chaque besoin son outil — et à chaque outil son SQL, que tu sauras prédire.",
+  theory: `
+<h3>1. Modifier UN objet : attribut + save()</h3>
+<p>Tu connais déjà le geste depuis la leçon 5 : on modifie l'attribut, on appelle <strong>save()</strong>, et comme le pk (la clé primaire) est rempli, Django génère un <strong>UPDATE ... WHERE id = ...</strong> (UPDATE = modifier une ligne, WHERE = sur laquelle). Mais souviens-toi : ce UPDATE réécrit <em>toutes</em> les colonnes, même intactes. Quand tu sais exactement ce qui a changé, précise-le avec l'option <strong>update_fields</strong> (« champs à mettre à jour ») :</p>
+<pre class="pseudo">&gt;&gt;&gt; catan = Jeu.objects.get(titre='Catan')   # on recupere l'objet Catan depuis la base
+&gt;&gt;&gt; catan.prix = 27.50            # promotion d'été   # on change l'attribut prix EN MEMOIRE (rien n'est envoye)
+&gt;&gt;&gt; catan.save()                  # save() envoie l'UPDATE a MySQL
+# UPDATE ludotheque_jeu SET titre='Catan', editeur='Kosmos',   -- SET = liste des colonnes reecrites
+#        prix=27.50, stock=4, ... WHERE id = 1     ← TOUTES les colonnes   -- meme celles qui n'ont pas change
+
+&gt;&gt;&gt; catan.save(update_fields=['prix'])   # on limite l'UPDATE a la seule colonne prix
+# UPDATE ludotheque_jeu SET prix = 27.50 WHERE id = 1   ← ciblé   -- une seule colonne dans le SET</pre>
+<p>Le schéma reste : lire l'objet, le modifier en Python, le sauver. Une requête pour lire, une pour écrire — parfait pour un objet, ruineux pour mille.</p>
+
+<h3>2. Modifier en MASSE : update() sur un QuerySet</h3>
+<p>Fin de saison à la Ludothèque : tous les jeux indisponibles doivent passer à stock nul. Version naïve : boucler sur les objets et save() chacun — N requêtes UPDATE (une par jeu). Version ORM : <strong>update()</strong> s'applique directement au QuerySet (l'ensemble de résultats) et envoie <strong>UN seul UPDATE SQL</strong>, dont il renvoie le nombre de lignes touchées :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.filter(disponible=False).update(stock=0)   # filter(...) cible les jeux indisponibles, update() les modifie
+3                                  # trois lignes modifiées, UNE requête   # la valeur de retour = nb de lignes touchees
+# UPDATE ludotheque_jeu SET stock = 0 WHERE disponible = 0   -- une seule requete pour les 3 lignes</pre>
+<p>Trois différences avec save(), à connaître : update() <strong>ne charge aucun objet</strong> en mémoire (la base fait tout), il <strong>n'appelle pas save()</strong> sur chaque objet, et il <strong>n'émet pas les signaux</strong> de sauvegarde de Django (les « signaux » sont des notifications automatiques déclenchées par save(), vues plus tard). C'est une opération d'ensemble, taillée pour la performance — pas un raccourci de save().</p>
+
+<h3>3. Supprimer : delete() sur un objet ou un QuerySet</h3>
+<p>Même dualité pour la suppression : <strong>jeu.delete()</strong> supprime UNE ligne, <strong>queryset.delete()</strong> supprime toutes les lignes du QuerySet en un DELETE (DELETE = effacer des lignes). Les deux renvoient le bilan : un total et un <strong>dictionnaire</strong> (une liste clé → valeur) détaillé par modèle (précieux dès la leçon 8, quand les suppressions cascaderont sur les modèles liés) :</p>
+<pre class="pseudo">&gt;&gt;&gt; dixit = Jeu.objects.get(titre='Dixit')   # on recupere l'objet a supprimer
+&gt;&gt;&gt; dixit.delete()                            # supprime la ligne correspondante
+(1, {'ludotheque.Jeu': 1})                    # bilan : 1 ligne supprimee, dont 1 dans le modele Jeu
+# DELETE FROM ludotheque_jeu WHERE id = 4      -- efface uniquement la ligne d'id 4
+
+&gt;&gt;&gt; Jeu.objects.filter(stock=0, disponible=False).delete()   # supprime toutes les lignes filtrees
+(2, {'ludotheque.Jeu': 2})         # DELETE ... WHERE stock=0 AND disponible=0   -- 2 lignes effacees en une requete
+
+&gt;&gt;&gt; dixit.titre                     # on relit un attribut de l'objet Python
+'Dixit'                            # l'objet Python survit en mémoire...   # l'objet existe toujours cote Python
+&gt;&gt;&gt; dixit.pk is None                # sa cle primaire vaut-elle "rien" ?
+True                               # ...mais il n'est plus relié à aucune ligne   # plus aucune ligne en base</pre>
+<p>Note ce détail élégant : après delete(), l'objet Python existe toujours, mais Django a remis son <strong>pk à None</strong>. Un dixit.save() referait donc… un INSERT — une nouvelle ligne, avec un nouvel id.</p>
+
+<h3>4. get_or_create : le duo (objet, created)</h3>
+<p>Scénario classique d'import : « ajoute Azul au catalogue, sauf s'il y est déjà ». Avec get() + try/except, c'est laborieux. <strong>get_or_create()</strong> (« obtiens ou crée ») le fait en un appel et renvoie <strong>toujours un tuple</strong> (un couple de valeurs) : l'objet, et un <strong>booléen</strong> (vrai/faux) <em>created</em> qui dit s'il vient d'être créé. L'argument <strong>defaults</strong> (« valeurs par défaut ») fournit les champs utilisés <em>seulement à la création</em> — jamais pour chercher :</p>
+<pre class="pseudo">&gt;&gt;&gt; jeu, created = Jeu.objects.get_or_create(          # on DEBALLE le tuple dans deux variables : jeu et created
+...     titre='Azul',                                  # critere de recherche : le titre
+...     defaults={'editeur': 'Next Move', 'prix': 39.90, 'stock': 2})   # utilise seulement si Azul n'existe pas
+&gt;&gt;&gt; created                                            # created = a-t-il ete cree a l'instant ?
+False                              # Azul existait : defaults ignorés, SELECT seul   # False = trouve, pas cree
+
+&gt;&gt;&gt; jeu, created = Jeu.objects.get_or_create(          # meme methode pour un jeu absent
+...     titre='Dixit',
+...     defaults={'editeur': 'Libellud', 'prix': 31.90})
+&gt;&gt;&gt; created
+True                               # absent : SELECT puis INSERT avec les defaults   # True = cree a l'instant</pre>
+<p>La recherche ne porte que sur les arguments hors defaults (ici titre) : utilise un champ unique, comme pour get(). Relancé dix fois, le script donne dix fois le même résultat — c'est l'<strong>idempotence</strong> (une opération qu'on peut répéter sans changer le résultat), la qualité d'or des scripts d'import.</p>
+
+<h3>5. update_or_create : mettre à jour, sinon créer</h3>
+<p>Variante pour les synchronisations de catalogue : <strong>update_or_create()</strong> cherche de la même façon, mais si l'objet existe, il lui <em>applique</em> les defaults (et sauve) au lieu de les ignorer. Absent : création ; présent : mise à jour — toujours le tuple (objet, created) :</p>
+<pre class="pseudo">&gt;&gt;&gt; jeu, created = Jeu.objects.update_or_create(      # cherche, puis met a jour OU cree
+...     titre='Catan',                                 # critere de recherche
+...     defaults={'prix': 29.90, 'stock': 6})          # valeurs APPLIQUEES (meme si l'objet existe deja)
+&gt;&gt;&gt; created
+False                              # Catan existait : prix et stock mis à jour   # False = trouve puis mis a jour</pre>
+<p>Une ligne pour les voisins : merge() chez Hibernate/JPA, Update()/Remove() + SaveChanges() chez EF Core, updateOrCreate() et firstOrCreate() chez Eloquent — les mêmes duos, aux mêmes postes.</p>
+<div class="warn"><strong>Jeu.objects.all().delete()</strong> vide la table entière ; un <strong>update() sans filter()</strong> réécrit toutes les lignes. Une seule requête, aucun avertissement, aucun retour en arrière — l'ORM exécute ce que ton QuerySet décrit. Avant tout update() ou delete() de masse : relis le queryset, affiche son count(), et au moindre doute print(qs.query).</div>
+<div class="tip">get_or_create et update_or_create renvoient <strong>TOUJOURS un tuple</strong> : écris systématiquement <em>obj, created = ...</em>. Oublier le déballage — puis appeler obj.titre sur le tuple — est LE bug classique de cette leçon.</div>`,
+  exercises: [
+    { type: "qcm", q: "catan.prix = 27.50 puis catan.save() génère…", opts: ["Un INSERT", "Un UPDATE de toutes les colonnes WHERE id = catan.pk", "Un UPDATE de la seule colonne prix", "Deux requêtes UPDATE"], a: 1, exp: "save() réécrit tout par défaut ; pour cibler, il faut update_fields." },
+    { type: "qcm", q: "Pour ne réécrire que la colonne prix lors d'un save() :", opts: ["catan.save(update_fields=['prix'])", "catan.save(only='prix')", "catan.update('prix')", "catan.save(prix=True)"], a: 0, exp: "update_fields liste les colonnes du SET : UPDATE ... SET prix = ... WHERE id = ..." },
+    { type: "qcm", q: "Jeu.objects.filter(disponible=False).update(stock=0) envoie vers MySQL…", opts: ["Un UPDATE par jeu indisponible", "Un SELECT puis des UPDATE", "UN seul UPDATE avec WHERE disponible = 0", "Un DELETE"], a: 2, exp: "La base fait tout le travail en une requête : c'est l'opération de masse par excellence." },
+    { type: "qcm", q: "La valeur de retour de update() :", opts: ["Le QuerySet modifié", "Le nombre de lignes modifiées", "True ou False", "Le premier objet modifié"], a: 1, exp: "Un entier — pratique pour journaliser « 3 jeux mis à jour »." },
+    { type: "vf", q: "queryset.update(...) appelle la méthode save() de chaque objet concerné.", a: false, exp: "Aucun objet n'est chargé : pas de save() individuel, pas de signaux — un pur UPDATE SQL d'ensemble." },
+    { type: "input", q: "La méthode qui supprime un objet (ou toutes les lignes d'un QuerySet) :", a: ["delete", "delete()", ".delete()"], ph: "jeu.… / qs.…", exp: "delete() sur l'objet pour une ligne, sur le QuerySet pour l'ensemble filtré." },
+    { type: "qcm", q: "Le retour de Jeu.objects.filter(stock=0).delete() ressemble à…", opts: ["(2, {'ludotheque.Jeu': 2})", "True", "Un QuerySet vide", "None"], a: 0, exp: "Total supprimé + détail par modèle — le dictionnaire s'étoffera avec les cascades (leçon 8)." },
+    { type: "qcm", q: "Après dixit.delete(), l'objet Python dixit…", opts: ["Est détruit par Python", "Garde son pk", "Devient un QuerySet", "Survit en mémoire, mais son pk repasse à None"], a: 3, exp: "Plus aucune ligne ne lui correspond ; un save() referait un INSERT tout neuf." },
+    { type: "qcm", q: "get_or_create() renvoie…", opts: ["L'objet seul", "Un tuple (objet, created)", "Un booléen seul", "Un QuerySet"], a: 1, exp: "created vaut True si l'objet vient d'être créé, False s'il existait — déballe toujours les deux." },
+    { type: "vf", q: "Dans le tuple renvoyé par get_or_create, created vaut True si l'objet existait déjà.", a: false, exp: "C'est l'inverse : True = créé à l'instant, False = trouvé en base." },
+    { type: "qcm", q: "Dans get_or_create(titre='Azul', defaults={'prix': 39.90}), les defaults servent…", opts: ["Seulement à remplir l'objet en cas de création, jamais à chercher", "À filtrer la recherche", "À mettre à jour l'objet trouvé", "À rien : ils sont obligatoires mais ignorés"], a: 0, exp: "La recherche porte sur titre uniquement ; si Azul existe, les defaults sont ignorés." },
+    { type: "input", q: "La méthode qui met à jour l'objet s'il existe (avec les defaults), sinon le crée :", a: ["update_or_create", "update_or_create()"], ph: "Jeu.objects.…", exp: "La variante « synchronisation » : présent → UPDATE, absent → INSERT, toujours un tuple." },
+    { type: "qcm", q: "Jeu.objects.all().delete() exécute…", opts: ["Une suppression jeu par jeu avec confirmation", "Rien : all() protège la table", "Un DELETE de TOUTES les lignes de ludotheque_jeu, irréversible", "Un TRUNCATE réversible"], a: 2, exp: "L'ORM exécute ce que le queryset décrit — relis-le toujours avant un delete() de masse." },
+    { type: "qcm", q: "update() est une méthode disponible sur…", opts: ["Un objet Jeu", "Un QuerySet (Jeu.objects.filter(...)), pas sur un objet isolé", "settings.py", "La connexion MySQL"], a: 1, exp: "Pour un objet isolé : attribut + save(). update() est l'outil d'ensemble." },
+    { type: "qcm", q: "L'équivalent Eloquent (PHP/Laravel) de get_or_create :", opts: ["merge()", "SaveChanges()", "em.persist()", "firstOrCreate()"], a: 3, exp: "Et updateOrCreate() pour la variante mise à jour ; merge() est chez JPA, SaveChanges chez EF Core." }
+  ],
+  final: {
+    title: "Exercice final — Le bon outil pour chaque geste",
+    intro: `<p>Modifier un objet, mille lignes, supprimer, importer sans doublon : quatre besoins, quatre outils. Vérifions que tu choisis le bon sans hésiter.</p>`,
+    questions: [
+      { type: "qcm", q: "Baisser le prix d'UN jeu précis déjà chargé en mémoire :", opts: ["attribut + save() (éventuellement update_fields)", "queryset.update()", "delete() puis create()", "get_or_create()"], a: 0, exp: "Un objet, une modification : le geste de base de la leçon 5, affiné par update_fields." },
+      { type: "qcm", q: "Passer stock=0 pour TOUS les jeux indisponibles, en une requête :", opts: ["Une boucle de save()", "Jeu.objects.filter(disponible=False).update(stock=0)", "Jeu.objects.update(stock=0)", "delete()"], a: 1, exp: "filter() cible, update() frappe une fois — sans filter(), toute la table y passait." },
+      { type: "vf", q: "Après jeu.delete(), appeler jeu.save() recréerait une nouvelle ligne avec un nouvel id.", a: true, exp: "pk est repassé à None : pour save(), l'objet est neuf → INSERT." },
+      { type: "input", q: "Complète le déballage idiomatique : …, created = Jeu.objects.get_or_create(titre='Catan')", a: ["obj", "jeu", "objet"], ph: "…, created = …", exp: "Toujours deux variables : l'objet et le booléen — le tuple non déballé est LE bug classique." },
+      { type: "qcm", q: "Un script d'import relançable dix fois sans créer de doublons repose sur…", opts: ["create() dans une boucle", "save() sans pk", "get_or_create() (recherche sur champ unique + defaults)", "delete() préventif de la table"], a: 2, exp: "L'idempotence : chaque relance trouve les objets existants au lieu de les dupliquer." }
+    ],
+    solution: `<pre class="pseudo">UN objet        : catan.prix = 27.50 ; catan.save()                       # lire, modifier, sauver
+                  → UPDATE toutes colonnes | ciblé : save(update_fields=['prix'])   # cibler avec update_fields
+En MASSE        : Jeu.objects.filter(disponible=False).update(stock=0)     # une requete pour N lignes
+                  → UN UPDATE SQL, renvoie le nombre de lignes             # valeur de retour = nb lignes
+                  (pas de save() par objet, pas de signaux)                # operation d'ensemble
+Supprimer       : jeu.delete() / queryset.delete()                        # un objet ou tout un QuerySet
+                  → (total, {détail par modèle}) ; l'objet survit, pk = None   # pk remis a None
+Import idempotent: obj, created = Jeu.objects.get_or_create(              # relançable sans doublon
+                     titre='Azul', defaults={...})   ← defaults : création seule   # defaults ignores si trouve
+Synchroniser    : update_or_create(titre=..., defaults={...})             # met a jour si present, sinon cree
+Ailleurs        : merge (JPA) · Update/Remove+SaveChanges (EF Core)       # equivalents dans d'autres ORM
+                  · updateOrCreate/firstOrCreate (Eloquent)               # equivalents Laravel</pre>
+<p>Le CRUD est complet : créer, lire, modifier, supprimer. Il est temps de disséquer l'objet le plus rusé de l'ORM — leçon 7, <strong>Le QuerySet : paresseux, chaînable, évalué tard</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l6", title: "Inventaire de retour de salon", level: 1,
+    statement: "La Ludothèque rentre du salon d'Essen et te confie l'inventaire, en trois chantiers : (A) tous les jeux de l'éditeur 'Kosmos' bénéficient d'une remise — leur prix passe uniformément à 24.90 ; (B) l'exemplaire de 'Dixit' est revenu abîmé et doit disparaître du catalogue ; (C) le fichier du salon liste des nouveautés (dont '7 Wonders' que la Ludothèque possède peut-être déjà) à importer sans créer de doublon, script relançable. Pour chaque chantier : choisis l'outil (save, update, delete, get_or_create) en JUSTIFIANT pourquoi les autres conviennent moins, écris le code shell, et prédis le SQL exact envoyé à MySQL. Termine par la précaution que tu prends avant d'exécuter le chantier A, et le piège du tuple au chantier C.",
+    hints: [
+      "Chantier A : plusieurs lignes, même valeur, aucun objet à charger — quel outil frappe en une seule requête, et que renvoie-t-il pour contrôler le résultat ?",
+      "Chantier B : un objet précis — get() d'abord (sur quel champ ?), delete() ensuite ; que devient le pk de l'objet Python après coup ?",
+      "Chantier C : la recherche de get_or_create doit porter sur un champ discriminant (titre), le reste part dans defaults — et n'oublie pas : obj, created = …"
+    ],
+    solution: "Chantier A — remise Kosmos : update() de masse\nOutil : Jeu.objects.filter(editeur='Kosmos').update(prix=24.90)\nPourquoi pas save() ? Il faudrait charger chaque jeu et envoyer N UPDATE ;\nupdate() fait UNE requête et renvoie le nombre de lignes touchées.\nSQL prédit : UPDATE ludotheque_jeu SET prix = 24.90 WHERE editeur = 'Kosmos'\nPrécaution AVANT : je relis le queryset —\n  qs = Jeu.objects.filter(editeur='Kosmos') ; qs.count() ; print(qs.query)\n→ si le count est aberrant ou le WHERE absent, je m'arrête (un update()\nsans filter() réécrirait TOUTE la table, sans retour en arrière).\n\nChantier B — Dixit abîmé : get() puis delete() d'objet\nOutil :\n  dixit = Jeu.objects.get(titre='Dixit')   # titre discriminant ici\n  dixit.delete()\nPourquoi pas update() ? On ne modifie pas, on retire du catalogue.\nRetour : (1, {'ludotheque.Jeu': 1}).\nSQL prédit : SELECT ... WHERE titre = 'Dixit' puis\n            DELETE FROM ludotheque_jeu WHERE id = 4\nAprès coup : l'objet Python dixit survit mais dixit.pk is None —\nun save() accidentel recréerait une ligne neuve.\n\nChantier C — import du salon : get_or_create, relançable\nOutil :\n  jeu, created = Jeu.objects.get_or_create(\n      titre='7 Wonders',\n      defaults={'editeur': 'Repos Prod', 'prix': 44.90, 'stock': 3})\nPourquoi pas create() ? Relancé deux fois, il dupliquerait les jeux ;\nget_or_create cherche sur titre et n'utilise defaults qu'à la création :\nle script est idempotent.\nSQL prédit : SELECT ... WHERE titre = '7 Wonders'\n  → trouvé : rien d'autre (created=False)\n  → absent : INSERT INTO ludotheque_jeu ... (created=True)\nPiège du tuple : écrire jeu = Jeu.objects.get_or_create(...) sans déballer\nfait de jeu un tuple — jeu.titre plante. Toujours : obj, created = ...",
+    note: "Choisir entre le geste unitaire (save/delete d'objet) et le geste d'ensemble (update/delete de QuerySet), c'est exactement l'arbitrage que tu faisais au Niveau 4 entre un UPDATE ciblé et un UPDATE de masse — l'ORM n'a rien changé au SQL, seulement à la syntaxe. Le get_or_create idempotent resservira tel quel dans les scripts de peuplement de ton projet full-stack du Niveau 6, et tu retrouveras le même trio chez EF Core, Hibernate et Eloquent." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

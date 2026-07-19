@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Configuration : appsettings.json et environnements",
+  subtitle: "Le même code partout, une configuration par machine.",
+  theory: `
+<h3>1. Le principe : code ≠ configuration</h3>
+<p>Un <strong>environnement</strong> est un contexte d'exécution : ta machine (développement), celle du collègue, le serveur de test, la production (la machine qui sert les vrais utilisateurs). Le <strong>CODE</strong> est identique partout ; ce qui change (chaîne de connexion, clés, niveaux de log), c'est la <strong>CONFIGURATION</strong> (les réglages). Le fichier de config principal est <code>appsettings.json</code> (format JSON) :</p>
+<pre class="pseudo">// appsettings.json                                            // le fichier de configuration de base
+{
+  "ConnectionStrings": { "Defaut": "Data Source=taches.db" },  // où trouver la base de données
+  "Taches": { "MaxParMembre": 100 },                           // un réglage métier (limite de tâches)
+  "Logging": { "LogLevel": { "Default": "Information" } }      // niveau de journalisation par défaut
+}</pre>
+<h3>2. Les fichiers par environnement</h3>
+<p>ASP.NET Core <strong>superpose</strong> plusieurs sources (les empile ; la dernière l'emporte) : <code>appsettings.json</code> (base), puis <code>appsettings.Development.json</code> (si l'environnement est Development), puis les <strong>variables d'environnement</strong> (des réglages fournis par le système d'exploitation, hors fichiers) :</p>
+<pre class="pseudo">appsettings.json                → commun, versionné               // valeurs par défaut, dans Git
+appsettings.Development.json    → surcharges de dev, versionné    // réglages propres au développement
+variables d'environnement       → prod et SECRETS (jamais versionnés)  // gagnent sur tout le reste</pre>
+<p>L'environnement actif est donné par la variable <code>ASPNETCORE_ENVIRONMENT</code> (Development, Staging, Production). C'est elle que lit <code>app.Environment.IsDevelopment()</code> (leçon 13).</p>
+<h3>3. Lire la configuration</h3>
+<pre class="pseudo">// Accès direct :
+builder.Configuration.GetConnectionString("Defaut");   // lit ConnectionStrings:Defaut
+builder.Configuration["Taches:MaxParMembre"];          // le : descend dans la hiérarchie JSON (section:clé)
+
+// La voie propre : les OPTIONS typées
+public class TachesOptions                             // une classe qui reflète la section "Taches"
+{
+    public int MaxParMembre { get; set; } = 50;        // valeur par défaut si la clé est absente
+}
+builder.Services.Configure&lt;TachesOptions&gt;(             // lie la section de config à cette classe
+    builder.Configuration.GetSection("Taches"));       // la section "Taches" du JSON
+
+// Injection dans un service :
+public TacheService(IOptions&lt;TachesOptions&gt; options)   // on reçoit les options par DI (leçon 2)
+{
+    _maxParMembre = options.Value.MaxParMembre;        // .Value donne l'objet configuré
+}</pre>
+<h3>4. Les secrets</h3>
+<p>Un <strong>secret</strong> est une donnée sensible (mot de passe, clé d'API). Un mot de passe dans appsettings.json versionné = un mot de passe public à jamais (l'historique Git n'oublie rien). Les règles :</p>
+<ul>
+<li><strong>Développement</strong> : <code>dotnet user-secrets</code> stocke les secrets HORS du projet (~/.microsoft/usersecrets).</li>
+<li><strong>Production</strong> : variables d'environnement (ou un coffre type Azure Key Vault).</li>
+</ul>
+<pre class="pseudo">dotnet user-secrets init                               # active le coffre à secrets local pour ce projet
+dotnet user-secrets set "ConnectionStrings:Defaut" "Server=...;Password=..."   # range un secret HORS du dépôt Git</pre>
+<h3>5. La hiérarchie en action</h3>
+<pre class="pseudo">appsettings.json          : "MaxParMembre": 100                     // valeur de base
+appsettings.Development.json : "MaxParMembre": 10   ← gagne en dev   // surcharge en développement
+variable d'env TACHES__MAXPARMEMBRE=500              ← gagnerait sur tout  // la dernière source l'emporte</pre>
+<div class="warn">Ne committe JAMAIS un secret « temporairement ». Un secret exposé dans Git est un secret grillé : il faut le CHANGER, pas juste l'effacer du dernier commit.</div>
+<div class="tip">Le double underscore __ dans les variables d'environnement remplace le : des clés (Taches:MaxParMembre → TACHES__MAXPARMEMBRE) — pratique sous Linux où : est interdit.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi séparer code et configuration ?", opts: ["Pour faire joli", "Le même code tourne partout ; seule la config change selon l'environnement", "Pour ralentir Git", "C'est une contrainte de C#"], a: 1, exp: "Dév, test, prod : un seul code, des configs différentes." },
+    { type: "qcm", q: "Quelle variable détermine l'environnement actif ?", opts: ["DOTNET_MODE", "ASPNETCORE_ENVIRONMENT (Development, Staging, Production)", "APP_ENV", "RUN_MODE"], a: 1, exp: "Elle pilote IsDevelopment() et le choix du appsettings.Xxx.json." },
+    { type: "qcm", q: "Dans quel ordre les sources de configuration se superposent-elles (la dernière gagne) ?", opts: ["Variables d'env, puis JSON", "appsettings.json → appsettings.{Env}.json → variables d'environnement", "Au hasard", "Une seule source à la fois"], a: 1, exp: "Du plus général au plus spécifique." },
+    { type: "qcm", q: "Comment lire Taches:MaxParMembre directement ?", opts: ["Configuration[\"Taches:MaxParMembre\"]", "Configuration.Taches.MaxParMembre", "GetSetting()", "File.ReadAllText"], a: 0, exp: "Les : descendent dans la hiérarchie JSON." },
+    { type: "qcm", q: "Quel est l'avantage des options typées (IOptions<T>) ?", opts: ["Aucun", "Configuration liée à une classe : typée, testable, injectable, avec valeurs par défaut", "C'est plus court", "Elles chiffrent la config"], a: 1, exp: "Fini les chaînes magiques éparpillées." },
+    { type: "qcm", q: "Où stocker le mot de passe de la base EN DÉVELOPPEMENT ?", opts: ["appsettings.json versionné", "dotnet user-secrets : hors du projet, donc hors de Git", "Dans le code", "Dans un commentaire"], a: 1, exp: "user-secrets = le coffre local du développeur." },
+    { type: "qcm", q: "Et EN PRODUCTION ?", opts: ["appsettings.json", "Variables d'environnement (ou un coffre à secrets)", "Un fichier passwords.txt", "Dans le contrôleur"], a: 1, exp: "Le serveur de prod porte ses secrets, le code ne les connaît pas." },
+    { type: "qcm", q: "Un mot de passe a été poussé sur Git puis retiré au commit suivant. En sécurité ?", opts: ["Oui", "Non : l'historique le conserve ; il faut CHANGER le mot de passe", "Oui si le repo est privé", "Oui, Git chiffre"], a: 1, exp: "Rotation obligatoire : un secret exposé est grillé." },
+    { type: "qcm", q: "appsettings.Development.json fixe MaxParMembre à 10, appsettings.json à 100. En dev, la valeur est :", opts: ["100", "10 : le fichier d'environnement surcharge la base", "55", "Erreur"], a: 1, exp: "La source la plus spécifique gagne." },
+    { type: "qcm", q: "À quoi correspond TACHES__MAXPARMEMBRE en variable d'environnement ?", opts: ["Une erreur", "À la clé Taches:MaxParMembre (le __ remplace le :)", "À un fichier", "À rien"], a: 1, exp: "La convention double underscore, indispensable sous Linux." },
+    { type: "qcm", q: "Comment injecter TachesOptions dans un service ?", opts: ["new TachesOptions()", "Constructeur : IOptions<TachesOptions> options, puis options.Value", "Variable globale", "Configuration statique"], a: 1, exp: "La DI (leçon 2) s'applique aussi à la configuration." },
+    { type: "qcm", q: "Quel appel lit une chaîne de connexion par son nom ?", opts: ["GetConnection()", "Configuration.GetConnectionString(\"Defaut\")", "ConnectionString.Read()", "GetString()"], a: 1, exp: "Le raccourci dédié à la section ConnectionStrings." },
+    { type: "qcm", q: "Pourquoi appsettings.Development.json PEUT-il être versionné, contrairement aux secrets ?", opts: ["Il ne peut pas", "Il contient des réglages de dev NON sensibles (niveaux de log, base locale sans mot de passe)", "Git l'ignore", "Il est chiffré"], a: 1, exp: "Réglages ≠ secrets. Les secrets, eux, sortent du projet." },
+    { type: "vf", q: "app.Environment.IsDevelopment() renvoie true si ASPNETCORE_ENVIRONMENT vaut « Development ».", a: true, exp: "C'est exactement le lien avec la leçon 13." },
+    { type: "vf", q: "Les options typées peuvent définir des valeurs par défaut si la clé est absente de la config.", a: true, exp: "public int MaxParMembre { get; set; } = 50; — le défaut C# prend le relais." }
+  ],
+  final: {
+    title: "Exercice final — Préparer la mise en production",
+    intro: `<p>Le gestionnaire de tâches part en production. Compare :</p>
+<pre class="pseudo"># --- Machine de dev ---              # --- Serveur de production ---   # deux machines, un seul code
+ASPNETCORE_ENVIRONMENT=Development     ASPNETCORE_ENVIRONMENT=Production  # l'environnement change
+appsettings.json (versionné)           appsettings.json (le même !)       # base commune identique
+appsettings.Development.json           variables d'environnement :        # surcharges différentes
+user-secrets :                           CONNECTIONSTRINGS__DEFAUT=        # dev : coffre local / prod : variable d'env
+  ConnectionStrings:Defaut=              "Server=10.0.0.5;Password=s3cr3t!"  # le secret ne vit QUE sur le serveur
+  "Data Source=taches.db"</pre>`,
+    questions: [
+      { type: "qcm", q: "Le code de l'application diffère-t-il entre les deux machines ?", opts: ["Oui, deux versions", "Non : même code ; la configuration absorbe les différences", "Oui, la prod est recompilée différemment", "Impossible à dire"], a: 1, exp: "C'est tout le principe." },
+      { type: "qcm", q: "En production, d'où vient la chaîne de connexion ?", opts: ["De appsettings.json", "De la variable d'environnement CONNECTIONSTRINGS__DEFAUT, qui surcharge tout", "De user-secrets", "Du code"], a: 1, exp: "Les variables d'env sont la dernière couche : elles gagnent." },
+      { type: "qcm", q: "Le mot de passe « s3cr3t! » apparaît-il quelque part dans Git ?", opts: ["Oui, dans appsettings", "Non : il ne vit que sur le serveur de production", "Oui, chiffré", "Dans l'historique"], a: 1, exp: "Aucun secret versionné : l'objectif est atteint." },
+      { type: "qcm", q: "En dev, la page d'erreur détaillée s'affiche mais pas en prod. Quel mécanisme relie ça à cette leçon ?", opts: ["Le hasard", "if (app.Environment.IsDevelopment()) — piloté par ASPNETCORE_ENVIRONMENT", "Le .csproj", "Kestrel"], a: 1, exp: "Configuration et pipeline (leçon 13) travaillent ensemble." },
+      { type: "vf", q: "Pour tester la config de prod en local, on peut lancer avec ASPNETCORE_ENVIRONMENT=Production.", a: true, exp: "Pratique pour vérifier le comportement… avec une base de test, évidemment !" }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 14 :
+// 1. Code identique partout ; la config change par environnement.
+// 2. Superposition : appsettings.json → appsettings.{Env}.json → variables d'env.
+// 3. ASPNETCORE_ENVIRONMENT pilote tout (IsDevelopment…).
+// 4. Options typées (IOptions<T>) : la config propre et injectable.
+// 5. Secrets : user-secrets en dev, variables d'env/coffre en prod.
+//    JAMAIS dans Git — et un secret exposé se CHANGE.</pre>
+<p>Fin de la semaine 2 : données structurées, validées, configurables. Semaine 3 : prouver, protéger, livrer.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

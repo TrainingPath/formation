@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Acheter un jeu : prix figé et couverture (JaCoCo)",
+  subtitle: "Une facture ne change pas — et la qualité devient un cliquet.",
+  theory: `
+<h3>1. Acheter, sur l'autre stock</h3>
+<p>Acheter suit exactement le même patron que louer (transaction, jeu verrouillé, contrôle du stock), mais sur l'<strong>autre</strong> stock : <code>stockVente</code> et non <code>stockLocation</code>. La seule vraie nouveauté est le prix, que l'on <em>fige</em> (voir section suivante).</p>
+<pre class="pseudo">@Transactional                                   // tout ou rien : la moindre exception annule l'achat (rollback)
+public Achat acheter(Utilisateur client, Long jeuId) {   // le client achete le jeu jeuId
+    Jeu jeu = repo.findByIdForUpdate(jeuId).orElseThrow(EntityNotFoundException::new);   // recupere le jeu VERROUILLE ; erreur 404 s'il n'existe pas
+    if (jeu.getStockVente() <= 0)                // si le stock de VENTE est epuise…
+        throw new StockInsuffisantException("Plus de stock de vente");   // …on refuse (leve l'exception -> rollback)
+    jeu.setStockVente(jeu.getStockVente() - 1);  // sinon : un exemplaire vendu, stock de vente -1
+    return achatRepo.save(new Achat(client, jeu, LocalDate.now(), jeu.getPrixAchat())); // FIGÉ   // enregistre l'achat en COPIANT le prix actuel dans la facture
+}</pre>
+
+<h3>2. Le prix est copié, pas référencé</h3>
+<p><strong>Copier</strong> une valeur, c'est en prendre une photo à un instant donné ; <strong>référencer</strong>, c'est garder un lien vivant qui suit les changements. Une facture doit être <strong>immuable</strong> (« qui ne change jamais ») : on copie donc le prix dans l'achat, on ne pointe pas vers le prix du catalogue qui, lui, peut évoluer.</p>
+<pre class="pseudo">// Achat.montant = jeu.getPrixAchat()  -> COPIE la valeur au moment de l'achat
+// Si demain le vendeur change prix_achat, les factures passées NE bougent PAS
+// (une facture est un fait historique, immuable)</pre>
+
+<h3>3. Le test qui prouve le figeage</h3>
+<p><code>BigDecimal</code> est le type des nombres à virgule <em>exacts</em>, obligatoire pour l'argent (les <code>double</code> arrondissent mal les centimes). <code>isEqualByComparingTo</code> compare deux <code>BigDecimal</code> par leur valeur. L'astuce du test : changer le prix du catalogue APRÈS l'achat, puis vérifier que le montant de la facture n'a pas bougé.</p>
+<pre class="pseudo">@Test void prixFige() {                          // test : le montant d'un achat ne doit pas suivre le prix du catalogue
+    BigDecimal prixInitial = jeu.getPrixAchat(); // on memorise le prix au moment de l'achat
+    Achat a = jeuService.acheter(client, jeu.getId());   // le client achete -> le montant est copie maintenant
+    jeu.setPrixAchat(new BigDecimal("99")); repo.save(jeu);      // le prix change APRÈS   // on change le prix du catalogue APRES coup (99)
+    assertThat(achatRepo.findById(a.getId()).get().getMontant())   // on relit le montant enregistre dans la facture…
+        .isEqualByComparingTo(prixInitial);                     // le montant, lui, ne bouge pas   // …et on AFFIRME qu'il vaut toujours le prix initial (fige)
+}</pre>
+
+<h3>4. La couverture entre dans la CI (JaCoCo)</h3>
+<p>La <strong>couverture de tests</strong> mesure quelle proportion des lignes de code est exécutée par les tests — comme vérifier quel pourcentage d'une maison a été inspecté. La <strong>CI</strong> (intégration continue) est le robot qui, à chaque envoi de code, recompile et relance tous les tests. <strong>JaCoCo</strong> est l'outil qui mesure cette couverture. On le branche dans le <code>pom.xml</code>, le fichier de configuration de <strong>Maven</strong> (l'outil qui construit le projet), sous forme de <strong>plugin</strong> (une extension) réglé pour <em>faire échouer</em> la construction si la couverture passe sous un seuil.</p>
+<pre class="pseudo"><!-- pom.xml : jacoco-maven-plugin -->
+<plugin>                                                      <!-- on ajoute le plugin JaCoCo au projet -->
+  <groupId>org.jacoco</groupId><artifactId>jacoco-maven-plugin</artifactId>   <!-- identite du plugin (organisation + nom) -->
+  <executions>                                                <!-- les etapes que le plugin executera -->
+    <execution><goals><goal>prepare-agent</goal></goals></execution>   <!-- prepare-agent : arme la mesure avant que les tests tournent -->
+    <execution><id>verifier-couverture</id><phase>verify</phase>       <!-- une 2e etape, jouee en phase "verify" (apres les tests) -->
+      <goals><goal>check</goal></goals>                       <!-- check : compare la couverture obtenue au seuil exige -->
+      <configuration><rules><rule>                            <!-- debut des regles a respecter -->
+        <element>BUNDLE</element>                             <!-- on mesure sur l'ensemble du module (BUNDLE) -->
+        <limits><limit><counter>LINE</counter>                <!-- le compteur surveille : les LIGNES de code -->
+          <value>COVEREDRATIO</value><minimum>0.80</minimum></limit></limits>   <!-- exige au MINIMUM 80% (0.80) de lignes couvertes -->
+      </rule></rules></configuration>                         <!-- fin des regles -->
+    </execution>
+  </executions>
+</plugin></pre>
+
+<h3>5. Le cliquet anti-recul</h3>
+<div class="warn">On règle le seuil au niveau <strong>actuel</strong>, puis on le remonte au fil des progrès — jamais on ne le baisse (cours CI/CD leçon 11). La couverture devient un cliquet : elle ne peut plus reculer sans faire échouer le build. La qualité n'est plus une intention, c'est une propriété du pipeline.</div>
+<div class="tip">Attention : 80 % de couverture ne veut pas dire « 80 % correct » — un test peut exécuter une ligne sans rien vérifier. La couverture repère le code <strong>jamais testé</strong> (une alarme utile), pas la qualité des assertions. On l'utilise comme garde-fou, pas comme objectif en soi.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter agit sur…", opts: ["stock_location", "stock_vente", "les deux", "aucun"], a: 1, exp: "L'autre stock." },
+    { type: "qcm", q: "Le montant de l'achat…", opts: ["Référence le prix courant", "Copie prix_achat au moment de l'achat (figé)", "Est nul", "Change chaque jour"], a: 1, exp: "Facture = fait historique." },
+    { type: "qcm", q: "Si le prix change après l'achat…", opts: ["Les factures passées changent", "Les factures passées ne bougent pas", "Erreur", "Remboursement auto"], a: 1, exp: "Figé." },
+    { type: "qcm", q: "Le test du figeage change le prix…", opts: ["Avant l'achat", "Après l'achat, puis vérifie le montant inchangé", "Jamais", "En prod"], a: 1, exp: "Preuve du figeage." },
+    { type: "qcm", q: "JaCoCo mesure…", opts: ["La vitesse", "La couverture de tests", "La sécurité", "Le style"], a: 1, exp: "Lignes exécutées par les tests." },
+    { type: "qcm", q: "Le seuil de couverture est un…", opts: ["Objectif décoratif", "Cliquet (ne recule jamais)", "Maximum", "Hasard"], a: 1, exp: "Anti-recul." },
+    { type: "qcm", q: "On règle le seuil…", opts: ["À 100 % d'emblée", "Au niveau actuel, puis on remonte", "À 0", "Au hasard"], a: 1, exp: "Progressif." },
+    { type: "qcm", q: "80 % de couverture signifie…", opts: ["80 % correct", "80 % des lignes exécutées (pas forcément vérifiées)", "Zéro bug", "Parfait"], a: 1, exp: "Attention au sens." },
+    { type: "qcm", q: "La couverture repère surtout…", opts: ["Les bugs", "Le code JAMAIS testé", "Le style", "Les secrets"], a: 1, exp: "Alarme utile." },
+    { type: "qcm", q: "jacoco check en phase verify…", opts: ["Déploie", "Fait échouer le build si sous le seuil", "Ignore", "Chiffre"], a: 1, exp: "Barrière." },
+    { type: "vf", q: "Une facture est un fait historique, donc immuable.", a: true, exp: "Prix figé." },
+    { type: "qcm", q: "Acheter est aussi…", opts: ["Non transactionnel", "@Transactional + verrou (comme louer)", "Un GET", "Sans test"], a: 1, exp: "Même rigueur." },
+    { type: "qcm", q: "Copier le prix plutôt que le référencer évite…", opts: ["Rien", "Que modifier le catalogue réécrive l'historique", "Un index", "Un cache"], a: 1, exp: "Intégrité comptable." },
+    { type: "qcm", q: "Le cliquet garantit que la couverture…", opts: ["Monte ou stagne, jamais ne baisse", "Baisse librement", "Reste à 0", "N'existe pas"], a: 0, exp: "Qualité durable." },
+    { type: "vf", q: "Un test peut exécuter une ligne sans rien vérifier.", a: true, exp: "D'où : couverture ≠ qualité." }
+  ],
+  final: {
+    title: "Exercice final — Prix figé et cliquet de couverture",
+    intro: `<p>Achat immuable + JaCoCo en CI.</p>`,
+    questions: [
+      { type: "qcm", q: "Le montant de l'achat :", opts: ["copie prix_achat (figé)", "référence le prix courant", "est nul", "change chaque jour"], a: 0, exp: "Fait historique." },
+      { type: "qcm", q: "Le test le prouve en :", opts: ["changeant le prix APRÈS et vérifiant le montant inchangé", "ne testant rien", "un screenshot", "un log"], a: 0, exp: "Figeage vérifié." },
+      { type: "qcm", q: "JaCoCo sert de :", opts: ["cliquet (seuil qui ne recule pas)", "linter", "déployeur", "chiffreur"], a: 0, exp: "Anti-recul." },
+      { type: "qcm", q: "80 % de couverture veut dire :", opts: ["80 % des lignes exécutées", "80 % correct", "zéro bug", "parfait"], a: 0, exp: "Prudence." },
+      { type: "vf", q: "On remonte le seuil au fil des progrès, jamais on ne le baisse.", a: true, exp: "Cliquet." }
+    ],
+    solution: `<pre class="pseudo">@Transactional Achat acheter(Utilisateur c, Long id){   // tout ou rien
+  Jeu j = repo.findByIdForUpdate(id).orElseThrow();     // jeu verrouille (erreur s'il n'existe pas)
+  if (j.getStockVente() <= 0) throw new StockInsuffisantException(...);   // stock de vente epuise ? refus -> rollback
+  j.setStockVente(j.getStockVente()-1);                 // un exemplaire vendu : stock de vente -1
+  return achatRepo.save(new Achat(c, j, now(), j.getPrixAchat())); // FIGÉ   // enregistre l'achat en COPIANT le prix (fige)
+}
+@Test prixFige(): acheter -> changer prixAchat -> montant inchangé   // preuve : le montant ne suit pas le catalogue
+
+<!-- pom.xml : jacoco check, LINE COVEREDRATIO >= 0.80 (fail sinon) --></pre>
+<p>L'achat est immuable et la qualité verrouillée. Demain : le frontend Thymeleaf, échappé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton achat figé et la config JaCoCo…",
+  items: [
+  { id: "proj6java-l12", title: "Achat à prix figé + cliquet de couverture", level: 3,
+    statement: "Écris le service acheter (transaction, stock_vente, montant = prixAchat figé), le test qui prouve le figeage (changer le prix APRÈS l'achat), et la configuration JaCoCo (seuil de couverture qui fait échouer le build). Explique en 3-4 lignes pourquoi copier le prix et ce que la couverture prouve — et ne prouve pas.",
+    hints: [
+      "Achat.montant = jeu.getPrixAchat() COPIÉ ; test : setPrixAchat(99) après, montant inchangé.",
+      "jacoco-maven-plugin : prepare-agent + check (LINE COVEREDRATIO >= 0.80) en phase verify.",
+      "Couverture = code exécuté, pas code vérifié : un garde-fou, pas un objectif."
+    ],
+    solution: "@Transactional\npublic Achat acheter(Utilisateur client, Long jeuId) {\n    Jeu jeu = repo.findByIdForUpdate(jeuId).orElseThrow(EntityNotFoundException::new);\n    if (jeu.getStockVente() <= 0)\n        throw new StockInsuffisantException(\"Plus de stock de vente\");\n    jeu.setStockVente(jeu.getStockVente() - 1);\n    return achatRepo.save(new Achat(client, jeu, LocalDate.now(), jeu.getPrixAchat()));\n}\n\n@Test void prixFige() {\n    BigDecimal prixInitial = jeu.getPrixAchat();\n    Achat a = jeuService.acheter(client, jeu.getId());\n    jeu.setPrixAchat(new BigDecimal(\"99\")); repo.save(jeu);   // change APRES\n    assertThat(achatRepo.findById(a.getId()).get().getMontant())\n        .isEqualByComparingTo(prixInitial);                  // montant fige\n}\n\n<!-- pom.xml -->\n<plugin>\n  <groupId>org.jacoco</groupId>\n  <artifactId>jacoco-maven-plugin</artifactId>\n  <executions>\n    <execution><goals><goal>prepare-agent</goal></goals></execution>\n    <execution>\n      <id>verifier-couverture</id><phase>verify</phase>\n      <goals><goal>check</goal></goals>\n      <configuration><rules><rule>\n        <element>BUNDLE</element>\n        <limits><limit>\n          <counter>LINE</counter><value>COVEREDRATIO</value><minimum>0.80</minimum>\n        </limit></limits>\n      </rule></rules></configuration>\n    </execution>\n  </executions>\n</plugin>\n\n// POURQUOI COPIER LE PRIX, CE QUE LA COUVERTURE (NE) PROUVE (PAS)\n// Copier : une facture est un FAIT DATE. Si Achat referencait le prix courant du\n// jeu, changer le catalogue reecrirait tout l'historique comptable -- faux et\n// potentiellement illegal. On copie donc la valeur au moment de l'achat (fige).\n// Couverture : 80% signifie que 80% des lignes sont EXECUTEES par un test, pas\n// qu'elles sont bien VERIFIEES (un test sans assertion couvre sans prouver).\n// Elle repere le code jamais teste (alarme utile) ; le cliquet empeche qu'on\n// regresse. Mais la vraie qualite vient des assertions, pas du pourcentage.",
+    note: "Le prix figé est une règle d'intégrité comptable universelle : une facture, un reçu, un contrat sont des faits historiques qu'aucune modification ultérieure du catalogue ne doit altérer. Le cliquet de couverture, lui, illustre une philosophie de la qualité automatisée : on ne vise pas la perfection d'un coup, on empêche seulement la régression, en remontant le seuil pas à pas. C'est mesurable, honnête, et durable — à condition de se rappeler que la couverture mesure l'exécution, pas la pertinence des vérifications." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

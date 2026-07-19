@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'architecture en couches",
+  subtitle: "Bilan de semaine : organiser le code comme les professionnels.",
+  theory: `
+<h3>1. Les trois couches</h3>
+<p>Une <strong>couche</strong> (layer) est un groupe de classes qui partagent un même rôle ; on les empile comme les étages d'un immeuble, chaque étage ne parlant qu'à son voisin du dessous. Sans le savoir, tu construis depuis lundi une architecture classique :</p>
+<pre class="pseudo">CONTRÔLEUR  (Controllers/)   ← parle HTTP : reçoit, traduit, répond   // l'accueil de l'immeuble
+    │ appelle
+SERVICE     (Services/)      ← la logique métier : règles, calculs, décisions  // les bureaux qui décident
+    │ appelle
+STOCKAGE    (Repositories/)  ← l'accès aux données : lire/écrire, rien d'autre  // les archives</pre>
+<ul>
+<li>Le <strong>contrôleur</strong> ne connaît QUE le service : il traduit HTTP ↔ C# (statuts, binding), zéro logique métier.</li>
+<li>Le <strong>service</strong> contient les règles : « une tâche terminée ne peut pas être modifiée », « pas plus de 100 tâches par membre »…</li>
+<li>Le <strong>repository</strong> (« dépôt », prononcé « ri-po-zi-tori ») lit et écrit les données. Aujourd'hui en mémoire, dès demain en base — sans toucher aux autres couches.</li>
+</ul>
+<h3>2. Exemple complet</h3>
+<pre class="pseudo">public class TacheService                     // la couche métier : les règles
+{
+    private readonly IStockageTaches _stockage;  // dépendance vers la couche données (injectée)
+    public TacheService(IStockageTaches stockage) { _stockage = stockage; }  // DI par constructeur
+
+    public Tache? Terminer(int id)            // règle : marquer une tâche comme terminée
+    {
+        var tache = _stockage.ParId(id);      // on récupère la tâche via le repository
+        if (tache == null) return null;       // introuvable → null (PAS de NotFound ici : ce serait du HTTP)
+        if (tache.EstTerminee)                // déjà terminée ?
+            throw new InvalidOperationException("Déjà terminée !");  // violation de règle → exception
+        tache.EstTerminee = true;             // LA règle métier : on la marque terminée
+        return tache;                         // on renvoie la tâche mise à jour
+    }
+}
+
+// Contrôleur : traduction HTTP pure
+[HttpPost("{id:int}/terminer")]               // POST api/taches/3/terminer
+public ActionResult&lt;Tache&gt; Terminer(int id)
+{
+    var tache = _service.Terminer(id);        // on délègue toute la logique au service
+    return tache == null ? NotFound() : tache;  // on traduit : null → 404, sinon → 200 + JSON
+}</pre>
+<h3>3. Pourquoi découper ?</h3>
+<ul>
+<li><strong>Testabilité</strong> : le service se teste sans HTTP ni base (leçon 15).</li>
+<li><strong>Remplaçabilité</strong> : changer le stockage (mémoire → SQL) ne touche ni service ni contrôleur.</li>
+<li><strong>Lisibilité</strong> : on sait toujours OÙ chercher une règle, une route, une requête.</li>
+</ul>
+<p>C'est le principe de <strong>responsabilité unique</strong> : une classe = une raison de changer. Tu l'appliquais déjà avec les méthodes (leçon 8 de C#) — ici, à l'échelle de l'application.</p>
+<h3>4. Ce motif est universel</h3>
+<p>Spring (Java) a Controller/Service/Repository ; Laravel (PHP) a Contrôleur/Modèle. Les noms varient, l'idée est LA même partout : séparer le transport (HTTP), la logique et les données. Apprends-le une fois, retrouve-le partout.</p>
+<h3>5. Où va quel code ? Le guide</h3>
+<pre class="pseudo">« Quel statut HTTP renvoyer ? »               → Contrôleur                    // vocabulaire HTTP
+« Une tâche terminée est-elle modifiable ? »  → Service                       // règle métier
+« Comment chercher par titre ? »              → Repository                    // accès aux données
+« Quelle interface pour le stockage ? »       → Contrats (interfaces) partagés  // les contrats entre couches</pre>
+<div class="warn">Le piège du débutant : écrire les règles métier dans le contrôleur. Ça marche… jusqu'au jour où la même règle doit servir ailleurs (autre contrôleur, tâche planifiée, test) et qu'on la duplique. La règle vit dans le service, UNE fois.</div>
+<div class="tip">Test rapide : si tu peux expliquer une ligne de code sans prononcer « HTTP », « JSON » ou « statut », elle n'a probablement rien à faire dans un contrôleur.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelles sont les trois couches classiques d'une API ?", opts: ["HTML, CSS, JS", "Contrôleur (HTTP), Service (métier), Repository (données)", "Vue, Modèle, Fichier", "Client, Serveur, Base"], a: 1, exp: "Chaque couche a UN métier et n'appelle que celle du dessous." },
+    { type: "qcm", q: "Quel est le rôle exact du contrôleur ?", opts: ["Tout faire", "Traduire HTTP ↔ C# : binding, statuts, délégation au service", "Stocker les données", "Calculer les règles métier"], a: 1, exp: "Un traducteur, pas un décideur." },
+    { type: "qcm", q: "Où vit la règle « une tâche terminée ne peut plus être modifiée » ?", opts: ["Dans le contrôleur", "Dans le service : c'est de la logique métier", "Dans le repository", "Dans appsettings.json"], a: 1, exp: "La règle est indépendante du transport et du stockage." },
+    { type: "qcm", q: "Que fait le repository ?", opts: ["Les règles métier", "Lire et écrire les données, rien d'autre", "Les statuts HTTP", "La sérialisation JSON"], a: 1, exp: "L'accès aux données isolé derrière une interface." },
+    { type: "qcm", q: "Pourquoi le service ne doit-il PAS renvoyer NotFound() lui-même ?", opts: ["NotFound est lent", "NotFound est du vocabulaire HTTP : c'est l'affaire du contrôleur ; le service renvoie null ou lève une exception", "Il le peut", "Question de style"], a: 1, exp: "Le service doit rester utilisable hors HTTP (tests, tâches planifiées…)." },
+    { type: "qcm", q: "Demain, le stockage passe de la mémoire à une base SQL. Quelles couches changent ?", opts: ["Toutes", "Seulement le repository (et l'enregistrement au conteneur)", "Le contrôleur", "Le service et le contrôleur"], a: 1, exp: "Le grand bénéfice de l'interface IStockageTaches." },
+    { type: "qcm", q: "Quel principe cette architecture applique-t-elle ?", opts: ["La récursivité", "La responsabilité unique : une classe, une raison de changer", "L'héritage multiple", "L'optimisation prématurée"], a: 1, exp: "Déjà appliqué aux méthodes (leçon 8 de C#), maintenant aux classes." },
+    { type: "qcm", q: "Comment les couches se connaissent-elles entre elles ?", opts: ["Par des variables globales", "Par injection de dépendances : chaque couche reçoit celle du dessous en constructeur", "Par des fichiers", "Par le réseau"], a: 1, exp: "Contrôleur reçoit le service, le service reçoit le repository." },
+    { type: "qcm", q: "Une règle métier dans un contrôleur pose problème quand :", opts: ["Jamais", "La même règle doit servir ailleurs : on la duplique, et les copies divergent", "Le contrôleur est trop court", "On utilise LINQ"], a: 1, exp: "Duplication = bugs en devenir. La règle vit UNE fois, dans le service." },
+    { type: "qcm", q: "Quel test rapide révèle du code mal placé dans un contrôleur ?", opts: ["Compter les lignes", "Si la ligne s'explique sans dire « HTTP », « JSON » ou « statut », elle n'est pas à sa place", "Vérifier les usings", "Chronométrer"], a: 1, exp: "Le contrôleur ne parle QUE la langue HTTP." },
+    { type: "qcm", q: "L'équivalent de cette architecture existe-t-il ailleurs ?", opts: ["Non, c'est propre à .NET", "Oui : Spring (Java), Laravel (PHP)… séparent pareillement transport, logique et données", "Uniquement en Java", "Uniquement dans les jeux"], a: 1, exp: "Un savoir transférable à tout ton avenir de développeur." },
+    { type: "qcm", q: "Dans l'exemple, pourquoi Terminer lève-t-il une InvalidOperationException ?", opts: ["Pour planter le serveur", "Violer une règle métier est un cas exceptionnel : l'exception (leçon 16 de C#) le signale au monde extérieur", "Par erreur", "Pour les logs"], a: 1, exp: "Le contrôleur (ou un middleware, leçon 13) la traduira en réponse HTTP propre." },
+    { type: "qcm", q: "Le service TacheService doit-il être enregistré au conteneur ?", opts: ["Non", "Oui : builder.Services.AddScoped<TacheService>() pour être injectable dans le contrôleur", "Seulement en production", "Il s'enregistre tout seul"], a: 1, exp: "Tout maillon de la chaîne DI doit être déclaré." },
+    { type: "vf", q: "Le contrôleur peut appeler directement le repository pour « gagner du temps ».", a: false, exp: "Possible techniquement, mais la logique métier finirait par s'y glisser. Discipline : contrôleur → service → repository." },
+    { type: "vf", q: "Le service peut être testé sans lancer de serveur web.", a: true, exp: "C'est un des objectifs majeurs du découpage — rendez-vous leçon 15." }
+  ],
+  final: {
+    title: "Exercice final — L'audit d'un contrôleur obèse",
+    intro: `<p>Un stagiaire a tout écrit dans le contrôleur. Fais l'audit :</p>
+<pre class="pseudo">[HttpPost]                                              // POST api/taches
+public ActionResult&lt;Tache&gt; Creer(Tache t)
+{
+    // A. lecture directe du "stockage" : une liste statique globale
+    if (StockageGlobal.Taches.Count(x =&gt; !x.EstTerminee) &gt;= 10)  // état global static : anti-DI
+        return BadRequest("Trop de tâches en cours");   // B. règle métier codée dans le contrôleur
+
+    t.Id = StockageGlobal.ProchainId++;                 // C. gestion des id dans le contrôleur
+    StockageGlobal.Taches.Add(t);                       // écriture directe dans la liste globale
+    return CreatedAtAction(nameof(ParId), new { id = t.Id }, t);  // 201 (ça, c'est bien du HTTP)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Problème A : la liste statique globale. Pourquoi est-ce grave ?", opts: ["C'est trop rapide", "État global non injecté : introuvable, non remplaçable, non testable — il faut un repository derrière une interface", "static est interdit", "Aucun problème"], a: 1, exp: "Le static global est l'anti-DI par excellence." },
+      { type: "qcm", q: "Problème B : la règle « max 10 tâches en cours ». Où doit-elle vivre ?", opts: ["Dans le contrôleur, c'est bien", "Dans le service (TacheService.Creer) : logique métier réutilisable et testable", "Dans appsettings.json", "Dans le client"], a: 1, exp: "Demain, une app mobile ou un import en masse devra respecter la MÊME règle." },
+      { type: "qcm", q: "Problème C : l'attribution des id. Sa vraie place ?", opts: ["Le contrôleur", "Le repository/stockage (et bientôt la base de données elle-même)", "Le client", "Program.cs"], a: 1, exp: "L'identité des données appartient à la couche données." },
+      { type: "qcm", q: "Après refactoring, que restera-t-il dans le contrôleur ?", opts: ["Tout", "L'appel au service et la traduction du résultat en statuts HTTP (201/400)", "La règle des 10 tâches", "La liste globale"], a: 1, exp: "~5 lignes de traduction : le contrôleur idéal." },
+      { type: "vf", q: "Ce code « fonctionne », donc l'architecture importe peu pour un petit projet.", a: false, exp: "Tous les gros projets ingérables ont commencé comme de petits projets « où ça marchait ». L'architecture est une assurance-vie." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 7 :
+// 1. Contrôleur = HTTP ; Service = règles ; Repository = données.
+// 2. Chaque couche reçoit la suivante par DI, derrière une interface.
+// 3. Les règles métier vivent UNE fois, dans le service.
+// 4. Le service parle C# (null, exceptions), le contrôleur parle HTTP (404, 400).
+// 5. Ce motif (Spring, Laravel, .NET…) est LE standard de l'industrie.</pre>
+<p>Semaine 1 terminée ! Ton API est propre mais amnésique : chaque redémarrage efface tout. Semaine 2 : la persistance avec Entity Framework Core.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton code C# ici…",
+  items: [
+  { id: "dotnet-couches-service", title: "Extraire le service", level: 2,
+    statement: "Refactore l'exercice final : écris <code>TacheService</code> avec une méthode <code>Tache? Creer(Tache t)</code> qui applique la règle « maximum 10 tâches non terminées » (renvoie <code>null</code> si refus — ou choisis une exception dédiée), délègue l'ajout au <code>IStockageTaches</code> injecté, et renvoie la tâche créée. Puis réécris la méthode du contrôleur qui traduit : null → <code>BadRequest(\"Trop de tâches en cours\")</code>, sinon 201.",
+    hints: [
+      "Le service reçoit IStockageTaches par constructeur et compte : _stockage.Toutes().Count(x => !x.EstTerminee).",
+      "Le service ne connaît NI BadRequest NI CreatedAtAction : il renvoie Tache? — c'est le contrôleur qui traduit.",
+      "Contrôleur : var creee = _service.Creer(t); if (creee == null) return BadRequest(...);"
+    ],
+    solution: "public class TacheService\n{\n    private readonly IStockageTaches _stockage;              // couche données injectée\n    public TacheService(IStockageTaches stockage) { _stockage = stockage; }  // DI\n\n    public Tache? Creer(Tache t)\n    {\n        // LA règle métier, écrite UNE fois, testable sans HTTP\n        int enCours = _stockage.Toutes().Count(x => !x.EstTerminee);  // compte les tâches en cours\n        if (enCours >= 10)\n            return null;                      // refus : le contrôleur traduira\n\n        _stockage.Ajouter(t);                 // l'id est l'affaire du stockage\n        return t;                             // succès : on renvoie la tâche créée\n    }\n}\n\n// TachesController — traduction HTTP pure\n[HttpPost]\npublic ActionResult<Tache> Creer(Tache t)\n{\n    var creee = _service.Creer(t);            // on délègue la logique au service\n    if (creee == null)\n        return BadRequest(\"Trop de tâches en cours\");   // 400\n\n    return CreatedAtAction(nameof(ParId), new { id = creee.Id }, creee);  // 201\n}\n\n// Program.cs\nbuilder.Services.AddScoped<TacheService>();   // le service doit être connu du conteneur",
+    note: "Relis les deux morceaux : le service s'explique sans jamais dire « HTTP », le contrôleur sans jamais dire « règle ». C'est le signe d'un découpage réussi." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Actuator, logs et bonnes pratiques",
+  subtitle: "Une application qu'on ne peut pas observer est une application qu'on ne peut pas exploiter.",
+  theory: `
+<h3>1. Les logs : le journal de bord</h3>
+<p>Un <strong>log</strong> (« journal ») est une trace écrite de ce que fait l'application. <strong>Journaliser</strong>, c'est enregistrer ces traces. Fini les <code>System.out.println</code> ! En production, on journalise avec <strong>SLF4J</strong> (la bibliothèque de journalisation intégrée à Spring Boot) :</p>
+<pre class="pseudo">@Service                                         // couche métier
+public class EmpruntService {
+    private static final Logger log = LoggerFactory.getLogger(EmpruntService.class);  // le journal de cette classe
+
+    public EmpruntDto emprunter(Long membreId, Long livreId) {  // méthode métier
+        log.info("Emprunt demandé : membre={}, livre={}", membreId, livreId);  // trace INFO (événement normal)
+        ...
+        log.warn("Plafond atteint pour le membre {}", membreId);  // trace WARN (anormal mais géré)
+        ...
+        log.error("Échec inattendu de l'emprunt", exception);   // trace ERROR (avec la stack !)
+    }                                            // fin de la méthode
+}                                                // fin de la classe</pre>
+<pre class="pseudo">Niveaux :  TRACE &lt; DEBUG &lt; INFO &lt; WARN &lt; ERROR   // du plus bavard au plus grave
+# application.properties :
+logging.level.root=INFO                          # niveau par défaut de toute l'application
+logging.level.com.exemple.biblio=DEBUG      ← ton code, plus bavard
+logging.file.name=logs/biblio.log                # écrit aussi les logs dans ce fichier</pre>
+<ul>
+<li>Les <code>{}</code> sont remplacés par les arguments : pas de concaténation coûteuse.</li>
+<li>INFO : événements normaux notables ; WARN : anormal mais géré ; ERROR : il faut regarder.</li>
+</ul>
+<h3>2. Spring Boot Actuator : l'application s'ausculte</h3>
+<p><strong>Actuator</strong> ajoute des <strong>endpoints</strong> techniques (des URL spéciales) pour surveiller l'application : sa santé, ses statistiques, sa version.</p>
+<pre class="pseudo">Dépendance : spring-boot-starter-actuator        // apporte les endpoints de supervision
+
+GET /actuator/health   → {"status":"UP"}      ← la base répond ? le disque va ?
+GET /actuator/info     → version, description    // informations sur l'application
+GET /actuator/metrics  → mémoire, requêtes HTTP, temps de réponse...   // mesures chiffrées
+
+# Exposer prudemment :
+management.endpoints.web.exposure.include=health,info,metrics   # on n'expose QUE ces 3 endpoints</pre>
+<p><code>/actuator/health</code> est LA sonde des orchestrateurs et des supervisions : « l'application est-elle vivante ? ». Elle agrège l'état de la base, du disque, etc.</p>
+<h3>3. Empaqueter et lancer</h3>
+<pre class="pseudo">./mvnw package                                   # compile et empaquette toute l'application
+→ target/biblio-0.0.1-SNAPSHOT.jar    ← le « fat jar » : TOUT dedans (Tomcat compris)
+
+java -jar biblio-0.0.1-SNAPSHOT.jar --spring.profiles.active=prod   # lance le jar avec le profil prod</pre>
+<p>Un <strong>fat jar</strong> (« gros jar ») est un fichier unique contenant ton code, ses dépendances et le serveur Tomcat. Un seul fichier à déployer sur n'importe quelle machine avec Java. C'est aussi ce jar qu'on met dans une image Docker.</p>
+<h3>4. Les transactions : @Transactional</h3>
+<p>Une <strong>transaction</strong> regroupe plusieurs écritures en un bloc « tout ou rien » : soit tout réussit, soit tout est annulé (<em>rollback</em>). Emprunter = modifier le livre ET créer l'emprunt. Si le deuxième échoue, le premier doit être annulé !</p>
+<pre class="pseudo">@Transactional                    // tout ou rien (une seule transaction)
+public EmpruntDto emprunter(Long membreId, Long livreId) {  // méthode métier
+    l.setDisponible(false);       // modification 1 : le livre devient indisponible
+    empruntRepo.save(e);          // modification 2 : on enregistre l'emprunt
+    // exception ici → TOUT est annulé (rollback), le livre reste disponible
+}                                 // fin de la méthode</pre>
+<p>Pose <code>@Transactional</code> sur les méthodes de service qui font PLUSIEURS écritures liées.</p>
+<h3>5. La revue de préparation production</h3>
+<pre class="pseudo">✅ profils dev/prod séparés, secrets en variables d'env  (leçon 14)
+✅ ddl-auto=validate en prod                              (leçon 14)
+✅ erreurs uniformes, rien de technique ne fuit           (leçon 13)
+✅ sécurité : rôles, mots de passe hachés                 (leçons 16-17)
+✅ tests verts                                            (leçon 15)
+✅ logs utiles + actuator/health exposé                   (aujourd'hui)
+✅ @Transactional sur les écritures multiples             (aujourd'hui)</pre>
+<div class="warn">Ne journalise JAMAIS de données sensibles : mots de passe (même hachés), contenus privés, données personnelles superflues. Les logs se copient, s'archivent, se transfèrent — un secret dans un log est un secret perdu.</div>
+<div class="tip">log.debug(\"Détail : {}\", objetCouteux) avec le niveau INFO actif : le message n'est pas construit du tout. C'est pour ça qu'on utilise les {} au lieu de la concaténation — la paresse de SLF4J est une optimisation.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi remplacer System.out.println par un vrai logger ?", opts: ["C'est pareil", "Niveaux, horodatage, fichiers, filtrage par paquet : le println n'a rien de tout ça", "println est plus lent à écrire", "Pour la couleur"], a: 1, exp: "La journalisation est configurable et exploitable ; println est un cri dans le vide." },
+    { type: "qcm", q: "Ordre correct des niveaux de log (du plus bavard au plus grave) ?", opts: ["ERROR < INFO < DEBUG", "TRACE < DEBUG < INFO < WARN < ERROR", "INFO < TRACE < ERROR", "DEBUG < TRACE < WARN"], a: 1, exp: "On règle un seuil : INFO affiche INFO, WARN et ERROR." },
+    { type: "qcm", q: "Quel niveau pour « le plafond d'emprunts a bloqué une demande » (anormal mais géré) ?", opts: ["ERROR", "WARN", "TRACE", "Aucun"], a: 1, exp: "Géré par le métier → WARN. ERROR = il faut qu'un humain regarde." },
+    { type: "qcm", q: "Pourquoi log.info(\"membre={}\", id) plutôt que \"membre=\" + id ?", opts: ["C'est plus joli", "Le message n'est construit QUE si le niveau est actif : pas de coût inutile", "La concaténation est interdite", "Aucune différence"], a: 1, exp: "Les {} sont paresseux — gratuit quand le niveau est filtré." },
+    { type: "qcm", q: "Que renvoie GET /actuator/health quand tout va bien ?", opts: ["200 OK sans corps", "{\"status\":\"UP\"}", "La liste des livres", "La version de Java"], a: 1, exp: "UP/DOWN : la sonde de vie standard, base et disque inclus." },
+    { type: "qcm", q: "Qui consomme typiquement /actuator/health ?", opts: ["Les visiteurs", "Les systèmes de supervision et orchestrateurs (est-elle vivante ?)", "Les navigateurs", "Le compilateur"], a: 1, exp: "Un DOWN peut déclencher un redémarrage automatique ou une alerte." },
+    { type: "qcm", q: "Pourquoi limiter les endpoints Actuator exposés ?", opts: ["Pour la vitesse", "Certains révèlent la configuration interne : on n'expose que le nécessaire", "Ils sont payants", "Par superstition"], a: 1, exp: "management.endpoints.web.exposure.include=health,info,metrics — le reste sous clé." },
+    { type: "qcm", q: "Que contient le « fat jar » produit par ./mvnw package ?", opts: ["Le code source", "Ton code + toutes les dépendances + Tomcat : une application autonome", "Seulement les .class", "La base de données"], a: 1, exp: "java -jar suffit sur toute machine avec Java : déploiement simplissime." },
+    { type: "qcm", q: "Que garantit @Transactional sur une méthode de service ?", opts: ["La rapidité", "Tout ou rien : une exception annule TOUTES les écritures de la méthode", "L'authentification", "Le cache"], a: 1, exp: "Le rollback protège la cohérence : jamais un livre bloqué sans emprunt créé." },
+    { type: "qcm", q: "Sans @Transactional, une exception entre les deux écritures de emprunter() laisserait…", opts: ["Tout propre", "Le livre marqué indisponible SANS emprunt : donnée incohérente", "Une erreur de compilation", "La base vide"], a: 1, exp: "L'incohérence silencieuse : le pire des bugs. La transaction l'élimine." },
+    { type: "vf", q: "Il est acceptable de journaliser le mot de passe reçu au niveau DEBUG « pour déboguer »." , a: false, exp: "JAMAIS, à aucun niveau : les logs fuient. Un secret journalisé est compromis." },
+    { type: "qcm", q: "logging.level.com.exemple.biblio=DEBUG fait quoi ?", opts: ["Tout le monde en DEBUG", "TON code en DEBUG, le reste (Spring, Hibernate) reste au niveau root", "Rien", "Désactive les logs"], a: 1, exp: "Filtrage par paquet : bavard chez toi, calme ailleurs." },
+    { type: "qcm", q: "Où finit le log avec logging.file.name=logs/biblio.log ?", opts: ["Nulle part", "Dans le fichier logs/biblio.log (en plus de la console)", "Dans la base", "Dans Git"], a: 1, exp: "Les fichiers de logs sont la mémoire de l'exploitation." },
+    { type: "qcm", q: "log.error(\"Échec\", exception) : pourquoi passer l'exception en 2ᵉ argument ?", opts: ["Pour la supprimer", "La stack trace complète est journalisée : indispensable au diagnostic", "C'est décoratif", "Pour l'envoyer au client"], a: 1, exp: "Sans la stack, un ERROR est une devinette." },
+    { type: "qcm", q: "Quel est le lien entre la leçon 13 (erreurs) et les logs d'aujourd'hui ?", opts: ["Aucun", "Le handler 500 dit peu au client mais log.error TOUT en interne : les deux moitiés du même geste", "Les logs remplacent les handlers", "Les handlers remplacent les logs"], a: 1, exp: "Discrétion dehors + diagnostic dedans = gestion d'erreur complète." }
+  ],
+  final: {
+    title: "Exercice final — L'incident de production",
+    intro: `<p>Lundi 9h04. La supervision t'alerte : /actuator/health renvoie DOWN. Les utilisateurs signalent des erreurs à l'emprunt. Extraits des logs :</p>
+<pre class="pseudo">08:58:12 INFO  [EmpruntService] Emprunt demandé : membre=812, livre=44   // demande normale reçue
+08:58:12 ERROR [GestionErreurs] Erreur inattendue                        // le handler a attrapé une erreur
+   org.postgresql.util.PSQLException: Connection refused                 // la base refuse la connexion
+   ...
+08:59:01 WARN  [HikariPool] Connection is not available (timeout 30000ms)  // le pool n'a plus de connexion
+09:00:00 INFO  [HealthEndpoint] Health status changed to DOWN            // la santé passe à DOWN
+   {"db": {"status": "DOWN"}}                                            // la base est signalée DOWN</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel composant est en panne, d'après les logs et le health ?", opts: ["Tomcat", "La base de données PostgreSQL (Connection refused, db DOWN)", "Le CSS", "Le DNS"], a: 1, exp: "Trois indices convergents : PSQLException, le pool sans connexion, db:DOWN." },
+      { type: "qcm", q: "Que reçoit l'utilisateur qui tente d'emprunter pendant l'incident ?", opts: ["La stack PSQLException", "Un 500 générique « Une erreur interne est survenue » — le handler de la leçon 13 fait écran", "Un 404", "Rien du tout"], a: 1, exp: "L'advice attrape l'exception technique : message neutre dehors, détails dans les logs." },
+      { type: "qcm", q: "Comment la supervision a-t-elle su AVANT la plupart des utilisateurs ?", opts: ["Par hasard", "Elle interroge /actuator/health en continu : le passage à DOWN a déclenché l'alerte", "Elle lit les emails", "Elle devine"], a: 1, exp: "La sonde de santé transforme une panne silencieuse en alerte immédiate." },
+      { type: "qcm", q: "Le membre 812 : son livre a-t-il été bloqué sans emprunt créé ?", opts: ["Impossible à savoir", "Non : @Transactional a annulé toutes les écritures de la demande ratée", "Oui, il faut corriger à la main", "Le livre a été supprimé"], a: 1, exp: "Le rollback garantit : échec = état intact. Aucun nettoyage manuel." },
+      { type: "qcm", q: "La base revient à 9h20. Que fait l'application ?", opts: ["Il faut la redémarrer", "Le pool retrouve ses connexions, health repasse UP, le service reprend", "Elle a perdu ses données", "Elle reste DOWN"], a: 1, exp: "L'application saine se rétablit seule quand sa dépendance revient." }
+    ],
+    solution: `<pre class="pseudo">// Autopsie de l'incident — pourquoi tout a bien fini :
+
+// 1. DÉTECTION  : /actuator/health → DOWN → alerte automatique.
+// 2. DIAGNOSTIC : logs ERROR avec stack complète → PSQLException
+//                 → panne base identifiée en 2 minutes.
+// 3. PROTECTION : le handler 500 n'a RIEN révélé aux clients.
+// 4. COHÉRENCE  : @Transactional → aucune donnée à moitié écrite.
+// 5. REPRISE    : base relancée → pool reconnecté → UP.
+
+// L'équation de la leçon :
+// logs utiles + sonde de santé + erreurs écran + transactions
+// = un incident GÉRÉ au lieu d'une catastrophe subie.</pre>
+<p>Ton application est observable, cohérente et déployable. Il ne reste qu'à tout assembler : demain, le projet guidé complet !</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-logs-transactional", title: "Journaliser et sécuriser le retour de livre", level: 2,
+    statement: "Reprends la méthode <code>rendre(Long empruntId, String emailDemandeur)</code> de la leçon 17 et mets-la aux normes de production : ajoute le logger de classe, un <code>log.info</code> à l'entrée (id + demandeur), un <code>log.warn</code> quand l'accès est refusé, et l'annotation qui garantit le « tout ou rien » des deux écritures (livre redisponible + emprunt clôturé).",
+    hints: [
+      "Le logger : private static final Logger log = LoggerFactory.getLogger(EmpruntService.class);",
+      "Toujours les {} : log.info(\"Retour demandé : emprunt={}, demandeur={}\", empruntId, emailDemandeur);",
+      "@Transactional sur la méthode : les deux modifications forment un bloc indivisible."
+    ],
+    solution: "@Service\npublic class EmpruntService {\n    private static final Logger log =\n        LoggerFactory.getLogger(EmpruntService.class);\n    // ... dépendances ...\n\n    @Transactional                               // les 2 écritures : tout ou rien\n    public void rendre(Long empruntId, String emailDemandeur) {\n        log.info(\"Retour demandé : emprunt={}, demandeur={}\",\n                 empruntId, emailDemandeur);     // trace de l'événement normal\n\n        Emprunt e = empruntRepo.findById(empruntId)\n            .orElseThrow(() -> new EmpruntIntrouvableException(empruntId));\n\n        if (!e.getMembre().getEmail().equals(emailDemandeur)) {\n            // anormal mais géré → WARN (pas ERROR : pas de bug, une tentative)\n            log.warn(\"Accès refusé : {} a tenté de rendre l'emprunt {} d'autrui\",\n                     emailDemandeur, empruntId);\n            throw new AccesRefuseException(\"Cet emprunt ne vous appartient pas\");\n        }\n\n        e.getLivre().setDisponible(true);        // écriture 1\n        e.cloturer();                            // écriture 2\n        empruntRepo.save(e);                     // si échec ICI → rollback de tout\n        log.info(\"Emprunt {} clôturé\", empruntId);\n    }\n}",
+    note: "Remarque le choix des niveaux : INFO pour le normal, WARN pour la tentative suspecte (précieux pour repérer un compte qui « teste » des ids !), et l'ERROR reste au handler global." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

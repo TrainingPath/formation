@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Traduire du C en assembleur (gcc -S)",
+  subtitle: "Voir ce que devient chaque construction du C : le meilleur professeur d'assembleur.",
+  theory: `
+<h3>1. gcc -S : le traducteur</h3>
+<p><strong>gcc</strong> est un <strong>compilateur</strong> : un outil qui traduit un langage de haut niveau (ici le C) en code machine. Avec l'option <code>-S</code>, on lui demande de s'arrêter à mi-chemin et de nous montrer l'<strong>assembleur</strong> produit, sans aller jusqu'au binaire. Les deux lignes ci-dessous sont des commandes tapées dans le <strong>terminal</strong> ; en shell, un commentaire commence par <code>#</code> :</p>
+<pre class="pseudo">gcc -S -O0 prog.c          # produit prog.s : l'assembleur (syntaxe AT&amp;T), sans l'assembler ni optimiser
+gcc -S -O0 -masm=intel prog.c   # le même, mais en syntaxe Intel (plus lisible pour nous)</pre>
+<p><code>gcc -S</code> traduit ton C en assembleur. En <strong>-O0</strong> (« O-zéro », sans optimisation), le code est verbeux mais <strong>littéral</strong> : chaque construction du C s'y retrouve, ligne à ligne. C'est le meilleur moyen d'apprendre, car on voit la correspondance exacte.</p>
+
+<h3>2. Une variable et une affectation</h3>
+<p>Une <strong>variable locale</strong> (déclarée dans une fonction) est rangée sur la <strong>pile</strong> — la zone de mémoire de travail d'une fonction. Le registre <code>rbp</code> repère le début de cette zone, et <code>[rbp-4]</code> désigne une case située 4 octets plus loin. <code>DWORD PTR</code> précise qu'on manipule 4 octets (un <em>double word</em>, la taille d'un <code>int</code>).</p>
+<pre class="pseudo">/* C */          int x = 5;          // en C : une variable entière x reçoit la valeur 5
+; asm (Intel, -O0)                    ; ce que le compilateur en fait :
+    mov DWORD PTR [rbp-4], 5    ; x est une case de 4 octets sur la pile ([rbp-4]) ; on y écrit 5</pre>
+<p>Une variable locale devient donc une <strong>case sur la pile</strong> (repérée par <code>rbp</code>), et l'affectation (<code>x = 5</code>) est un simple <code>mov</code> vers cette case.</p>
+
+<h3>3. Un if</h3>
+<p>Un <code>if</code> devient une <strong>comparaison</strong> (<code>cmp</code>) suivie d'un <strong>saut conditionnel</strong>. Astuce classique : on teste la condition <em>inverse</em> pour sauter par-dessus le bloc quand il ne faut pas l'exécuter.</p>
+<pre class="pseudo">/* C */          if (x &lt; 5) { ... }   // en C : exécuter le bloc seulement si x < 5
+; asm                                 ; traduction :
+    cmp DWORD PTR [rbp-4], 5   ; compare x (sur la pile) avec 5
+    jge .sinon                 ; « jump if greater or equal » : si x >= 5, sauter par-dessus le bloc
+    ; ... corps du if ...      ; (le code exécuté uniquement quand x < 5)
+.sinon:                        ; étiquette : reprise du programme après le bloc</pre>
+<p>Le <code>if</code> devient <code>cmp</code> + saut conditionnel (souvent la <strong>condition inverse</strong> pour sauter par-dessus le bloc). On reconnaît tout ce qu'on a appris.</p>
+
+<h3>4. Une boucle for</h3>
+<p>Une boucle réunit quatre morceaux : une <strong>initialisation</strong>, un <strong>test</strong> de continuation, le <strong>corps</strong> et un <strong>incrément</strong>, reliés par des <strong>étiquettes</strong> (des noms qui repèrent un endroit du code) et des sauts.</p>
+<pre class="pseudo">/* C */          for (int i = 0; i &lt; n; i++) somme += i;   // boucle : i de 0 à n-1
+; asm (schéma)                                             ; structure typique :
+    mov [i], 0          ; initialisation : i = 0
+.test:                  ; étiquette : test de continuation
+    cmp [i], [n]        ; compare i et n
+    jge .fin            ; si i >= n, sortir de la boucle
+    ; somme += i        ; corps de la boucle
+    inc [i]             ; incrément : i++ (ou add [i], 1)
+    jmp .test           ; saut inconditionnel : retour au test
+.fin:                   ; étiquette : sortie de la boucle</pre>
+
+<h3>5. Pourquoi c'est utile</h3>
+<div class="tip">Lire l'assembleur généré permet de : <strong>comprendre</strong> comment le C utilise la pile, les registres et la convention d'appel (les règles de passage des arguments) ; <strong>déboguer</strong> un comportement étrange ; et <strong>vérifier</strong> ce que le compilateur a réellement fait. C'est un pont dans les deux sens : le C explique l'assembleur, et l'assembleur révèle le C. Chaque construction que tu connais (variable, if, boucle, fonction) a son équivalent mécanique.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que fait <code>gcc -S</code> ?", opts: ["exécute le C", "traduit le C en assembleur (fichier .s)", "l'assemble en binaire", "l'affiche"], a: 1, exp: "Sans assembler." },
+    { type: "qcm", q: "En -O0, le code généré est…", opts: ["optimisé", "verbeux mais littéral (chaque construction visible)", "vide", "en binaire"], a: 1, exp: "Idéal pour apprendre." },
+    { type: "qcm", q: "Une variable locale C devient…", opts: ["un registre fixe", "une case sur la pile ([rbp-n])", "une section .data", "un fichier"], a: 1, exp: "Dans le cadre." },
+    { type: "qcm", q: "Une affectation <code>x = 5</code> devient…", opts: ["un cmp", "un mov vers la case de x", "un jmp", "un call"], a: 1, exp: "Écriture en mémoire." },
+    { type: "qcm", q: "Un <code>if</code> C devient…", opts: ["un mov", "cmp + saut conditionnel (souvent condition inverse)", "un call", "un ret"], a: 1, exp: "Comparaison + branchement." },
+    { type: "qcm", q: "Une boucle for devient…", opts: ["un seul mov", "init + test (cmp/jge) + corps + incrément + jmp", "un call", "rien"], a: 1, exp: "Étiquettes et sauts." },
+    { type: "qcm", q: "Pour obtenir de l'assembleur Intel avec gcc :", opts: ["-S seul", "-S -masm=intel", "-O2", "-c"], a: 1, exp: "gcc génère AT&T par défaut." },
+    { type: "qcm", q: "Lire l'assembleur généré aide à…", opts: ["rien", "comprendre pile/registres/convention et déboguer", "trier", "afficher"], a: 1, exp: "Pédagogique et pratique." },
+    { type: "qcm", q: "[rbp-4] désigne…", opts: ["un registre", "une variable locale sur la pile", "une section", "l'écran"], a: 1, exp: "Cadre de pile." },
+    { type: "qcm", q: "Le if utilise souvent la condition…", opts: ["directe", "inverse (jge pour un <), pour sauter le bloc", "aléatoire", "aucune"], a: 1, exp: "Sauter par-dessus." },
+    { type: "vf", q: "Chaque construction C (variable, if, boucle, fonction) a un équivalent mécanique en asm.", a: true, exp: "gcc -S le montre." },
+    { type: "qcm", q: "gcc -S assemble-t-il en binaire ?", opts: ["oui", "non : il s'arrête à l'assembleur (.s)", "parfois", "toujours"], a: 1, exp: "-c pour l'objet, pas -S." },
+    { type: "qcm", q: "Le pont C ↔ assembleur va…", opts: ["dans un sens", "dans les deux sens (le C explique l'asm, l'asm révèle le C)", "nulle part", "vers Python"], a: 1, exp: "Compréhension mutuelle." },
+    { type: "qcm", q: "L'incrément i++ dans une boucle devient…", opts: ["un cmp", "inc [i] (ou add [i], 1)", "un call", "un ret"], a: 1, exp: "Progression." },
+    { type: "qcm", q: "Le meilleur professeur d'assembleur, c'est…", opts: ["un livre", "lire l'assembleur que le compilateur produit", "deviner", "rien"], a: 1, exp: "Voir le C traduit." }
+  ],
+  final: {
+    title: "Exercice final — Reconnaître les constructions",
+    intro: `<p>On donne l'assembleur (Intel, -O0) d'un extrait C. Identifie ce que fait le C :</p>
+<pre class="pseudo">    mov DWORD PTR [rbp-4], 0    ; (A) initialise une variable locale à 0 (ex. i = 0)
+.L2:                            ; étiquette : début de la boucle
+    cmp DWORD PTR [rbp-4], 3    ; (B) compare cette variable à 3
+    jg .L3                      ; si elle dépasse 3, sortir de la boucle
+    add DWORD PTR [rbp-8], 5    ; (C) ajoute 5 à une autre variable (ex. total += 5)
+    add DWORD PTR [rbp-4], 1    ; (D) incrémente la variable de boucle (i++)
+    jmp .L2                     ; retour au test
+.L3:                            ; étiquette : sortie de la boucle</pre>`,
+    questions: [
+      { type: "qcm", q: "(A) <code>mov [rbp-4], 0</code> correspond à…", opts: ["afficher", "initialiser une variable (ex. i = 0)", "un call", "un ret"], a: 1, exp: "Init d'une locale." },
+      { type: "qcm", q: "(B)+jg forme…", opts: ["un if simple", "le test de fin d'une boucle (i <= 3 ?)", "un appel", "rien"], a: 1, exp: "cmp + saut = condition." },
+      { type: "qcm", q: "(C) <code>add [rbp-8], 5</code> :", opts: ["compare", "ajoute 5 à une autre variable (ex. total += 5)", "saute", "affiche"], a: 1, exp: "Accumulation." },
+      { type: "qcm", q: "(D) <code>add [rbp-4], 1</code> :", opts: ["init", "incrément de la variable de boucle (i++)", "un ret", "un cmp"], a: 1, exp: "Progression." },
+      { type: "qcm", q: "L'ensemble correspond à…", opts: ["un if", "une boucle for qui accumule (for i de 0 à 3 : total += 5)", "un appel de fonction", "un affichage"], a: 1, exp: "init, test, corps, incrément, jmp." }
+    ],
+    solution: `<pre class="pseudo">/* Le C d'origine, reconstitué : */
+int total = 0;                 // [rbp-8] : l'accumulateur
+for (int i = 0; i &lt;= 3; i++)   // [rbp-4] = i ; test cmp/jg ; incrément add ,1
+    total += 5;                // add [rbp-8], 5
+
+; La boucle for se lit : init (mov ,0), étiquette .L2, test (cmp/jg .L3),
+; corps (add total,5), incrément (add i,1), retour (jmp .L2), sortie .L3.</pre>
+<p>On reconnaît tout : variables sur la pile, boucle avec test et incrément, accumulation. Savoir lire ceci, c'est comprendre exactement ce que le C fait. Demain : l'effet de l'optimisation.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse / ton code ici…",
+  items: [
+  { id: "asm-l18", title: "Prédire l'assembleur d'un if", level: 3,
+    statement: "Pour la fonction C : int f(int x) { if (x > 0) return 1; return 0; }, écris (en pseudo-assembleur Intel commenté) la structure attendue en -O0 : où est x, quelle comparaison, quel saut, quelles valeurs de retour.",
+    hints: [
+      "x (argument) est sauvé sur la pile en -O0, ex. [rbp-4].",
+      "Comparer à 0 : cmp DWORD PTR [rbp-4], 0 ; saut conditionnel.",
+      "Le retour se fait dans eax (mov eax, 1 / mov eax, 0)."
+    ],
+    solution: "; int f(int x) { if (x > 0) return 1; return 0; }  --  schema -O0 (Intel)\nf:                                ; etiquette : debut de la fonction\n    push rbp                      ; prologue : sauve l'ancienne base de pile\n    mov  rbp, rsp                 ; installe le nouveau cadre de pile\n    mov  DWORD PTR [rbp-4], edi   ; sauver l'argument x (edi) sur la pile\n    cmp  DWORD PTR [rbp-4], 0     ; x > 0 ?\n    jle  .zero                    ; si x <= 0, aller au return 0\n    mov  eax, 1                   ; return 1 (valeur de retour dans eax)\n    jmp  .fin                     ; sauter vers l'epilogue commun\n.zero:                            ; cas x <= 0\n    mov  eax, 0                   ; return 0\n.fin:                             ; sortie commune\n    pop  rbp                      ; epilogue : restaure l'ancienne base de pile\n    ret                           ; revient a l'appelant (resultat dans eax)",
+    note: "On retrouve tout ce qu'on a appris : prologue (push rbp), argument sauvé sur la pile (edi -> [rbp-4]), if via cmp + saut conditionnel (jle pour l'inverse de >), retour dans eax, épilogue. gcc -S -O0 produirait exactement cette structure — le C n'est que de l'assembleur déguisé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

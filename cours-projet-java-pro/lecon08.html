@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 8</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Validation (Bean Validation) et gestion des erreurs",
+  subtitle: "Blinder les entrées et traduire les échecs — sécurité et robustesse d'un même geste.",
+  theory: `
+<h3>1. Toute entrée est hostile</h3>
+<p>Bientôt, l'<strong>API</strong> ne fera plus que lire : elle va aussi <em>écrire</em> (créer un jeu, enregistrer une location). Rappel : une <strong>API</strong> (« interface de programmation ») est la porte par laquelle d'autres programmes envoient des demandes à notre serveur — comme un guichet où l'on dépose des formulaires. Dès qu'un guichet accepte des formulaires venus de l'extérieur, on pose la règle de sécurité n°1 : <strong>aucune donnée entrante n'est digne de confiance</strong>. Une donnée « entrante » est tout ce qu'un utilisateur ou un autre programme nous envoie (un titre, un prix, un numéro).</p>
+<p><strong>Valider</strong>, c'est vérifier qu'une donnée respecte des règles avant de l'utiliser — comme un videur qui contrôle chaque entrée à la porte. On valide en <em>liste d'autorisation</em> (on décrit précisément ce qui est <strong>permis</strong> : « le titre ne doit pas être vide, le prix doit être positif ») plutôt qu'en <em>liste d'interdiction</em> (courir après tout ce qui est interdit). Autoriser explicitement le connu-bon est bien plus sûr que tenter d'énumérer l'infinité du mal : on ne pourra jamais dresser la liste de <em>toutes</em> les mauvaises entrées possibles.</p>
+
+<h3>2. Bean Validation sur un DTO de requête</h3>
+<pre class="pseudo">public record JeuForm(                        // record = petite fiche immuable qui transporte les donnees recues du client
+    @NotBlank String titre,                  // @NotBlank : le titre doit exister ET ne pas etre vide ni juste des espaces
+    @NotNull @Positive BigDecimal prixAchat, // @NotNull : present ; @Positive : strictement > 0 ; BigDecimal = nombre a virgule EXACT (argent)
+    @NotNull @Positive BigDecimal prixLocation, // memes deux regles pour le prix de location
+    @PositiveOrZero int stockVente,          // @PositiveOrZero : entier >= 0 (un stock peut valoir 0, mais jamais etre negatif)
+    @PositiveOrZero int stockLocation,       // idem pour le stock destine a la location
+    @NotNull Long categorieId) {}            // @NotNull : l'identifiant de la categorie doit obligatoirement etre fourni
+
+@PostMapping("/api/jeux")                    // @PostMapping : repond aux requetes POST (creation) envoyees sur /api/jeux
+public JeuDto creer(@Valid @RequestBody JeuForm form) { ... }   // @RequestBody : Spring transforme le JSON recu en objet JeuForm ; @Valid : declenche la validation AVANT le corps de la methode</pre>
+<p>Une <strong>annotation</strong> (les mots précédés de <code>@</code>) est une étiquette collée sur un morceau de code pour lui donner un comportement automatique, sans écrire la logique à la main — comme un tampon « FRAGILE » apposé sur un colis. Ici, <code>@Valid</code> déclenche la validation <em>avant même</em> d'entrer dans la méthode : si une seule règle est violée, la requête est rejetée et n'atteint jamais le <strong>métier</strong> (le cœur du programme qui manipule vraiment les données). Le <strong>DTO</strong> <code>JeuForm</code> (<em>Data Transfer Object</em>, objet de transfert) est cette fiche sur mesure qui décrit exactement les champs qu'on accepte en entrée — ni plus, ni moins.</p>
+
+<h3>3. Traduire les erreurs, sans fuite</h3>
+<pre class="pseudo">@RestControllerAdvice                        // etiquette : classe qui intercepte les erreurs de TOUS les controleurs, en un seul endroit
+public class GestionErreurs {                // une "exception" = un incident que le programme signale quand quelque chose tourne mal
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)       // capture l'erreur "validation echouee" (@Valid a rejete la requete)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)                       // -> renvoie le code HTTP 400 (Bad Request = requete mal formee)
+    public Map<String,String> invalide() { return Map.of("erreur", "Requête invalide"); }   // reponse JSON neutre : juste un message poli
+
+    @ExceptionHandler(EntityNotFoundException.class)               // capture l'erreur "l'objet demande n'existe pas en base"
+    @ResponseStatus(HttpStatus.NOT_FOUND)                          // -> code HTTP 404 (Not Found = ressource inexistante)
+    public Map<String,String> introuvable() { return Map.of("erreur", "Introuvable"); }   // message neutre, sans detail interne
+
+    @ExceptionHandler(StockInsuffisantException.class)             // capture notre erreur metier maison : pas assez de stock
+    @ResponseStatus(HttpStatus.CONFLICT)                           // -> code HTTP 409 (Conflict = l'etat actuel empeche l'action)
+    public Map<String,String> stock(StockInsuffisantException e) {   // e = l'objet exception recu ; il transporte un message
+        return Map.of("erreur", e.getMessage());                 // ici le message metier est maitrise (ex : "Stock insuffisant"), on peut le renvoyer
+    }
+}</pre>
+
+<h3>4. Messages génériques (anti-fuite)</h3>
+<pre class="pseudo">// JAMAIS : renvoyer la stack trace ou "Table 'jeu' doesn't exist"
+// -> révèle la techno, le schéma, des chemins (cours Sécurité l.14)
+// TOUJOURS : un message neutre + le vrai détail dans les logs serveur</pre>
+
+<h3>5. Un test par branche d'erreur</h3>
+<pre class="pseudo">@Test void refuseTitreVide() throws Exception {   // @Test : methode de test automatique ; scenario "un titre vide doit etre refuse"
+    mockMvc.perform(post("/api/jeux").contentType(APPLICATION_JSON)   // mockMvc = faux navigateur ; on envoie une requete POST au format JSON
+        .content("{\\"titre\\":\\"\\",\\"prixLocation\\":5,...}"))     // le corps JSON contient un titre VIDE ("") : entree volontairement invalide
+        .andExpect(status().isBadRequest());                          // on EXIGE le code 400 : le test echoue si l'API accepte ce titre vide
+}</pre>
+<p>Décryptons ce test. <code>@Test</code> marque une méthode que l'usine de tests exécutera automatiquement pour vérifier une promesse. <code>mockMvc.perform(...)</code> envoie une fausse requête HTTP sans passer par le vrai réseau. <code>post("/api/jeux")</code> simule une création, <code>content(...)</code> fournit le corps JSON — ici un titre vide, donc invalide. <code>andExpect(status().isBadRequest())</code> <em>exige</em> la réponse 400 : si l'API acceptait cette entrée, le test virerait au rouge. Chaque règle de sécurité est ainsi verrouillée par une preuve automatique.</p>
+<div class="warn">Une gestion d'erreurs centralisée (<code>@RestControllerAdvice</code>) évite le piège des <code>try/catch</code> dispersés qui finissent par diverger. Un seul endroit décide comment chaque exception devient un code HTTP — cohérent, testable, sans fuite technique.</div>
+<div class="tip">La validation n'est pas une commodité, c'est la première ligne de défense (cours Sécurité). Écrite maintenant, avec des messages génériques et une liste d'autorisation, elle ferme d'emblée l'injection et la fuite d'information. Chaque cas d'erreur a son test : la robustesse devient vérifiable, pas espérée.</div>`,
+  exercises: [
+    { type: "qcm", q: "La règle de sécurité n°1 sur les entrées :", opts: ["Elles sont sûres", "Toute entrée est hostile (à valider)", "On filtre le mal connu", "On ignore"], a: 1, exp: "Liste d'autorisation." },
+    { type: "qcm", q: "@Valid sur @RequestBody…", opts: ["Ne fait rien", "Déclenche la validation avant le métier", "Chiffre", "Déploie"], a: 1, exp: "Requête invalide bloquée." },
+    { type: "qcm", q: "@Positive sur prixLocation garantit…", opts: ["Un prix > 0", "Rien", "Un entier", "Un texte"], a: 0, exp: "Contrainte déclarative." },
+    { type: "qcm", q: "Valider en liste d'autorisation, c'est…", opts: ["Interdire le mal connu", "Autoriser explicitement ce qui est permis", "Tout accepter", "Chiffrer"], a: 1, exp: "Plus sûr que la liste noire." },
+    { type: "qcm", q: "@RestControllerAdvice centralise…", opts: ["Les entités", "La traduction des exceptions en HTTP", "Le CSS", "La base"], a: 1, exp: "Un seul endroit." },
+    { type: "qcm", q: "StockInsuffisantException devient…", opts: ["500", "409 (Conflict)", "200", "301"], a: 1, exp: "Conflit d'état métier." },
+    { type: "qcm", q: "EntityNotFound devient…", opts: ["404", "200", "403", "500"], a: 0, exp: "Ressource absente." },
+    { type: "qcm", q: "Un message d'erreur ne doit JAMAIS…", opts: ["Être neutre", "Révéler la stack trace / le schéma", "Être court", "Être loggé côté serveur"], a: 1, exp: "Anti-fuite d'information." },
+    { type: "qcm", q: "Le vrai détail de l'erreur va…", opts: ["Au client", "Dans les logs serveur", "Nulle part", "Dans l'URL"], a: 1, exp: "Utile sans trahir." },
+    { type: "qcm", q: "Chaque branche d'erreur a…", opts: ["Rien", "Son test (verrouillé par la CI)", "Un TODO", "Un email"], a: 1, exp: "Robustesse vérifiable." },
+    { type: "vf", q: "Des try/catch dispersés finissent par diverger.", a: true, exp: "D'où la gestion centralisée." },
+    { type: "qcm", q: "Une requête invalide…", opts: ["Atteint le métier", "N'atteint jamais le métier (rejetée avant)", "Plante la base", "Est loggée puis exécutée"], a: 1, exp: "@Valid en amont." },
+    { type: "qcm", q: "@PositiveOrZero convient à…", opts: ["Un prix", "Un stock (0 permis)", "Un titre", "Un id"], a: 1, exp: "Stock >= 0." },
+    { type: "qcm", q: "La validation est…", opts: ["Une commodité", "La première ligne de défense", "Optionnelle", "Décorative"], a: 1, exp: "Sécurité par conception." },
+    { type: "vf", q: "MethodArgumentNotValidException correspond à un 400.", a: true, exp: "Requête invalide." }
+  ],
+  final: {
+    title: "Exercice final — Entrées sûres, erreurs traduites",
+    intro: `<p>Validation + advice centralisé + tests d'erreur.</p>`,
+    questions: [
+      { type: "qcm", q: "La validation se déclare :", opts: ["par annotations (@NotBlank, @Positive) + @Valid", "à la main partout", "en SQL", "jamais"], a: 0, exp: "Bean Validation." },
+      { type: "qcm", q: "Les exceptions -> HTTP sont gérées :", opts: ["dans un @RestControllerAdvice", "en try/catch dispersés", "en prod", "au hasard"], a: 0, exp: "Centralisé." },
+      { type: "qcm", q: "StockInsuffisant ->", opts: ["409", "200", "500", "302"], a: 0, exp: "Conflit métier." },
+      { type: "qcm", q: "Le message renvoyé au client :", opts: ["neutre (détail dans les logs)", "la stack trace", "le SQL", "le schéma"], a: 0, exp: "Anti-fuite." },
+      { type: "vf", q: "Chaque cas d'erreur est couvert par un test.", a: true, exp: "Verrouillé en CI." }
+    ],
+    solution: `<pre class="pseudo">record JeuForm(@NotBlank String titre, @NotNull @Positive BigDecimal prixLocation,   // fiche d'entree : chaque champ porte sa regle de validation
+              @PositiveOrZero int stockLocation, @NotNull Long categorieId){}         // stock >= 0 ; categorieId obligatoire
+@PostMapping @Valid @RequestBody JeuForm form   // POST : @RequestBody lit le JSON, @Valid le valide AVANT le metier
+
+@RestControllerAdvice class GestionErreurs {                       // un seul endroit traduit les exceptions en codes HTTP
+  @ExceptionHandler(MethodArgumentNotValidException.class) -> 400   // validation echouee -> 400 Bad Request
+  @ExceptionHandler(EntityNotFoundException.class)         -> 404   // objet introuvable  -> 404 Not Found
+  @ExceptionHandler(StockInsuffisantException.class)       -> 409  (message métier)   // conflit metier -> 409 Conflict (message sur)
+}
+// messages neutres cote client, vrai detail dans les logs serveur ; 1 test par branche d'erreur</pre>
+<p>Les entrées sont sûres. Demain : les comptes et l'authentification durcie (Spring Security).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta validation et ta gestion d'erreurs…",
+  items: [
+  { id: "proj6java-l8", title: "Validation + gestion d'erreurs centralisée", level: 2,
+    statement: "Écris le record JeuForm annoté (Bean Validation), le contrôleur POST avec @Valid, et le @RestControllerAdvice qui traduit MethodArgumentNotValid->400, EntityNotFound->404, StockInsuffisant->409 avec des messages génériques. Ajoute un test qui refuse un titre vide. Explique en 2-3 lignes pourquoi centraliser et pourquoi des messages neutres.",
+    hints: [
+      "@NotBlank, @NotNull @Positive, @PositiveOrZero sur les champs du record.",
+      "@RestControllerAdvice + @ExceptionHandler + @ResponseStatus par type d'exception.",
+      "Message neutre au client, vrai détail dans les logs (anti-fuite, cours Sécurité l.14)."
+    ],
+    solution: "public record JeuForm(                       // fiche d'entree immuable : transporte les donnees recues du client\n    @NotBlank String titre,                  // le titre doit exister et ne pas etre vide\n    @NotNull @Positive BigDecimal prixAchat, // present et strictement positif (montant exact)\n    @NotNull @Positive BigDecimal prixLocation, // idem pour le prix de location\n    @PositiveOrZero int stockVente,          // entier >= 0 (un stock peut valoir 0)\n    @PositiveOrZero int stockLocation,       // idem pour le stock de location\n    @NotNull Long categorieId) {}            // l'identifiant de categorie est obligatoire\n\n@PostMapping(\"/api/jeux\")                    // POST /api/jeux : creation d'un jeu\npublic JeuDto creer(@Valid @RequestBody JeuForm form) {   // @RequestBody : JSON -> objet ; @Valid : valide AVANT d'entrer ici\n    return jeuService.creer(form);           // delegue la creation au service metier, puis renvoie le DTO cree\n}\n\n@RestControllerAdvice                        // intercepte les exceptions de TOUS les controleurs, au meme endroit\npublic class GestionErreurs {\n    private static final Logger log = LoggerFactory.getLogger(GestionErreurs.class);   // journal serveur : y ecrire les vrais details\n\n    @ExceptionHandler(MethodArgumentNotValidException.class)   // capture l'echec de validation\n    @ResponseStatus(HttpStatus.BAD_REQUEST)                   // -> code HTTP 400 (requete mal formee)\n    public Map<String,String> invalide() { return Map.of(\"erreur\", \"Requete invalide\"); }   // reponse JSON neutre\n\n    @ExceptionHandler(EntityNotFoundException.class)          // capture « objet demande absent en base »\n    @ResponseStatus(HttpStatus.NOT_FOUND)                    // -> code HTTP 404 (ressource introuvable)\n    public Map<String,String> introuvable() { return Map.of(\"erreur\", \"Introuvable\"); }   // message neutre\n\n    @ExceptionHandler(StockInsuffisantException.class)        // capture notre erreur metier : stock insuffisant\n    @ResponseStatus(HttpStatus.CONFLICT)                     // -> code HTTP 409 (conflit d'etat)\n    public Map<String,String> stock(StockInsuffisantException e) {   // e = l'exception, elle porte un message metier sur\n        return Map.of(\"erreur\", e.getMessage());             // ce message metier est maitrise, on peut le renvoyer\n    }\n\n    @ExceptionHandler(Exception.class)                       // filet de securite : capture TOUTE autre exception imprevue\n    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)        // -> code HTTP 500 (erreur interne)\n    public Map<String,String> imprevu(Exception e) {\n        log.error(\"Erreur imprevue\", e);          // detail cote serveur seulement\n        return Map.of(\"erreur\", \"Erreur interne\"); // message neutre cote client\n    }\n}\n\n@Test void refuseTitreVide() throws Exception {              // scenario de test : un titre vide doit etre refuse\n    mockMvc.perform(post(\"/api/jeux\").contentType(MediaType.APPLICATION_JSON)   // faux navigateur : POST JSON vers l'API\n            .content(\"{\\\"titre\\\":\\\"\\\",\\\"prixLocation\\\":5,\\\"prixAchat\\\":30,\\\"categorieId\\\":1}\"))   // corps avec un titre VIDE : entree invalide\n        .andExpect(status().isBadRequest());                 // on EXIGE 400 : le test rougit si l'API accepte ce titre vide\n}\n\n// POURQUOI CENTRALISER, POURQUOI DES MESSAGES NEUTRES\n// Centraliser : un seul endroit decide exception -> code HTTP. Des try/catch\n// disperses divergent (un 500 ici, un 404 la pour le meme cas) et sont impossibles\n// a tester uniformement. Messages neutres : une stack trace ou 'Table jeu doesn't\n// exist' revele la techno, le schema, des chemins -- de l'or pour un attaquant.\n// Le client recoit un message inoffensif ; le vrai detail reste dans les logs.",
+    note: "La validation et la gestion d'erreurs sont deux faces d'une même exigence de sécurité : ne jamais faire confiance à l'entrée, ne jamais trahir l'intérieur. En les posant AVANT que l'API n'écrive quoi que ce soit, on ferme l'injection et la fuite d'information par conception. Le handler générique en dernier recours (Exception -> 500 neutre + log) est le filet qui garantit qu'aucune stack trace ne fuite jamais, même sur un cas non prévu." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

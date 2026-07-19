@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Autorisations : rôles et permissions",
+  subtitle: "Savoir QUI tu es ne dit pas encore ce que tu as le DROIT de faire.",
+  theory: `
+<h3>1. Authentification ≠ autorisation</h3>
+<p>Petit rappel de vocabulaire de base avant de commencer. Une <strong>API</strong> (<em>Application Programming Interface</em>) est le « guichet » d'un serveur : un programme qui reçoit des demandes venant d'autres programmes et y répond. Une <strong>requête</strong> est la demande envoyée par le <strong>client</strong> (celui qui demande : navigateur, appli mobile, outil en ligne de commande…) ; la <strong>réponse</strong> est ce que le <strong>serveur</strong> (l'ordinateur qui héberge l'API) renvoie en retour. Tout ce dialogue circule via <strong>HTTP</strong> (<em>HyperText Transfer Protocol</em>), la « langue » du web. Une requête vise un <strong>endpoint</strong> (un point d'entrée précis de l'API, désigné par une <strong>URL</strong> comme <code>/jeux/5</code>) avec une <strong>méthode</strong> qui dit l'intention : <code>GET</code> (lire), <code>POST</code> (créer), <code>PUT</code>/<code>PATCH</code> (modifier), <code>DELETE</code> (supprimer).</p>
+<p>Hier, ton API a appris à reconnaître Aïcha : c'est l'<strong>authentification</strong> (QUI es-tu ?), le fait de <em>prouver son identité</em>. Aujourd'hui, la question suivante : Aïcha, membre, envoie <code>DELETE /jeux/5</code>. Elle est bien authentifiée… mais supprimer un jeu est réservé aux gestionnaires. C'est l'<strong>autorisation</strong> (AS-TU LE DROIT ?), le fait de <em>vérifier les permissions</em> une fois l'identité connue. Deux questions distinctes, deux <strong>codes de statut</strong> distincts (le nombre à trois chiffres que le serveur met dans sa réponse pour résumer ce qui s'est passé) :</p>
+<pre class="pseudo">401 Unauthorized  → « Qui es-tu ? »  Pas (ou mal) authentifié.        # 401 = code de statut : identité non prouvée
+                    La réponse inclut l'en-tête WWW-Authenticate.       # en-tête (info technique) qui dit COMMENT s'authentifier
+403 Forbidden     → « Je sais qui tu es. Et c'est NON. »               # 403 = identité connue, mais droit refusé
+                    Authentifié, mais le droit manque. Réessayer ne sert à rien.   # re-tenter avec le même compte ne changera rien</pre>
+<p>Un <strong>en-tête</strong> (en anglais <em>header</em>) est une ligne d'information technique attachée à une requête ou à une réponse HTTP, en plus du contenu principal. <code>WWW-Authenticate</code> est l'en-tête par lequel le serveur annonce quel type de preuve d'identité il attend.</p>
+
+<h3>2. Les rôles de la Ludothèque</h3>
+<p>Un <strong>rôle</strong> est une étiquette qui résume les droits d'une personne (comme « membre du personnel » ou « client » dans un magasin). Trois <strong>rôles</strong> ici, du plus courant au plus rare : <strong>membre</strong> (loue des jeux, écrit des avis), <strong>gestionnaire</strong> (gère le catalogue), <strong>admin</strong> (gère les membres). Le rôle voyage dans le <strong>JWT</strong> — le <em>JSON Web Token</em> vu à la leçon 16, c'est-à-dire un petit jeton signé (une sorte de badge infalsifiable) que le client présente à chaque requête. À l'intérieur de ce jeton, chaque information s'appelle un <strong>claim</strong> (une « affirmation ») ; ici le claim <code>role</code> porte le rôle, et le serveur le lit à chaque requête. Règle métier importante : la <strong>lecture du catalogue reste publique</strong> — pas besoin de compte pour découvrir Catan.</p>
+
+<h3>3. La matrice endpoint × rôle</h3>
+<p>Le cœur du travail d'autorisation : écrire noir sur blanc qui peut quoi. C'est la <strong>matrice de permissions</strong> de la Ludothèque — un simple tableau qui croise chaque endpoint (en lignes) avec chaque rôle (en colonnes), et dit « oui » ou « non » dans chaque case. Une <strong>ressource</strong> (comme <em>jeux</em>, <em>avis</em>, <em>membres</em>) est un type d'objet que l'API expose :</p>
+<pre class="pseudo">Endpoint                    | public | membre | gestionnaire | admin
+----------------------------+--------+--------+--------------+------
+GET  /jeux, /jeux/5         |  oui   |  oui   |     oui      |  oui
+GET  /jeux/5/avis           |  oui   |  oui   |     oui      |  oui
+POST /jeux/5/avis           |  non   |  oui   |     oui      |  oui
+PATCH/DELETE /avis/7        |  non   | si SIEN|     oui      |  oui
+POST /locations             |  non   |  oui   |     oui      |  oui
+GET  /membres/12/locations  |  non   | si SOI |     oui      |  oui
+POST/PUT/PATCH/DELETE /jeux |  non   |  non   |     oui      |  oui
+GET/POST/… /membres         |  non   |  non   |     non      |  oui</pre>
+<p>Chaque « non » se traduit par un <strong>403</strong> (le demandeur est identifié mais n'a pas le droit) ou un <strong>401</strong> si la requête n'est même pas authentifiée (aucune identité prouvée). Lis le tableau de gauche à droite : plus on avance vers <em>admin</em>, plus les droits s'accumulent.</p>
+
+<h3>4. Les permissions au niveau objet</h3>
+<p>Regarde les lignes « si SIEN » : le rôle ne suffit pas toujours. Aïcha (membre) peut modifier <em>un</em> avis… à condition que ce soit <strong>le sien</strong>. Le serveur doit comparer le propriétaire de l'objet avec l'utilisateur du token. Ici <code>sub</code> (pour <em>subject</em>, « sujet ») est le claim du JWT qui contient l'identifiant du propriétaire du token — en clair, le numéro de l'utilisateur connecté ; <code>Bearer</code> est le mot-clé qui précède le jeton dans l'en-tête <code>Authorization</code> (« porteur de ce jeton ») :</p>
+<pre class="pseudo">PATCH /avis/7   Authorization: Bearer eyJ…  (sub: 12)                 # PATCH = modifier l'avis 7 ; le token dit : je suis l'utilisateur 12
+
+avis 7 → { "id": 7, "jeu": 5, "membre": 12, … }                      # l'avis n°7 appartient au membre 12 (champ "membre" du JSON)
+membre de l'avis (12) == sub du token (12)  → 200 OK, modification    # propriétaire == demandeur → 200 (succès), on autorise
+membre de l'avis (31) != sub du token (12)  → 403 Forbidden           # propriétaire != demandeur → 403 (refus), pas le sien</pre>
+<p>Ci-dessus, <code>{ ... }</code> est du <strong>JSON</strong> (<em>JavaScript Object Notation</em>) : un format texte universel pour représenter des données sous forme de paires <code>"nom": valeur</code>. C'est la <strong>permission au niveau objet</strong> (object-level) : même endpoint, même rôle, verdict différent selon l'objet visé.</p>
+
+<h3>5. La défense se joue TOUJOURS côté serveur</h3>
+<p>Le front de la Ludothèque (la partie visible côté client, ce que l'utilisateur voit à l'écran) cachera le bouton « Supprimer le jeu » aux simples membres. Très bien pour l'ergonomie — <strong>nul pour la sécurité</strong> : <code>curl</code> (un outil qui envoie des requêtes HTTP à la main, en ligne de commande) forgé par un utilisateur malin ignore superbement tes boutons cachés. Chaque règle de la matrice doit être vérifiée <strong>par l'API</strong>, à chaque requête. En <strong>Django REST Framework</strong> (DRF, une boîte à outils du langage Python pour construire des API) :</p>
+<pre class="pseudo"># DRF — on attache des règles de permission à la vue (le code qui traite les avis)
+class AvisViewSet(ModelViewSet):                     # ModelViewSet = vue toute prête (liste, détail, création, modif, suppression)
+    permission_classes = [IsAuthenticated, IsOwnerOrReadOnly]   # liste des contrôles à passer AVANT d'exécuter la vue
+
+class IsOwnerOrReadOnly(BasePermission):             # BasePermission = modèle de base ; on écrit ici notre propre règle
+    def has_object_permission(self, request, view, obj):        # fonction appelée pour vérifier l'accès à UN objet précis (obj)
+        if request.method in SAFE_METHODS:           # SAFE_METHODS = GET, HEAD, OPTIONS (méthodes de lecture, sans effet)
+            return True                              # lecture : autorisée à tout le monde (return True = « oui »)
+        return obj.membre_id == request.user.id      # écriture : OK seulement si l'objet appartient au demandeur (le SIEN)
+
+# Spring (Java)  : @PreAuthorize("hasRole('GESTIONNAIRE')")     # même idée, une annotation posée au-dessus de la méthode
+# Laravel (PHP) : Policies · ASP.NET (C#) : [Authorize(Roles = "gestionnaire")]   # équivalents dans d'autres frameworks</pre>
+<div class="warn">Cacher un bouton, griser un champ, filtrer un menu : c'est de l'affichage, pas de la sécurité. Si l'API ne vérifie pas elle-même la permission, elle n'existe pas.</div>
+<div class="tip">Écris la matrice endpoint × rôle AVANT de coder : c'est elle que tu traduiras en permission_classes, @PreAuthorize ou Policies — et elle ira telle quelle dans la documentation de l'API.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'authentification répond à la question…", opts: ["« Qui es-tu ? »", "« As-tu le droit ? »", "« Où es-tu ? »", "« Combien de requêtes ? »"], a: 0, exp: "L'autorisation répond ensuite à « as-tu le droit ? »." },
+    { type: "qcm", q: "Aïcha, membre authentifiée, envoie DELETE /jeux/5. Réponse correcte de l'API :", opts: ["401", "404", "403", "200"], a: 2, exp: "Authentifiée mais sans le droit : 403 Forbidden." },
+    { type: "qcm", q: "Une requête sans token sur POST /locations reçoit…", opts: ["403", "401", "500", "204"], a: 1, exp: "Pas de preuve d'identité : 401, avec WWW-Authenticate." },
+    { type: "qcm", q: "Quel en-tête accompagne une réponse 401 ?", opts: ["Retry-After", "Location", "Content-Length", "WWW-Authenticate"], a: 3, exp: "Il indique le schéma d'authentification attendu (ex. Bearer)." },
+    { type: "qcm", q: "Dans la Ludothèque, créer ou supprimer des jeux est réservé…", opts: ["Aux membres", "Au public", "Aux gestionnaires (et admin)", "À personne"], a: 2, exp: "Le membre consomme le catalogue, le gestionnaire le gère." },
+    { type: "qcm", q: "La gestion des membres (GET/POST /membres…) appartient…", opts: ["À l'admin", "Aux gestionnaires", "Aux membres", "Au public"], a: 0, exp: "Dernier étage de la matrice : admin uniquement." },
+    { type: "qcm", q: "GET /jeux sans aucun token renvoie…", opts: ["401 : tout exige un compte", "200 : la lecture du catalogue est publique", "403", "301"], a: 1, exp: "Règle métier : on découvre le catalogue sans compte." },
+    { type: "qcm", q: "Aïcha (sub: 12) fait PATCH /avis/7, mais l'avis appartient au membre 31. Verdict :", opts: ["200, elle est membre", "401", "403 : permission au niveau objet refusée", "404 obligatoirement"], a: 2, exp: "Même rôle, mauvais propriétaire : un membre ne modifie que SES avis." },
+    { type: "qcm", q: "Une permission « au niveau objet » signifie que…", opts: ["Le verdict dépend de l'objet visé, pas seulement du rôle", "Les objets ont des mots de passe", "Le JSON est validé", "Le rôle est ignoré"], a: 0, exp: "Même endpoint, même rôle : SIEN → oui, celui d'un autre → 403." },
+    { type: "qcm", q: "Le front cache le bouton « Supprimer » aux membres. L'API peut-elle se dispenser de vérifier ?", opts: ["Oui, le bouton est invisible", "Oui, si le front est en HTTPS", "Oui, pour gagner du temps", "Non : un curl forgé ignore le front, le serveur vérifie toujours"], a: 3, exp: "L'affichage n'est pas une défense." },
+    { type: "vf", q: "403 signifie que le serveur ne sait pas qui envoie la requête.", a: false, exp: "C'est le 401. Le 403 dit : identité connue, droit refusé." },
+    { type: "vf", q: "Réessayer une requête 403 avec le même compte peut finir par passer.", a: false, exp: "Le droit manque : re-tenter ne change rien, contrairement à un 401 où se connecter suffit." },
+    { type: "vf", q: "Le rôle de l'utilisateur peut voyager dans un claim du JWT.", a: true, exp: "role: « membre » — signé, donc infalsifiable (leçon 16)." },
+    { type: "input", q: "Code de statut : requête authentifiée mais droit insuffisant.", a: ["403"], ph: "Un nombre…", exp: "403 Forbidden — « je sais qui tu es, et c'est non »." },
+    { type: "input", q: "Code de statut : requête sans authentification valide.", a: ["401"], ph: "Un nombre…", exp: "401 Unauthorized, accompagné de WWW-Authenticate." }
+  ],
+  final: {
+    title: "Exercice final — La matrice à l'épreuve",
+    intro: `<p>Cinq requêtes arrivent sur l'API de la Ludothèque. À toi de rendre le verdict de la matrice : pour chacune, demande-toi d'abord « la requête est-elle authentifiée ? » (sinon 401), puis « le rôle et la propriété donnent-ils le droit ? » (sinon 403), sinon c'est un succès (200 pour une lecture/modif, 201 pour une création).</p>`,
+    questions: [
+      { type: "qcm", q: "Visiteur sans compte : GET /jeux/5/avis →", opts: ["200", "401", "403", "404"], a: 0, exp: "La lecture du catalogue et des avis est publique." },
+      { type: "qcm", q: "Visiteur sans compte : POST /jeux/5/avis →", opts: ["201", "403", "401", "204"], a: 2, exp: "Créer un avis exige d'être authentifié : 401." },
+      { type: "qcm", q: "Aïcha, membre : POST /jeux (nouveau jeu) →", opts: ["201", "401", "200", "403"], a: 3, exp: "Authentifiée mais pas gestionnaire : 403." },
+      { type: "vf", q: "Un gestionnaire peut lister tous les membres (GET /membres).", a: false, exp: "La gestion des membres est réservée à l'admin." },
+      { type: "input", q: "Aïcha fait PATCH /avis/7 sur SON propre avis : quel code en cas de succès ?", a: ["200"], ph: "Un nombre…", exp: "200 OK avec l'avis modifié — la permission objet est satisfaite." }
+    ],
+    solution: `<pre class="pseudo">Authentification = QUI (401 si absente, + WWW-Authenticate)          # 401 = identité non prouvée → « qui es-tu ? »
+Autorisation     = A LE DROIT (403 si refusée)                       # 403 = identité connue, mais droit manquant
+
+Matrice Ludothèque :                                                 # qui a le droit de quoi, du plus large au plus restreint
+  public       → lecture du catalogue et des avis                    # aucun compte requis pour consulter
+  membre       → + créer avis et locations, modifier SES avis (objet)   # « SES » = permission au niveau objet
+  gestionnaire → + créer/modifier/supprimer les jeux                 # gère le catalogue
+  admin        → + gérer les membres                                 # dernier étage : tous les droits
+
+Défense côté SERVEUR, toujours : permission_classes (DRF),           # la vérification se fait dans l'API, jamais dans le front
+@PreAuthorize (Spring), Policies (Laravel), [Authorize] (ASP.NET).   # mêmes règles selon le framework utilisé</pre>
+<p>Ton API sait qui parle et ce qu'il a le droit de faire. Reste un adversaire inattendu : le navigateur lui-même. Demain, CORS.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l17", title: "La matrice de permissions", level: 3,
+    statement: "La Ludothèque ajoute une ressource « evenements » (soirées jeux) : GET /evenements et GET /evenements/3 (consultation), POST /evenements (création), PATCH /evenements/3 (modification), DELETE /evenements/3, et POST /evenements/3/inscriptions (s'inscrire à une soirée). Règles métier : tout le monde peut consulter le programme ; s'inscrire exige un compte membre ; créer et modifier des événements est le travail des gestionnaires ; supprimer un événement, plus grave, est réservé à l'admin ; enfin, un membre peut annuler SA propre inscription (DELETE /inscriptions/9) mais pas celle d'un autre. Rédige la matrice endpoint × rôle complète (public, membre, gestionnaire, admin), signale les permissions au niveau objet, et indique pour chaque « non » le code de statut renvoyé selon que la requête est authentifiée ou non.",
+    hints: [
+      "Reprends le format de la matrice de la théorie : une ligne par endpoint, une colonne par rôle.",
+      "Repère les règles où le rôle ne suffit pas : c'est là que tu écris « si SIEN » (permission au niveau objet).",
+      "Pour chaque refus, deux cas : pas de token du tout → quel code ? token valide mais droit manquant → quel code ?"
+    ],
+    solution: "MATRICE — ressource « evenements » de la Ludothèque\n\nEndpoint                          | public | membre | gestionnaire | admin\n----------------------------------+--------+--------+--------------+------\nGET  /evenements, /evenements/3   |  oui   |  oui   |     oui      |  oui\nPOST /evenements/3/inscriptions   |  non   |  oui   |     oui      |  oui\nDELETE /inscriptions/9            |  non   | si SIEN|     oui      |  oui\nPOST /evenements                  |  non   |  non   |     oui      |  oui\nPATCH /evenements/3               |  non   |  non   |     oui      |  oui\nDELETE /evenements/3              |  non   |  non   |     non      |  oui\n\nPermissions au niveau objet :\n- DELETE /inscriptions/9 : autorisé seulement si l'inscription\n  appartient au membre du token (comparaison membre_id == sub).\n  Sinon 403, même pour un membre parfaitement authentifié.\n\nCodes en cas de refus :\n- Requête sans token (ou token invalide/expiré) sur un endpoint\n  protégé → 401 Unauthorized + en-tête WWW-Authenticate.\n- Requête authentifiée mais rôle ou propriété insuffisants\n  → 403 Forbidden (inutile de réessayer avec le même compte).\n\nRappel d'implémentation : chaque ligne de cette matrice doit être\nvérifiée CÔTÉ SERVEUR (permission_classes en DRF, @PreAuthorize en\nSpring, Policies en Laravel, [Authorize(Roles = …)] en ASP.NET).\nLe front peut cacher des boutons : c'est du confort, pas une défense.",
+    note: "Écrire la matrice avant de coder est un réflexe professionnel : dans les capstones Ludothèque, elle deviendra directement tes permission_classes DRF, tes @PreAuthorize Spring, tes Policies Laravel ou tes attributs [Authorize] ASP.NET. Le cours Sécurité applicative te montrera ce qui arrive aux API qui oublient les permissions au niveau objet — c'est l'une des failles les plus courantes du top OWASP." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

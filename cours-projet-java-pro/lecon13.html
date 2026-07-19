@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Le frontend Thymeleaf : templates échappés et en-têtes de sécurité",
+  subtitle: "Donner un visage au métier — avec XSS et clickjacking fermés d'office.",
+  theory: `
+<h3>1. Thymeleaf échappe par défaut</h3>
+<p><strong>Thymeleaf</strong> est le moteur qui fabrique les pages web du projet : on écrit un <strong>template</strong> (un modèle de page HTML à trous) et il remplit les trous avec les données du serveur, comme un publipostage où l'on insère chaque nom dans une lettre type. <strong>Échapper</strong> le HTML, c'est neutraliser les caractères spéciaux (&lt; &gt; &amp;) pour qu'un texte s'affiche tel quel au lieu d'être interprété comme du code — ce qui ferme la faille <strong>XSS</strong> (injection d'un script dans la page).</p>
+<pre class="pseudo">&lt;!-- catalogue.html --&gt;
+&lt;tr th:each="jeu : \${page.content}"&gt;                &lt;!-- th:each : repete cette ligne pour CHAQUE jeu de la page --&gt;
+  &lt;td th:text="\${jeu.titre}"&gt;—&lt;/td&gt;          &lt;!-- th:text ÉCHAPPE le HTML --&gt;
+  &lt;td th:text="\${jeu.prixLocation} + ' €'"&gt;—&lt;/td&gt;   &lt;!-- meme echappement, ici le prix suivi du symbole euro --&gt;
+&lt;/tr&gt;</pre>
+<p><code>th:text</code> transforme <code>&lt;script&gt;</code> en texte inoffensif : une saisie malveillante s'affiche, ne s'exécute jamais. C'est la parade au <strong>XSS</strong>, gratuite et par défaut.</p>
+
+<h3>2. Le piège th:utext</h3>
+<p><code>th:utext</code> (le <em>u</em> pour <em>unescaped</em>, « non échappé ») insère le contenu <strong>brut</strong>, sans neutraliser le HTML. À utiliser uniquement sur du HTML que <em>vous</em> maîtrisez, jamais sur une saisie d'utilisateur — sinon une description contenant un script s'exécuterait vraiment.</p>
+<pre class="pseudo">&lt;!-- DANGER : th:utext n'échappe PAS (unescaped) --&gt;
+&lt;td th:utext="\${jeu.description}"&gt;&lt;/td&gt;   &lt;!-- XSS si description vient d'un utilisateur --&gt;
+&lt;!-- Règle : th:utext UNIQUEMENT sur du HTML de confiance, jamais sur une saisie --&gt;</pre>
+
+<h3>3. Le formulaire porte le jeton CSRF</h3>
+<p>Un <strong>formulaire</strong> HTML envoie des données au serveur quand on clique sur son bouton. Le <strong>jeton CSRF</strong> est un mot de passe à usage unique, glissé dans le formulaire, qui prouve que la demande vient bien de notre page et pas d'un site pirate. Spring Security et Thymeleaf l'ajoutent tout seuls.</p>
+<pre class="pseudo">&lt;form th:action="@{/louer/{id}(id=\${jeu.id})}" method="post"&gt;   &lt;!-- formulaire POST : th:action construit l'URL /louer/… avec l'id du jeu --&gt;
+  &lt;!-- Spring Security + Thymeleaf injectent AUTOMATIQUEMENT le champ _csrf --&gt;
+  &lt;button&gt;Louer&lt;/button&gt;                              &lt;!-- le bouton qui declenche l'envoi du formulaire --&gt;
+&lt;/form&gt;                                                &lt;!-- fin du formulaire --&gt;</pre>
+
+<h3>4. Les en-têtes de sécurité</h3>
+<p>Un <strong>en-tête</strong> (header) est une consigne que le serveur joint à chaque page pour dicter au navigateur comment se comporter. La <strong>CSP</strong> (Content-Security-Policy) liste les sources autorisées de scripts et d'images ; le <strong>clickjacking</strong> piège l'utilisateur en superposant notre site invisible sur une page pirate ; <strong>nosniff</strong> interdit au navigateur de « deviner » le type d'un fichier (une image traitée comme un script serait dangereuse).</p>
+<pre class="pseudo">// SecuriteConfig
+http.headers(h -> h                              // on configure les en-tetes de securite pour TOUT le site
+    .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"))   // CSP : n'autorise scripts/images que depuis NOTRE domaine ('self')
+    .frameOptions(f -> f.deny())                 // anti-clickjacking (X-Frame-Options)
+    .contentTypeOptions(Customizer.withDefaults()) // nosniff
+);</pre>
+
+<h3>5. La CSP, adoptée en douceur</h3>
+<p>Le mode <strong>Report-Only</strong> (« signaler seulement ») déploie la CSP en observation : le navigateur <em>signale</em> ce qu'elle bloquerait, sans rien bloquer. On lit ces rapports, on corrige les faux positifs, puis on bascule en mode réellement bloquant — une CSP activée trop brutalement casse des pages et finit désactivée.</p>
+<pre class="pseudo">// Démarrer en Report-Only : la CSP OBSERVE les violations sans rien casser
+// Content-Security-Policy-Report-Only: default-src 'self'
+// -> on lit les rapports, on ajuste, PUIS on passe en mode bloquant</pre>
+<div class="warn">Le frontend hérite <strong>gratuitement</strong> de l'échappement Thymeleaf et des en-têtes posés d'office : XSS et clickjacking sont fermés avant même d'exister. Une CSP démarrée en report-only observe sans casser, exactement la méthode qui la fait adopter (cours Sécurité). Vérifie qu'aucun <code>th:utext</code> ne traîne sur du contenu utilisateur : <code>grep th:utext</code> avant chaque merge.</div>
+<div class="tip">On ne « rajoute pas la sécurité du rendu » à la fin : elle est présente dès le premier template. Le métier construit aux leçons 5-12 s'affiche derrière un rempart déjà en place — c'est ça, construire en sécurisant.</div>`,
+  exercises: [
+    { type: "qcm", q: "th:text…", opts: ["N'échappe pas", "Échappe le HTML (anti-XSS)", "Chiffre", "Déploie"], a: 1, exp: "Saisie affichée, jamais exécutée." },
+    { type: "qcm", q: "th:utext…", opts: ["Échappe", "N'échappe PAS (danger sur saisie)", "Chiffre", "Est obligatoire"], a: 1, exp: "Seulement du HTML de confiance." },
+    { type: "qcm", q: "Le XSS est fermé par…", opts: ["Un WAF", "L'échappement du template", "Un cookie", "Un index"], a: 1, exp: "th:text par défaut." },
+    { type: "qcm", q: "Le jeton CSRF dans le formulaire est…", opts: ["À écrire à la main", "Injecté automatiquement (Spring Security + Thymeleaf)", "Absent", "Dans l'URL"], a: 1, exp: "_csrf automatique." },
+    { type: "qcm", q: "frameOptions().deny() protège contre…", opts: ["Le XSS", "Le clickjacking", "L'injection SQL", "Le CSRF"], a: 1, exp: "X-Frame-Options: DENY." },
+    { type: "qcm", q: "nosniff (contentTypeOptions) empêche…", opts: ["Le login", "Le navigateur de deviner un type MIME", "Le CSS", "Le cache"], a: 1, exp: "Anti-confusion de type." },
+    { type: "qcm", q: "La CSP démarre idéalement en…", opts: ["Bloquant direct", "Report-Only (observe sans casser)", "Désactivée", "HTTP"], a: 1, exp: "Adoption en douceur." },
+    { type: "qcm", q: "default-src 'self' autorise…", opts: ["Tout", "Les ressources du même domaine", "Rien", "Les scripts externes"], a: 1, exp: "Réduit la surface XSS." },
+    { type: "qcm", q: "Avant chaque merge on vérifie…", opts: ["Le CSS", "Qu'aucun th:utext ne traîne sur une saisie", "La RAM", "Le port"], a: 1, exp: "grep th:utext." },
+    { type: "qcm", q: "L'échappement du template est…", opts: ["Payant", "Gratuit et par défaut", "Optionnel", "Lent"], a: 1, exp: "Hérité d'office." },
+    { type: "vf", q: "Une saisie malveillante affichée via th:text s'affiche mais ne s'exécute pas.", a: true, exp: "Neutralisée." },
+    { type: "qcm", q: "Report-Only permet…", opts: ["De bloquer d'emblée", "De lire les violations avant de bloquer", "De chiffrer", "Rien"], a: 1, exp: "Ajuster puis durcir." },
+    { type: "qcm", q: "Le frontend hérite de la sécurité…", opts: ["À la fin", "Dès le premier template", "Jamais", "En prod"], a: 1, exp: "Construire en sécurisant." },
+    { type: "qcm", q: "th:utext sur une description utilisateur est…", opts: ["Sûr", "Une porte à XSS", "Recommandé", "Rapide"], a: 1, exp: "Ne jamais dé-échapper une saisie." },
+    { type: "vf", q: "Les en-têtes de sécurité sont posés une fois pour tout le site.", a: true, exp: "Config centrale." }
+  ],
+  final: {
+    title: "Exercice final — Le rendu, sécurisé d'office",
+    intro: `<p>Templates échappés + en-têtes + CSRF.</p>`,
+    questions: [
+      { type: "qcm", q: "Le contenu utilisateur s'affiche via :", opts: ["th:text (échappé)", "th:utext (brut)", "innerHTML", "eval"], a: 0, exp: "Anti-XSS." },
+      { type: "qcm", q: "Le clickjacking est bloqué par :", opts: ["frameOptions().deny()", "un cookie", "un index", "rien"], a: 0, exp: "X-Frame-Options." },
+      { type: "qcm", q: "La CSP se déploie d'abord en :", opts: ["Report-Only", "bloquant direct", "désactivée", "HTTP only"], a: 0, exp: "Observer sans casser." },
+      { type: "qcm", q: "Le jeton CSRF est :", opts: ["injecté automatiquement dans le form", "à écrire à la main", "dans l'URL", "absent"], a: 0, exp: "Spring + Thymeleaf." },
+      { type: "vf", q: "th:utext ne doit jamais afficher une saisie utilisateur.", a: true, exp: "XSS sinon." }
+    ],
+    solution: `<pre class="pseudo">&lt;td th:text="\${jeu.titre}"&gt;&lt;/td&gt;              &lt;!-- échappé --&gt;
+&lt;form th:action="@{/louer/{id}(id=\${jeu.id})}" method="post"&gt; ... &lt;!-- _csrf auto --&gt;
+
+http.headers(h -> h                        // en-tetes de securite pour tout le site
+   .contentSecurityPolicy(csp -> csp.policyDirectives("default-src 'self'"))   // CSP : ressources autorisees depuis notre domaine seulement
+   .frameOptions(f -> f.deny())            // anti-clickjacking (interdit d'afficher le site dans un cadre)
+   .contentTypeOptions(withDefaults()));   // nosniff
+// CSP en Report-Only d'abord, puis bloquant</pre>
+<p>Le rendu est sécurisé d'office. Demain : les secrets et la configuration par environnement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton template échappé et tes en-têtes…",
+  items: [
+  { id: "proj6java-l13", title: "Le frontend échappé et sous en-têtes de sécurité", level: 2,
+    statement: "Écris un extrait de template Thymeleaf du catalogue (th:text échappé, formulaire de location avec CSRF automatique), la configuration des en-têtes de sécurité (CSP, frameOptions deny, nosniff) et explique la stratégie report-only. En 2-3 lignes : pourquoi th:text plutôt que th:utext, et ce que le frontend hérite gratuitement.",
+    hints: [
+      "th:text échappe ; th:utext ne dé-échappe QUE du HTML de confiance.",
+      "Le champ _csrf est injecté automatiquement par Spring Security + Thymeleaf.",
+      "CSP report-only : observer les violations avant de bloquer."
+    ],
+    solution: "<!-- catalogue.html (Thymeleaf) -->\n<table>\n  <tr th:each=\"jeu : ${page.content}\">\n    <td th:text=\"${jeu.titre}\">—</td>                <!-- ECHAPPE : anti-XSS -->\n    <td th:text=\"${jeu.prixLocation} + ' €'\">—</td>\n    <td>\n      <form th:action=\"@{/louer/{id}(id=${jeu.id})}\" method=\"post\">\n        <!-- Spring Security + Thymeleaf injectent le champ _csrf automatiquement -->\n        <button th:disabled=\"${!jeu.louable}\">Louer</button>\n      </form>\n    </td>\n  </tr>\n</table>\n\n// SecuriteConfig — en-tetes poses une fois pour tout le site\nhttp.headers(h -> h\n    .contentSecurityPolicy(csp -> csp.policyDirectives(\"default-src 'self'\"))\n    .frameOptions(f -> f.deny())                    // anti-clickjacking\n    .contentTypeOptions(Customizer.withDefaults())  // nosniff\n);\n\n// STRATEGIE REPORT-ONLY\n// On deploie d'abord la CSP en 'Content-Security-Policy-Report-Only' : le\n// navigateur SIGNALE les violations (dans la console / via un endpoint de report)\n// sans rien bloquer. On observe le trafic reel, on ajuste les directives (une\n// police, un script legitime oublie), PUIS on bascule en mode bloquant. Deployee\n// bloquante d'emblee, une CSP casse souvent des pages et se fait desactiver.\n\n// POURQUOI th:text, CE QUI EST HERITE GRATUITEMENT\n// th:text echappe le HTML : &lt;script&gt;alert(1)&lt;/script&gt; saisi par un utilisateur\n// s'AFFICHE comme du texte, ne s'EXECUTE jamais. th:utext le rendrait brut ->\n// XSS. En posant l'echappement (par defaut) et les en-tetes (config centrale)\n// des le premier template, tout le frontend herite du rempart sans effort :\n// XSS et clickjacking sont fermes avant meme d'exister.",
+    note: "L'échappement par défaut de Thymeleaf est un filet de sécurité majeur : la grande majorité des XSS viennent d'un dé-échappement volontaire (th:utext, |safe, innerHTML) sur une donnée non fiable. La règle « th:utext uniquement sur du HTML de confiance » et le grep avant merge suffisent à éliminer cette classe de failles. Combinés aux en-têtes posés en config centrale, ils font du rendu un rempart présent dès le premier écran — la sécurité du frontend n'est jamais une étape séparée." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

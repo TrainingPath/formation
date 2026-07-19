@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Réseau : ports publiés et réseaux internes",
+  subtitle: "Faire parler l'app et sa base — sans exposer ce qui doit rester privé.",
+  theory: `
+<h3>1. Deux questions différentes</h3>
+<p>Le réseau Docker répond à DEUX questions qu'il ne faut jamais mélanger. Première : qui, depuis l'extérieur (ton navigateur, Internet), peut atteindre un conteneur ? C'est la <strong>publication</strong> de ports (l'option <code>-p</code>). Deuxième : comment les conteneurs se parlent-ils entre eux, en privé ? C'est le rôle des <strong>réseaux Docker</strong>.</p>
+<pre class="pseudo">« Qui peut joindre le conteneur DEPUIS l'extérieur ? »  -> publication (-p)     # ouvrir une porte vers le monde : navigateur, Internet
+« Comment les conteneurs se joignent-ils ENTRE EUX ? »  -> réseaux Docker       # un couloir privé entre conteneurs, invisible du dehors</pre>
+
+<h3>2. Le réseau utilisateur et son DNS</h3>
+<p>On crée un <strong>réseau</strong> nommé, puis on y branche les conteneurs. Le bonus magique : sur un réseau créé par toi, Docker fournit un <strong>DNS interne</strong> (un annuaire) — chaque conteneur devient joignable par son <strong>nom</strong>, sans jamais connaître son adresse IP (qui, elle, change à chaque redémarrage).</p>
+<pre class="pseudo">docker network create reseau-ludo         # crée un réseau privé nommé 'reseau-ludo' (un couloir commun pour nos conteneurs)
+
+docker run -d --name bdd --network reseau-ludo ... mysql:8.4             # branche MySQL ('bdd') sur ce réseau
+docker run -d --name ludo --network reseau-ludo -e DB_HOST=bdd ... ludotheque:0.1   # branche l'app et lui dit : la base est joignable au nom 'bdd'</pre>
+<p>Sur un réseau créé par l'utilisateur, Docker fournit un <strong>DNS interne</strong> : chaque conteneur est joignable par son <strong>nom</strong>. On écrit donc <code>DB_HOST=bdd</code> (le nom du conteneur MySQL) — et le mur n°1 de la leçon 7 (« localhost = le conteneur ») tombe enfin.</p>
+
+<h3>3. Publier ou ne pas publier</h3>
+<p>La <strong>surface d'attaque</strong> est l'ensemble des points par lesquels un pirate pourrait entrer. La réduire au minimum est une règle de sécurité : on ne publie QUE ce qui doit être joignable du dehors.</p>
+<pre class="pseudo">app : -p 8000:8000     -> le monde extérieur doit pouvoir la joindre (on publie son port)   # porte ouverte : nécessaire pour servir les visiteurs
+bdd : PAS de -p        -> seule l'app, sur le même réseau, peut la joindre                   # aucune porte vers l'extérieur : privé
+      MySQL reste invisible de l'hôte et d'Internet ✔                                        # surface d'attaque minimale : personne d'autre n'y accède</pre>
+<p>Ne pas publier MySQL n'est pas un oubli : c'est la <strong>surface d'attaque minimale</strong>. À l'intérieur du réseau, le port 3306 (celui de MySQL) reste joignable par les autres conteneurs — c'est suffisant.</p>
+
+<h3>4. Inspecter et tester</h3>
+<p>On vérifie que la résolution de noms fonctionne réellement.</p>
+<pre class="pseudo">docker network ls                       # liste les réseaux Docker existants
+docker network inspect reseau-ludo      # détaille le réseau : quels conteneurs y sont connectés, avec quelles IP
+docker exec ludo getent hosts bdd       # depuis l'app, demande l'adresse du nom 'bdd' : prouve que le DNS interne répond
+docker exec ludo python -c "import socket; print(socket.gethostbyname('bdd'))"   # même test en Python : résout 'bdd' en une adresse IP interne</pre>
+
+<h3>5. Le réseau par défaut (bridge) et ses limites</h3>
+<p>Si tu ne précises pas de réseau, le conteneur rejoint le <strong>bridge par défaut</strong> — un réseau générique qui, lui, N'offre PAS la résolution par nom. D'où la règle simple à retenir.</p>
+<pre class="pseudo">Sans --network : les conteneurs vont sur le bridge PAR DÉFAUT           # le réseau générique fourni d'office par Docker
+-> pas de résolution par nom (DNS) : il faudrait jongler avec des IP    # sur le bridge par défaut, pas d'annuaire : on devrait connaître les IP...
+   qui changent à chaque redémarrage                                    # ...et ces IP changent, donc rien de fiable
+Moralité : toujours un réseau NOMMÉ pour une application multi-conteneurs   # règle d'or : un réseau créé par toi = DNS par nom garanti</pre>
+<div class="warn"><code>-p 3306:3306</code> sur MySQL « pour déboguer » expose la base à tout le réseau local (voire Internet sur un serveur). Si un accès ponctuel est nécessaire : <code>docker exec -it bdd mysql</code> — jamais une publication permanente.</div>
+<div class="tip">Compose (leçon 12) créera ce réseau automatiquement et y inscrira chaque service sous son nom — ce que tu fais à la main aujourd'hui, tu sauras le lire dans le YAML demain.</div>`,
+  exercises: [
+    { type: "qcm", q: "La publication (-p) répond à la question…", opts: ["Comment les conteneurs se parlent", "Qui peut joindre le conteneur depuis l'extérieur", "Où sont les données", "Quel tag choisir"], a: 1, exp: "Deux questions distinctes." },
+    { type: "qcm", q: "La communication ENTRE conteneurs passe par…", opts: ["-p", "Un réseau Docker commun", "Un fichier", "SSH"], a: 1, exp: "Réseau + DNS interne." },
+    { type: "qcm", q: "Créer un réseau :", opts: ["docker network create reseau-ludo", "docker create net", "ifconfig", "docker run --net-new"], a: 0, exp: "Réseau utilisateur nommé." },
+    { type: "qcm", q: "Sur un réseau utilisateur, un conteneur est joignable par…", opts: ["Son nom (DNS interne)", "Son IP seulement", "Son tag", "Son volume"], a: 0, exp: "DB_HOST=bdd." },
+    { type: "qcm", q: "DB_HOST vaut désormais…", opts: ["localhost", "bdd (le nom du conteneur MySQL)", "127.0.0.1", "0.0.0.0"], a: 1, exp: "Le mur n°1 tombe." },
+    { type: "qcm", q: "MySQL est lancé…", opts: ["Avec -p 3306:3306", "Sans -p : joignable seulement depuis le réseau interne", "Avec -p 80:80", "Sans réseau"], a: 1, exp: "Surface d'attaque minimale." },
+    { type: "vf", q: "Sans -p, MySQL est quand même joignable par l'app du même réseau.", a: true, exp: "Le 3306 vit à l'intérieur du réseau." },
+    { type: "qcm", q: "-p 3306:3306 « pour déboguer » est…", opts: ["Une bonne pratique", "Une exposition dangereuse de la base", "Obligatoire", "Sans effet"], a: 1, exp: "docker exec -it bdd mysql suffit." },
+    { type: "qcm", q: "Voir qui est connecté à un réseau :", opts: ["docker network inspect reseau-ludo", "docker ps", "docker logs", "ping"], a: 0, exp: "Conteneurs + IP." },
+    { type: "qcm", q: "Tester la résolution DNS depuis l'app :", opts: ["docker exec ludo getent hosts bdd", "docker dns", "nslookup sur l'hôte", "docker network ls"], a: 0, exp: "La résolution en direct." },
+    { type: "qcm", q: "Le bridge par défaut (sans --network)…", opts: ["Offre le DNS par nom", "N'offre PAS la résolution par nom", "Est plus rapide", "N'existe pas"], a: 1, exp: "D'où le réseau nommé." },
+    { type: "qcm", q: "Pour une app multi-conteneurs, on utilise…", opts: ["Le bridge par défaut", "Toujours un réseau nommé", "Pas de réseau", "Le réseau de l'hôte"], a: 1, exp: "Règle simple." },
+    { type: "qcm", q: "8000 de -p 8000:8000 côté gauche désigne…", opts: ["Le port du conteneur", "Le port de l'hôte", "Le port de MySQL", "Un PID"], a: 1, exp: "hôte:conteneur (leçon 2)." },
+    { type: "vf", q: "Compose créera le réseau et le DNS automatiquement.", a: true, exp: "Leçon 12." },
+    { type: "qcm", q: "Un accès SQL ponctuel de débogage se fait par…", opts: ["docker exec -it bdd mysql -p...", "-p 3306:3306 permanent", "un tunnel public", "phpMyAdmin exposé"], a: 0, exp: "Sans rien publier." }
+  ],
+  final: {
+    title: "Exercice final — L'app parle à sa base",
+    intro: `<p>On relie enfin les deux conteneurs de la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre des opérations :", opts: ["network create, puis run bdd et ludo avec --network", "run puis network", "que des -p", "un câble"], a: 0, exp: "Le réseau d'abord." },
+      { type: "qcm", q: "MySQL est lancé :", opts: ["--network reseau-ludo, SANS -p", "avec -p 3306:3306", "sans réseau", "en latest"], a: 0, exp: "Privé." },
+      { type: "qcm", q: "L'app reçoit :", opts: ["-e DB_HOST=bdd", "-e DB_HOST=localhost", "-e DB_HOST=127.0.0.1", "rien"], a: 0, exp: "Le nom DNS du conteneur." },
+      { type: "qcm", q: "La vérification :", opts: ["docker exec ludo python manage.py check --database default", "croiser les doigts", "docker ps", "un reboot"], a: 0, exp: "La connexion réelle." },
+      { type: "vf", q: "Depuis l'hôte, mysql -h localhost:3306 joint ce MySQL.", a: false, exp: "Pas publié : invisible de l'hôte." }
+    ],
+    solution: `<pre class="pseudo">$ docker network create reseau-ludo            # crée le réseau privé commun
+
+$ docker run -d --name bdd --network reseau-ludo \\            # MySQL sur le réseau, en arrière-plan
+    -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=ludotheque \\   # mot de passe root + base créée au démarrage
+    -v donnees-mysql:/var/lib/mysql mysql:8.4        # PAS de -p : la base reste privée (invisible du dehors)
+
+$ docker run -d --name ludo --network reseau-ludo -p 8000:8000 \\   # l'app sur le même réseau, ELLE publiée (-p)
+    -e DB_HOST=bdd -e DB_PASSWORD=secret -e DJANGO_SECRET_KEY=dev \\   # DB_HOST=bdd : elle joint la base par son NOM (DNS interne)
+    ludotheque:0.1                                  # l'image de l'application
+
+$ docker exec ludo python manage.py check --database default   # teste la connexion réelle app -> base
+System check identified no issues                    # ✔ aucun problème : ils se parlent bien</pre>
+<p>Le mur n°1 est tombé. Demain : ranger la configuration qui s'accumule.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton plan réseau…",
+  items: [
+  { id: "docker-l9", title: "Le plan réseau de la Ludothèque", level: 3,
+    statement: "Écris le plan réseau commenté de la Ludothèque à trois conteneurs (app, bdd, et un futur proxy nginx) : les commandes network create + run avec leurs --network et -p JUSTIFIÉS (qui est publié, qui ne l'est pas, pourquoi), et le tableau final « qui joint qui, par quel nom, sur quel port ».",
+    hints: [
+      "Seul le proxy (443/80) mérite un -p ; l'app est jointe par le proxy via son nom.",
+      "bdd : jamais publiée ; jointe par l'app sur bdd:3306.",
+      "Tableau : source → destination (nom:port) → publié ?"
+    ],
+    solution: "docker network create reseau-ludo\n\n# La base : privée, uniquement sur le réseau interne\ndocker run -d --name bdd --network reseau-ludo \\\n    -e MYSQL_ROOT_PASSWORD=secret -v donnees-mysql:/var/lib/mysql \\\n    mysql:8.4                          # pas de -p : invisible dehors\n\n# L'app : sur le réseau, PAS publiée directement (le proxy s'en charge)\ndocker run -d --name ludo --network reseau-ludo \\\n    -e DB_HOST=bdd -e DB_PASSWORD=secret \\\n    ludotheque:0.1                     # pas de -p non plus\n\n# Le proxy : LE seul point d'entrée public\ndocker run -d --name proxy --network reseau-ludo \\\n    -p 80:80 -p 443:443 \\\n    -v ./nginx.conf:/etc/nginx/conf.d/default.conf:ro \\\n    nginx:alpine                       # proxy_pass http://ludo:8000\n\n# Qui joint qui ?\n# internet → proxy      :80/:443   PUBLIÉ (le seul)\n# proxy    → ludo:8000             réseau interne, par nom\n# ludo     → bdd:3306              réseau interne, par nom\n# internet → bdd / ludo            IMPOSSIBLE (non publiés)",
+    note: "Le motif « un seul point d'entrée publié » est l'architecture de production standard : le proxy gère HTTPS et route par nom DNS interne, l'app et la base restent inaccessibles du dehors. :ro sur le montage nginx.conf = lecture seule, un petit durcissement gratuit. Compose déclarera tout ça en YAML (leçon 12)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Cache de premier niveau et bonnes pratiques de session",
+  subtitle: "Le contexte de persistance EST un cache — et tu l'utilises depuis la leçon 5 sans le savoir.",
+  theory: `
+<h3>1. La révélation : deux find, un seul SELECT</h3>
+<p>Depuis la leçon 5, on parle du contexte de persistance comme d'une « salle d'attente » des entités gérées. Voici sa deuxième nature : c'est un <strong>cache</strong> (une mémoire temporaire qui évite de redemander ce qu'on a déjà). Regarde ce que dit show_sql :</p>
+<pre class="pseudo">Jeu a = em.find(Jeu.class, 42L);   // → SELECT ... WHERE id = 42 (1er appel : va en base)
+Jeu b = em.find(Jeu.class, 42L);   // → AUCUN SQL ! (déjà en mémoire)
+System.out.println(a == b);        // true : c'est le MÊME objet Java</pre>
+<p>Le deuxième find ne touche pas MySQL : Hibernate a trouvé le jeu 42 dans son contexte et rend <strong>exactement la même instance</strong>. C'est le <strong>cache de premier niveau</strong>, et il est toujours actif — impossible à désactiver, gratuit, silencieux. C'est aussi lui qui expliquait, hier, pourquoi un N+1 sur 50 locations du même jeu ne refaisait pas 50 fois le même SELECT.</p>
+
+<h3>2. L'identity map : une ligne = un objet</h3>
+<p>Ce comportement porte un nom de motif de conception : l'<strong>identity map</strong> (« carte d'identité » des objets). Règle : au sein d'un même EntityManager, une ligne de la base est représentée par <strong>au plus un</strong> objet Java. Conséquences précieuses :</p>
+<pre class="pseudo">Location loc = em.find(Location.class, 7L); // charger la location 7 (entité gérée)
+Jeu viaLoc = loc.getJeu();                 // le jeu id 42, atteint via la relation
+Jeu direct = em.find(Jeu.class, 42L);      // le jeu id 42, atteint via find
+// viaLoc == direct → true : une seule vérité en mémoire
+viaLoc.setTitre("Catan (édition 2026)");   // on modifie via une des deux références...
+System.out.println(direct.getTitre());     // "Catan (édition 2026)" aussi ! (c'est le même objet)</pre>
+<p>Pas de copies divergentes, pas de « quelle version de l'objet est la bonne ? » : le dirty checking (leçon 6) travaille sur cette instance unique. C'est également ce qui garantit qu'un commit n'envoie qu'UN UPDATE par ligne modifiée.</p>
+
+<h3>3. La portée : l'EntityManager, pas l'application</h3>
+<p>Point capital : ce cache vit et meurt <strong>avec son EntityManager</strong>. Deux EntityManager différents ont chacun leur contexte : chacun fera son propre SELECT et obtiendra sa propre instance du jeu 42. Ce n'est PAS un cache partagé entre utilisateurs :</p>
+<pre class="pseudo">EntityManager em1 = emf.createEntityManager();  // premier EntityManager (son propre contexte)
+EntityManager em2 = emf.createEntityManager();  // second EntityManager (contexte distinct)
+Jeu x = em1.find(Jeu.class, 42L);   // SELECT (dans le contexte de em1)
+Jeu y = em2.find(Jeu.class, 42L);   // SELECT aussi (dans le contexte de em2)
+// x == y → false : deux instances, deux salles d'attente séparées</pre>
+<p>Il existe bien un <strong>cache de deuxième niveau</strong>, partagé au niveau de l'EntityManagerFactory (donc de l'application), à activer explicitement avec un fournisseur comme Ehcache — hors programme de ce cours : sache qu'il existe, méfie-toi de qui te le vend comme solution miracle.</p>
+
+<h3>4. Piloter le contexte : flush, clear, detach</h3>
+<p>Trois méthodes pour reprendre la main sur la salle d'attente :</p>
+<pre class="pseudo">em.flush();    // pousse MAINTENANT le SQL en attente vers MySQL
+               // (sans commiter : la transaction reste ouverte)
+em.detach(jeu);// éjecte UNE entité : elle devient détachée (leçon 7),
+               // ses modifications futures ne seront plus suivies
+em.clear();    // vide TOUT le contexte : toutes les entités détachées,
+               // le cache repart à zéro</pre>
+<p>Cas d'usage typique : un import de 10 000 jeux dans la même transaction. Sans précaution, le contexte accumule 10 000 entités surveillées — mémoire qui gonfle, dirty checking de plus en plus lent au flush. Le remède classique : <strong>flush() + clear() tous les 50 objets</strong>, par paquets.</p>
+
+<h3>5. Bonnes pratiques de session : le récapitulatif</h3>
+<p>Tout ce que tu as appris converge vers une hygiène simple :</p>
+<pre class="pseudo">1. UNE EntityManagerFactory pour toute l'application (coûteuse, thread-safe)
+2. UN EntityManager COURT par opération métier (léger, non thread-safe)
+   → ouvert tard, fermé tôt : le motif « unité de travail » (leçon 5)
+3. Écritures dans une transaction : begin/commit, rollback si échec (leçon 17)
+4. Relations en LAZY + JOIN FETCH ciblé (leçons 12 et 18)
+5. Traitements de masse : flush() + clear() par paquets
+6. Toujours close() l'EntityManager (try/finally ou try-with-resources)</pre>
+<p>Un EntityManager qui vit longtemps, c'est un cache qui grossit, des données qui se périment (le contexte ne voit pas les modifications faites par les autres utilisateurs !) et des fuites mémoire. Côté Spring (Niveau 6), le motif standard « un EntityManager par requête HTTP, une transaction par méthode @Transactional » applique exactement ces règles pour toi ; EF Core (DbContext court), Eloquent et Django suivent la même philosophie de session brève.</p>
+<div class="warn">Le cache de premier niveau ne se périme JAMAIS de lui-même : si un autre utilisateur modifie le jeu 42 en base, ton EntityManager continue de servir sa vieille copie sans refaire de SELECT. C'est la vraie raison des sessions courtes — un contexte qui vieillit est un contexte qui ment. Au besoin, em.refresh(jeu) recharge de force depuis la base.</div>
+<div class="tip">Attention à la nuance : le cache de premier niveau ne court-circuite que find (recherche par clé primaire). Une requête JPQL part TOUJOURS en base ; en revanche, si les lignes ramenées sont déjà dans le contexte, Hibernate te rend les instances existantes plutôt que d'en créer des doublons — l'identity map a toujours le dernier mot.</div>`,
+  exercises: [
+    { type: "qcm", q: "Deux em.find(Jeu.class, 42L) successifs sur le MÊME EntityManager exécutent…", opts: ["Deux SELECT", "Un seul SELECT : le second est servi par le cache de premier niveau", "Aucun SELECT", "Un SELECT et un UPDATE"], a: 1, exp: "Le contexte de persistance garde le jeu 42 : pas de second aller-retour base." },
+    { type: "qcm", q: "Ces deux find retournent…", opts: ["Deux copies distinctes de l'objet", "La même instance Java (a == b vaut true)", "Un objet et un proxy", "null puis l'objet"], a: 1, exp: "Identity map : une ligne = au plus un objet par contexte." },
+    { type: "input", q: "Comment s'appelle le motif « une ligne de la base = au plus un objet en mémoire » ?", a: ["identity map", "identity-map", "identitymap", "l'identity map"], ph: "deux mots anglais…", exp: "L'identity map, cœur du cache de premier niveau." },
+    { type: "qcm", q: "La portée du cache de premier niveau est…", opts: ["Toute l'application", "L'EntityManager (son contexte de persistance)", "Le serveur MySQL", "La JVM entière, tous threads confondus"], a: 1, exp: "Chaque EntityManager a sa salle d'attente ; deux managers = deux caches indépendants." },
+    { type: "vf", q: "Le cache de premier niveau doit être activé explicitement dans la configuration.", a: false, exp: "Il est toujours actif et impossible à désactiver : c'est la nature même du contexte de persistance." },
+    { type: "qcm", q: "Deux EntityManager différents qui font find(Jeu.class, 42L) obtiennent…", opts: ["La même instance", "Deux instances distinctes, avec un SELECT chacun", "Une erreur", "Un objet partagé en lecture seule"], a: 1, exp: "Le cache n'est pas partagé : x == y vaut false entre deux contextes." },
+    { type: "qcm", q: "em.flush() a pour effet de…", opts: ["Pousser immédiatement le SQL en attente, sans commiter", "Valider la transaction", "Vider le cache", "Fermer la connexion"], a: 0, exp: "flush = synchroniser contexte → base ; le commit reste une étape distincte." },
+    { type: "qcm", q: "em.clear() a pour effet de…", opts: ["Supprimer les lignes en base", "Détacher toutes les entités et vider le contexte", "Recharger toutes les entités", "Annuler la transaction"], a: 1, exp: "La salle d'attente est vidée : tout devient détaché, le cache repart à zéro." },
+    { type: "input", q: "Quelle méthode éjecte UNE seule entité du contexte de persistance ?", a: ["detach", "em.detach", "detach()", "em.detach()"], ph: "nom de la méthode…", exp: "em.detach(jeu) : l'entité devient détachée, ses modifications ne sont plus suivies (leçon 7)." },
+    { type: "qcm", q: "Pour importer 10 000 jeux sans faire exploser la mémoire, on recommande…", opts: ["Un EAGER global", "flush() puis clear() par paquets (ex. tous les 50 persist)", "Un seul commit final sans rien d'autre", "Désactiver les transactions"], a: 1, exp: "On vide régulièrement la salle d'attente : mémoire stable, dirty checking rapide." },
+    { type: "qcm", q: "Le cache de deuxième niveau…", opts: ["Est identique au premier niveau", "Est partagé au niveau de l'application, à activer explicitement (hors programme)", "Remplace MySQL", "Est activé par défaut dans JPA"], a: 1, exp: "Partagé via l'EntityManagerFactory, avec un fournisseur type Ehcache ; à manier avec prudence." },
+    { type: "vf", q: "Si un autre utilisateur modifie le jeu 42 en base, ton contexte déjà chargé s'en aperçoit automatiquement.", a: false, exp: "Le cache ne se périme jamais seul : il sert sa copie. D'où les sessions courtes, ou em.refresh() pour forcer." },
+    { type: "qcm", q: "Un EntityManager qui vit très longtemps provoque…", opts: ["De meilleures performances garanties", "Cache qui gonfle, données périmées, risque de fuite mémoire", "La fermeture de MySQL", "Des tables en double"], a: 1, exp: "Un contexte qui vieillit est un contexte qui ment : ouvert tard, fermé tôt." },
+    { type: "vf", q: "Une requête JPQL est court-circuitée par le cache de premier niveau, comme find.", a: false, exp: "Le JPQL part toujours en base ; mais les lignes déjà connues sont rendues via les instances existantes (identity map)." },
+    { type: "qcm", q: "Au Niveau 6, le motif Spring équivalent aux sessions courtes est…", opts: ["Un EntityManager par requête HTTP et une transaction par méthode @Transactional", "Un EntityManager global statique", "Un cache Redis obligatoire", "Une factory par utilisateur"], a: 0, exp: "Spring applique l'hygiène de session pour toi ; EF Core fait pareil avec un DbContext court." }
+  ],
+  final: {
+    title: "Exercice final — L'énigme des deux sessions",
+    intro: `<p>Un collègue est perdu : « J'ai chargé le jeu 42 dans mon programme A, puis le programme B a changé son prix en base, mais A affiche toujours l'ancien prix, même après un deuxième find ! ». À toi d'expliquer, en t'appuyant sur ce que fait vraiment le contexte de persistance.</p>`,
+    questions: [
+      { type: "qcm", q: "Pourquoi le deuxième find du programme A rend-il l'ancien prix ?", opts: ["MySQL a perdu la mise à jour", "Le find est servi par le cache de premier niveau : aucun SELECT n'est refait", "Le dirty checking a écrasé la valeur", "Le jeu 42 est final"], a: 1, exp: "Même EntityManager → même contexte → même instance, jamais rechargée." },
+      { type: "qcm", q: "La méthode qui force le rechargement de l'entité depuis la base :", opts: ["em.refresh(jeu)", "em.persist(jeu)", "em.remove(jeu)", "em.flush()"], a: 0, exp: "refresh écrase l'état en mémoire avec l'état actuel de la base." },
+      { type: "vf", q: "Si le programme A avait ouvert un NOUVEL EntityManager pour le deuxième find, il aurait vu le nouveau prix.", a: true, exp: "Nouveau contexte = cache vide = vrai SELECT : c'est l'argument massue des sessions courtes." },
+      { type: "input", q: "Quelle méthode vide entièrement le contexte de persistance d'un EntityManager ?", a: ["clear", "em.clear", "clear()", "em.clear()"], ph: "nom de la méthode…", exp: "em.clear() détache tout ; les find suivants repartent en base." },
+      { type: "qcm", q: "La leçon d'architecture à en tirer :", opts: ["Garder un EntityManager global pour profiter du cache", "Un EntityManager court par unité de travail : le cache est un outil de cohérence intra-opération, pas un cache applicatif", "Désactiver le cache de premier niveau", "Toujours utiliser des requêtes natives"], a: 1, exp: "Le premier niveau garantit la cohérence D'UNE opération ; le partage entre opérations relève du 2e niveau, hors programme." }
+    ],
+    solution: `<pre class="pseudo">EXPLICATION DE L'ÉNIGME
+  Programme A, EntityManager unique et durable :
+    find(42) n°1 → SELECT, le jeu entre dans le contexte (prix 3.50)
+    [B fait UPDATE jeu SET prix_location = 4.50 WHERE id = 42 ; commit]
+    find(42) n°2 → servi par le CACHE : aucun SQL, prix toujours 3.50
+  Le contexte ne se périme jamais seul : il sert sa copie.
+
+REMÈDES, DU PONCTUEL AU STRUCTUREL
+  em.refresh(jeu)  → recharge CETTE entité depuis la base
+  em.clear()       → vide tout ; les prochains find repartent en base
+  LE BON DESIGN    → EntityManager court : une opération métier,
+                     un contexte neuf, des données fraîches
+
+RÉCAPITULATIF DES BONNES PRATIQUES DE SESSION
+  1 factory durable · N managers jetables · transactions encadrées
+  LAZY + JOIN FETCH ciblé · flush/clear par paquets en masse
+  close() systématique · jamais de contexte qui traverse les requêtes</pre>
+<p>Tu connais désormais toute la mécanique interne : mapping, cycle de vie, relations, requêtes, transactions, performance, cache. Demain, on assemble TOUT : la couche de persistance complète de la Ludothèque, entité par entité, DAO par DAO — la synthèse du cours.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l19", title: "La charte de session de l'équipe", level: 3,
+    statement: "Ton équipe démarre le développement de la Ludothèque et te demande de rédiger la « charte EntityManager » du projet : un document court que chaque développeur devra respecter. Rédige-la : durée de vie de la factory et des managers, règles sur les transactions, politique pour les traitements de masse (import du catalogue fournisseur : 20 000 jeux), interdictions explicites (avec la raison de chaque interdit), et le paragraphe qui explique POURQUOI le cache de premier niveau impose des sessions courtes (avec le scénario de données périmées à l'appui).",
+    hints: [
+      "Une charte efficace : peu de règles, chacune avec sa justification en une phrase — un interdit non justifié sera contourné.",
+      "Pour l'import de 20 000 jeux : quel duo de méthodes, à quelle fréquence, et que se passe-t-il si on l'oublie (mémoire, vitesse du dirty checking) ?",
+      "Le scénario de péremption : deux utilisateurs, un prix modifié, un contexte qui sert sa vieille copie — déroule-le pas à pas comme preuve."
+    ],
+    solution: "CHARTE ENTITYMANAGER — projet Ludothèque\n\nRÈGLE 1 — Une seule EntityManagerFactory\n  Créée au démarrage, fermée à l'arrêt. Coûteuse et thread-safe :\n  la dupliquer gaspille ; la recréer par requête est une faute.\n\nRÈGLE 2 — Un EntityManager par opération métier\n  createEntityManager() au début de l'opération (louerJeu, inscrireMembre),\n  close() en finally. Jamais de manager stocké en champ statique ni\n  partagé entre threads (il n'est pas thread-safe).\n\nRÈGLE 3 — Toute écriture dans une transaction\n  begin() avant, commit() après, rollback() dans le catch si tx.isActive().\n  Une transaction = une opération métier cohérente (leçon 17).\n\nRÈGLE 4 — Traitements de masse par paquets\n  Import catalogue (20 000 jeux) : tous les 50 persist,\n  em.flush() puis em.clear().\n  Sinon : 20 000 entités surveillées, mémoire qui gonfle, dirty checking\n  qui ralentit à chaque flush — l'import passe de 30 s à plusieurs minutes.\n\nINTERDITS\n  - EntityManager global « pour profiter du cache » : voir pourquoi ci-dessous.\n  - EAGER pour corriger une lenteur : déplace le coût partout (leçon 18).\n  - Écriture hors transaction : TransactionRequiredException ou pire,\n    état incohérent.\n\nPOURQUOI LES SESSIONS COURTES (la preuve par le scénario)\n  10 h 00 : le poste Accueil charge le jeu 42 (prix 3.50) dans son\n            EntityManager gardé ouvert toute la journée.\n  10 h 05 : le poste Gestion passe le prix à 4.50 (commit en base).\n  10 h 30 : l'Accueil refait find(42) → servi par SON cache : 3.50.\n            Il facture le mauvais prix, sans erreur ni avertissement.\n  Le cache de premier niveau garantit la cohérence D'UNE opération\n  (identity map, un seul UPDATE par ligne) ; il ne se périme jamais seul.\n  Un contexte neuf par opération = des données fraîches par construction.",
+    note: "Cette charte est exactement ce que Spring institutionnalise au Niveau 6 : un EntityManager par requête HTTP, @Transactional par méthode de service — tu sauras désormais ce que ces conventions protègent. EF Core impose la même discipline avec ses DbContext courts : la règle est universelle, pas une manie de Hibernate." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

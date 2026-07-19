@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Le frontend Razor : templates échappés et en-têtes de sécurité",
+  subtitle: "Donner un visage au métier — avec XSS et clickjacking fermés d'office.",
+  theory: `
+<h3>1. Le frontend, le HTML et les templates Razor</h3>
+<p>Le <strong>frontend</strong> (« façade », de l'anglais <em>front</em> = le devant) est la partie visible d'une application : les pages, les boutons, les tableaux que l'utilisateur regarde. Le <strong>backend</strong> (« l'arrière-boutique ») est le code caché qui calcule et parle à la base de données. Ici le frontend est une page web listant des jeux à louer.</p>
+<p>Une page web s'écrit en <strong>HTML</strong> (<em>HyperText Markup Language</em>, « langage de balisage »), fait de <strong>balises</strong> entre chevrons. Une balise est une étiquette qui donne un rôle à un morceau de contenu : <code>&lt;td&gt;…&lt;/td&gt;</code> délimite une cellule de tableau, <code>&lt;form&gt;…&lt;/form&gt;</code> un formulaire. Chaque balise ouvrante (<code>&lt;td&gt;</code>) se referme (<code>&lt;/td&gt;</code>), comme une parenthèse.</p>
+<p>Un <strong>template</strong> (« gabarit ») est une page HTML à trous : on dessine le décor une seule fois, et on laisse des emplacements que le programme remplira avec de vraies données. <strong>Razor</strong> est le moteur de templates de C# : il reconnaît le caractère <code>@</code> comme « ici, insère une valeur venue du code », un peu comme un publipostage où <code>@jeu.Titre</code> signifie « colle ici le titre du jeu ». Le <strong>modèle</strong> (<code>Model</code>) désigne les données que le backend transmet à la page.</p>
+
+<h4>Razor échappe par défaut</h4>
+<pre class="pseudo">@* Views/Catalogue/Index.cshtml *@          @* commentaire Razor (entre @* et *@) : ignoré, invisible dans la page *@
+@foreach (var jeu in Model) {               @* POUR CHAQUE jeu de la liste Model (les données reçues du backend)… *@
+  &lt;tr&gt;                                      @* …ouvrir une ligne de tableau (table row) *@
+    &lt;td&gt;@jeu.Titre&lt;/td&gt;              @* cellule : @jeu.Titre insère le titre — et @ ÉCHAPPE le HTML (anti-XSS) *@
+    &lt;td&gt;@jeu.PrixLocation €&lt;/td&gt;     @* cellule : le prix de location, suivi du symbole euro *@
+  &lt;/tr&gt;                                     @* fermer la ligne de tableau *@
+}                                           @* fin de la boucle : Razor recommence pour le jeu suivant *@</pre>
+<p><strong>Échapper</strong> (en anglais <em>escape</em>) veut dire « neutraliser » : transformer des caractères dangereux en texte inoffensif. Quand une valeur contient <code>&lt;script&gt;</code>, Razor l'affiche comme du texte visible au lieu de le laisser s'exécuter. C'est la parade au <strong>XSS</strong> (<em>Cross-Site Scripting</em>) : une attaque où un pirate glisse du code dans une saisie (un commentaire, un pseudo) en espérant qu'il s'exécute dans le navigateur des autres visiteurs. Avec <code>@variable</code>, cette protection est <strong>gratuite et automatique</strong>. Une <strong>variable</strong> est une case mémoire nommée qui contient une valeur (ici le titre d'un jeu).</p>
+
+<h3>2. Le piège Html.Raw</h3>
+<pre class="pseudo">@* DANGER : Html.Raw n'échappe PAS *@                     @* Html.Raw insère la valeur telle quelle, sans neutraliser *@
+&lt;td&gt;@Html.Raw(jeu.Description)&lt;/td&gt;   @* si Description vient d'un utilisateur, un script glissé dedans s'exécuterait : XSS *@
+@* Règle : Html.Raw UNIQUEMENT sur du HTML de confiance, jamais sur une saisie *@</pre>
+<p><code>Html.Raw</code> demande explicitement à Razor de ne PAS échapper — d'insérer le HTML « brut » (<em>raw</em>). C'est utile pour afficher du HTML que VOUS maîtrisez, mais c'est une porte ouverte au XSS si la donnée vient d'un utilisateur. La règle d'or : <code>Html.Raw</code> seulement sur du contenu de confiance.</p>
+
+<h3>3. Le formulaire porte le jeton antiforgery</h3>
+<pre class="pseudo">&lt;form asp-action="Louer" asp-route-id="@jeu.Id" method="post"&gt;   @* formulaire qui, une fois validé, appelle l'action Louer pour ce jeu *@
+    @* le tag helper de formulaire injecte AUTOMATIQUEMENT le jeton antiforgery *@
+    &lt;button&gt;Louer&lt;/button&gt;                                       @* bouton qui envoie (submit) le formulaire *@
+&lt;/form&gt;                                                          @* fin du formulaire *@
+// côté action : [ValidateAntiForgeryToken] vérifie le jeton    // le serveur rejette la requête si le jeton manque ou est faux</pre>
+<p>Un <strong>formulaire</strong> (<code>&lt;form&gt;</code>) est un bloc qui envoie des données au serveur quand on clique sur un bouton. <code>method="post"</code> précise qu'on ENVOIE une action (louer), pas qu'on lit une page. Un <strong>tag helper</strong> est une balise « augmentée » par ASP.NET : les attributs <code>asp-*</code> sont lus côté serveur pour générer le bon HTML — et au passage, glisser un <strong>jeton antiforgery</strong>. Ce jeton est un mot de passe à usage unique, invisible, prouvant que le formulaire vient bien de votre site. Il ferme le <strong>CSRF</strong> (<em>Cross-Site Request Forgery</em>) : une attaque où un site malveillant fait exécuter une action à votre place. Une <strong>action</strong> est la méthode C# du serveur qui traite la requête ; l'étiquette <code>[ValidateAntiForgeryToken]</code> lui demande de vérifier le jeton avant d'agir.</p>
+
+<h3>4. Les en-têtes de sécurité (middleware)</h3>
+<pre class="pseudo">app.Use(async (ctx, next) => {                                   // ajoute une étape traversée par CHAQUE requête (un middleware)
+    ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'";  // n'autorise que les ressources du même site
+    ctx.Response.Headers["X-Frame-Options"] = "DENY";            // interdit d'afficher la page dans une iframe : anti-clickjacking
+    ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";  // interdit au navigateur de « deviner » le type d'un fichier
+    await next();                                                // passer la main à l'étape suivante de la chaîne
+});</pre>
+<p>Un <strong>en-tête</strong> (<em>header</em>) est une petite consigne que le serveur joint à chaque réponse, avant le contenu, comme l'étiquette collée sur un colis. Un <strong>middleware</strong> (« intergiciel ») est une étape que traverse chaque requête, telle une file de postes de contrôle : chacun peut inspecter, modifier, puis passer la main au suivant via <code>await next()</code>. Les mots <code>async</code>/<code>await</code> gèrent l'attente sans bloquer les autres visiteurs (détaillés plus tard). La <strong>CSP</strong> (<em>Content-Security-Policy</em>, « politique de sécurité du contenu ») liste les sources autorisées de scripts et d'images ; <code>default-src 'self'</code> = « seulement mon propre domaine ». <code>X-Frame-Options: DENY</code> empêche le <strong>clickjacking</strong> (piéger l'utilisateur en superposant votre page invisible sous un faux bouton). <code>nosniff</code> empêche le navigateur de réinterpréter un fichier dans un type dangereux (le <strong>type MIME</strong> est l'étiquette disant « ceci est une image / du texte / un script »).</p>
+
+<h3>5. La CSP, adoptée en douceur</h3>
+<div class="warn">On peut démarrer la CSP en <code>Content-Security-Policy-Report-Only</code> : elle <em>observe</em> les violations et les signale, sans rien bloquer. On ajuste, puis on bascule en mode bloquant — comme un videur qui note d'abord les intrus avant de les refouler. La grande majorité des XSS viennent d'un <code>Html.Raw</code> sur une donnée non fiable : <code>grep "Html.Raw" Views/</code> — <code>grep</code> étant un outil qui cherche un texte dans des fichiers — avant chaque <strong>merge</strong> (fusion du code dans le projet commun) suffit à éliminer cette classe de failles.</div>
+<div class="tip">Le frontend hérite <strong>gratuitement</strong> de l'échappement Razor et des en-têtes posés d'office : XSS et clickjacking fermés avant même d'exister. On ne « rajoute pas la sécurité du rendu » à la fin : elle est présente dès la première vue. C'est ça, construire en sécurisant.</div>`,
+  exercises: [
+    { type: "qcm", q: "@variable en Razor…", opts: ["N'échappe pas", "Échappe le HTML (anti-XSS)", "Chiffre", "Déploie"], a: 1, exp: "Saisie affichée, jamais exécutée." },
+    { type: "qcm", q: "Html.Raw en Razor…", opts: ["Échappe", "N'échappe PAS (danger sur saisie)", "Chiffre", "Est obligatoire"], a: 1, exp: "Seulement du HTML de confiance." },
+    { type: "qcm", q: "Le XSS est fermé par…", opts: ["Un WAF", "L'échappement du template (@variable)", "Un cookie", "Un index"], a: 1, exp: "Par défaut." },
+    { type: "qcm", q: "Le tag helper <form asp-*>…", opts: ["Est décoratif", "Injecte le jeton antiforgery automatiquement", "Chiffre", "Ralentit"], a: 1, exp: "Anti-CSRF." },
+    { type: "qcm", q: "X-Frame-Options: DENY protège contre…", opts: ["Le XSS", "Le clickjacking", "L'injection SQL", "Le CSRF"], a: 1, exp: "Pas d'iframe." },
+    { type: "qcm", q: "X-Content-Type-Options: nosniff empêche…", opts: ["Le login", "Le navigateur de deviner un type MIME", "Le CSS", "Le cache"], a: 1, exp: "Anti-confusion de type." },
+    { type: "qcm", q: "La CSP peut démarrer en…", opts: ["Bloquant direct", "Report-Only (observe sans casser)", "Désactivée", "HTTP"], a: 1, exp: "Adoption en douceur." },
+    { type: "qcm", q: "default-src 'self' autorise…", opts: ["Tout", "Les ressources du même domaine", "Rien", "Les scripts externes"], a: 1, exp: "Réduit la surface XSS." },
+    { type: "qcm", q: "Avant chaque merge on vérifie…", opts: ["Le CSS", "Qu'aucun Html.Raw ne traîne sur une saisie", "La RAM", "Le port"], a: 1, exp: "grep Html.Raw." },
+    { type: "qcm", q: "L'échappement Razor est…", opts: ["Payant", "Gratuit et par défaut", "Optionnel", "Lent"], a: 1, exp: "Hérité d'office." },
+    { type: "vf", q: "Une saisie malveillante affichée via @variable s'affiche mais ne s'exécute pas.", a: true, exp: "Neutralisée." },
+    { type: "qcm", q: "[ValidateAntiForgeryToken] côté action…", opts: ["Chiffre", "Vérifie le jeton antiforgery du formulaire", "Ralentit", "Déploie"], a: 1, exp: "Rejette si jeton absent/faux." },
+    { type: "qcm", q: "Les en-têtes de sécurité sont posés via…", opts: ["Chaque vue", "Un middleware global", "La base", "Le cache"], a: 1, exp: "Une fois pour tout le site." },
+    { type: "qcm", q: "Html.Raw sur une description utilisateur est…", opts: ["Sûr", "Une porte à XSS", "Recommandé", "Rapide"], a: 1, exp: "Ne jamais dé-échapper une saisie." },
+    { type: "vf", q: "Le frontend hérite de la sécurité dès la première vue.", a: true, exp: "Construire en sécurisant." }
+  ],
+  final: {
+    title: "Exercice final — Le rendu, sécurisé d'office",
+    intro: `<p>Templates échappés + en-têtes + antiforgery.</p>`,
+    questions: [
+      { type: "qcm", q: "Le contenu utilisateur s'affiche via :", opts: ["@variable (échappé)", "Html.Raw (brut)", "innerHTML", "eval"], a: 0, exp: "Anti-XSS." },
+      { type: "qcm", q: "Le clickjacking est bloqué par :", opts: ["X-Frame-Options: DENY", "un cookie", "un index", "rien"], a: 0, exp: "Pas d'iframe." },
+      { type: "qcm", q: "La CSP se déploie d'abord en :", opts: ["Report-Only", "bloquant direct", "désactivée", "HTTP only"], a: 0, exp: "Observer sans casser." },
+      { type: "qcm", q: "Le jeton antiforgery est :", opts: ["injecté par le tag helper, vérifié par [ValidateAntiForgeryToken]", "à écrire à la main", "dans l'URL", "absent"], a: 0, exp: "ASP.NET." },
+      { type: "vf", q: "Html.Raw ne doit jamais afficher une saisie utilisateur.", a: true, exp: "XSS sinon." }
+    ],
+    solution: `<pre class="pseudo">@* Index.cshtml *@                                              @* le template de la page catalogue *@
+<td>@jeu.Titre</td>                          @* @jeu.Titre : titre échappé automatiquement (anti-XSS) *@
+<form asp-action="Louer" asp-route-id="@jeu.Id" method="post"> ... </form>  @* le tag helper injecte le jeton antiforgery *@
+
+app.Use(async (ctx, next) => {                                  // middleware traversé par chaque requête
+  ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'";   // ressources du même domaine seulement
+  ctx.Response.Headers["X-Frame-Options"] = "DENY";             // pas d'iframe : anti-clickjacking
+  ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";   // pas de devinette de type MIME
+  await next();                                                 // passer au middleware suivant
+});   // d'abord CSP en Report-Only (on observe), puis mode bloquant</pre>
+<p>Le rendu est sécurisé d'office. Demain : les secrets et la configuration par environnement.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton template échappé et tes en-têtes…",
+  items: [
+  { id: "proj6cs-l13", title: "Le frontend échappé et sous en-têtes de sécurité", level: 2,
+    statement: "Écris un extrait de vue Razor du catalogue (@variable échappé, formulaire de location avec tag helper antiforgery), le middleware d'en-têtes de sécurité (CSP, X-Frame-Options, nosniff) et explique la stratégie report-only. En 2-3 lignes : pourquoi @variable plutôt que Html.Raw, et ce que le frontend hérite gratuitement.",
+    hints: [
+      "@variable échappe ; Html.Raw ne dé-échappe QUE du HTML de confiance.",
+      "<form asp-action ...> injecte le jeton ; [ValidateAntiForgeryToken] le vérifie.",
+      "CSP report-only : observer les violations avant de bloquer."
+    ],
+    solution: "@* Views/Catalogue/Index.cshtml *@              @* chemin du template de la page catalogue *@\n@model IEnumerable<Jeu>                          @* declare le type des donnees recues : une liste de Jeu *@\n<table>                                          @* ouvrir le tableau HTML *@\n@foreach (var jeu in Model) {                    @* pour chaque jeu de la liste Model… *@\n  <tr>                                           @* …ouvrir une ligne du tableau *@\n    <td>@jeu.Titre</td>                          @* titre du jeu, ECHAPPE : anti-XSS *@\n    <td>@jeu.PrixLocation €</td>                 @* prix de location suivi du symbole euro *@\n    <td>                                         @* cellule qui contient le bouton d'action *@\n      <form asp-action=\"Louer\" asp-route-id=\"@jeu.Id\" method=\"post\">   @* formulaire POST vers l'action Louer *@\n        @* le tag helper injecte le jeton antiforgery automatiquement *@\n        <button disabled=\"@(!jeu.EstLouable)\">Louer</button>           @* bouton desactive si le jeu n'est pas louable *@\n      </form>                                    @* fin du formulaire *@\n    </td>                                        @* fin de la cellule *@\n  </tr>                                           @* fin de la ligne *@\n}                                                @* fin de la boucle *@\n</table>                                         @* fin du tableau *@\n\n// Program.cs — en-tetes poses une fois pour tout le site\napp.Use(async (ctx, next) => {                   // middleware traverse par chaque requete\n    ctx.Response.Headers[\"Content-Security-Policy\"] = \"default-src 'self'\";   // ressources du meme domaine seulement\n    ctx.Response.Headers[\"X-Frame-Options\"] = \"DENY\";            // anti-clickjacking (pas d'iframe)\n    ctx.Response.Headers[\"X-Content-Type-Options\"] = \"nosniff\";  // pas de devinette de type MIME\n    await next();                                // passer au middleware suivant\n});                                              // fin du middleware\n\n// STRATEGIE REPORT-ONLY\n// On deploie d'abord la CSP en 'Content-Security-Policy-Report-Only' : le\n// navigateur SIGNALE les violations sans rien bloquer. On observe le trafic reel,\n// on ajuste les directives (un script legitime oublie), PUIS on bascule en mode\n// bloquant. Deployee bloquante d'emblee, une CSP casse souvent des pages.\n\n// POURQUOI @variable, CE QUI EST HERITE GRATUITEMENT\n// @variable echappe le HTML : &lt;script&gt;alert(1)&lt;/script&gt; saisi par un utilisateur\n// s'AFFICHE comme du texte, ne s'EXECUTE jamais. Html.Raw le rendrait brut -> XSS.\n// En posant l'echappement (par defaut) et les en-tetes (middleware global) des la\n// premiere vue, tout le frontend herite du rempart sans effort : XSS et\n// clickjacking fermes avant meme d'exister.",
+    note: "L'échappement par défaut de Razor est un filet de sécurité majeur : la grande majorité des XSS viennent d'un dé-échappement volontaire (Html.Raw, innerHTML) sur une donnée non fiable. La règle « Html.Raw uniquement sur du HTML de confiance » et le grep avant merge suffisent à éliminer cette classe de failles. Combinés aux en-têtes posés en middleware global, ils font du rendu un rempart présent dès le premier écran." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

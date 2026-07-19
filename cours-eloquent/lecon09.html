@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "La relation 1-N : hasMany",
+  subtitle: "Un jeu, toutes ses locations, tous ses avis : le sens parent → enfants.",
+  theory: `
+<h3>1. L'inverse de belongsTo</h3>
+<p>Leçon 8 : depuis une location, tu remontes vers SON jeu. Aujourd'hui, le sens inverse : depuis un jeu, tu descends vers TOUTES ses locations. C'est la relation <strong>1-N</strong> (un parent, plusieurs enfants), déclarée avec <strong>hasMany</strong> (« a plusieurs ») dans le modèle <strong>parent</strong> (analogie : une mère « a plusieurs » enfants ; c'est elle qui déclare hasMany).</p>
+<pre class="pseudo">Jeu (1) ──────&lt; Location (N)     Jeu    : hasMany(Location)
+Jeu (1) ──────&lt; Avis (N)         Location: belongsTo(Jeu)
+Membre (1) ───&lt; Location (N)
+
+La clé étrangère ne bouge PAS : elle reste chez l'enfant (locations.jeu_id).
+hasMany ne crée aucune colonne — il DÉCRIT le lien depuis l'autre bout.</pre>
+<p>Une relation complète se déclare donc <strong>des deux côtés</strong> : belongsTo chez l'enfant, hasMany chez le parent. En JPA, c'est le duo <em>@ManyToOne</em> / <em>@OneToMany(mappedBy = "jeu")</em> ; en Django, le ForeignKey suffit et le sens inverse (<em>jeu.avis_set</em>) est généré automatiquement.</p>
+
+<h3>2. Déclarer hasMany dans Jeu et Membre</h3>
+<pre class="pseudo">// app/Models/Jeu.php
+class Jeu extends Model
+{
+    protected $table = 'jeux'; // leçon 3 : pluriel irrégulier
+
+    public function locations()                  // "un jeu a plusieurs locations"
+    {
+        return $this-&gt;hasMany(Location::class);   // hasMany → cherche locations.jeu_id (par convention)
+    }
+
+    public function avis()                       // "un jeu a plusieurs avis"
+    {
+        return $this-&gt;hasMany(Avis::class);       // hasMany → cherche avis.jeu_id
+    }
+}
+
+// app/Models/Membre.php
+public function locations()                      // "un membre a plusieurs locations"
+{
+    return $this-&gt;hasMany(Location::class);       // hasMany → cherche locations.membre_id
+}</pre>
+<p>Convention : Eloquent devine la clé étrangère à partir du nom du modèle <strong>parent</strong> — <em>Jeu</em> → <em>jeu_id</em> chez l'enfant. Si la colonne diffère : <em>hasMany(Location::class, 'id_du_jeu')</em>. Le nom de la méthode, lui, est libre et se met au pluriel par lisibilité.</p>
+
+<h3>3. Le résultat est une Collection</h3>
+<pre class="pseudo">$jeu = Jeu::find(3);           // charge le jeu n°3
+
+$jeu-&gt;locations;              // Collection de Location (SELECT * FROM locations WHERE jeu_id = 3)
+$jeu-&gt;locations-&gt;count();     // 12 : compte les éléments déjà chargés en mémoire
+$jeu-&gt;avis-&gt;first()-&gt;note;    // 5 : premier avis de la collection, puis sa note
+
+foreach ($jeu-&gt;avis as $avis) {   // parcourt chaque avis du jeu
+    echo $avis-&gt;commentaire;      // affiche le commentaire de l'avis courant
+}                                // fin de la boucle
+
+// SQL en coulisses : SELECT * FROM avis WHERE jeu_id = 3</pre>
+<p>Une <strong>Collection</strong> Eloquent, pas un simple tableau : elle offre <em>count()</em>, <em>first()</em>, <em>isEmpty()</em>, <em>avg('note')</em>, <em>pluck('titre')</em>… Un jeu sans avis donne une Collection <strong>vide</strong>, jamais <em>null</em> — contrairement au belongsTo de la leçon 8.</p>
+
+<h3>4. La différence cruciale : $jeu-&gt;avis contre $jeu-&gt;avis()</h3>
+<p>C'est LA subtilité de la semaine. <strong>Sans parenthèses</strong> : Eloquent exécute la requête et te rend les <strong>résultats</strong> (Collection). <strong>Avec parenthèses</strong> : tu obtiens un <strong>query builder</strong> encore ouvert, que tu peux affiner avant d'exécuter. Un <strong>query builder</strong> est un objet qui construit la requête morceau par morceau (analogie : un bon de commande que tu complètes ligne par ligne avant de l'envoyer en cuisine ; tant que tu ne l'envoies pas, aucun plat n'est cuisiné).</p>
+<pre class="pseudo">$jeu-&gt;avis                    // Collection : TOUS les avis, requête DÉJÀ partie
+$jeu-&gt;avis()                  // HasMany : query builder, requête PAS ENCORE exécutée
+
+// Affiner puis exécuter :
+$jeu-&gt;avis()-&gt;where('note', '&gt;=', 4)-&gt;get();     // ajoute WHERE note >= 4, puis exécute (get)
+$jeu-&gt;avis()-&gt;count();                            // SELECT COUNT(*) en SQL, rien n'est chargé
+$jeu-&gt;locations()-&gt;whereNull('date_retour')-&gt;get(); // locations en cours (date_retour IS NULL)</pre>
+<p>Nuance de performance : <em>$jeu-&gt;avis-&gt;count()</em> charge tous les avis en mémoire puis compte en PHP ; <em>$jeu-&gt;avis()-&gt;count()</em> fait un <em>SELECT COUNT(*)</em> en base. Sur 10 000 lignes, la différence se sent.</p>
+
+<h3>5. Créer via la relation : la clé étrangère remplie toute seule</h3>
+<pre class="pseudo">$jeu = Jeu::find(3);           // charge le jeu n°3
+
+// create() via la relation : jeu_id = 3 posé automatiquement
+$jeu-&gt;avis()-&gt;create([          // insère un avis rattaché à CE jeu
+    'membre_id'   =&gt; 12,       // qui a laissé l'avis
+    'note'        =&gt; 5,        // la note donnée
+    'commentaire' =&gt; 'Excellent jeu de negociation.',   // le texte de l'avis
+]);                            // jeu_id est rempli tout seul par la relation
+
+// Variante avec un objet existant :
+$avis = new Avis(['note' =&gt; 4, 'membre_id' =&gt; 7]);   // crée l'objet Avis en mémoire
+$jeu-&gt;avis()-&gt;save($avis);    // pose jeu_id puis exécute l'INSERT
+
+// createMany() pour un lot :
+$jeu-&gt;avis()-&gt;createMany([ ['note' =&gt; 3, 'membre_id' =&gt; 2], ['note' =&gt; 5, 'membre_id' =&gt; 9] ]);   // insère plusieurs avis d'un coup</pre>
+<p>Plus jamais de <em>jeu_id</em> écrit à la main : la relation connaît le parent, elle remplit la clé. Comme au leçon 5, <em>create()</em> passe par <em>$fillable</em> — pense à y lister les colonnes.</p>
+<div class="warn">hasMany ne crée PAS la colonne jeu_id : c'est ta migration (leçon 4) qui la crée avec foreignId('jeu_id')-&gt;constrained('jeux'). Le modèle décrit, la migration construit — deux responsabilités distinctes.</div>
+<div class="tip">Mémo : parenthèses = « je veux encore travailler la requête », pas de parenthèses = « donne-moi les résultats ». En EF Core tu écrirais jeu.Avis (ICollection chargée via Include) ; en Django, jeu.avis_set.filter(note__gte=4) — même logique de manager affinables.</div>`,
+  exercises: [
+    { type: "qcm", q: "hasMany se déclare dans le modèle…", opts: ["Enfant, qui porte la FK", "Parent, référencé par la FK", "Pivot", "Peu importe"], a: 1, exp: "Le parent « a plusieurs » enfants ; la FK reste chez l'enfant." },
+    { type: "input", q: "Quelle méthode déclare « un jeu a plusieurs avis » ?", a: ["hasMany", "hasmany", "$this->hasMany(Avis::class)"], ph: "nom de la méthode…", exp: "return $this->hasMany(Avis::class); dans Jeu." },
+    { type: "qcm", q: "Jeu::class dans hasMany(Location::class) fait deviner la FK…", opts: ["location_id chez Jeu", "jeu_id chez Location", "id chez Location", "jeux_id chez Location"], a: 1, exp: "Nom du modèle parent + _id, cherchée dans la table enfant." },
+    { type: "qcm", q: "$jeu->locations retourne…", opts: ["Un modèle Location", "null si vide", "Une Collection de Location", "Un tableau PHP natif"], a: 2, exp: "Toujours une Collection — vide s'il n'y a rien, jamais null." },
+    { type: "vf", q: "Un jeu sans aucun avis : $jeu->avis vaut null.", a: false, exp: "Collection vide. C'est belongsTo (leçon 8) qui peut rendre null." },
+    { type: "qcm", q: "$jeu->avis() (avec parenthèses) retourne…", opts: ["La même Collection que $jeu->avis", "Un query builder à affiner, requête non exécutée", "Le premier avis", "Une erreur"], a: 1, exp: "Objet HasMany : tu peux chaîner where, count, create…" },
+    { type: "qcm", q: "Les avis avec note >= 4 d'un jeu :", opts: ["$jeu->avis->where(...)->get()", "$jeu->avis()->where('note', '>=', 4)->get()", "$jeu->avis(4)", "Avis::all()->note(4)"], a: 1, exp: "Parenthèses pour affiner, get() pour exécuter." },
+    { type: "qcm", q: "Le plus efficace pour compter 10 000 avis d'un jeu :", opts: ["$jeu->avis->count()", "$jeu->avis()->count()", "count($jeu->avis)", "Identique dans les deux cas"], a: 1, exp: "SELECT COUNT(*) en base, au lieu de charger 10 000 modèles en mémoire." },
+    { type: "input", q: "Quelle méthode appelée sur $jeu->avis() insère un avis en remplissant jeu_id automatiquement ?", a: ["create", "create()"], ph: "nom de la méthode…", exp: "$jeu->avis()->create([...]) — la relation connaît le parent." },
+    { type: "vf", q: "Avec $jeu->avis()->create([...]), il faut quand même fournir jeu_id dans le tableau.", a: false, exp: "C'est tout l'intérêt : la relation pose la FK toute seule." },
+    { type: "qcm", q: "hasMany crée la colonne jeu_id dans la table locations.", opts: ["Vrai, au premier accès", "Vrai, via composer", "Faux : c'est la migration qui crée les colonnes", "Faux : la colonne n'existe pas"], a: 2, exp: "Le modèle décrit le lien ; foreignId()->constrained() le construit." },
+    { type: "qcm", q: "L'équivalent JPA de hasMany :", opts: ["@OneToMany(mappedBy = \"jeu\")", "@ManyToOne", "@JoinColumn seul", "@ManyToMany"], a: 0, exp: "mappedBy pointe le champ propriétaire côté enfant, comme la FK chez Location." },
+    { type: "vf", q: "En Django, il faut déclarer explicitement la relation inverse dans le modèle parent.", a: false, exp: "Le ForeignKey génère automatiquement jeu.avis_set côté parent." },
+    { type: "qcm", q: "Les locations non rendues d'un membre :", opts: ["$membre->locations->whereNull(...)", "$membre->locations()->whereNull('date_retour')->get()", "$membre->whereNull('date_retour')", "Location::all()"], a: 1, exp: "On affine la relation avant d'exécuter — le filtre part en SQL." },
+    { type: "qcm", q: "Une relation 1-N complète dans la Ludothèque, c'est…", opts: ["hasMany des deux côtés", "belongsTo des deux côtés", "hasMany chez le parent + belongsTo chez l'enfant", "Un seul belongsToMany"], a: 2, exp: "Deux déclarations, une seule FK : chaque sens a sa méthode." }
+  ],
+  final: {
+    title: "Exercice final — Le sens parent → enfants",
+    intro: `<p>Jeu, Membre et leurs enfants : vérifie les deux sens et la nuance parenthèses / pas de parenthèses.</p>`,
+    questions: [
+      { type: "qcm", q: "« Un membre a plusieurs locations » se déclare par…", opts: ["hasMany(Location::class) dans Membre", "belongsTo(Location::class) dans Membre", "hasMany(Membre::class) dans Location", "attach()"], a: 0, exp: "Le parent Membre déclare hasMany ; Location garde son belongsTo." },
+      { type: "input", q: "Complète : $jeu->avis retourne une … de modèles Avis.", a: ["Collection", "collection"], ph: "type retourné…", exp: "Une Collection Eloquent, avec count(), first(), avg()…" },
+      { type: "vf", q: "$jeu->avis()->count() exécute un SELECT COUNT(*) sans charger les avis.", a: true, exp: "Le builder délègue le comptage à MySQL — bien plus léger." },
+      { type: "qcm", q: "Créer un avis lié au jeu 3 sans écrire jeu_id :", opts: ["Avis::create(['note' => 5])", "$jeu->avis->create([...])", "$jeu->avis()->create(['note' => 5, 'membre_id' => 12])", "new Avis()->attach($jeu)"], a: 2, exp: "Via la relation (avec parenthèses) : la FK est posée automatiquement." },
+      { type: "qcm", q: "La FK d'une relation Jeu hasMany Avis se trouve…", opts: ["Dans la table jeux", "Dans la table avis", "Dans une table pivot", "Nulle part"], a: 1, exp: "Toujours chez l'enfant — hasMany ne fait que décrire l'autre sens." }
+    ],
+    solution: `<pre class="pseudo">hasMany = le côté PARENT d'une relation 1-N (la FK reste chez l'enfant)
+
+Déclarer : public function avis() { return $this-&gt;hasMany(Avis::class); }
+Lire     : $jeu-&gt;avis            → Collection (requête exécutée)
+Affiner  : $jeu-&gt;avis()          → query builder ouvert
+           $jeu-&gt;avis()-&gt;where('note', '&gt;=', 4)-&gt;get()
+Créer    : $jeu-&gt;avis()-&gt;create([...])   → jeu_id rempli tout seul
+
+Duo complet : Jeu hasMany Avis  ⇄  Avis belongsTo Jeu
+Ailleurs : @OneToMany(mappedBy) en JPA · avis_set en Django · ICollection en EF Core</pre>
+<p>1-1, N-1, 1-N : il manque le N-N. Leçon 10 : belongsToMany et la table pivot categorie_jeu de ton Niveau 4.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l9", title: "Parenthèses ou pas : l'analyse qui sauve la prod", level: 2,
+    statement: "La page « fiche d'un jeu » de la Ludothèque doit afficher : le nombre total d'avis, la note moyenne, les 3 derniers avis, et le nombre de locations en cours. Pour chacun de ces quatre besoins, écris les deux versions possibles ($jeu->relation... et $jeu->relation()->...), indique le SQL approximatif généré par chaque version, puis désigne la meilleure en justifiant par ce qui transite entre MySQL et PHP.",
+    hints: [
+      "Sans parenthèses : TOUS les enfants sont chargés en mémoire, puis PHP filtre/compte/trie.",
+      "Avec parenthèses : le where/count/avg/orderBy part dans le SQL — MySQL fait le travail.",
+      "Pour « les 3 derniers avis », pense latest() et limit() côté builder contre sortBy() côté Collection."
+    ],
+    solution: "Besoin                  | Version Collection (sans parenthèses)      | Version builder (avec parenthèses)          | Gagnant\n------------------------+---------------------------------------------+----------------------------------------------+--------\nNombre d'avis           | $jeu->avis->count()                          | $jeu->avis()->count()                        | builder\n                        | SELECT * FROM avis WHERE jeu_id=3 (tout !)   | SELECT COUNT(*) FROM avis WHERE jeu_id=3     |\nNote moyenne            | $jeu->avis->avg('note')                      | $jeu->avis()->avg('note')                    | builder\n                        | tout charge, moyenne en PHP                  | SELECT AVG(note) — 1 nombre transite         |\n3 derniers avis         | $jeu->avis->sortByDesc('created_at')->take(3)| $jeu->avis()->latest()->limit(3)->get()      | builder\n                        | tri en PHP sur tout le lot                   | ORDER BY + LIMIT 3 en SQL                    |\nLocations en cours      | $jeu->locations->whereNull('date_retour')    | $jeu->locations()->whereNull('date_retour')  | builder\n                        | filtre en PHP                                | ->count() : WHERE ... IS NULL en SQL         |\n\nRègle : dès qu'un filtre, un tri, un agrégat ou une limite existe, il doit partir en SQL.\nLa Collection reste pertinente quand les données sont DÉJÀ chargées (eager loading, leçon 12).",
+    note: "Ce réflexe « pousser le travail vers la base » vient droit de ton cours MySQL : un SGBD compte et agrège mieux que PHP ne le fera jamais. C'est le même arbitrage qu'entre jeu.avis_set.all() puis filtre Python et .filter() en Django, ou entre matérialiser une ICollection et composer du LINQ en EF Core. Dans ton projet full-stack, ces choix feront la différence sur les pages listant beaucoup de données." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

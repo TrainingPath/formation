@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Compose avancé : healthchecks et dépendances",
+  subtitle: "Démarré n'est pas prêt : orchestrer un démarrage fiable.",
+  theory: `
+<h3>1. Le bug du lundi matin</h3>
+<p>Un piège subtil : un conteneur peut être <strong>démarré</strong> (il tourne) sans être <strong>prêt</strong> (capable de rendre son service). MySQL, par exemple, met quelques secondes à accepter des connexions après son lancement. Résultat : l'app démarre, tente de se connecter trop tôt, et plante — de manière intermittente.</p>
+<pre class="pseudo">docker compose up -d
+app     | OperationalError: Can't connect to MySQL...   # parfois ! l'app a démarré AVANT que MySQL soit prêt
+# MySQL était DÉMARRÉ (le conteneur tourne) mais pas PRÊT               # le conteneur est 'up', mais...
+# (le serveur SQL met plusieurs secondes à accepter des connexions)     # ...le moteur SQL initialise encore : il refuse les connexions</pre>
+<p><code>depends_on</code> simple garantit seulement l'<strong>ordre de démarrage</strong> (lancer bdd avant app), pas la <strong>disponibilité</strong> (que bdd soit réellement prête à répondre).</p>
+
+<h3>2. Le healthcheck</h3>
+<p>Un <strong>healthcheck</strong> (« contrôle de santé ») est une <strong>sonde</strong> : une petite commande que Docker répète à intervalles réguliers pour vérifier que le service répond vraiment. Ici, <code>mysqladmin ping</code> demande à MySQL « es-tu là et prêt ? ».</p>
+<pre class="pseudo">bdd:
+    image: mysql:8.4
+    healthcheck:                                          # définit la sonde de santé du service
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]   # la commande testée : 'mysqladmin ping' interroge le serveur SQL (CMD = sans passer par un shell)
+      interval: 5s        # relance la sonde toutes les 5 secondes                # fréquence du contrôle
+      timeout: 3s         # échec de la sonde si aucune réponse en 3 secondes     # patience max par essai
+      retries: 10         # après 10 échecs consécutifs, le service devient 'unhealthy'   # tolérance avant de déclarer malade
+      start_period: 30s   # délai de grâce initial : les échecs ne comptent pas pendant 30 s   # laisse à MySQL le temps de démarrer</pre>
+<p>La sonde interroge le <strong>service réel</strong> (le serveur SQL répond-il ?), pas seulement le processus. L'état est visible dans <code>docker compose ps</code> : <code>starting → healthy / unhealthy</code>.</p>
+
+<h3>3. Attendre la santé, pas le démarrage</h3>
+<p>On dit alors à l'app d'attendre non pas le simple démarrage, mais la SANTÉ de la base, grâce à <code>condition: service_healthy</code>.</p>
+<pre class="pseudo">app:
+    depends_on:
+      bdd:
+        condition: service_healthy    # l'app ne démarre QUE lorsque le healthcheck de bdd la déclare SAINE (prête)</pre>
+
+<h3>4. Les politiques de redémarrage</h3>
+<p>La <strong>politique de redémarrage</strong> (<code>restart</code>) dit à Docker quoi faire si un conteneur s'arrête. Quatre choix, du plus passif au plus automatique.</p>
+<pre class="pseudo">restart: "no"            # par DÉFAUT : rien n'est relancé automatiquement
+restart: always          # relance TOUJOURS, même après un 'docker stop' volontaire (piège !)
+restart: unless-stopped  # relance après un crash ou un reboot, MAIS respecte un arrêt volontaire ✔ (le bon choix en prod)
+restart: on-failure:3    # relance uniquement en cas d'ÉCHEC (code de sortie non nul), 3 tentatives maximum</pre>
+
+<h3>5. Un healthcheck pour l'app aussi</h3>
+<p>On peut aussi sonder l'application elle-même. La forme <code>CMD-SHELL</code> passe la commande à un shell (utile pour utiliser <code>||</code>). Ici, on interroge une URL <code>/sante/</code> qui vérifie que tout fonctionne, base comprise.</p>
+<pre class="pseudo">app:
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8000/sante/ || exit 1"]   # curl interroge l'URL /sante/ ; -f échoue si code HTTP >= 400 ; sinon 'exit 1' (CMD-SHELL = via un shell, pour le '||')
+      interval: 30s   # sonde toutes les 30 secondes
+      retries: 3      # 'unhealthy' après 3 échecs de suite
+# l'app expose /sante/ : une vue qui vérifie la connexion à la base et renvoie 200   # la sonde traverse toute la pile (serveur -> Django -> base)</pre>
+<div class="warn">Un healthcheck trop agressif (interval court + commande lourde) devient une charge en soi ; un healthcheck trop naïf (<code>exit 0</code>) ment. La sonde doit tester le service <strong>réellement rendu</strong> — pour l'app, une URL qui touche la base.</div>
+<div class="tip"><code>docker inspect --format '{{json .State.Health}}' &lt;conteneur&gt;</code> montre l'historique des sondes : l'outil parfait quand un service oscille entre healthy et unhealthy.</div>`,
+  exercises: [
+    { type: "qcm", q: "depends_on simple garantit…", opts: ["La disponibilité", "Seulement l'ordre de démarrage", "La santé", "La persistance"], a: 1, exp: "Démarré ≠ prêt." },
+    { type: "qcm", q: "MySQL « démarré mais pas prêt » signifie…", opts: ["Le conteneur tourne, le serveur SQL n'accepte pas encore de connexions", "Un crash", "Un bug Docker", "Le volume est plein"], a: 0, exp: "Quelques secondes d'initialisation." },
+    { type: "qcm", q: "Un healthcheck est…", opts: ["Un antivirus", "Une sonde périodique qui teste le service réel", "Un log", "Un backup"], a: 1, exp: "mysqladmin ping, curl…" },
+    { type: "qcm", q: "interval: 5s / retries: 10 signifie…", opts: ["Unhealthy après ~10 sondes espacées de 5 s en échec", "5 conteneurs", "10 secondes de timeout", "Rien"], a: 0, exp: "La patience configurée." },
+    { type: "qcm", q: "start_period sert à…", opts: ["Démarrer plus vite", "Un délai de grâce avant de compter les échecs", "Redémarrer", "Chronométrer"], a: 1, exp: "MySQL a le droit d'être lent au boot." },
+    { type: "qcm", q: "Faire attendre l'app jusqu'à la santé de bdd :", opts: ["condition: service_healthy", "un sleep 30", "un cron", "rien"], a: 0, exp: "Dans depends_on." },
+    { type: "vf", q: "Un sleep 30 dans le CMD de l'app est une solution equivalente et propre.", a: false, exp: "Fragile : 30 s parfois trop, parfois pas assez." },
+    { type: "qcm", q: "L'état de santé se lit dans…", opts: ["docker compose ps", "les emails", "le YAML", "le volume"], a: 0, exp: "starting/healthy/unhealthy." },
+    { type: "qcm", q: "restart: always a un piège :", opts: ["Il ne relance jamais", "Il relance même après un docker stop volontaire", "Il supprime les volumes", "Il est payant"], a: 1, exp: "D'où unless-stopped." },
+    { type: "qcm", q: "Le choix recommandé en production :", opts: ["restart: unless-stopped", "restart: \"no\"", "restart: always partout sans réfléchir", "aucun"], a: 0, exp: "Crash + reboot couverts, arrêt volontaire respecté." },
+    { type: "qcm", q: "on-failure:3 :", opts: ["Relance sur échec, 3 essais maximum", "3 conteneurs", "3 secondes", "3 volumes"], a: 0, exp: "Évite la boucle de crash infinie." },
+    { type: "qcm", q: "Le healthcheck de l'app devrait tester…", opts: ["exit 0", "Une URL qui touche la base (ex. /sante/)", "Le CPU", "Le CSS"], a: 1, exp: "Le service réellement rendu." },
+    { type: "vf", q: "Un healthcheck qui fait exit 0 en permanence est utile.", a: false, exp: "Il ment : toujours healthy." },
+    { type: "qcm", q: "L'historique des sondes se lit par…", opts: ["docker inspect (.State.Health)", "docker ps", "cat health.log", "compose down"], a: 0, exp: "Diagnostic des oscillations." },
+    { type: "qcm", q: "Après un reboot du serveur, les services repartent grâce à…", opts: ["La politique restart", "La chance", "cron", "systemd obligatoire"], a: 0, exp: "unless-stopped s'en charge." }
+  ],
+  final: {
+    title: "Exercice final — Le démarrage fiable",
+    intro: `<p>On rend le up -d déterministe, du premier coup, à chaque fois.</p>`,
+    questions: [
+      { type: "qcm", q: "La sonde MySQL :", opts: ["mysqladmin ping -h localhost", "exit 0", "curl :8000", "SELECT *"], a: 0, exp: "Le serveur SQL répond-il ?" },
+      { type: "qcm", q: "app attend bdd via :", opts: ["depends_on + condition: service_healthy", "un sleep", "l'ordre du YAML", "rien"], a: 0, exp: "La santé, pas le démarrage." },
+      { type: "qcm", q: "La politique des deux services :", opts: ["restart: unless-stopped", "no", "always", "on-failure:0"], a: 0, exp: "Prod raisonnable." },
+      { type: "qcm", q: "Vérifier que tout est sain :", opts: ["docker compose ps (healthy)", "croire", "cat yaml", "ping"], a: 0, exp: "L'état de santé affiché." },
+      { type: "vf", q: "Avec cette config, l'erreur « Can't connect » au démarrage disparaît.", a: true, exp: "L'app ne part que sur une base prête." }
+    ],
+    solution: `<pre class="pseudo">services:
+  app:
+    build: .
+    ports: ["8000:8000"]                       # port publié
+    env_file: .env.docker                      # config (leçon 10)
+    restart: unless-stopped                    # relance crash/reboot, respecte l'arrêt volontaire
+    depends_on:
+      bdd:
+        condition: service_healthy             # attend que bdd soit SAINE, pas juste démarrée
+  bdd:
+    image: mysql:8.4
+    environment: { ... }                       # variables MySQL (secrets sortis du YAML)
+    volumes: [donnees-mysql:/var/lib/mysql]    # état persistant
+    restart: unless-stopped
+    healthcheck:                               # la sonde de santé de MySQL
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]   # le serveur SQL répond-il ?
+      interval: 5s                             # toutes les 5 s
+      timeout: 3s                              # échec si pas de réponse en 3 s
+      retries: 10                              # unhealthy après 10 échecs
+      start_period: 30s                        # délai de grâce au démarrage</pre>
+<p>Le démarrage est déterministe. Demain : développer DANS les conteneurs, sans rebuild.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes healthchecks…",
+  items: [
+  { id: "docker-l13", title: "La vue /sante/ et sa sonde", level: 3,
+    statement: "Écris les deux moitiés du healthcheck applicatif : 1) la vue Django /sante/ qui exécute un SELECT 1 sur la base et renvoie 200 {\"statut\": \"ok\"} ou 503 si la base ne répond pas, avec sa route ; 2) le bloc healthcheck du service app dans compose.yaml qui l'interroge (curl -fs, interval 30s, retries 3, start_period 15s).",
+    hints: [
+      "from django.db import connection ; with connection.cursor() as c: c.execute(\"SELECT 1\")",
+      "En cas d'exception : JsonResponse({\"statut\": \"ko\"}, status=503).",
+      "curl -f échoue (code retour ≠ 0) sur un statut HTTP >= 400 — c'est ce qui fait échouer la sonde."
+    ],
+    solution: "# catalogue/views.py\nfrom django.db import connection\nfrom django.http import JsonResponse\n\ndef sante(request):\n    try:\n        with connection.cursor() as c:\n            c.execute(\"SELECT 1\")\n        return JsonResponse({\"statut\": \"ok\"})\n    except Exception:\n        return JsonResponse({\"statut\": \"ko\"}, status=503)\n\n# urls.py\npath(\"sante/\", views.sante, name=\"sante\"),\n\n# compose.yaml — service app\n    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -fs http://localhost:8000/sante/ || exit 1\"]\n      interval: 30s\n      timeout: 5s\n      retries: 3\n      start_period: 15s",
+    note: "La sonde traverse TOUT : gunicorn répond, Django route, la base exécute un SELECT — si l'un des trois meurt, l'app devient unhealthy et un orchestrateur peut agir (alerte, redémarrage, retrait du trafic). Le 503 (Service Unavailable) est le bon code : « je suis là mais pas en état de servir ». Attention : curl doit exister dans l'image (slim : RUN apt-get install -y curl, ou une sonde Python)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

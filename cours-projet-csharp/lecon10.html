@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Authentification avec JWT",
+  subtitle: "Prouver qui l'on est : la connexion et le jeton signé.",
+  theory: `
+<h3>1. Authentification vs autorisation</h3>
+<p>Deux mots proches à ne pas confondre. <strong>Authentifier</strong> = vérifier <em>qui</em> parle (la leçon d'aujourd'hui), comme un vigile qui contrôle une carte d'identité. <strong>Autoriser</strong> = décider ce que cette personne a le <em>droit</em> de faire (leçon 11), comme vérifier que son billet donne accès à telle salle. Pour une API, le standard est le <strong>JWT</strong> (JSON Web Token) : un <strong>jeton</strong> (petit laissez-passer numérique) <strong>signé</strong> que le client obtient à la connexion et renvoie à chaque requête.</p>
+
+<h3>2. Configurer le JWT Bearer</h3>
+<pre class="pseudo">builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)  // active l'authentification par jeton "Bearer"
+    .AddJwtBearer(o =&gt; o.TokenValidationParameters = new() {   // règles pour vérifier les jetons reçus
+        ValidateIssuerSigningKey = true,                        // exiger que la signature du jeton soit valide
+        IssuerSigningKey = new SymmetricSecurityKey(cle),  // clé secrète
+        ValidateIssuer = false, ValidateAudience = false        // (simplifié) on ne vérifie ni l'émetteur ni le destinataire
+    });
+...
+app.UseAuthentication();   // AVANT UseAuthorization
+app.UseAuthorization();                                          // ensuite seulement : décider des droits</pre>
+<p>« <strong>Bearer</strong> » (« porteur ») signifie que celui qui présente le jeton valide est considéré comme authentifié — comme un ticket de cinéma : qui le détient entre. La <strong>clé secrète</strong> (<code>cle</code>) est connue du seul serveur ; elle sert à signer et à vérifier les jetons. L'ordre compte : <code>UseAuthentication</code> (identifier) doit venir <em>avant</em> <code>UseAuthorization</code> (autoriser), car il faut savoir qui est là avant de décider de ses droits.</p>
+
+<h3>3. La connexion : vérifier, puis émettre</h3>
+<pre class="pseudo">[HttpPost("/api/connexion")]                                    // répond à POST /api/connexion
+public async Task&lt;ActionResult&gt; Connexion(ConnexionDto dto) {    // reçoit email + mot de passe dans dto
+    var user = await _userManager.FindByEmailAsync(dto.Email);   // cherche le compte par son email
+    if (user is null || !await _userManager.CheckPasswordAsync(user, dto.MotDePasse))  // compte absent OU mauvais mot de passe ?
+        return Unauthorized();                       // 401, sans préciser quoi
+    var roles = await _userManager.GetRolesAsync(user);          // récupère les rôles de cet utilisateur
+    var claims = new List&lt;Claim&gt; { new(ClaimTypes.Name, user.Email!) };  // contenu du jeton : d'abord le nom (email)
+    claims.AddRange(roles.Select(r =&gt; new Claim(ClaimTypes.Role, r)));   // ajoute un "claim" par rôle
+    var token = new JwtSecurityToken(claims: claims,             // fabrique le jeton avec ces informations
+        expires: DateTime.UtcNow.AddHours(2),                    // il expirera dans 2 heures
+        signingCredentials: new(new SymmetricSecurityKey(cle), SecurityAlgorithms.HmacSha256));  // le signe avec la clé secrète (HMAC-SHA256)
+    return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token) });  // renvoie le jeton (200 OK) au client
+}</pre>
+<p>Un <strong>claim</strong> (« revendication ») est une information inscrite dans le jeton, par exemple « je m'appelle… » ou « j'ai le rôle Vendeur ». Le mot de passe est vérifié <strong>une seule fois</strong>, à la connexion. Ensuite, le client envoie <code>Authorization: Bearer &lt;token&gt;</code> à chaque requête (un <strong>en-tête</strong> = une ligne d'information accompagnant la requête). La <strong>signature</strong> — une empreinte calculée avec la clé secrète — prouve que le jeton n'a pas été falsifié : le modifier casserait la signature.</p>
+
+<h3>4. Protéger les routes</h3>
+<p>Deux attributs décident qui peut accéder à quoi :</p>
+<pre class="pseudo">[AllowAnonymous]  [HttpGet("/api/jeux")]      // catalogue public en lecture
+[Authorize]       [HttpPost("/api/locations")] // louer exige d'être connecté</pre>
+<p><code>[AllowAnonymous]</code> autorise tout le monde (même non connecté) ; <code>[Authorize]</code> exige un jeton valide.</p>
+<div class="warn">Le message d'échec de connexion reste volontairement vague (« identifiants invalides ») : dire précisément « email inconnu » ou « mauvais mot de passe » aiderait un attaquant à <strong>énumérer</strong> les comptes (deviner quelles adresses existent en observant la réponse).</div>
+<div class="tip">Le jeton porte l'identité ET les rôles (les claims) : le serveur n'a pas besoin de garder une <strong>session</strong> en mémoire (un dossier ouvert par utilisateur connecté). C'est ce qui rend l'API <em>stateless</em> (« sans état » : chaque requête se suffit à elle-même), donc facile à multiplier et à déployer.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Authentifier, c'est…", opts: ["Donner des droits", "Vérifier l'identité", "Chiffrer la base", "Paginer"], a: 1, exp: "Qui parle ?" },
+    { type: "qcm", q: "JWT signifie…", opts: ["Java Web Tool", "JSON Web Token", "Just White Text", "JQuery Web Test"], a: 1, exp: "Un jeton JSON signé." },
+    { type: "qcm", q: "Le client renvoie le jeton via l'en-tête…", opts: ["Cookie: jwt", "Authorization: Bearer <token>", "X-Token", "Accept"], a: 1, exp: "Schéma Bearer." },
+    { type: "qcm", q: "Ce qui garantit qu'un JWT n'a pas été falsifié :", opts: ["Sa longueur", "Sa signature (clé secrète)", "Le HTTPS seul", "Le navigateur"], a: 1, exp: "Signature HMAC vérifiée." },
+    { type: "qcm", q: "Vérifier le mot de passe à la connexion :", opts: ["CheckPasswordAsync", "un == sur la chaîne", "FindByEmailAsync seul", "SignOutAsync"], a: 0, exp: "Compare au hachage." },
+    { type: "qcm", q: "Si email ou mot de passe est faux, on renvoie…", opts: ["404 avec détail", "401 Unauthorized sans préciser lequel", "500", "200"], a: 1, exp: "Vague, exprès." },
+    { type: "vf", q: "Le mot de passe est vérifié à chaque requête de l'API.", a: false, exp: "Une fois à la connexion ; ensuite le jeton suffit." },
+    { type: "qcm", q: "Les informations portées par le jeton s'appellent…", opts: ["Des DTO", "Des claims (identité, rôles…)", "Des scopes CSS", "Des migrations"], a: 1, exp: "Claims." },
+    { type: "qcm", q: "UseAuthentication() doit être appelé…", opts: ["Après UseAuthorization", "Avant UseAuthorization", "En dernier", "Jamais"], a: 1, exp: "On identifie avant de décider des droits." },
+    { type: "qcm", q: "Laisser le catalogue lisible sans compte :", opts: ["[AllowAnonymous]", "[Authorize]", "[NonAction]", "[FromBody]"], a: 0, exp: "Lecture publique." },
+    { type: "qcm", q: "expires: DateTime.UtcNow.AddHours(2) fait que…", opts: ["Le jeton dure 2 h puis devient invalide", "La base expire", "Le mot de passe change", "Rien"], a: 0, exp: "Durée de vie limitée." },
+    { type: "vf", q: "Une API à JWT n'a pas besoin de session serveur : elle est stateless.", a: true, exp: "Tout est dans le jeton." },
+    { type: "qcm", q: "La clé de signature doit être…", opts: ["Publiée sur GitHub", "Secrète (configuration/variable d'environnement)", "Dans le HTML", "Vide"], a: 1, exp: "Sinon n'importe qui signe des jetons." },
+    { type: "qcm", q: "GetRolesAsync(user) sert ici à…", opts: ["Supprimer les rôles", "Mettre les rôles dans les claims du jeton", "Créer les rôles", "Trier"], a: 1, exp: "Le rôle voyage dans le jeton." },
+    { type: "vf", q: "Dire « email inconnu » à l'échec de connexion est une bonne pratique.", a: false, exp: "Ça permet d'énumérer les comptes." }
+  ],
+  final: {
+    title: "Exercice final — La connexion",
+    intro: `<p>On émet un jeton à la connexion et on protège l'API.</p>`,
+    questions: [
+      { type: "qcm", q: "Ordre correct dans Program.cs :", opts: ["UseAuthentication puis UseAuthorization", "UseAuthorization puis UseAuthentication", "Aucun des deux", "Peu importe"], a: 0, exp: "Identifier avant d'autoriser." },
+      { type: "qcm", q: "Vérification du mot de passe :", opts: ["CheckPasswordAsync(user, dto.MotDePasse)", "user.Password == dto.MotDePasse", "un SELECT", "un cookie"], a: 0, exp: "Contre le hachage." },
+      { type: "qcm", q: "Le jeton contient identité et rôle grâce aux…", opts: ["claims", "DTO", "scopes", "index"], a: 0, exp: "Claims." },
+      { type: "qcm", q: "POST /api/locations doit porter…", opts: ["[Authorize]", "[AllowAnonymous]", "rien", "[Obsolete]"], a: 0, exp: "Louer exige un compte." },
+      { type: "vf", q: "Le jeton est signé avec une clé secrète côté serveur.", a: true, exp: "SymmetricSecurityKey + HMAC." }
+    ],
+    solution: `<pre class="pseudo">var user = await _userManager.FindByEmailAsync(dto.Email);   // cherche le compte par email
+if (user is null || !await _userManager.CheckPasswordAsync(user, dto.MotDePasse))  // absent ou mauvais mot de passe ?
+    return Unauthorized();                                   // 401 (message volontairement vague)
+
+var roles = await _userManager.GetRolesAsync(user);          // récupère ses rôles
+var claims = new List&lt;Claim&gt; { new(ClaimTypes.Name, user.Email!) };  // contenu du jeton : le nom
+claims.AddRange(roles.Select(r =&gt; new Claim(ClaimTypes.Role, r)));   // + un claim par rôle
+
+var token = new JwtSecurityToken(claims: claims,             // fabrique le jeton
+    expires: DateTime.UtcNow.AddHours(2),                    // expire dans 2 heures
+    signingCredentials: new(new SymmetricSecurityKey(cle), SecurityAlgorithms.HmacSha256));  // signé avec la clé secrète
+return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token) });  // renvoie le jeton au client</pre>
+<p>On sait QUI est connecté. Demain : décider de ses DROITS, rôle par rôle.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton endpoint de connexion…",
+  items: [
+  { id: "projcsharp-l10", title: "L'endpoint de connexion", level: 3,
+    statement: "Écris l'action POST /api/connexion : chercher l'utilisateur par email, vérifier le mot de passe (CheckPasswordAsync), renvoyer 401 si l'un des deux échoue, sinon construire les claims (nom + rôles) et renvoyer un JwtSecurityToken signé HMAC-SHA256 expirant dans 2 heures.",
+    hints: [
+      "var user = await _userManager.FindByEmailAsync(dto.Email); puis CheckPasswordAsync.",
+      "claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));",
+      "new JwtSecurityToken(claims: claims, expires: ..., signingCredentials: new(new SymmetricSecurityKey(cle), SecurityAlgorithms.HmacSha256))"
+    ],
+    solution: "[HttpPost(\"/api/connexion\")]                       // repond a POST /api/connexion\npublic async Task<ActionResult> Connexion(ConnexionDto dto) {   // recoit email + mot de passe\n    var user = await _userManager.FindByEmailAsync(dto.Email);   // cherche le compte par email\n    if (user is null || !await _userManager.CheckPasswordAsync(user, dto.MotDePasse))   // absent ou mauvais mot de passe ?\n        return Unauthorized();                     // 401 (meme reponse dans les deux cas)\n\n    var roles = await _userManager.GetRolesAsync(user);   // recupere ses roles\n    var claims = new List<Claim> { new(ClaimTypes.Name, user.Email!) };   // contenu du jeton : le nom\n    claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));   // + un claim par role\n\n    var token = new JwtSecurityToken(              // fabrique le jeton signe\n        claims: claims,                            // avec l'identite et les roles\n        expires: DateTime.UtcNow.AddHours(2),      // expire dans 2 heures\n        signingCredentials: new(new SymmetricSecurityKey(_cle), SecurityAlgorithms.HmacSha256));   // signe avec la cle secrete\n\n    return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token) });   // renvoie le jeton au client\n}",
+    note: "Les deux échecs (email inconnu, mauvais mot de passe) renvoient le même 401 : on ne renseigne pas un attaquant. Le jeton expire (2 h) et porte les rôles en claims — l'autorisation de demain lira ce claim sans retoucher la base à chaque requête." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

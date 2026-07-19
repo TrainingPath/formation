@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "La couche service et les règles métier, sous CI",
+  subtitle: "Les décisions du métier, isolées et testées en millisecondes (Moq).",
+  theory: `
+<h3>1. Pourquoi une couche service</h3>
+<p>Une <strong>couche</strong> est un groupe de classes qui joue un rôle précis. La <strong>couche service</strong> contient les <strong>décisions</strong> du métier (peut-on louer ? quel tarif ?). Les entités portent l'état, le <code>DbContext</code> l'accès aux données ; les décisions, elles, vivent dans une classe <code>Services/JeuService</code>. On la rend <strong>injectée</strong> (fournie de l'extérieur, voir plus bas) : testable isolément, réutilisable par l'API, le web et les tâches, indépendante des contrôleurs.</p>
+
+<h3>2. Une exception métier explicite</h3>
+<p>Une <strong>exception</strong> est un signal d'erreur : quand quelque chose d'anormal survient, le code « lève » une exception qui interrompt le déroulement normal. On crée ici notre propre type d'exception, avec un nom parlant.</p>
+<pre class="pseudo">public class StockInsuffisantException : Exception {          // notre exception métier ; hérite de la classe Exception (le ":" = "est une sorte de")
+    public StockInsuffisantException(string message) : base(message) {}   // constructeur : transmet le message d'erreur à la classe parente
+}</pre>
+<p>Un nom métier, pas un <code>InvalidOperationException</code> anonyme : l'intention se lit, et le middleware d'erreurs (leçon 8) la traduira en réponse HTTP 409 (« conflit »).</p>
+
+<h3>3. Le service (injection par constructeur)</h3>
+<p>L'<strong>injection de dépendances</strong> (« DI ») consiste à fournir à une classe les outils dont elle a besoin depuis l'extérieur, au lieu qu'elle les fabrique elle-même — comme un cuisinier à qui l'on livre les ingrédients plutôt que de le laisser aller aux champs. Ici, le service reçoit un <code>IJeuRepository</code> : une <strong>interface</strong>, c'est-à-dire un contrat qui liste des fonctions sans dire comment elles sont faites (on pourra donc brancher une vraie base… ou un faux objet en test).</p>
+<pre class="pseudo">public class JeuService {                                     // la classe qui porte les décisions métier
+    private readonly IJeuRepository _repo;                     // sa dépendance : l'accès aux données ; readonly = fixé une seule fois
+    public JeuService(IJeuRepository repo) => _repo = repo;   // constructeur : reçoit le repo par injection (DI) et le mémorise
+
+    public void VerifierStockLocation(Jeu jeu) {              // vérifie qu'un jeu peut être loué (ne renvoie rien : void)
+        if (jeu.StockLocation <= 0)                           // si le stock de location est épuisé…
+            throw new StockInsuffisantException($"Plus de stock pour {jeu.Titre}");   // …lever l'exception métier (throw = "lancer")
+    }
+    public decimal PrixLocation(Jeu jeu, int nbJours = 7) =>  // calcule le prix ; nbJours vaut 7 par défaut si non précisé
+        nbJours <= 7 ? jeu.PrixLocation                       // si 7 jours ou moins : le tarif de base ("?" = "alors")
+                     : jeu.PrixLocation + (nbJours - 7) * 0.50m;   // sinon : +0,50 € par jour au-delà de 7 (":" = "sinon") — decimal exact
+}</pre>
+<p><code>$"...{jeu.Titre}..."</code> est une <strong>chaîne interpolée</strong> : le texte entre accolades est remplacé par la valeur de la variable. L'écriture <code>condition ? A : B</code> est l'<strong>opérateur ternaire</strong> : « si la condition est vraie, prendre A, sinon B » — un <code>if/else</code> en une ligne.</p>
+
+<h3>4. Le test unitaire rapide (Moq)</h3>
+<p><strong>Moq</strong> est un outil qui fabrique de faux objets (« mocks ») respectant une interface, pour tester une classe en l'isolant de ses dépendances. Ici on donne au service un faux repository : le test n'a besoin d'aucune base.</p>
+<pre class="pseudo">public class JeuServiceTests {                                // classe de tests du service
+    [Fact] public void Tarif_prolongation() {                 // un test à cas unique
+        var svc = new JeuService(Mock.Of&lt;IJeuRepository&gt;());   // crée le service avec un FAUX repository (mock)
+        var jeu = new Jeu { PrixLocation = 5.00m };            // un jeu à 5,00 € de location
+        svc.PrixLocation(jeu, 10).Should().Be(6.50m);          // 10 jours -> 5 + 3×0,50 = 6,50 € attendu
+    }
+    [Fact] public void Refuse_si_stock_nul() {                 // test du chemin d'erreur
+        var svc = new JeuService(Mock.Of&lt;IJeuRepository&gt;());   // service avec faux repo
+        Action a = () => svc.VerifierStockLocation(new Jeu { StockLocation = 0 });   // prépare l'appel sans l'exécuter tout de suite
+        a.Should().Throw&lt;StockInsuffisantException&gt;();          // vérifie qu'il lève bien l'exception attendue
+    }
+}</pre>
+<p>Le repository est <strong>mocké</strong> : aucune base, aucun hôte web. Ces tests tournent en <strong>millisecondes</strong>.</p>
+
+<h3>5. decimal, le suffixe m</h3>
+<div class="warn">Le littéral <code>0.50m</code> (suffixe <code>m</code>) est un <code>decimal</code>, pas un <code>double</code>. En C#, l'arithmétique <code>decimal</code> est décimale et exacte — indispensable pour l'argent. Oublier le <code>m</code> (écrire <code>0.50</code>) créerait un <code>double</code> et rouvrirait la porte aux erreurs d'arrondi.</div>
+<div class="tip">Des tests unitaires en millisecondes, c'est la condition d'une CI < 10 min (cours CI/CD) : plus le projet grossit, plus il est vital que la majorité des tests soient rapides et sans base. On garde les tests d'intégration (avec MySQL) pour ce qui l'exige vraiment (leçon 11).</div>`,
+  exercises: [
+    { type: "qcm", q: "Les décisions métier vivent dans…", opts: ["Les entités", "Une classe Service (injectée)", "Le contrôleur", "La base"], a: 1, exp: "Testable, réutilisable." },
+    { type: "qcm", q: "StockInsuffisantException est…", opts: ["Générique", "Une exception métier nommée", "Un test", "Un service"], a: 1, exp: "L'intention se lit." },
+    { type: "qcm", q: "Le repository est fourni au service par…", opts: ["Un new", "L'injection par constructeur (DI)", "Une variable globale", "Le hasard"], a: 1, exp: "Testable (on injecte un mock)." },
+    { type: "qcm", q: "Le test du service utilise…", opts: ["Un vrai MySQL", "Un Mock du repository (Moq)", "La prod", "Rien"], a: 1, exp: "Sans base, en ms." },
+    { type: "qcm", q: "Ces tests tournent en…", opts: ["Minutes", "Millisecondes", "Heures", "Jamais"], a: 1, exp: "Pas de base ni d'hôte web." },
+    { type: "qcm", q: "Le littéral 0.50m est…", opts: ["Un double", "Un decimal (suffixe m)", "Un int", "Un string"], a: 1, exp: "Exact pour l'argent." },
+    { type: "qcm", q: "Oublier le suffixe m (écrire 0.50)…", opts: ["Ne change rien", "Crée un double (erreurs d'arrondi)", "Est interdit", "Chiffre"], a: 1, exp: "decimal obligatoire pour l'argent." },
+    { type: "qcm", q: "a.Should().Throw<...>() vérifie…", opts: ["Une valeur", "Qu'une exception est bien levée", "Le CSS", "La base"], a: 1, exp: "Test du chemin d'erreur." },
+    { type: "qcm", q: "PrixLocation(jeu, 10) avec base 5 € =", opts: ["5,00 €", "6,50 €", "10 €", "0 €"], a: 1, exp: "5 + 3×0,50." },
+    { type: "qcm", q: "Mock.Of<IJeuRepository>() crée…", opts: ["Un vrai repo", "Un faux repo pour isoler le test", "Une base", "Un contrôleur"], a: 1, exp: "Isolation." },
+    { type: "vf", q: "La majorité des tests doivent être rapides pour garder la CI < 10 min.", a: true, exp: "Vitesse = adoption." },
+    { type: "qcm", q: "La couche service dépend des contrôleurs ?", opts: ["Oui", "Non — indépendante (réutilisable)", "Toujours", "Jamais de repository"], a: 1, exp: "Découplage." },
+    { type: "qcm", q: "Réutiliser PrixLocation depuis l'API ET le web est possible car…", opts: ["C'est dans le contrôleur", "C'est dans le service (couche partagée)", "C'est en SQL", "Par magie"], a: 1, exp: "Une couche métier centrale." },
+    { type: "qcm", q: "Nommer l'exception (StockInsuffisant) aide…", opts: ["Rien", "La traduction HTTP ultérieure (409)", "Le CSS", "La base"], a: 1, exp: "Middleware en leçon 8." },
+    { type: "vf", q: "L'injection par constructeur rend le service testable en isolant le repository.", a: true, exp: "On injecte un mock." }
+  ],
+  final: {
+    title: "Exercice final — Le métier isolé et testé",
+    intro: `<p>Service + exception métier + tests rapides.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service reçoit le repository par :", opts: ["injection par constructeur", "un new interne", "une globale", "un champ public"], a: 0, exp: "Mockable." },
+      { type: "qcm", q: "Le test du service :", opts: ["mocke le repository (aucune base)", "démarre MySQL", "va en prod", "n'existe pas"], a: 0, exp: "Millisecondes." },
+      { type: "qcm", q: "On écrit l'argent avec :", opts: ["decimal (suffixe m)", "double", "float", "int"], a: 0, exp: "Exact." },
+      { type: "qcm", q: "L'erreur métier est :", opts: ["une exception nommée (StockInsuffisant)", "un return -1", "un null", "un Console.Write"], a: 0, exp: "Intention explicite." },
+      { type: "vf", q: "Des tests unitaires rapides gardent le pipeline véloce.", a: true, exp: "< 10 min." }
+    ],
+    solution: `<pre class="pseudo">public class JeuService {                                    // la couche service
+  private readonly IJeuRepository _repo;                    // dépendance injectée (accès données)
+  public JeuService(IJeuRepository repo) => _repo = repo;   // constructeur : reçoit le repo (DI)
+  public void VerifierStockLocation(Jeu j) {                // règle : le jeu est-il louable ?
+    if (j.StockLocation <= 0) throw new StockInsuffisantException(...);   // stock nul -> exception métier
+  }
+  public decimal PrixLocation(Jeu j, int n = 7) =>          // calcul du tarif (decimal exact)
+    n <= 7 ? j.PrixLocation : j.PrixLocation + (n - 7) * 0.50m;   // +0,50 €/jour au-delà de 7
+}
+// [Fact] : new JeuService(Mock.Of<IJeuRepository>()).PrixLocation(jeu,10).Should().Be(6.50m)   // test rapide, repo mocké</pre>
+<p>Le métier est isolé et testé. Demain : l'API REST et le job de tests avec MySQL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service et ses tests…",
+  items: [
+  { id: "proj6cs-l6", title: "Le service métier et ses tests Moq", level: 2,
+    statement: "Écris JeuService (injection par constructeur, VerifierStockLocation qui lève StockInsuffisantException, PrixLocation en decimal), l'exception métier, et deux tests Moq rapides (le tarif de prolongation et le refus sur stock nul). Explique en 2-3 lignes pourquoi ces tests n'ont pas besoin de base et pourquoi le suffixe m (decimal).",
+    hints: [
+      "Injection par constructeur -> on injecte Mock.Of<IJeuRepository>() en test.",
+      "PrixLocation : n <= 7 ? base : base + (n-7)*0.50m.",
+      "a.Should().Throw<StockInsuffisantException>() pour le refus (FluentAssertions)."
+    ],
+    solution: "public class StockInsuffisantException : Exception {\n    public StockInsuffisantException(string message) : base(message) {}\n}\n\npublic class JeuService {\n    private readonly IJeuRepository _repo;\n    public JeuService(IJeuRepository repo) => _repo = repo;\n\n    public void VerifierStockLocation(Jeu jeu) {\n        if (jeu.StockLocation <= 0)\n            throw new StockInsuffisantException($\"Plus de stock pour {jeu.Titre}\");\n    }\n    public decimal PrixLocation(Jeu jeu, int nbJours = 7) =>\n        nbJours <= 7 ? jeu.PrixLocation\n                     : jeu.PrixLocation + (nbJours - 7) * 0.50m;\n}\n\npublic class JeuServiceTests {\n    [Fact] public void Tarif_prolongation() {\n        var svc = new JeuService(Mock.Of<IJeuRepository>());\n        var jeu = new Jeu { PrixLocation = 5.00m };\n        svc.PrixLocation(jeu, 10).Should().Be(6.50m);\n    }\n    [Fact] public void Refuse_si_stock_nul() {\n        var svc = new JeuService(Mock.Of<IJeuRepository>());\n        Action a = () => svc.VerifierStockLocation(new Jeu { StockLocation = 0 });\n        a.Should().Throw<StockInsuffisantException>();\n    }\n}\n\n// POURQUOI SANS BASE, POURQUOI LE SUFFIXE m\n// VerifierStockLocation et PrixLocation sont du C# pur : ils ne touchent pas la\n// base. En mockant le repository (Moq), le test ne demarre ni la base ni l'hote\n// web et s'execute en millisecondes. Comme ces tests unitaires sont la MAJORITE,\n// la CI reste sous 10 min meme quand le projet grossit -- condition de son adoption.\n// Le suffixe m fait de 0.50m un decimal (exact) et non un double (flottant binaire,\n// erreurs d'arrondi). Pour l'argent, TOUJOURS decimal -- ne jamais oublier le m.",
+    note: "La séparation service / DbContext rend le métier testable sans infrastructure. Le suffixe m mérite d'être un réflexe : un littéral monétaire sans m devient un double et rouvre la porte aux erreurs d'arrondi que decimal était censé fermer. Isoler les décisions dans un service, c'est aussi ce qui permettra à l'API (demain) et au frontend (leçon 13) de partager exactement la même logique sans la dupliquer." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

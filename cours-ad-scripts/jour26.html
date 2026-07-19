@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 26</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 26,
+  title: "Les rôles FSMO en PowerShell",
+  subtitle: "Les cinq rôles uniques qui doivent toujours avoir un titulaire.",
+  theory: `
+<h3>1. Multi-maîtres… sauf pour certaines tâches</h3>
+<p>Dans Active Directory, la plupart des contrôleurs de domaine (les serveurs qui hébergent l'annuaire, abrégés <strong>DC</strong>) sont égaux : chacun peut recevoir une modification, qui se propage ensuite aux autres. C'est le modèle <strong>multi-maîtres</strong>. Mais certaines opérations sensibles ne supportent PAS que deux serveurs décident en même temps. Pour celles-là, un seul DC a le droit d'agir : c'est le titulaire d'un rôle <strong>FSMO</strong>.</p>
+<p><strong>FSMO</strong> signifie <em>Flexible Single Master Operations</em> (« opérations à maître unique flottant »). « Maître unique » : un seul serveur détient le rôle. « Flottant » : ce rôle peut être déplacé d'un DC à un autre si besoin.</p>
+<h3>2. Les cinq rôles FSMO</h3>
+<p>Il existe exactement <strong>cinq</strong> rôles. Deux sont uniques pour toute la <strong>forêt</strong>, trois sont uniques pour chaque <strong>domaine</strong> :</p>
+<pre class="pseudo">-- Niveau FORET (1 seul titulaire dans toute la foret) --
+Schema Master        # seul autorise a modifier le schema (jour 17)
+Domain Naming Master # seul autorise a ajouter/retirer des domaines dans la foret
+
+-- Niveau DOMAINE (1 titulaire par domaine) --
+RID Master           # distribue des lots de numeros (RID) pour fabriquer les SID des nouveaux objets
+PDC Emulator         # reference de l'heure, gestion fine des mots de passe, compatibilite
+Infrastructure Master # met a jour les references vers des objets d'autres domaines</pre>
+<div class="tip">Moyen mnémotechnique : les deux rôles « globaux » (Schema, Domain Naming) concernent la structure de la forêt ; les trois autres gèrent le quotidien d'un domaine.</div>
+<h3>3. À quoi sert chacun (en clair)</h3>
+<p>Le <strong>RID Master</strong> évite que deux DC créent deux objets avec le même SID (l'identifiant unique de sécurité) : il distribue à chaque DC des tranches de numéros. Le <strong>PDC Emulator</strong> est le plus visible au quotidien : il sert d'<strong>horloge de référence</strong> pour tout le domaine (l'heure est cruciale pour l'authentification Kerberos) et centralise certaines opérations de mot de passe. Les autres rôles agissent plus rarement, mais leur absence finit par poser problème.</p>
+<h3>4. Voir qui détient les rôles</h3>
+<p>On lit les titulaires avec deux cmdlets : une pour les rôles de domaine, une pour ceux de forêt.</p>
+<pre class="pseudo">Get-ADDomain | Select-Object PDCEmulator, RIDMaster, InfrastructureMaster   # les 3 roles de DOMAINE et leur DC titulaire
+Get-ADForest | Select-Object SchemaMaster, DomainNamingMaster              # les 2 roles de FORET et leur DC titulaire</pre>
+<div class="tip">Retiens la logique : <code>Get-ADDomain</code> pour les rôles de domaine, <code>Get-ADForest</code> pour les rôles de forêt.</div>
+<h3>5. Déplacer un rôle : le transfert</h3>
+<p>Déplacer proprement un rôle vers un autre DC (les deux serveurs sont allumés et d'accord) s'appelle un <strong>transfert</strong>. On utilise <code>Move-ADDirectoryServerOperationMasterRole</code> :</p>
+<pre class="pseudo">Move-ADDirectoryServerOperationMasterRole -Identity "DC02" -OperationMasterRole PDCEmulator,RIDMaster
+# -Identity              : le DC qui va RECEVOIR le(s) role(s)
+# -OperationMasterRole   : la liste des roles a lui transferer</pre>
+<h3>6. Saisir un rôle : la saisie (seize)</h3>
+<p>Si le DC titulaire est mort et ne reviendra pas, on ne peut pas « transférer » (il faut son accord). On <strong>saisit</strong> le rôle de force en ajoutant le paramètre <code>-Force</code> : c'est la <strong>saisie</strong> (seize).</p>
+<pre class="pseudo">Move-ADDirectoryServerOperationMasterRole -Identity "DC02" -OperationMasterRole PDCEmulator -Force
+# -Force : SAISIE forcee, a n'utiliser que si l'ancien titulaire est definitivement perdu</pre>
+<div class="warn">Ne JAMAIS ramener l'ancien titulaire sur le réseau après une saisie : deux serveurs croiraient détenir le même rôle unique, ce qui corrompt l'annuaire. Après une saisie, l'ancien DC doit être nettoyé/réinstallé.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie le modèle <strong>multi-maîtres</strong> d'AD ?", opts: ["Un seul serveur décide de tout", "Chaque DC peut recevoir une modification qui se propage ensuite", "Il n'y a pas de serveur", "Seuls les clients modifient"], a: 1, exp: "La plupart des changements peuvent se faire sur n'importe quel DC." },
+    { type: "qcm", q: "Que veut dire FSMO ?", opts: ["Fast Server Management Option", "Flexible Single Master Operations", "File System Master Object", "Forest Security Mode"], a: 1, exp: "Opérations à maître unique flottant." },
+    { type: "qcm", q: "Combien de rôles FSMO existe-t-il ?", opts: ["3", "5", "7", "2"], a: 1, exp: "Cinq : 2 de forêt et 3 de domaine." },
+    { type: "qcm", q: "Quels rôles sont uniques pour toute la FORÊT ?", opts: ["RID Master et PDC", "Schema Master et Domain Naming Master", "PDC et Infrastructure", "Tous"], a: 1, exp: "Schema Master et Domain Naming Master sont au niveau forêt." },
+    { type: "qcm", q: "Quel rôle sert d'horloge de référence pour le domaine ?", opts: ["RID Master", "PDC Emulator", "Schema Master", "Infrastructure Master"], a: 1, exp: "Le PDC Emulator donne l'heure de référence (crucial pour Kerberos)." },
+    { type: "qcm", q: "Quelle différence entre transfert et saisie (seize) ?", opts: ["Aucune", "Le transfert se fait avec les deux DC d'accord ; la saisie force quand l'ancien est mort", "La saisie est plus douce", "Le transfert nécessite -Force"], a: 1, exp: "Saisie = -Force, réservée au DC titulaire définitivement perdu." },
+    { type: "input", q: "Quelle cmdlet montre les rôles de DOMAINE (PDC, RID…) ? (Verbe-Nom)", a: ["Get-ADDomain", "get-addomain"], ph: "Verbe-ADDomain", exp: "Get-ADDomain expose PDCEmulator, RIDMaster, InfrastructureMaster." },
+    { type: "input", q: "Quelle cmdlet montre les rôles de FORÊT (Schema, Domain Naming) ? (Verbe-Nom)", a: ["Get-ADForest", "get-adforest"], ph: "Verbe-ADForest", exp: "Get-ADForest expose SchemaMaster et DomainNamingMaster." },
+    { type: "input", q: "Quelle cmdlet DÉPLACE (transfère/saisit) un rôle FSMO ? (Verbe-Nom)", a: ["Move-ADDirectoryServerOperationMasterRole", "move-addirectoryserveroperationmasterrole"], ph: "Move-AD...Role", exp: "Move-ADDirectoryServerOperationMasterRole gère transfert et saisie." },
+    { type: "input", q: "Quel paramètre force la SAISIE d'un rôle (ancien DC mort) ? (avec le tiret)", a: ["-Force", "Force"], ph: "-Xxxx", exp: "-Force transforme le transfert en saisie." },
+    { type: "input", q: "Quel rôle distribue les lots de numéros (RID) pour créer les SID ?", a: ["RID Master", "RIDMaster", "RID"], ph: "un rôle", exp: "Le RID Master évite les SID en double." },
+    { type: "input", q: "Combien de titulaires un rôle FSMO donné a-t-il à la fois (dans sa portée) ? (un nombre)", a: ["1", "un", "un seul"], ph: "un nombre", exp: "Un seul : c'est un rôle à maître UNIQUE." },
+    { type: "vf", q: "Un rôle FSMO peut être déplacé d'un DC à un autre.", a: true, exp: "Le « flottant » de FSMO signifie précisément cela." },
+    { type: "vf", q: "Après une saisie (seize), on peut sans risque remettre l'ancien titulaire en ligne.", a: false, exp: "Non : deux DC croiraient détenir le même rôle unique, ce qui corrompt AD." },
+    { type: "vf", q: "L'heure exacte gérée par le PDC Emulator est importante pour l'authentification.", a: true, exp: "Kerberos rejette les écarts d'horloge trop grands." }
+  ],
+  final: {
+    title: "Exercice final — Auditer et déplacer les rôles FSMO",
+    intro: `<p>Tu prépares la mise hors service de DC01 (proprement, il est encore allumé) et veux transférer ses rôles vers DC02, après avoir vérifié qui détient quoi.</p>
+<pre class="pseudo">Get-ADDomain | Select-Object PDCEmulator, RIDMaster, InfrastructureMaster   # qui detient les roles de domaine ?
+Get-ADForest | Select-Object SchemaMaster, DomainNamingMaster              # qui detient les roles de foret ?
+# ... puis transferer vers DC02 ...</pre>`,
+    questions: [
+      { type: "input", q: "Quelle cmdlet liste les titulaires des rôles de domaine ? (Verbe-Nom)", a: ["Get-ADDomain", "get-addomain"], ph: "Verbe-ADDomain", exp: "Get-ADDomain montre PDC, RID, Infrastructure." },
+      { type: "input", q: "Quelle cmdlet liste les titulaires des rôles de forêt ? (Verbe-Nom)", a: ["Get-ADForest", "get-adforest"], ph: "Verbe-ADForest", exp: "Get-ADForest montre Schema et Domain Naming." },
+      { type: "qcm", q: "DC01 est ENCORE allumé : transfert ou saisie ?", opts: ["Saisie avec -Force", "Transfert normal (sans -Force)", "Aucun des deux", "Suppression"], a: 1, exp: "Les deux DC étant disponibles, on fait un transfert propre." },
+      { type: "input", q: "Quelle cmdlet effectue le déplacement des rôles ? (Verbe-Nom)", a: ["Move-ADDirectoryServerOperationMasterRole", "move-addirectoryserveroperationmasterrole"], ph: "Move-AD...Role", exp: "Move-ADDirectoryServerOperationMasterRole déplace les rôles." },
+      { type: "qcm", q: "Si DC01 tombait en panne définitive AVANT le transfert, il faudrait…", opts: ["Attendre", "Faire une saisie avec -Force vers DC02, sans jamais rallumer DC01", "Créer une GPO", "Ne rien faire"], a: 1, exp: "Saisie forcée, puis nettoyer/ne pas rebrancher l'ancien titulaire." }
+    ],
+    solution: `<p>La démarche : auditer, puis transférer (DC01 étant disponible), on utilise le transfert normal.</p>
+<pre class="pseudo">Import-Module ActiveDirectory                                              # charge les cmdlets AD
+Get-ADDomain | Select-Object PDCEmulator, RIDMaster, InfrastructureMaster  # audit des 3 roles de domaine
+Get-ADForest | Select-Object SchemaMaster, DomainNamingMaster             # audit des 2 roles de foret
+Move-ADDirectoryServerOperationMasterRole -Identity "DC02" -OperationMasterRole PDCEmulator,RIDMaster,InfrastructureMaster,SchemaMaster,DomainNamingMaster   # transfere les 5 roles vers DC02</pre>
+<p>DC02 devient titulaire des cinq rôles ; DC01 peut être retiré sans laisser de rôle orphelin. En cas de panne subite, on aurait ajouté <code>-Force</code> pour une saisie, en veillant à ne jamais rallumer DC01.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j26", title: "Rapport des titulaires FSMO", level: 2,
+    statement: "Écris un script qui affiche les cinq titulaires de rôles FSMO : les trois rôles de domaine (via Get-ADDomain) et les deux rôles de forêt (via Get-ADForest).",
+    hints: [
+      "Charge le module ActiveDirectory.",
+      "Get-ADDomain donne PDCEmulator, RIDMaster, InfrastructureMaster.",
+      "Get-ADForest donne SchemaMaster et DomainNamingMaster ; utilise Select-Object pour n'afficher que ces colonnes."
+    ],
+    solution: "Import-Module ActiveDirectory                                               # charge les cmdlets AD\nGet-ADDomain | Select-Object PDCEmulator, RIDMaster, InfrastructureMaster   # affiche les 3 roles de DOMAINE et leur DC titulaire\nGet-ADForest | Select-Object SchemaMaster, DomainNamingMaster              # affiche les 2 roles de FORET et leur DC titulaire",
+    note: "Deux cmdlets suffisent car les rôles sont répartis en deux portées : domaine (Get-ADDomain) et forêt (Get-ADForest). Ce petit audit est le réflexe avant toute maintenance d'un contrôleur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

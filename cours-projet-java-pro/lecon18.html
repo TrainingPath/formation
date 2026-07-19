@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Le pipeline complet : build, push, scan, protection",
+  subtitle: "Assembler l'usine de bout en bout et verrouiller main.",
+  theory: `
+<h3>1. Le pipeline de CI, à ce stade</h3>
+<p>Un <strong>pipeline</strong> est une chaîne d'étapes automatiques déclenchée à chaque envoi de code, comme une chaîne de montage. Une <strong>PR</strong> (Pull Request, « demande de fusion ») propose d'intégrer des modifications ; <strong>merger</strong>, c'est les fusionner dans la branche principale. Plusieurs jobs tournent <em>en parallèle</em> (en même temps) pour aller vite, et la <strong>barrière</strong> n'autorise la fusion que si tout est vert et qu'un collègue a relu.</p>
+<pre class="pseudo">push / PR
+   ├─ tests (MySQL) + couverture JaCoCo   ┐
+   ├─ qualite (spotless:check)            ┤ en parallèle
+   └─ securite (gitleaks)                 ┘
+        └─ image (build + trivy + smoke test)   needs: les trois
+BARRIÈRE : merge SEULEMENT si tout est vert + 1 revue.</pre>
+
+<h3>2. Le workflow de release (sur tag)</h3>
+<p>Une <strong>release</strong> (« livraison ») est la publication officielle d'une version. On la déclenche par un <strong>tag Git</strong> : une étiquette posée sur un point précis de l'historique, nommée selon <strong>semver</strong> (versionnage sémantique, ex. <code>v1.0.0</code>). Le <strong>registre</strong> (ici <code>ghcr.io</code>) est l'entrepôt d'images en ligne ; <code>docker push</code> y dépose l'image, après s'être authentifié avec un <strong>secret</strong> (jeton) via <code>docker login</code>.</p>
+<pre class="pseudo"># .github/workflows/release.yml
+on: { push: { tags: ["v*"] } }            # SEUL un tag de version déclenche
+jobs:                                     # les taches de ce workflow
+  publier:                                # le job qui construit et publie la release
+    steps:                                # ses etapes, dans l'ordre
+      - uses: actions/checkout@v4         # recupere le code du depot
+      - run: echo "VERSION=\${GITHUB_REF_NAME#v}" >> "\$GITHUB_ENV"   # v1.0.0 -> 1.0.0
+      - run: echo "\${{ secrets.REGISTRY_TOKEN }}" | docker login ghcr.io -u toi --password-stdin   # connexion au registre avec le jeton secret
+      - run: |                            # etape multi-lignes (un script shell)
+          docker build -t ghcr.io/toi/ludotheque:\$VERSION .   # construit l'image, taguee avec le numero de version
+          trivy image --exit-code 1 --severity CRITICAL ghcr.io/toi/ludotheque:\$VERSION   # re-scanne l'image : arret si CVE critique
+          docker push ghcr.io/toi/ludotheque:\$VERSION   # depose l'image versionnee dans le registre</pre>
+<p>Le tag Git (aligné sur semver) déclenche build + scan + push d'un artefact <strong>versionné et immuable</strong>. Code et image racontent la même histoire.</p>
+
+<h3>3. La protection de branche</h3>
+<pre class="pseudo">Settings -> Branches -> main :
+✔ Require PR + 1 approbation
+✔ Require status checks : tests, qualite, securite, image
+✔ Require branches up to date ; ✔ no bypass (admins compris)</pre>
+
+<h3>4. Le graphe complet</h3>
+<pre class="pseudo">-- ci.yml --------  (~6-9 min)
+push/PR -> tests+qualite+securite (parallèle) -> image -> [si main] staging
+-- release.yml ---  (~4-6 min + approbation)
+git tag v1.0.0 -> publier (build+scan+push) -> approbation -> production</pre>
+
+<h3>5. La durée compte</h3>
+<div class="warn">Un pipeline de 40 minutes se contourne (« je merge, on verra ») ; un pipeline de 8 minutes est utilisé. Les caches (Maven, build Docker), le parallélisme et des jobs minimaux ne sont pas du confort — ils protègent l'adoption. Un pipeline lent est un pipeline mort.</div>
+<div class="tip">Le pipeline réunit les trois cours d'outillage : CI/CD (structure, protection), Docker (image), Sécurité (scans). Un commit tagué déclenche un artefact versionné et scanné ; la barrière de branche garantit que main est toujours déployable — une propriété mécanique, plus une intention.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les jobs tests/qualite/securite tournent…", opts: ["En série", "En parallèle", "Sur la prod", "Jamais"], a: 1, exp: "Pipeline rapide." },
+    { type: "qcm", q: "Le job image dépend de…", opts: ["Rien", "needs: [tests, qualite, securite]", "needs: [deploy]", "main"], a: 1, exp: "Après les verts." },
+    { type: "qcm", q: "release.yml se déclenche sur…", opts: ["Chaque push", "Les tags v* uniquement", "Les PR", "Un cron"], a: 1, exp: "Frontière vérifier/livrer." },
+    { type: "qcm", q: "La version d'image vient de…", opts: ["La date", "GITHUB_REF_NAME#v (le tag sans le v)", "un compteur", "un secret"], a: 1, exp: "v1.0.0 -> 1.0.0." },
+    { type: "qcm", q: "L'image poussée est…", opts: ["latest mouvant", "Versionnée et immuable", "Sans tag", "En clair"], a: 1, exp: "Traçable." },
+    { type: "qcm", q: "Avant le push au registre, on…", opts: ["Rien", "Scanne l'image (trivy critique)", "Déploie", "Chiffre le code"], a: 1, exp: "Pas d'image vulnérable publiée." },
+    { type: "qcm", q: "La protection de main exige…", opts: ["Rien", "PR + checks (tests/qualite/securite/image) + revue, sans bypass", "Un mot de passe", "Un cron"], a: 1, exp: "main toujours déployable." },
+    { type: "qcm", q: "--password-stdin sert à…", opts: ["La vitesse", "Éviter le jeton dans la ligne de commande", "Chiffrer", "Rien"], a: 1, exp: "Pas d'historique shell." },
+    { type: "qcm", q: "Un pipeline de 40 min…", opts: ["Est plus rigoureux", "Se contourne", "Est idéal", "N'existe pas"], a: 1, exp: "La durée protège l'adoption." },
+    { type: "qcm", q: "Les caches et le parallélisme sont…", opts: ["Du luxe", "Une protection de l'adoption du pipeline", "Dangereux", "Décoratifs"], a: 1, exp: "Vitesse = usage." },
+    { type: "vf", q: "Un tag Git déclenche un artefact versionné et scanné.", a: true, exp: "Code et image, même histoire." },
+    { type: "qcm", q: "Le pipeline réunit…", opts: ["Merise + SQL", "CI/CD + Docker + Sécurité", "Le CSS", "Rien"], a: 1, exp: "Les trois cours d'outillage." },
+    { type: "qcm", q: "« main toujours déployable » est désormais…", opts: ["Un vœu", "Une propriété mécanique (protection de branche)", "Un slogan", "Une option"], a: 1, exp: "Verrouillé." },
+    { type: "qcm", q: "Le registre reçoit…", opts: ["Chaque commit", "Les versions taguées (immuables)", "Rien", "Le code source"], a: 1, exp: "Artefacts choisis." },
+    { type: "vf", q: "L'artefact de release est immuable (on ne re-pousse pas un tag existant).", a: true, exp: "Contrat des versions." }
+  ],
+  final: {
+    title: "Exercice final — L'usine complète",
+    intro: `<p>On assemble CI + release et on verrouille main.</p>`,
+    questions: [
+      { type: "qcm", q: "Un push sur PR déclenche :", opts: ["tests + qualite + securite, puis image", "le déploiement prod", "rien", "une release"], a: 0, exp: "La CI protège." },
+      { type: "qcm", q: "Un tag v* déclenche :", opts: ["publier (build + scan + push registre)", "les tests seuls", "staging", "un badge"], a: 0, exp: "La livraison." },
+      { type: "qcm", q: "L'image poussée :", opts: ["ghcr.io/...:VERSION (immuable, scannée)", "latest muté", "sans tag", "en clair"], a: 0, exp: "Versionnée." },
+      { type: "qcm", q: "main est protégée par :", opts: ["checks + revue + up to date, sans bypass", "la bonne volonté", "un mot de passe", "rien"], a: 0, exp: "Mécanique." },
+      { type: "vf", q: "Le pipeline reste sous 10 min grâce aux caches et au parallélisme.", a: true, exp: "Adoption." }
+    ],
+    solution: `<pre class="pseudo"># release.yml
+on: { push: { tags: ["v*"] } }            # seul un tag v* declenche la release
+jobs:
+  publier:                                # job de publication
+    steps:
+      - uses: actions/checkout@v4         # recupere le code
+      - run: echo "VERSION=\${GITHUB_REF_NAME#v}" >> "\$GITHUB_ENV"   # deduit le numero de version du tag
+      - run: echo "\${{ secrets.REGISTRY_TOKEN }}" | docker login ghcr.io -u toi --password-stdin   # connexion au registre (jeton secret)
+      - run: |
+          docker build -t ghcr.io/toi/ludotheque:\$VERSION .   # construit l'image versionnee
+          trivy image --exit-code 1 --severity CRITICAL ghcr.io/toi/ludotheque:\$VERSION   # scan CVE bloquant
+          docker push ghcr.io/toi/ludotheque:\$VERSION   # publie l'image dans le registre
+
+# Protection de main : tests+qualite+securite+image verts + 1 revue</pre>
+<p>L'usine est complète. Demain : le déploiement automatisé (Actuator).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow de release…",
+  items: [
+  { id: "proj6java-l18", title: "Le release.yml complet + protection", level: 3,
+    statement: "Écris release.yml (tag v* -> version depuis le tag, login registre via secret, build + scan trivy + push version ET latest, création de la release GitHub), et la liste des status checks requis dans la protection de main. Explique pourquoi la release ne relance PAS les 200 tests.",
+    hints: [
+      "Deux tags d'image : $VERSION (immuable) et latest (commodité, pas pour la prod).",
+      "gh release create \"$GITHUB_REF_NAME\" --notes-file CHANGELOG.md (github.token).",
+      "Le commit tagué vient de main -> déjà passé tests+qualite+securite+image."
+    ],
+    solution: "# .github/workflows/release.yml\nname: Release\non: { push: { tags: [\"v*\"] } }\npermissions: { contents: write }          # pour creer la release GitHub\njobs:\n  publier:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - name: Version depuis le tag\n        run: echo \"VERSION=${GITHUB_REF_NAME#v}\" >> \"$GITHUB_ENV\"   # v1.2.0 -> 1.2.0\n      - name: Connexion au registre\n        run: echo \"${{ secrets.REGISTRY_TOKEN }}\" | docker login ghcr.io -u toi --password-stdin\n      - name: Build, scan, push\n        run: |\n          docker build -t ghcr.io/toi/ludotheque:$VERSION -t ghcr.io/toi/ludotheque:latest .\n          trivy image --exit-code 1 --severity CRITICAL ghcr.io/toi/ludotheque:$VERSION\n          docker push ghcr.io/toi/ludotheque:$VERSION\n          docker push ghcr.io/toi/ludotheque:latest\n      - name: Release GitHub\n        env: { GH_TOKEN: \"${{ github.token }}\" }\n        run: gh release create \"$GITHUB_REF_NAME\" --title \"$GITHUB_REF_NAME\" --notes-file CHANGELOG.md\n\n# Protection de main — status checks requis :\n#   tests, qualite, securite, image  (+ 1 revue, up to date, no bypass)\n\n# POURQUOI LA RELEASE NE RELANCE PAS LES 200 TESTS\n# Le tag est pose sur un commit de MAIN, or main est protegee : ce commit a DEJA\n# passe tests+qualite+securite+image avant d'y entrer. La release EMBALLE et\n# PUBLIE un commit certifie -- elle ne re-verifie pas ce qui l'est deja. Elle\n# re-scanne quand meme l'image publiee (defense en profondeur : une CVE peut\n# etre apparue entre-temps dans une couche de base).",
+    note: "La release publie un commit DÉJÀ certifié par la protection de main : inutile de relancer les tests, mais on re-scanne l'image car une CVE peut apparaître dans une couche de base entre deux jours. github.token est un jeton éphémère fourni par Actions, limité au dépôt — le moindre privilège appliqué au pipeline lui-même. Le tag Git et le tag d'image partagent le même numéro : traçabilité totale du code livré." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

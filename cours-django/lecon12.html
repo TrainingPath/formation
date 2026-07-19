@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Les Django Forms et la validation",
+  subtitle: "Générer et valider les formulaires sans peine.",
+  theory: `
+<h3>1. Pourquoi les Django Forms ?</h3>
+<p>À la leçon 6, on écrivait le HTML du formulaire à la main et on validait chaque champ dans la vue. <strong>Valider</strong>, c'est vérifier que les données reçues sont correctes (champ non vide, bon format, longueur suffisante…). Les <strong>Django Forms</strong> (« formulaires Django ») sont des classes Python qui automatisent tout : elles <strong>génèrent</strong> le HTML des champs, <strong>valident</strong> les données envoyées, et <strong>affichent les erreurs</strong> à côté des champs fautifs. Résultat : moins de code, plus de sécurité — comme un formulaire administratif intelligent qui refuse lui-même une case mal remplie et te dit pourquoi.</p>
+
+<h3>2. Un formulaire simple : forms.Form</h3>
+<p>Un <strong>champ</strong> de formulaire (<em>field</em>) décrit une case à remplir et ses règles. Le mot <code>label</code> est l'étiquette affichée devant le champ.</p>
+<pre class="pseudo"># taches/forms.py (le fichier des formulaires de l'app, à créer)
+from django import forms                                     # importe la boîte à outils des formulaires
+
+class TacheForm(forms.Form):                                 # un formulaire = une classe héritant de forms.Form
+    texte = forms.CharField(max_length=200, label="Tâche")   # un champ texte (200 car. max), étiquette "Tâche"
+    urgent = forms.BooleanField(required=False)              # une case à cocher ; required=False = facultative</pre>
+<p>Chaque attribut décrit un champ, avec ses règles (longueur max, obligatoire ou non…). Django en déduit à la fois le HTML ET la validation.</p>
+
+<h3>3. Le ModelForm : le formulaire depuis un modèle</h3>
+<p>La classe interne <code>Meta</code> (« métadonnées », les informations qui décrivent le formulaire) indique de quel modèle partir et quels champs reprendre.</p>
+<pre class="pseudo"># Encore plus court : un formulaire GÉNÉRÉ automatiquement à partir du modèle Tache
+class TacheForm(forms.ModelForm):      # ModelForm : formulaire construit depuis un modèle
+    class Meta:                        # Meta : la configuration du ModelForm
+        model = Tache                  # model : le modèle source (la table Tache)
+        fields = ["texte", "faite"]    # fields : la liste des champs à inclure dans le formulaire</pre>
+<div class="tip">Le <code>ModelForm</code> génère un formulaire directement à partir d'un modèle : les champs, leurs types et leurs validations sont déduits automatiquement. Il sait même <strong>enregistrer</strong> l'objet en base (<code>form.save()</code>). C'est l'outil de choix pour créer/modifier des enregistrements.</div>
+
+<h3>4. Utiliser le formulaire dans la vue</h3>
+<pre class="pseudo">def creer(request):
+    if request.method == "POST":            # si le formulaire a été envoyé…
+        form = TacheForm(request.POST)      # on construit le form en le REMPLISSANT avec les données reçues
+        if form.is_valid():                 # is_valid() : VALIDE automatiquement tous les champs
+            form.save()                     # (ModelForm) enregistre la tâche en base de données
+            return redirect("liste")        # PRG : rediriger après succès
+    else:                                   # sinon (méthode GET, première visite)…
+        form = TacheForm()                  # on crée un formulaire VIDE à remplir
+    return render(request, "taches/creer.html", {"form": form})  # on affiche le form (vide, ou avec ses erreurs)</pre>
+<p>Le motif est toujours le même : en POST, on remplit le form et on teste <code>is_valid()</code> ; si oui, on enregistre et on redirige ; sinon (ou en GET), on ré-affiche le formulaire — avec ses erreurs.</p>
+
+<h3>5. Afficher le formulaire dans le template</h3>
+<pre class="pseudo">&lt;form method="post"&gt;                         &lt;!-- envoi de données --&gt;
+    {% csrf_token %}                          &lt;!-- protection anti-CSRF, toujours obligatoire --&gt;
+    {{ form.as_p }}                           &lt;!-- affiche TOUS les champs (chacun dans un &lt;p&gt;), avec labels et erreurs --&gt;
+    &lt;button type="submit"&gt;Enregistrer&lt;/button&gt; &lt;!-- bouton d'envoi --&gt;
+&lt;/form&gt;                                       &lt;!-- fin du formulaire --&gt;</pre>
+<p><code>{{ form.as_p }}</code> génère automatiquement les champs, leurs labels ET les messages d'erreur. Variantes : <code>{{ form.as_table }}</code> (en tableau), <code>{{ form.as_ul }}</code> (en liste), ou champ par champ avec <code>{{ form.texte }}</code> pour un contrôle total de la mise en page.</p>
+
+<h3>6. La validation et les erreurs</h3>
+<p><code>cleaned_data</code> (« données nettoyées ») est le dictionnaire des valeurs déjà validées et converties au bon type. Une <code>ValidationError</code> est l'exception qu'on lève pour signaler une donnée invalide.</p>
+<pre class="pseudo"># Après form.is_valid() == True :
+form.cleaned_data["texte"]     # les données NETTOYÉES et converties (au bon type), pas les données brutes
+
+# Validation PERSONNALISÉE dans le formulaire :
+class TacheForm(forms.ModelForm):
+    class Meta:
+        model = Tache                  # modèle source
+        fields = ["texte"]             # champ inclus
+    def clean_texte(self):                       # clean_<champ> : validation sur mesure du champ "texte"
+        texte = self.cleaned_data["texte"]       # on récupère la valeur nettoyée du champ
+        if len(texte) &lt; 3:                        # si le texte fait moins de 3 caractères…
+            raise forms.ValidationError("Trop court (3 caractères minimum)")  # …on signale l'erreur
+        return texte                             # sinon on renvoie la valeur validée</pre>
+<div class="warn">Après <code>is_valid()</code>, on lit les données propres via <code>form.cleaned_data</code> (déjà validées et converties au bon type), pas via <code>request.POST</code> (données brutes). Pour une règle spécifique, on écrit une méthode <code>clean_&lt;champ&gt;()</code> qui lève une <code>ValidationError</code> : l'erreur s'affiche automatiquement à côté du champ.</div>`,
+  exercises: [
+    { type: "qcm", q: "Les Django Forms automatisent…", opts: ["Le routage", "La génération du HTML, la VALIDATION et l'affichage des erreurs", "Les migrations", "Le CSS"], a: 1, exp: "Moins de code, plus de sécurité que le formulaire à la main." },
+    { type: "qcm", q: "Un <code>forms.Form</code> décrit…", opts: ["Une table", "Des CHAMPS (avec leurs règles), d'où Django déduit HTML + validation", "Une URL", "Une vue"], a: 1, exp: "Chaque attribut = un champ du formulaire." },
+    { type: "qcm", q: "Un <code>ModelForm</code> est…", opts: ["Un modèle", "Un formulaire GÉNÉRÉ à partir d'un modèle (champs déduits automatiquement)", "Une URL", "Un template"], a: 1, exp: "L'outil idéal pour créer/modifier un enregistrement." },
+    { type: "qcm", q: "Dans un ModelForm, la classe <code>Meta</code> précise…", opts: ["Le style", "Le modèle source et les champs à inclure", "L'URL", "La vue"], a: 1, exp: "model = ... et fields = [...]." },
+    { type: "qcm", q: "<code>form.is_valid()</code> fait…", opts: ["Enregistre", "VALIDE tous les champs et renvoie True/False", "Affiche", "Route"], a: 1, exp: "La validation automatique de tout le formulaire." },
+    { type: "qcm", q: "Sur un ModelForm valide, <code>form.save()</code> …", opts: ["Affiche", "ENREGISTRE l'objet en base de données", "Valide", "Redirige"], a: 1, exp: "Le ModelForm sait persister l'objet." },
+    { type: "qcm", q: "En méthode GET (affichage initial), on crée le form avec…", opts: ["TacheForm(request.POST)", "TacheForm() (vide)", "TacheForm.save()", "rien"], a: 1, exp: "Un formulaire vide à remplir ; avec request.POST en cas de soumission." },
+    { type: "qcm", q: "<code>{{ form.as_p }}</code> dans un template…", opts: ["Valide", "Génère tous les champs, labels ET erreurs, chacun dans un <p>", "Route", "Enregistre"], a: 1, exp: "L'affichage automatique du formulaire." },
+    { type: "qcm", q: "Un formulaire Django dans un template a-t-il besoin de <code>{% csrf_token %}</code> ?", opts: ["Non", "Oui : c'est un POST, le jeton CSRF reste obligatoire", "Seulement en GET", "Jamais"], a: 1, exp: "Le form ne dispense pas du csrf_token." },
+    { type: "qcm", q: "Après is_valid(), on lit les données via…", opts: ["request.POST (brut)", "form.cleaned_data (validées et converties au bon type)", "request.GET", "form.raw"], a: 1, exp: "cleaned_data = les données propres." },
+    { type: "qcm", q: "Une méthode <code>clean_texte(self)</code> dans un form sert à…", opts: ["Afficher", "Ajouter une VALIDATION personnalisée sur le champ texte (lève ValidationError si invalide)", "Router", "Enregistrer"], a: 1, exp: "clean_<champ> pour une règle sur mesure." },
+    { type: "qcm", q: "Une <code>ValidationError</code> levée dans un clean_…", opts: ["Plante le serveur", "Affiche automatiquement l'erreur à côté du champ concerné", "Est ignorée", "Supprime le champ"], a: 1, exp: "Le message d'erreur remonte dans le formulaire." },
+    { type: "qcm", q: "Le motif standard d'une vue avec formulaire :", opts: ["Toujours render", "POST → form(request.POST) → is_valid → save + redirect ; sinon form() vide", "GET seulement", "Pas de validation"], a: 1, exp: "Le motif « afficher ou traiter » avec validation." },
+    { type: "vf", q: "Un ModelForm évite d'écrire à la main le HTML des champs ET leur validation.", a: true, exp: "Tout est déduit du modèle : gain de temps et de sécurité." },
+    { type: "qcm", q: "Pour un contrôle total de la mise en page, on affiche…", opts: ["form.as_p seulement", "les champs un par un : {{ form.texte }}, {{ form.texte.errors }}…", "rien", "form.save"], a: 1, exp: "L'affichage champ par champ pour personnaliser le HTML." }
+  ],
+  final: {
+    title: "Exercice final — Le ModelForm de la tâche",
+    intro: `<p>On remplace le formulaire manuel par un ModelForm :</p>
+<pre class="pseudo"># forms.py
+from django import forms          # boîte à outils des formulaires
+from .models import Tache         # le modèle source
+
+class TacheForm(forms.ModelForm):
+    class Meta:                    # configuration du ModelForm
+        model = Tache             # modèle source
+        fields = ["texte"]        # champs inclus
+
+# views.py
+def creer(request):
+    if request.method == "POST":            # si envoi du formulaire
+        form = TacheForm(request.POST)      # remplir avec les données reçues
+        if form.is_valid():                 # valider
+            form.save()                     # enregistrer en base
+            return redirect("liste")        # rediriger (PRG)
+    else:                                   # sinon (GET)
+        form = TacheForm()                  # formulaire vide
+    return render(request, "taches/creer.html", {"form": form})  # afficher</pre>`,
+    questions: [
+      { type: "qcm", q: "D'où viennent les champs du formulaire ?", opts: ["Écrits à la main", "Générés à partir du modèle Tache (Meta.fields)", "De l'URL", "Du template"], a: 1, exp: "Le ModelForm déduit les champs du modèle." },
+      { type: "qcm", q: "Que fait <code>form.is_valid()</code> ici ?", opts: ["Enregistre", "Valide les données envoyées (longueur, présence…) et renvoie True/False", "Affiche", "Route"], a: 1, exp: "La validation automatique avant d'enregistrer." },
+      { type: "qcm", q: "Que fait <code>form.save()</code> ?", opts: ["Valide", "Crée la tâche en base à partir des données validées", "Affiche", "Redirige"], a: 1, exp: "Le ModelForm enregistre l'objet." },
+      { type: "qcm", q: "Dans le template, l'affichage minimal du formulaire :", opts: ["{{ form }}", "{% csrf_token %} puis {{ form.as_p }} dans un <form method=post>", "form.save", "rien"], a: 1, exp: "csrf_token + form.as_p + le bouton." },
+      { type: "vf", q: "Ce ModelForm valide automatiquement que le champ texte respecte le max_length du modèle.", a: true, exp: "Les validations du modèle sont héritées par le ModelForm." }
+    ],
+    solution: `<pre class="pseudo"># forms.py
+class TacheForm(forms.ModelForm):
+    class Meta:
+        model = Tache             # modèle source
+        fields = ["texte"]        # champ inclus
+
+# views.py — le motif standard
+form = TacheForm(request.POST)   # remplir (ou TacheForm() vide en GET)
+if form.is_valid():              # valider
+    form.save()                  # enregistrer
+    return redirect("liste")     # rediriger
+
+&lt;!-- template --&gt;
+&lt;form method="post"&gt;{% csrf_token %}{{ form.as_p }}&lt;button&gt;OK&lt;/button&gt;&lt;/form&gt;  &lt;!-- csrf + champs + bouton --&gt;
+# ModelForm : champs + validation + save automatiques. cleaned_data pour les données propres.</pre>
+<p>Tes formulaires sont robustes et concis. Demain : messages flash, sessions et gestion des erreurs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code Django ici…",
+  items: [
+  { id: "dj-l12", title: "Un ModelForm avec validation", level: 3,
+    statement: "Écris un <code>ModelForm</code> nommé <code>TacheForm</code> pour le modèle Tache (champs « texte » et « faite »), avec une validation personnalisée <code>clean_texte</code> qui refuse un texte de moins de 3 caractères. Puis écris la vue <code>creer</code> qui l'utilise (POST → is_valid → save → redirect ; sinon affiche le form).",
+    hints: [
+      "class TacheForm(forms.ModelForm): class Meta: model = Tache ; fields = [\"texte\", \"faite\"].",
+      "def clean_texte(self): texte = self.cleaned_data[\"texte\"] ; if len(texte) < 3: raise forms.ValidationError(\"...\") ; return texte.",
+      "Vue : form = TacheForm(request.POST) ; if form.is_valid(): form.save() ; return redirect(\"liste\")."
+    ],
+    solution: "# forms.py\nfrom django import forms\nfrom .models import Tache\n\nclass TacheForm(forms.ModelForm):\n    class Meta:\n        model = Tache\n        fields = [\"texte\", \"faite\"]\n\n    def clean_texte(self):                       # validation sur mesure du champ texte\n        texte = self.cleaned_data[\"texte\"]       # valeur nettoyée\n        if len(texte) < 3:                        # règle : au moins 3 caractères\n            raise forms.ValidationError(\"Trop court (3 caractères minimum)\")\n        return texte                             # renvoyer la valeur validée\n\n# views.py\nfrom django.shortcuts import render, redirect\nfrom .forms import TacheForm\n\ndef creer(request):\n    if request.method == \"POST\":                 # si envoi\n        form = TacheForm(request.POST)           # remplir\n        if form.is_valid():                      # valider\n            form.save()                          # enregistrer\n            return redirect(\"liste\")             # rediriger\n    else:                                        # sinon (GET)\n        form = TacheForm()                       # formulaire vide\n    return render(request, \"taches/creer.html\", {\"form\": form})",
+    note: "Le ModelForm génère et valide les champs ; clean_texte ajoute une règle métier. En cas d'échec, form.is_valid() est False et le template ré-affiche le formulaire avec l'erreur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

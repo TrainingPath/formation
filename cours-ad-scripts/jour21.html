@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Les comptes de service gérés (gMSA)",
+  subtitle: "Des comptes pour les logiciels, dont le mot de passe se gère tout seul.",
+  theory: `
+<h3>1. Le problème des comptes de service</h3>
+<p>Beaucoup de logiciels tournent en arrière-plan sur les serveurs : un service de sauvegarde, un antivirus, un serveur web… Ces programmes ont besoin d'un compte pour s'exécuter : on parle d'un <strong>compte de service</strong>. Traditionnellement, on créait un compte utilisateur normal avec un mot de passe fixe. Problème : ce mot de passe est souvent noté quelque part, ne change jamais (par peur de casser le service), et devient une faille de sécurité.</p>
+<h3>2. La solution : le gMSA</h3>
+<p>Un <strong>gMSA</strong> (group Managed Service Account, « compte de service géré de groupe ») est un compte spécial, prévu pour les services, dont Active Directory <strong>gère automatiquement le mot de passe</strong>. Personne ne connaît ce mot de passe : AD le fabrique, le change tout seul régulièrement (environ tous les 30 jours) et le distribue aux serveurs autorisés. Le « g » de gMSA (group) signifie que <em>plusieurs serveurs</em> peuvent partager le même compte, contrairement à l'ancien MSA (sMSA) limité à une seule machine.</p>
+<div class="tip">Avantages du gMSA : mot de passe très long, changé automatiquement, jamais tapé ni stocké par un humain, et utilisable par plusieurs serveurs à la fois. Sécurité et confort réunis.</div>
+<h3>3. Le prérequis : la clé racine KDS</h3>
+<p>Avant de créer le moindre gMSA, la forêt a besoin d'une <strong>clé racine KDS</strong> (KDS Root Key). C'est la graine secrète à partir de laquelle AD calcule tous les mots de passe des gMSA. On ne la crée qu'une seule fois pour toute la forêt :</p>
+<pre class="pseudo">Add-KdsRootKey -EffectiveImmediately   # cree la cle racine KDS (a ne faire qu'UNE fois par foret)</pre>
+<div class="warn">En production, la clé n'est réellement utilisable qu'après un délai de propagation (souvent cité comme 10 heures) pour laisser tous les contrôleurs de domaine se synchroniser. En laboratoire, on peut forcer une date passée pour ne pas attendre.</div>
+<h3>4. Créer un gMSA</h3>
+<p>On crée le compte avec <code>New-ADServiceAccount</code>. Deux informations clés : le nom du compte et le nom DNS que les clients utiliseront (le <strong>DNSHostName</strong>) :</p>
+<pre class="pseudo">New-ADServiceAccount -Name "svc-sauvegarde" -DNSHostName "svc-sauvegarde.exemple.local" -PrincipalsAllowedToRetrieveManagedPassword "GrpServeursSauvegarde"
+# -Name        : le nom du compte de service gere
+# -DNSHostName : le nom DNS associe au service
+# -PrincipalsAllowedToRetrieveManagedPassword : le groupe des serveurs AUTORISES a recuperer le mot de passe</pre>
+<p>Le dernier paramètre est essentiel : seuls les serveurs (ou le groupe) qu'on y désigne pourront obtenir le mot de passe géré. C'est ce qui rend le partage sûr.</p>
+<h3>5. Installer le gMSA sur le serveur</h3>
+<p>Sur chaque serveur autorisé, on « installe » le compte pour qu'il puisse s'en servir. Cela nécessite le module <strong>ActiveDirectory</strong> côté serveur :</p>
+<pre class="pseudo">Install-ADServiceAccount -Identity "svc-sauvegarde"   # installe le gMSA sur CE serveur (a lancer sur le serveur autorise)
+Test-ADServiceAccount -Identity "svc-sauvegarde"      # verifie que le serveur peut bien utiliser le compte (renvoie True si OK)</pre>
+<p><code>Test-ADServiceAccount</code> renvoie <code>True</code> quand tout est prêt : le service pourra démarrer avec ce compte.</p>
+<h3>6. L'utiliser dans un service</h3>
+<p>On configure ensuite le service Windows pour qu'il s'exécute sous ce compte. Détail important : le nom du compte se termine par le signe dollar et on ne fournit <strong>aucun mot de passe</strong> (c'est tout l'intérêt : AD s'en charge).</p>
+<pre class="pseudo">Set-Service ... # ou l'outil de configuration du service, en indiquant le compte EXEMPLE\svc-sauvegarde$ sans mot de passe</pre>
+<div class="tip">À retenir : clé KDS une fois pour la forêt, puis New-ADServiceAccount pour créer, Install/Test-ADServiceAccount sur chaque serveur, et le service tourne avec un mot de passe que personne n'a jamais vu.</div>`,
+  exercises: [
+    { type: "qcm", q: "À quoi sert un <strong>compte de service</strong> ?", opts: ["À se connecter en tant qu'humain", "À faire tourner un logiciel ou un service en arrière-plan", "À stocker des fichiers", "À créer des GPO"], a: 1, exp: "Un service Windows a besoin d'un compte pour s'exécuter." },
+    { type: "qcm", q: "Quel est l'avantage principal d'un <strong>gMSA</strong> ?", opts: ["Il est gratuit", "Son mot de passe est géré et changé automatiquement par AD", "Il n'a pas besoin d'AD", "Il est plus rapide"], a: 1, exp: "AD fabrique, change et distribue le mot de passe tout seul." },
+    { type: "qcm", q: "Que signifie le « g » de gMSA ?", opts: ["global", "group : plusieurs serveurs peuvent partager le compte", "gratuit", "graphique"], a: 1, exp: "group : contrairement au sMSA limité à une seule machine." },
+    { type: "qcm", q: "Que faut-il créer UNE fois par forêt avant tout gMSA ?", opts: ["Une GPO", "La clé racine KDS", "Un utilisateur admin", "Un lecteur AD:"], a: 1, exp: "La clé racine KDS est la graine des mots de passe gMSA." },
+    { type: "qcm", q: "Qui connaît le mot de passe d'un gMSA ?", opts: ["L'administrateur", "Personne : il est géré et distribué par AD", "Tous les utilisateurs", "Le service DNS"], a: 1, exp: "Le mot de passe n'est jamais tapé ni stocké par un humain." },
+    { type: "qcm", q: "À quoi sert <code>-PrincipalsAllowedToRetrieveManagedPassword</code> ?", opts: ["À définir la couleur du compte", "À désigner les serveurs autorisés à récupérer le mot de passe", "À supprimer le compte", "À créer la clé KDS"], a: 1, exp: "Seuls ces serveurs pourront obtenir le mot de passe géré." },
+    { type: "input", q: "Quelle cmdlet CRÉE un gMSA ? (Verbe-Nom)", a: ["New-ADServiceAccount", "new-adserviceaccount"], ph: "Verbe-ADServiceAccount", exp: "New-ADServiceAccount crée le compte de service géré." },
+    { type: "input", q: "Quelle cmdlet crée la clé racine KDS ? (Verbe-Nom)", a: ["Add-KdsRootKey", "add-kdsrootkey"], ph: "Verbe-KdsRootKey", exp: "Add-KdsRootKey -EffectiveImmediately crée la clé racine." },
+    { type: "input", q: "Quelle cmdlet INSTALLE le gMSA sur un serveur ? (Verbe-Nom)", a: ["Install-ADServiceAccount", "install-adserviceaccount"], ph: "Verbe-ADServiceAccount", exp: "Install-ADServiceAccount rend le compte utilisable sur ce serveur." },
+    { type: "input", q: "Quelle cmdlet VÉRIFIE qu'un serveur peut utiliser le gMSA (renvoie True) ? (Verbe-Nom)", a: ["Test-ADServiceAccount", "test-adserviceaccount"], ph: "Verbe-ADServiceAccount", exp: "Test-ADServiceAccount renvoie True si tout est prêt." },
+    { type: "input", q: "Par quel caractère se termine le nom d'un compte gMSA (ex : svc-sauvegarde_) ?", a: ["$", "dollar", "le dollar"], ph: "un signe", exp: "Le nom se termine par le signe dollar : svc-sauvegarde$." },
+    { type: "input", q: "Combien de fois crée-t-on la clé racine KDS pour une forêt ? (un nombre)", a: ["1", "une", "une seule"], ph: "un nombre", exp: "Une seule fois pour toute la forêt." },
+    { type: "vf", q: "Avec un gMSA, on doit fournir manuellement le mot de passe au service.", a: false, exp: "Justement non : AD gère le mot de passe, on n'en fournit aucun." },
+    { type: "vf", q: "Un gMSA peut être partagé par plusieurs serveurs.", a: true, exp: "C'est le sens du « g » (group)." },
+    { type: "vf", q: "Test-ADServiceAccount renvoie True quand le serveur peut utiliser le compte.", a: true, exp: "True signifie que le service pourra démarrer avec ce gMSA." }
+  ],
+  final: {
+    title: "Exercice final — Mettre en place un gMSA de sauvegarde",
+    intro: `<p>Tu dois créer un compte de service géré pour le logiciel de sauvegarde, utilisable par les serveurs du groupe <code>GrpServeursSauvegarde</code>.</p>
+<pre class="pseudo">Add-KdsRootKey -EffectiveImmediately        # (si pas deja fait) cree la cle racine de la foret
+New-ADServiceAccount -Name "svc-sauvegarde" ...   # cree le gMSA
+Install-ADServiceAccount -Identity "svc-sauvegarde"   # sur chaque serveur autorise
+Test-ADServiceAccount -Identity "svc-sauvegarde"      # doit renvoyer True</pre>`,
+    questions: [
+      { type: "qcm", q: "Quelle est l'étape PRÉALABLE à toute création de gMSA dans la forêt ?", opts: ["Installer le service", "Créer la clé racine KDS", "Supprimer les anciens comptes", "Créer une GPO"], a: 1, exp: "Sans clé KDS, AD ne peut pas fabriquer les mots de passe." },
+      { type: "input", q: "Quelle cmdlet crée le compte svc-sauvegarde ? (Verbe-Nom)", a: ["New-ADServiceAccount", "new-adserviceaccount"], ph: "Verbe-ADServiceAccount", exp: "New-ADServiceAccount crée le gMSA." },
+      { type: "qcm", q: "Quel paramètre indique les serveurs autorisés à récupérer le mot de passe ?", opts: ["-DNSHostName", "-PrincipalsAllowedToRetrieveManagedPassword", "-Name", "-Path"], a: 1, exp: "Ce paramètre restreint l'accès au mot de passe géré." },
+      { type: "input", q: "Sur le serveur, quelle cmdlet vérifie que le compte est utilisable (True) ? (Verbe-Nom)", a: ["Test-ADServiceAccount", "test-adserviceaccount"], ph: "Verbe-ADServiceAccount", exp: "Test-ADServiceAccount renvoie True si tout est bon." },
+      { type: "vf", q: "Une fois en place, le mot de passe du gMSA sera changé automatiquement par AD.", a: true, exp: "AD renouvelle le mot de passe périodiquement, sans intervention." }
+    ],
+    solution: `<p>La mise en place complète, dans l'ordre :</p>
+<pre class="pseudo">Import-Module ActiveDirectory                                       # charge les cmdlets AD
+Add-KdsRootKey -EffectiveImmediately                                # 1. cle racine KDS (une fois par foret)
+New-ADServiceAccount -Name "svc-sauvegarde" -DNSHostName "svc-sauvegarde.exemple.local" -PrincipalsAllowedToRetrieveManagedPassword "GrpServeursSauvegarde"   # 2. cree le gMSA et autorise le groupe de serveurs
+Install-ADServiceAccount -Identity "svc-sauvegarde"                 # 3. sur chaque serveur autorise : installe le compte
+Test-ADServiceAccount -Identity "svc-sauvegarde"                    # 4. verifie : doit renvoyer True</pre>
+<p>Résultat : le service de sauvegarde tourne sous un compte dont le mot de passe, long et renouvelé tout seul, n'est connu de personne. C'est bien plus sûr qu'un vieux compte à mot de passe fixe.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j21", title: "Créer et vérifier un gMSA", level: 3,
+    statement: "Écris un script qui crée un gMSA nommé <code>svc-web</code> (DNSHostName <code>svc-web.exemple.local</code>) utilisable par le groupe <code>GrpServeursWeb</code>, puis, côté serveur, l'installe et vérifie qu'il est utilisable.",
+    hints: [
+      "Suppose la clé racine KDS déjà en place ; utilise New-ADServiceAccount.",
+      "Renseigne -Name, -DNSHostName et -PrincipalsAllowedToRetrieveManagedPassword.",
+      "Termine par Install-ADServiceAccount puis Test-ADServiceAccount."
+    ],
+    solution: "Import-Module ActiveDirectory                              # charge les cmdlets AD\nNew-ADServiceAccount -Name 'svc-web' -DNSHostName 'svc-web.exemple.local' -PrincipalsAllowedToRetrieveManagedPassword 'GrpServeursWeb'   # cree le gMSA et autorise le groupe de serveurs web\nInstall-ADServiceAccount -Identity 'svc-web'              # sur le serveur : installe le compte de service gere\nTest-ADServiceAccount -Identity 'svc-web'                 # verifie que le serveur peut utiliser le compte (True attendu)",
+    note: "New-ADServiceAccount se lance depuis un poste d'administration ; Install/Test-ADServiceAccount se lancent sur le serveur qui utilisera le compte. Test doit renvoyer True avant de configurer le service." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

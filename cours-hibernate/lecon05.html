@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 5</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "L'EntityManager : persist, find, remove",
+  subtitle: "Le chef d'orchestre de la persistance — trois méthodes et ta base s'anime.",
+  theory: `
+<h3>1. Le chef d'orchestre</h3>
+<p>L'<strong>EntityManager</strong> est l'interface centrale de JPA : c'est lui qui traduit tes intentions objet en SQL. Il gère un espace de travail appelé <strong>contexte de persistance</strong> — la « salle d'attente » des entités qu'il surveille (on approfondit leçons 6, 7 et 19). Une <strong>transaction</strong> est un bloc d'écritures « tout ou rien » : soit tout réussit (commit), soit tout est annulé (rollback), jamais à moitié.</p>
+<pre class="pseudo">EntityManager em = emf.createEntityManager();   // on obtient un EntityManager : léger, UN par unité de travail
+em.getTransaction().begin();                     // begin() = OUVRIR une transaction (le bloc « tout ou rien »)
+// ... persist / find / remove ...               // ici on place nos opérations (créer, lire, supprimer)
+em.getTransaction().commit();                    // commit() = VALIDER : Hibernate envoie enfin le SQL à MySQL
+em.close();                                       // on ferme l'EntityManager : l'unité de travail est terminée</pre>
+
+<h3>2. persist : créer</h3>
+<pre class="pseudo">Jeu jeu = new Jeu("Catan");                      // on crée un objet Jeu en mémoire (état "transient" : inconnu de la base)
+jeu.setPrixLocation(new BigDecimal("3.50"));     // on renseigne le prix (BigDecimal = précis, sans arrondi, pour l'argent)
+em.persist(jeu);                                 // persist() : l'objet devient GÉRÉ, l'INSERT est planifié (pas encore envoyé)
+tx.commit();                                     // au commit → INSERT INTO jeu (titre, prix_location) VALUES (?, ?)
+System.out.println(jeu.getId());                 // l'id AUTO_INCREMENT est maintenant rempli par MySQL !</pre>
+<p>persist ne retourne rien : il place l'objet sous surveillance et planifie l'INSERT. Après le commit, l'objet a reçu son id de MySQL. Un objet non encore persisté est dit <strong>transient</strong> (« de passage », inconnu de la base) ; une fois persisté, il est <strong>géré</strong> (surveillé par l'EntityManager).</p>
+
+<h3>3. find : lire par clé primaire</h3>
+<pre class="pseudo">Jeu jeu = em.find(Jeu.class, 42L);   // find() → SELECT ... WHERE id = 42 ; rend l'entité GÉRÉE correspondante
+if (jeu == null) { /* aucun jeu 42 : find rend null, pas d'exception */ }   // toujours penser à tester le null</pre>
+<p>find prend la classe et la clé, retourne l'entité <strong>gérée</strong> ou <strong>null</strong>. Il existe aussi <em>getReference</em>, qui rend un <strong>proxy</strong> paresseux (une doublure vide qui ne déclenchera la requête qu'au premier accès) sans SELECT immédiat — utile pour poser une clé étrangère sans charger la ligne.</p>
+
+<h3>4. remove : supprimer</h3>
+<pre class="pseudo">Jeu jeu = em.find(Jeu.class, 42L);   // 1. charger l'entité (ou getReference) → elle est désormais gérée
+em.remove(jeu);                       // 2. remove() planifie le DELETE de cet objet géré
+tx.commit();                          // 3. au commit → DELETE FROM jeu WHERE id = 42</pre>
+<p>remove exige une entité <strong>gérée</strong> : on supprime un objet surveillé, pas un id brut. Attention aux clés étrangères : MySQL refusera de supprimer un jeu référencé par des locations (contraintes du Niveau 4 toujours en service).</p>
+
+<h3>5. Écritures = transaction obligatoire</h3>
+<p>Hors serveur d'application, toute écriture doit être encadrée : <strong>begin() … commit()</strong> (ou rollback() en cas d'erreur — leçon 17 approfondit). Les repositories Spring Data faisaient exactement ces appels sous ton save()/findById()/deleteById() ; EF Core a SaveChanges, Eloquent save(), Django objects.create() : mêmes verbes partout.</p>
+<div class="warn">persist(jeu) n'exécute PAS l'INSERT immédiatement : Hibernate attend le flush/commit pour envoyer le SQL (le <em>flush</em> est le moment où le contexte de persistance vide ses écritures en attente vers la base). Si tu ne vois rien dans show_sql, vérifie d'abord que la transaction est bien commitée.</div>
+<div class="tip">Adopte le motif « unité de travail » : un EntityManager court par opération métier (créer un jeu, inscrire un membre), ouvert tard, fermé tôt. La factory est unique et durable ; les managers sont jetables.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'interface centrale de JPA pour manipuler les entités :", opts: ["EntityManager", "ResultSet", "HttpServlet", "ClassLoader"], a: 0, exp: "C'est le chef d'orchestre : persist, find, remove, requêtes." },
+    { type: "input", q: "Quelle méthode de l'EntityManager planifie l'insertion d'une nouvelle entité ?", a: ["persist", "em.persist", "persist()"], ph: "nom de la méthode…", exp: "em.persist(jeu) : l'entité devient gérée, l'INSERT part au commit." },
+    { type: "qcm", q: "em.find(Jeu.class, 42L) exécute…", opts: ["Un SELECT par clé primaire", "Un DELETE", "Un UPDATE", "Un CREATE TABLE"], a: 0, exp: "Lecture par PK : SELECT ... WHERE id = 42." },
+    { type: "qcm", q: "Si aucun jeu n'a l'id 42, em.find retourne…", opts: ["null", "Une exception fatale", "Un jeu vide", "-1"], a: 0, exp: "find rend null : à toi de tester (Spring Data enrobait ça dans Optional)." },
+    { type: "vf", q: "persist(jeu) envoie l'INSERT à MySQL à la ligne même où il est appelé.", a: false, exp: "L'INSERT est planifié et part au flush/commit : c'est l'écriture différée." },
+    { type: "qcm", q: "Après le commit d'un persist, l'attribut id de l'objet…", opts: ["Contient la valeur AUTO_INCREMENT attribuée par MySQL", "Reste null pour toujours", "Vaut toujours 0", "Devient une chaîne"], a: 0, exp: "Hibernate récupère la clé générée et la reporte dans l'objet." },
+    { type: "qcm", q: "remove exige…", opts: ["Une entité gérée (chargée via find ou getReference)", "Un id sous forme de String", "Une connexion FTP", "Que la table soit vide"], a: 0, exp: "On supprime un objet surveillé, pas un id brut." },
+    { type: "qcm", q: "Toute écriture (persist, remove) hors serveur d'application doit être entourée de…", opts: ["begin() et commit() d'une transaction", "try/finally uniquement", "Un commentaire", "Un thread séparé"], a: 0, exp: "Sans transaction active, l'écriture échoue (TransactionRequiredException)." },
+    { type: "vf", q: "Il est recommandé de créer une EntityManagerFactory à chaque requête utilisateur.", a: false, exp: "La factory est unique et coûteuse ; ce sont les EntityManager qui sont jetables." },
+    { type: "qcm", q: "getReference diffère de find car il…", opts: ["Rend un proxy sans exécuter de SELECT immédiat", "Supprime la ligne", "Retourne du JSON", "Ferme la connexion"], a: 0, exp: "Pratique pour référencer une entité sans la charger (utile leçon 8)." },
+    { type: "qcm", q: "Supprimer un jeu encore référencé par des locations provoque…", opts: ["Une erreur de contrainte de clé étrangère MySQL", "Une suppression silencieuse des locations", "Un simple avertissement", "Rien du tout"], a: 0, exp: "Les contraintes FK du Niveau 4 restent en service : l'ORM ne les contourne pas." },
+    { type: "input", q: "Quelle méthode de la transaction valide définitivement les écritures ?", a: ["commit", "commit()", "tx.commit"], ph: "nom de la méthode…", exp: "commit() ; en cas de problème : rollback() (leçon 17)." },
+    { type: "qcm", q: "Sous le save() d'un repository Spring Data se cache…", opts: ["persist (ou merge) d'un EntityManager", "Un fichier CSV", "Une requête HTTP", "Un mail au DBA"], a: 0, exp: "Le voile se lève : Spring Data délègue à l'EntityManager." },
+    { type: "vf", q: "Le contexte de persistance est l'espace où l'EntityManager surveille les entités gérées.", a: true, exp: "La salle d'attente : centrale pour les leçons 6, 7 et 19." },
+    { type: "qcm", q: "Les verbes équivalents ailleurs : SaveChanges, save(), objects.create() appartiennent à…", opts: ["EF Core, Eloquent, Django ORM", "Git, Docker, Maven", "HTML, CSS, JS", "JUnit, Mockito, AssertJ"], a: 0, exp: "Mêmes concepts CRUD dans toutes les piles de la formation." }
+  ],
+  final: {
+    title: "Exercice final — Le premier jeu en base",
+    intro: `<p>Scénario complet : insérer « 7 Wonders » dans la base, le relire, puis le supprimer. Chaque étape doit être à sa place.</p>`,
+    questions: [
+      { type: "qcm", q: "L'ordre correct des opérations d'insertion :", opts: ["begin → new Jeu → persist → commit", "persist → new Jeu → begin → commit", "commit → persist → begin", "new Jeu → commit → persist"], a: 0, exp: "Transaction ouverte, objet créé et persisté, commit qui déclenche l'INSERT." },
+      { type: "qcm", q: "Quel SQL apparaît dans show_sql au commit du persist ?", opts: ["INSERT INTO jeu (...) VALUES (?, ?)", "SELECT * FROM jeu", "DROP TABLE jeu", "ALTER TABLE jeu"], a: 0, exp: "L'écriture différée part au commit." },
+      { type: "input", q: "Pour relire le jeu d'id 7 : Jeu j = em.____(Jeu.class, 7L);", a: ["find", "em.find", ".find"], ph: "la méthode…", exp: "find : lecture par clé primaire, null si absent." },
+      { type: "vf", q: "em.remove(j) suivi de commit génère un DELETE FROM jeu WHERE id = ?.", a: true, exp: "Suppression planifiée, exécutée au commit." },
+      { type: "qcm", q: "Tu oublies em.getTransaction().begin() avant persist. Résultat :", opts: ["TransactionRequiredException (aucune écriture possible)", "L'INSERT part quand même", "MySQL crée la transaction seul", "Le programme accélère"], a: 0, exp: "Écriture = transaction active obligatoire." }
+    ],
+    solution: `<pre class="pseudo">EntityManager em = emf.createEntityManager();     // ouvrir l'unité de travail
+EntityTransaction tx = em.getTransaction();       // récupérer l'objet transaction
+tx.begin();                                       // ouvrir la transaction (écritures à venir)
+Jeu jeu = new Jeu("7 Wonders");                   // créer l'objet en mémoire (état transient)
+em.persist(jeu);                                  // planifié... l'objet devient géré
+tx.commit();                                       // → INSERT (id attribué : ex. 7)
+Jeu relu = em.find(Jeu.class, jeu.getId());        // → SELECT WHERE id = ? (on relit le jeu)
+tx.begin();                                       // nouvelle transaction pour la suppression
+em.remove(relu);                                  // planifier le DELETE de l'entité gérée
+tx.commit();                                       // → DELETE WHERE id = ?
+em.close();                                        // fermer l'EntityManager (fin de l'unité de travail)</pre>
+<p>Créer, lire, supprimer : trois verbes maîtrisés. Il en manque un — modifier. Demain, tu découvriras qu'avec Hibernate… il n'y a souvent RIEN à appeler : le dirty checking.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l5", title: "Concevoir le service d'inscription", level: 2,
+    statement: "Décris, étape par étape et en pseudo-code Java, l'opération métier « inscrire un membre à la Ludothèque » avec l'EntityManager : vérification préalable que le pseudo n'est pas déjà pris (on suppose une méthode findByPseudo fournie), création, persistance, gestion de la transaction et des erreurs (que faire si le commit échoue sur la contrainte UNIQUE du pseudo ?). Justifie où commence et où finit l'unité de travail.",
+    hints: [
+      "Délimite l'unité de travail : création de l'EntityManager, begin, ... , commit/rollback, close.",
+      "Deux barrières contre le doublon : la vérification applicative ET la contrainte UNIQUE — pourquoi garder les deux ?",
+      "En cas d'échec du commit : quel appel évite de laisser la transaction ouverte, et que remonte-t-on à l'appelant ?"
+    ],
+    solution: "inscrireMembre(pseudo, email) :\n  em = emf.createEntityManager()          // début de l'unité de travail\n  tx = em.getTransaction()\n  essayer :\n    tx.begin()\n    si findByPseudo(em, pseudo) existe :\n        lever PseudoDejaPrisException      // barrière applicative, message clair\n    m = new Membre(pseudo, email)          // transient\n    em.persist(m)                          // géré, INSERT planifié\n    tx.commit()                            // INSERT réel ; id attribué\n    retourner m\n  attraper (ex) :\n    si tx.isActive() : tx.rollback()       // ne JAMAIS laisser tx ouverte\n    // la contrainte UNIQUE peut quand même claquer (deux requêtes simultanées) :\n    // la base est la barrière finale ; on retraduit en PseudoDejaPrisException\n    relancer\n  enfin :\n    em.close()                             // fin de l'unité de travail\n\nUnité de travail = UNE opération métier complète : ouverte tard, fermée tôt.",
+    note: "La double barrière (test applicatif + contrainte UNIQUE) illustre un principe transversal : la base reste le gardien final de l'intégrité, l'application offre juste un message aimable. C'est ce motif exact que @Transactional et les repositories Spring automatiseront — et tu le retrouveras dans la leçon 17 puis dans ton projet du Niveau 6." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

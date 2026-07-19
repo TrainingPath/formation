@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : prix figé",
+  subtitle: "Enregistrer le prix au moment de l'achat — pas une référence vers un prix qui changera.",
+  theory: `
+<h3>1. Acheter, c'est l'autre stock</h3>
+<p>L'achat touche <code>stockVente()</code> (et non <code>stockLocation()</code>) : ce sont deux compteurs indépendants. Comme la location, c'est une opération à <strong>deux écritures</strong> : <strong>insérer l'achat</strong> et <strong>décrémenter le stock de vente</strong>. Donc, à nouveau, une <strong>transaction</strong> (tout ou rien).</p>
+
+<h3>2. Le piège du prix</h3>
+<div class="warn">Un achat garde une trace <strong>historique</strong> (un souvenir daté de ce qui s'est passé). Si l'on stockait seulement l'<code>id</code> du jeu et qu'on rejouait son prix <em>actuel</em>, alors demain, quand le prix changera, les vieux achats afficheraient un mauvais montant. Il faut donc <strong>figer</strong> (copier une bonne fois) le prix payé dans la ligne d'achat, comme un ticket de caisse imprimé qui ne bouge plus.</div>
+
+<h3>3. Le schéma</h3>
+<pre class="pseudo">CREATE TABLE achat (                        -- cree la table des achats (l'historique)
+  id           INT AUTO_INCREMENT PRIMARY KEY,   -- identifiant unique auto-genere
+  utilisateur_id INT NOT NULL,              -- lien vers l'acheteur (cle etrangere plus bas)
+  jeu_id       INT NOT NULL,                -- lien vers le jeu achete
+  quantite     INT NOT NULL,                -- combien d'exemplaires achetes
+  prix_unitaire DECIMAL(6,2) NOT NULL,   -- prix FIGÉ au moment de l'achat
+  date_achat   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,   -- date + heure, remplie automatiquement
+  FOREIGN KEY (utilisateur_id) REFERENCES utilisateur(id),   -- garantit un acheteur existant
+  FOREIGN KEY (jeu_id) REFERENCES jeu(id)                    -- garantit un jeu existant
+);</pre>
+<p><code>DATETIME</code> stocke une date avec l'heure ; <code>CURRENT_TIMESTAMP</code> remplit automatiquement l'instant présent. La colonne <code>prix_unitaire</code> est une copie du prix du jeu au moment de l'achat. C'est une <strong>dénormalisation volontaire</strong> : normalement on évite de dupliquer une donnée, mais ici on le fait exprès pour que l'historique reste vrai même si le catalogue évolue.</p>
+
+<h3>4. Le service</h3>
+<pre class="pseudo">void AchatService::acheter(sql::Connection&amp; con, int uid, int jeuId, int q) {   // achete q exemplaires d'un jeu
+    if (q &lt;= 0) throw SaisieInvalide("Quantite invalide");   // quantite absurde : refuse
+    Jeu j = JeuRepository::findById(con, jeuId);  // charge le jeu concerne
+    if (j.stockVente() &lt; q)                       // pas assez de stock de vente ?
+        throw StockInsuffisant("Stock de vente insuffisant");   // refuse par une exception
+    double prix = j.prixAchat();                  // on FIGE le prix courant
+    TransactionGuard tx(con);                     // ouvre la transaction (RAII)
+    AchatRepository::inserer(con, uid, jeuId, q, prix);   // prix copié
+    JeuRepository::decrementerStockVente(con, jeuId, q);  // ecriture 2 : retire q du stock de vente
+    tx.commit();                                  // valide les deux ecritures ensemble
+}</pre>
+
+<h3>5. Cohérence du total</h3>
+<div class="tip">Le total d'un achat se recalcule depuis <code>prix_unitaire × quantite</code> stockés dans la ligne, jamais depuis le prix actuel du catalogue. Ainsi une <strong>facture</strong> de l'an dernier reste exacte pour toujours. Figer les données historiques est un réflexe métier essentiel.</div>`,
+  exercises: [
+    { type: "qcm", q: "Acheter touche…", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "Le stock de vente." },
+    { type: "qcm", q: "L'achat est une opération…", opts: ["à une écriture", "à deux écritures → transaction", "sans écriture", "d'affichage"], a: 1, exp: "Insertion + décrément." },
+    { type: "qcm", q: "Pourquoi figer le prix ?", opts: ["par vitesse", "pour que l'historique reste vrai si le prix change", "obligation SQL", "sans raison"], a: 1, exp: "Facture historique." },
+    { type: "qcm", q: "prix_unitaire dans la table achat est…", opts: ["une référence au jeu", "une copie du prix au moment de l'achat", "toujours nul", "calculé à l'affichage"], a: 1, exp: "Figé." },
+    { type: "qcm", q: "Copier le prix dans l'achat est…", opts: ["une erreur", "une dénormalisation volontaire (historique)", "interdit", "inutile"], a: 1, exp: "Justifiée." },
+    { type: "qcm", q: "Le total d'un achat se calcule depuis…", opts: ["le prix actuel du catalogue", "prix_unitaire × quantite stockés", "rien", "l'UI"], a: 1, exp: "Données figées." },
+    { type: "qcm", q: "Si le stock de vente < quantité, on…", opts: ["achète quand même", "lance StockInsuffisant", "renvoie 0", "affiche"], a: 1, exp: "Refus." },
+    { type: "qcm", q: "On fige le prix…", opts: ["après commit", "avant/pendant la transaction, à la valeur courante", "jamais", "à l'affichage"], a: 1, exp: "Au moment de l'achat." },
+    { type: "qcm", q: "DECIMAL(6,2) convient pour…", opts: ["un texte", "un montant monétaire (pas de flottant approximatif)", "un id", "une date"], a: 1, exp: "Précision monétaire." },
+    { type: "qcm", q: "Les clés étrangères de la table achat référencent…", opts: ["rien", "utilisateur(id) et jeu(id)", "le prix", "la date"], a: 1, exp: "Intégrité référentielle." },
+    { type: "vf", q: "Recalculer le total d'un vieil achat avec le prix actuel donnerait un montant faux si le prix a changé.", a: true, exp: "D'où le prix figé." },
+    { type: "qcm", q: "quantite <= 0 déclenche…", opts: ["un achat", "SaisieInvalide", "un commit", "rien"], a: 1, exp: "Validation." },
+    { type: "qcm", q: "Comme la location, l'achat utilise…", opts: ["aucun garde", "un TransactionGuard (RAII)", "un goto", "un thread"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "date_achat DEFAULT CURRENT_TIMESTAMP…", opts: ["est inutile", "horodate automatiquement l'achat", "stocke le prix", "trie"], a: 1, exp: "Trace temporelle." },
+    { type: "qcm", q: "Vendre le dernier exemplaire empêche-t-il de louer ?", opts: ["oui", "non : les deux stocks sont indépendants", "parfois", "toujours"], a: 1, exp: "Deux compteurs." }
+  ],
+  final: {
+    title: "Exercice final — Une facture qui reste vraie",
+    intro: `<p>Un développeur affiche une vieille facture ainsi :</p>
+<pre class="pseudo">Achat a = AchatRepository::findById(con, achatId);   // charge l'achat (ses donnees figees)
+Jeu j = JeuRepository::findById(con, a.jeuId());     // charge le jeu (dont le prix a pu changer)
+double total = j.prixAchat() * a.quantite();   // prix ACTUEL du catalogue
+</pre>`,
+    questions: [
+      { type: "qcm", q: "Le bug :", opts: ["aucun", "on utilise le prix actuel, pas celui payé : la facture change si le prix évolue", "trop lent", "quantite fausse"], a: 1, exp: "Historique faux." },
+      { type: "qcm", q: "La bonne source du prix :", opts: ["le catalogue", "a.prixUnitaire() figé dans l'achat", "l'UI", "zéro"], a: 1, exp: "Donnée historique." },
+      { type: "qcm", q: "Le total correct :", opts: ["j.prixAchat()*q", "a.prixUnitaire() * a.quantite()", "0", "au hasard"], a: 1, exp: "Depuis l'achat." },
+      { type: "qcm", q: "Pourquoi stocker prix_unitaire dans achat ?", opts: ["vitesse", "figer l'historique indépendamment du catalogue", "obligation", "rien"], a: 1, exp: "Vérité durable." },
+      { type: "vf", q: "Une facture émise doit rester identique même si les prix changent ensuite.", a: true, exp: "Principe métier." }
+    ],
+    solution: `<pre class="pseudo">Achat a = AchatRepository::findById(con, achatId);   // charge l'achat (avec son prix figé)
+double total = a.prixUnitaire() * a.quantite();   // prix FIGÉ au moment de l'achat
+std::cout &lt;&lt; "Total : " &lt;&lt; total &lt;&lt; " EUR\\n";     // affiche le total, toujours exact</pre>
+<p>Le montant vient des données figées dans la ligne d'achat, jamais du catalogue courant. La facture reste vraie pour toujours. Demain : l'interface console et les smart pointers.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpp-l13", title: "L'achat, prix figé", level: 3,
+    statement: "Écris AchatService::acheter(con, uid, jeuId, q) : valide q > 0 (sinon SaisieInvalide), vérifie que stockVente >= q (sinon StockInsuffisant), fige le prix courant, puis sous TransactionGuard insère l'achat (avec le prix figé) et décrémente le stock de vente, et commit.",
+    hints: [
+      "Récupère le Jeu avec JeuRepository::findById.",
+      "double prix = j.prixAchat(); AVANT d'écrire.",
+      "TransactionGuard tx(con); ... tx.commit();"
+    ],
+    solution: "void AchatService::acheter(sql::Connection& con, int uid, int jeuId, int q) {   // achete q exemplaires d'un jeu\n    if (q <= 0)                                // quantite non positive ?\n        throw SaisieInvalide(\"Quantite invalide\");   // refuse la saisie\n    Jeu j = JeuRepository::findById(con, jeuId);   // charge le jeu concerne\n    if (j.stockVente() < q)                    // pas assez de stock de vente ?\n        throw StockInsuffisant(\"Stock de vente insuffisant\");   // refuse\n    double prix = j.prixAchat();               // on FIGE le prix courant\n    TransactionGuard tx(con);                  // RAII : rollback auto si exception\n    AchatRepository::inserer(con, uid, jeuId, q, prix);   // prix copie dans la ligne\n    JeuRepository::decrementerStockVente(con, jeuId, q);  // retire q du stock de vente\n    tx.commit();                               // les deux ecritures ensemble\n}",
+    note: "On fige le prix (double prix = j.prixAchat()) avant d'écrire, puis on le copie dans la ligne d'achat : l'historique devient indépendant du catalogue. Les deux écritures sont atomiques grâce au TransactionGuard. Valider puis vérifier le stock avant d'ouvrir la transaction évite d'annuler pour rien." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

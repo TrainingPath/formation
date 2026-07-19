@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Tests d'intégration (WebApplicationFactory)",
+  subtitle: "Vérifier l'assemblage réel : de la requête HTTP jusqu'à la base.",
+  theory: `
+<h3>1. Unitaire vs intégration</h3>
+<p>Le test unitaire isole une seule brique (leçon 17). Le <strong>test d'intégration</strong>, lui, vérifie la <strong>chaîne complète</strong> — on dit aussi le <strong>pipeline</strong> : routage (le tri des URL vers la bonne action) → contrôleur → validation → service → EF Core → base, en envoyant de vraies requêtes HTTP. On teste l'assemblage entier, pas une pièce détachée.</p>
+
+<h3>2. WebApplicationFactory : l'app en mémoire</h3>
+<pre class="pseudo">public class ApiTests : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt; {   // tests partageant une app démarrée une seule fois
+    private readonly HttpClient _client;             // le client HTTP qui enverra les requêtes
+    public ApiTests(WebApplicationFactory&lt;Program&gt; factory) =&gt;   // reçoit "l'usine" qui a démarré l'app
+        _client = factory.CreateClient();            // fabrique un client branché sur l'app en mémoire
+
+    [Fact]                                           // un test
+    public async Task GetJeux_Renvoie200EtDuJson() { // vérifie que GET /api/jeux répond OK, en JSON
+        var reponse = await _client.GetAsync("/api/jeux");   // envoie une vraie requête GET
+        reponse.EnsureSuccessStatusCode();                       // 2xx
+        Assert.Contains("application/json",          // vérifie que le type de contenu est bien du JSON
+            reponse.Content.Headers.ContentType!.ToString());
+    }
+}</pre>
+<p><code>WebApplicationFactory</code> démarre <strong>toute l'application</strong> en mémoire (Program.cs compris) et fournit un <code>HttpClient</code> branché dessus : on envoie de vraies requêtes sans avoir à lancer un serveur ni passer par le réseau. <code>IClassFixture</code> fait en sorte que l'app ne démarre qu'une fois pour toute la classe de tests (gain de temps). <code>EnsureSuccessStatusCode()</code> échoue si le code n'est pas un succès (2xx).</p>
+
+<h3>3. Une base de test dédiée</h3>
+<pre class="pseudo">factory.WithWebHostBuilder(b =&gt; b.ConfigureServices(services =&gt; {   // reconfigure l'app spécialement pour les tests
+    services.RemoveAll&lt;DbContextOptions&lt;AppDbContext&gt;&gt;();            // retire la configuration de base normale
+    services.AddDbContext&lt;AppDbContext&gt;(o =&gt;                         // en réenregistre une autre…
+        o.UseSqlServer(chaineDeTest));   // base LudothequeTest, jamais la prod !
+}));</pre>
+<p>On <strong>substitue</strong> (remplace) la base : les tests écrivent dans <code>LudothequeTest</code>, une base jetable remise à zéro entre les tests (on rejoue les migrations et un jeu de données connu). Ainsi chaque test part d'un état propre et prévisible.</p>
+
+<h3>4. Tester la sécurité et le métier de bout en bout</h3>
+<pre class="pseudo">[Fact]
+public async Task Louer_SansToken_Renvoie401() {     // sans être connecté, louer doit être refusé
+    var reponse = await _client.PostAsync("/api/locations/1", null);   // tente de louer le jeu 1 sans jeton
+    Assert.Equal(HttpStatusCode.Unauthorized, reponse.StatusCode);     // on attend 401 Unauthorized
+}
+
+[Fact]
+public async Task Louer_DecrementeLeStock() {        // vérifie qu'une location baisse bien le stock
+    var token = await ConnexionAsync("client@ludo.fr", "Motdepasse8!");   // se connecte et récupère un jeton
+    _client.DefaultRequestHeaders.Authorization = new("Bearer", token);   // ajoute ce jeton à toutes les requêtes
+    await _client.PostAsync("/api/locations/1", null);                    // loue le jeu 1
+    // relire le jeu : le stock a baissé de 1 (vérifié en base de test)
+}</pre>
+<p>On teste aussi la <strong>sécurité</strong> (un accès sans jeton renvoie bien 401) et le <strong>métier</strong> (après la location, le stock a réellement diminué en base) — de la requête HTTP jusqu'à l'effet final.</p>
+<div class="warn">Les tests d'intégration ne visent <strong>jamais</strong> la base de production : on utilise une chaîne de connexion de test dédiée, et un jeu de données reconstruit avant chaque série. Un test qui dépend du hasard des données laissées par les tests précédents est un test qui ment.</div>
+<div class="tip">La <strong>pyramide des tests</strong> : beaucoup d'unitaires (rapides), moins d'intégration (plus lents mais réalistes). Les deux couches se complètent — l'une prouve les règles, l'autre l'assemblage.</div>
+`,
+  exercises: [
+    { type: "qcm", q: "Un test d'intégration vérifie…", opts: ["Une méthode isolée", "La chaîne complète (HTTP → base)", "Le CSS", "Le README"], a: 1, exp: "L'assemblage réel." },
+    { type: "qcm", q: "L'outil qui démarre l'app en mémoire :", opts: ["WebApplicationFactory<Program>", "Moq", "Flyway", "Docker"], a: 0, exp: "Fournit un HttpClient branché." },
+    { type: "qcm", q: "factory.CreateClient() renvoie…", opts: ["Un navigateur", "Un HttpClient qui parle à l'app en mémoire", "Un DbContext", "Un mock"], a: 1, exp: "Requêtes HTTP réelles, sans réseau." },
+    { type: "qcm", q: "EnsureSuccessStatusCode() échoue si…", opts: ["Le code n'est pas 2xx", "Le JSON est long", "La base est vide", "Le test est lent"], a: 0, exp: "Vérifie le succès HTTP." },
+    { type: "qcm", q: "La base utilisée par les tests d'intégration :", opts: ["La prod", "Une base de test dédiée (LudothequeTest)", "Aucune", "Un fichier Excel"], a: 1, exp: "Substituée dans les services." },
+    { type: "vf", q: "Tester sur la base de production est acceptable si on fait attention.", a: false, exp: "Jamais : substitution obligatoire." },
+    { type: "qcm", q: "Remplacer le DbContext dans les tests :", opts: ["WithWebHostBuilder + ConfigureServices", "un if en prod", "éditer Program.cs", "impossible"], a: 0, exp: "On substitue l'enregistrement DI." },
+    { type: "qcm", q: "POST /api/locations/1 sans jeton doit renvoyer…", opts: ["200", "401", "201", "302"], a: 1, exp: "La sécurité se teste aussi." },
+    { type: "qcm", q: "Pour tester en connecté, le client HTTP ajoute…", opts: ["Un cookie manuel", "L'en-tête Authorization: Bearer <token>", "un mot de passe en URL", "rien"], a: 1, exp: "Comme un vrai client." },
+    { type: "qcm", q: "Louer_DecrementeLeStock vérifie…", opts: ["Le HTML", "Que le stock a baissé en base après l'appel HTTP", "La couleur du bouton", "Les logs"], a: 1, exp: "Effet réel de bout en bout." },
+    { type: "vf", q: "Chaque série de tests repart d'un jeu de données connu.", a: true, exp: "Déterminisme." },
+    { type: "qcm", q: "La pyramide des tests recommande…", opts: ["Que de l'intégration", "Beaucoup d'unitaires, moins d'intégration", "Aucun test", "Que du manuel"], a: 1, exp: "Vitesse + réalisme." },
+    { type: "qcm", q: "Un test d'intégration est plus lent car…", opts: ["xUnit est lent", "Il traverse toutes les couches et la base", "C# est lent", "Il est mal écrit"], a: 1, exp: "Le prix du réalisme." },
+    { type: "qcm", q: "IClassFixture<...> sert à…", opts: ["Partager la factory entre les tests de la classe", "Mocker", "Migrer", "Logger"], a: 0, exp: "L'app démarre une fois." },
+    { type: "vf", q: "Les tests d'intégration rendent les tests unitaires inutiles.", a: false, exp: "Complémentaires : règles vs assemblage." }
+  ],
+  final: {
+    title: "Exercice final — L'API testée de bout en bout",
+    intro: `<p>On vérifie le catalogue et la protection de la location.</p>`,
+    questions: [
+      { type: "qcm", q: "L'app testée démarre :", opts: ["En mémoire via WebApplicationFactory", "Sur le serveur de prod", "Dans le navigateur", "Pas du tout"], a: 0, exp: "Program.cs compris." },
+      { type: "qcm", q: "GET /api/jeux doit renvoyer :", opts: ["2xx et du JSON", "401", "500", "du HTML"], a: 0, exp: "Catalogue public." },
+      { type: "qcm", q: "POST /api/locations/1 sans jeton :", opts: ["401 Unauthorized", "201", "200", "404"], a: 0, exp: "Protégé." },
+      { type: "qcm", q: "La base visée par ces tests :", opts: ["LudothequeTest (substituée)", "la prod", "MySQL", "aucune"], a: 0, exp: "Chaîne de test." },
+      { type: "vf", q: "Ce test échouerait si quelqu'un retirait [Authorize] de la location.", a: true, exp: "La sécurité est verrouillée par le test." }
+    ],
+    solution: `<pre class="pseudo">public class ApiTests : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt; {  // app démarrée une fois pour la classe
+    private readonly HttpClient _client;              // client HTTP de test
+    public ApiTests(WebApplicationFactory&lt;Program&gt; factory) =&gt;   // reçoit l'usine (app en mémoire)
+        _client = factory.CreateClient();             // client branché sur l'app
+
+    [Fact]
+    public async Task GetJeux_Renvoie200EtDuJson() {  // le catalogue public répond OK
+        var reponse = await _client.GetAsync("/api/jeux");   // requête GET réelle
+        reponse.EnsureSuccessStatusCode();            // échoue si code non 2xx
+    }
+
+    [Fact]
+    public async Task Louer_SansToken_Renvoie401() {  // louer sans jeton est refusé
+        var reponse = await _client.PostAsync("/api/locations/1", null);   // POST sans authentification
+        Assert.Equal(HttpStatusCode.Unauthorized, reponse.StatusCode);     // on attend 401
+    }
+}</pre>
+<p>L'assemblage est prouvé. Demain : les derniers réflexes de qualité avant la mise en ligne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton test d'intégration…",
+  items: [
+  { id: "projcsharp-l18", title: "Le 404 et le 403 de bout en bout", level: 3,
+    statement: "Écris deux tests d'intégration : GetJeu_Inexistant_Renvoie404 (GET /api/jeux/99999 → NotFound) et CreerJeu_EnClient_Renvoie403 (se connecter avec un compte Client, poser le Bearer, POST /api/jeux → Forbidden). Utilise HttpStatusCode et le HttpClient de la factory.",
+    hints: [
+      "Assert.Equal(HttpStatusCode.NotFound, reponse.StatusCode);",
+      "var token = await ConnexionAsync(\"client@ludo.fr\", \"Motdepasse8!\");",
+      "_client.DefaultRequestHeaders.Authorization = new(\"Bearer\", token); puis PostAsJsonAsync."
+    ],
+    solution: "[Fact]\npublic async Task GetJeu_Inexistant_Renvoie404() {   // un jeu inexistant doit donner 404\n    var reponse = await _client.GetAsync(\"/api/jeux/99999\");   // GET d'un id qui n'existe pas\n    Assert.Equal(HttpStatusCode.NotFound, reponse.StatusCode);   // on attend 404 NotFound\n}\n\n[Fact]\npublic async Task CreerJeu_EnClient_Renvoie403() {   // un client (non vendeur) ne peut pas créer de jeu\n    var token = await ConnexionAsync(\"client@ludo.fr\", \"Motdepasse8!\");   // se connecte en tant que Client\n    _client.DefaultRequestHeaders.Authorization = new(\"Bearer\", token);   // ajoute le jeton aux requêtes\n\n    var reponse = await _client.PostAsJsonAsync(\"/api/jeux\",   // tente de créer un jeu (POST)\n        new { Titre = \"Test\", PrixLocation = 2.5 });   // avec des données de test\n\n    Assert.Equal(HttpStatusCode.Forbidden, reponse.StatusCode);   // connecté mais interdit -> 403\n}",
+    note: "Ces deux tests couvrent la traduction des erreurs (middleware de la leçon 8 → 404) et la matrice des droits (leçon 11 → 403 pour un client authentifié mais non vendeur). Ils traversent le vrai pipeline : si demain une refonte casse le middleware ou l'attribut [Authorize(Roles=…)], la CI le verra avant les utilisateurs." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

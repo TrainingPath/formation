@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 27</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 27,
+  title: "Surveiller la réplication",
+  subtitle: "Vérifier que tous les contrôleurs de domaine racontent la même histoire.",
+  theory: `
+<h3>1. Qu'est-ce que la réplication ?</h3>
+<p>Un domaine possède souvent plusieurs contrôleurs de domaine (DC) pour la fiabilité. Quand on crée un utilisateur sur DC01, cette information doit apparaître aussi sur DC02, DC03… Ce mécanisme de recopie automatique des changements d'un DC vers les autres s'appelle la <strong>réplication</strong>. Grâce à elle, tous les DC finissent par avoir une copie identique de l'annuaire.</p>
+<div class="tip">On parle de <strong>convergence</strong> : après quelques instants, tous les DC « convergent » vers le même contenu. Tant que ce n'est pas le cas, deux DC peuvent donner des réponses différentes.</div>
+<h3>2. Pourquoi la surveiller ?</h3>
+<p>Si la réplication est en panne (câble coupé, DC éteint, pare-feu mal réglé), les DC se désynchronisent : un mot de passe changé sur l'un n'est pas connu de l'autre, un compte supprimé « ressuscite »… Surveiller la réplication, c'est vérifier qu'aucun DC n'est en retard et qu'il n'y a pas d'erreurs.</p>
+<h3>3. Les outils historiques</h3>
+<p>Deux commandes classiques restent très utilisées. <strong>repadmin</strong> est l'outil de référence pour la réplication ; <strong>dcdiag</strong> teste la santé générale d'un DC :</p>
+<pre class="pseudo">repadmin /replsummary       # resume l'etat de la replication : retards et erreurs par DC
+repadmin /showrepl          # detail des partenaires de replication du DC courant
+dcdiag /test:replications   # test de sante cible sur la replication</pre>
+<h3>4. Les cmdlets PowerShell modernes</h3>
+<p>Le module ActiveDirectory offre des cmdlets plus lisibles, dont les résultats sont des objets que l'on peut filtrer et exporter (comme au jour 23). Les principales :</p>
+<pre class="pseudo">Get-ADReplicationPartnerMetadata -Target "exemple.local" -Scope Domain   # avec qui chaque DC replique et QUAND pour la derniere fois
+Get-ADReplicationFailure -Target "DC01"                                  # liste les echecs de replication d'un DC
+Get-ADReplicationUpToDatenessVectorTable -Target "exemple.local"         # etat d'avancement de chaque DC (qui est a jour)</pre>
+<div class="tip">Le nom compliqué <code>Get-ADReplicationPartnerMetadata</code> se lit « les informations (metadata) sur les partenaires de réplication ». La propriété <code>LastReplicationSuccess</code> indique la date de la dernière réplication réussie.</div>
+<h3>5. Forcer une réplication</h3>
+<p>Par défaut, la réplication se fait automatiquement à intervalles réguliers. On peut la déclencher tout de suite (utile après un changement urgent ou pour tester) avec <code>Sync-ADObject</code> ou l'ancienne commande <code>repadmin /syncall</code> :</p>
+<pre class="pseudo">repadmin /syncall /AdeP     # force une replication de TOUS les DC, tout de suite
+Sync-ADObject -Object "CN=Marie Dupont,OU=RH,DC=exemple,DC=local" -Source "DC01" -Destination "DC02"
+# Sync-ADObject : replique immediatement UN objet precis de DC01 vers DC02</pre>
+<h3>6. Lire un rapport de réplication</h3>
+<p>Ce qu'on regarde en priorité : la <strong>date de dernière réplication réussie</strong> (récente = bon signe) et le <strong>nombre d'échecs consécutifs</strong> (doit rester à zéro). Un DC dont la dernière réussite date de plusieurs jours, ou qui cumule des échecs, demande une intervention.</p>
+<pre class="pseudo">Get-ADReplicationPartnerMetadata -Target "exemple.local" -Scope Domain |   # recupere l'etat de replication...
+    Select-Object Server, Partner, LastReplicationSuccess, ConsecutiveReplicationFailures   # ...et affiche l'essentiel
+# LastReplicationSuccess          : date de la derniere replication reussie (doit etre recente)
+# ConsecutiveReplicationFailures  : nombre d'echecs d'affilee (doit rester a 0)</pre>
+<div class="warn">Une réplication cassée est sournoise : tout semble marcher, jusqu'à ce que des incohérences apparaissent. Surveiller régulièrement (idéalement automatiquement, voir jour 29) évite les mauvaises surprises.</div>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce que la <strong>réplication</strong> ?", opts: ["Supprimer un DC", "La recopie automatique des changements d'un DC vers les autres", "Créer une GPO", "Sauvegarder l'annuaire"], a: 1, exp: "Elle maintient tous les DC à jour avec le même contenu." },
+    { type: "qcm", q: "Que signifie que les DC ont <strong>convergé</strong> ?", opts: ["Ils sont éteints", "Ils ont tous le même contenu d'annuaire", "Ils sont en panne", "Ils sont supprimés"], a: 1, exp: "Convergence = contenu identique sur tous les DC." },
+    { type: "qcm", q: "Que risque-t-on si la réplication est en panne ?", opts: ["Rien", "Des DC désynchronisés : mots de passe et objets incohérents", "Plus de vitesse", "Moins de GPO"], a: 1, exp: "Les DC racontent alors des histoires différentes." },
+    { type: "qcm", q: "Quel outil historique RÉSUME l'état de la réplication ?", opts: ["gpupdate", "repadmin", "wbadmin", "ntdsutil"], a: 1, exp: "repadmin /replsummary donne un résumé des retards et erreurs." },
+    { type: "qcm", q: "Quelle propriété indique la date de la dernière réplication réussie ?", opts: ["LastLogonDate", "LastReplicationSuccess", "Enabled", "PDCEmulator"], a: 1, exp: "LastReplicationSuccess doit être récente." },
+    { type: "qcm", q: "Quelle valeur doit rester à zéro pour une réplication saine ?", opts: ["Le nombre de DC", "ConsecutiveReplicationFailures (échecs consécutifs)", "Le nombre d'utilisateurs", "Le SID"], a: 1, exp: "Zéro échec consécutif = réplication en bonne santé." },
+    { type: "input", q: "Quelle cmdlet liste les ÉCHECS de réplication d'un DC ? (Verbe-Nom)", a: ["Get-ADReplicationFailure", "get-adreplicationfailure"], ph: "Get-ADReplication...", exp: "Get-ADReplicationFailure montre les échecs." },
+    { type: "input", q: "Quelle cmdlet donne les infos sur les partenaires de réplication ? (Verbe-Nom)", a: ["Get-ADReplicationPartnerMetadata", "get-adreplicationpartnermetadata"], ph: "Get-ADReplication...", exp: "Get-ADReplicationPartnerMetadata : partenaires et dernières réplications." },
+    { type: "input", q: "Quelle cmdlet réplique IMMÉDIATEMENT un objet précis entre deux DC ? (Verbe-Nom)", a: ["Sync-ADObject", "sync-adobject"], ph: "Verbe-ADObject", exp: "Sync-ADObject force la réplication d'un objet." },
+    { type: "input", q: "Quel outil historique teste la santé générale d'un DC ?", a: ["dcdiag"], ph: "un outil", exp: "dcdiag /test:replications teste la réplication." },
+    { type: "input", q: "Quelle sous-commande de repadmin donne le résumé ? repadmin /___", a: ["replsummary", "/replsummary"], ph: "un mot", exp: "repadmin /replsummary résume l'état." },
+    { type: "input", q: "Une réplication réussie récente est-elle bon signe ? (oui/non)", a: ["oui", "yes"], ph: "oui/non", exp: "Oui : une date récente indique que le DC est à jour." },
+    { type: "vf", q: "Une réplication cassée est immédiatement visible et bruyante.", a: false, exp: "Au contraire, elle est sournoise : tout semble marcher un temps." },
+    { type: "vf", q: "Les cmdlets Get-ADReplication* renvoient des objets qu'on peut filtrer et exporter.", a: true, exp: "Comme tout objet PowerShell, on peut les piper vers Select/Export." },
+    { type: "vf", q: "On peut forcer une réplication immédiate sans attendre l'intervalle automatique.", a: true, exp: "Sync-ADObject ou repadmin /syncall déclenchent tout de suite." }
+  ],
+  final: {
+    title: "Exercice final — Contrôle de santé de la réplication",
+    intro: `<p>Chaque matin, tu veux un coup d'oeil rapide : chaque DC a-t-il répliqué récemment, et sans échec ?</p>
+<pre class="pseudo">Get-ADReplicationPartnerMetadata -Target "exemple.local" -Scope Domain |   # etat de replication du domaine
+    Select-Object Server, Partner, LastReplicationSuccess, ConsecutiveReplicationFailures   # colonnes essentielles</pre>`,
+    questions: [
+      { type: "input", q: "Quelle cmdlet fournit l'état des partenaires de réplication ? (Verbe-Nom)", a: ["Get-ADReplicationPartnerMetadata", "get-adreplicationpartnermetadata"], ph: "Get-ADReplication...", exp: "Get-ADReplicationPartnerMetadata." },
+      { type: "qcm", q: "Quelle colonne dois-tu regarder pour repérer un DC en retard ?", opts: ["Enabled", "LastReplicationSuccess (trop ancienne = problème)", "GivenName", "SID"], a: 1, exp: "Une dernière réussite ancienne signale un retard." },
+      { type: "qcm", q: "Quelle valeur t'alerte si elle dépasse zéro ?", opts: ["Le nombre de DC", "ConsecutiveReplicationFailures", "Le nombre de GPO", "L'heure"], a: 1, exp: "Des échecs consécutifs indiquent une réplication cassée." },
+      { type: "input", q: "Pour investiguer un DC précis, quelle cmdlet liste ses échecs ? (Verbe-Nom)", a: ["Get-ADReplicationFailure", "get-adreplicationfailure"], ph: "Get-ADReplication...", exp: "Get-ADReplicationFailure -Target DCxx." },
+      { type: "qcm", q: "Après avoir réparé le lien, comment vérifier tout de suite que ça repart ?", opts: ["Supprimer le DC", "Forcer une réplication (Sync-ADObject / repadmin /syncall) puis relire l'état", "Créer une GPO", "Redémarrer les clients"], a: 1, exp: "On force une réplication et on recontrôle." }
+    ],
+    solution: `<p>Un contrôle matinal lisible, filtré sur l'essentiel :</p>
+<pre class="pseudo">Import-Module ActiveDirectory                                                     # charge les cmdlets AD
+Get-ADReplicationPartnerMetadata -Target "exemple.local" -Scope Domain |          # etat de replication de tout le domaine
+    Select-Object Server, Partner, LastReplicationSuccess, ConsecutiveReplicationFailures |   # garde les colonnes utiles
+    Sort-Object ConsecutiveReplicationFailures -Descending                        # remonte en haut les DC qui echouent</pre>
+<p>On lit deux choses : la date de dernière réussite (récente = bon) et le nombre d'échecs consécutifs (0 = bon). Trier par échecs décroissants met tout de suite les problèmes en évidence. Au jour 29, on automatisera ce contrôle en tâche planifiée.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script PowerShell ici…",
+  items: [
+  { id: "adps-j27", title: "Alerter sur les échecs de réplication", level: 3,
+    statement: "Écris un script qui récupère l'état de réplication du domaine <code>exemple.local</code>, n'affiche que les partenaires ayant AU MOINS un échec consécutif, avec le serveur, le partenaire et le nombre d'échecs.",
+    hints: [
+      "Utilise Get-ADReplicationPartnerMetadata -Target 'exemple.local' -Scope Domain.",
+      "Filtre avec Where-Object sur ConsecutiveReplicationFailures -gt 0.",
+      "Affiche Server, Partner et ConsecutiveReplicationFailures via Select-Object."
+    ],
+    solution: "Import-Module ActiveDirectory                                                       # charge les cmdlets AD\nGet-ADReplicationPartnerMetadata -Target 'exemple.local' -Scope Domain |            # recupere l'etat de replication du domaine\n    Where-Object { $_.ConsecutiveReplicationFailures -gt 0 } |                      # ne garde que les partenaires en echec\n    Select-Object Server, Partner, ConsecutiveReplicationFailures                  # affiche serveur, partenaire et nombre d'echecs",
+    note: "Where-Object filtre les objets selon une condition ; $_ represente l'objet en cours d'examen. Ne montrer que les lignes en echec transforme un long tableau en alerte concise, ideale pour un controle quotidien." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

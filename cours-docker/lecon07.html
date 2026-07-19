@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Conteneuriser l'application de la Ludothèque",
+  subtitle: "L'image tourne — et révèle exactement ce qui manque encore.",
+  theory: `
+<h3>1. Lancer l'application conteneurisée</h3>
+<p>On lance enfin NOTRE image. Rappel : <code>-e</code> passe une <strong>variable d'environnement</strong> au conteneur (un réglage lu par l'application), et <code>-p</code> publie un port. Ce sont les mêmes variables que ton <code>settings.py</code> lit déjà (leçon 2 du capstone) — l'application ne change pas, on ne fait que lui fournir son environnement de l'extérieur.</p>
+<pre class="pseudo">docker run -d --name ludo \\             # lance l'application en arrière-plan (-d), conteneur nommé 'ludo'
+    -p 8000:8000 \\                      # publie le port : 8000 de l'hôte -> 8000 du conteneur
+    -e DJANGO_SECRET_KEY=cle-de-dev \\   # -e : injecte une variable d'environnement (la clé secrète Django)
+    -e DB_PASSWORD=motdepasse \\         # -e : injecte le mot de passe de la base de données
+    ludotheque:0.1                      # l'image à exécuter (celle qu'on a construite à la leçon 6)</pre>
+<p>Le port est publié, la configuration passe par <code>-e</code> — les mêmes variables que <code>settings.py</code> lit depuis la leçon 2 du capstone. L'image n'a pas changé : seul l'environnement change.</p>
+
+<h3>2. Premier mur : la base injoignable</h3>
+<p>On lit toujours les logs après un lancement. Ici, une erreur attendue apparaît.</p>
+<pre class="pseudo">$ docker logs ludo                                  # on lit la sortie de l'application dans le conteneur
+django.db.utils.OperationalError:                   # erreur Django : impossible d'ouvrir la connexion à la base
+    Can't connect to MySQL server on 'localhost'    # elle cherche MySQL sur 'localhost'... mais localhost = le conteneur lui-même !</pre>
+<p>Normal : <strong>dans</strong> le conteneur, <code>localhost</code> est le conteneur lui-même — il n'y a pas de MySQL dedans, et c'est très bien ainsi (règle d'or : <strong>un conteneur = un processus</strong>, un seul programme par boîte). Il faudra un conteneur MySQL séparé et un réseau commun pour qu'ils se parlent : c'est le programme de la <strong>semaine 2</strong>.</p>
+
+<h3>3. Deuxième mur : tout est éphémère</h3>
+<p><strong>Éphémère</strong> signifie « qui ne dure pas ». Tout ce qu'un conteneur écrit va dans sa fine <strong>couche d'écriture</strong> (leçon 4), qui meurt avec lui. Preuve par l'expérience :</p>
+<pre class="pseudo">docker exec ludo touch /app/preuve.txt      # on crée un fichier vide DANS le conteneur ('touch' = créer/toucher un fichier)
+docker rm -f ludo                           # on DÉTRUIT le conteneur (-f force même s'il tourne)
+docker run -d --name ludo ... ludotheque:0.1  # on en recrée un NEUF à partir de la même image
+docker exec ludo ls /app/preuve.txt         # on cherche le fichier... 'No such file' : il a disparu, tout repart de l'image</pre>
+<p>La couche d'écriture meurt avec le conteneur. Les données de la Ludothèque (clients, locations, achats) devront donc vivre ailleurs, dans des <strong>volumes</strong> (leçon 8).</p>
+
+<h3>4. Ce qui marche déjà</h3>
+<p>Bonne nouvelle : l'image, elle, est saine. On peut le vérifier de l'intérieur avec <code>exec</code>.</p>
+<pre class="pseudo">docker exec ludo python manage.py check     # lance le contrôle interne de Django : l'application est saine, aucun problème
+docker exec ludo pip list                   # liste les dépendances installées : exactement les versions figées, partout pareil
+docker exec ludo whoami                     # affiche l'utilisateur du processus : 'root' pour l'instant (la leçon 16 corrigera ce risque)
+# et l'image tournerait À L'IDENTIQUE sur n'importe quelle machine   # c'est la promesse tenue : même image = même comportement partout</pre>
+
+<h3>5. Un conteneur = un processus</h3>
+<p>Un <strong>anti-modèle</strong> est une « fausse bonne idée » qu'il faut éviter. Ici : tout entasser dans un seul conteneur.</p>
+<div class="warn">La tentation : tout mettre dans un conteneur (app + MySQL + nginx). C'est l'anti-modèle — impossible à mettre à l'échelle, à mettre à jour ou à observer séparément. Un conteneur porte <strong>un</strong> processus ; l'assemblage est le travail de Compose (leçon 12).</div>
+<div class="tip">Bilan de la semaine 1 : image reproductible ✔, config par environnement ✔, port publié ✔. Les deux murs (réseau, persistance) sont le programme de la semaine 2 — tu sais désormais <em>pourquoi</em> ces notions existent.</div>`,
+  exercises: [
+    { type: "qcm", q: "La configuration du conteneur passe par…", opts: ["Un fichier codé en dur", "-e (variables d'environnement)", "Le Dockerfile modifié à chaque fois", "Un cookie"], a: 1, exp: "Mêmes variables que le capstone." },
+    { type: "qcm", q: "DB_HOST=localhost échoue car…", opts: ["MySQL est éteint", "Dans le conteneur, localhost = le conteneur lui-même", "Le port est fermé", "Django bug"], a: 1, exp: "Pas de MySQL dedans." },
+    { type: "qcm", q: "L'erreur MySQL se lit avec…", opts: ["docker logs ludo", "docker ps", "cat error.log", "docker images"], a: 0, exp: "La sortie du processus." },
+    { type: "vf", q: "Il faudrait installer MySQL DANS l'image de l'application.", a: false, exp: "Un conteneur = un processus ; MySQL aura le sien." },
+    { type: "qcm", q: "Un fichier créé dans le conteneur, après rm + nouveau run…", opts: ["Est toujours là", "A disparu : on repart de l'image", "Est sur Docker Hub", "Est dans Git"], a: 1, exp: "La couche d'écriture meurt avec le conteneur." },
+    { type: "qcm", q: "La persistance des données viendra…", opts: ["Des volumes (leçon 8)", "D'un plus gros conteneur", "De latest", "Du cache"], a: 0, exp: "Le premier sujet de la semaine 2." },
+    { type: "qcm", q: "Le lien app ↔ MySQL viendra…", opts: ["Du réseau Docker (leçon 9)", "De localhost", "D'un câble", "De pip"], a: 0, exp: "DNS interne entre conteneurs." },
+    { type: "qcm", q: "docker exec ludo python manage.py check sert à…", opts: ["Migrer", "Vérifier que l'app conteneurisée est saine", "Supprimer", "Publier"], a: 1, exp: "Diagnostic dans le conteneur." },
+    { type: "qcm", q: "docker exec ludo whoami affiche root :", opts: ["Parfait, rien à faire", "Un point à durcir (leçon 16)", "Une erreur Docker", "Impossible"], a: 1, exp: "Non-root à venir." },
+    { type: "qcm", q: "« Un conteneur = un processus » implique…", opts: ["App, base et proxy chacun leur conteneur", "Tout dans un seul conteneur", "Pas de base du tout", "Un conteneur par fichier"], a: 0, exp: "L'assemblage = Compose." },
+    { type: "vf", q: "Mettre app + MySQL + nginx dans un seul conteneur est une bonne pratique.", a: false, exp: "Anti-modèle : ni échelle, ni mise à jour, ni observation séparées." },
+    { type: "qcm", q: "La même image sur une autre machine donnerait…", opts: ["Un autre comportement", "Exactement le même environnement", "Une erreur", "Une image différente"], a: 1, exp: "La promesse tenue." },
+    { type: "qcm", q: "Ce qui change entre dev et prod pour cette image :", opts: ["Le code", "L'environnement (-e / --env-file)", "Le Dockerfile", "Le tag latest"], a: 1, exp: "Image fixe, config variable." },
+    { type: "qcm", q: "Les acquis de la semaine 1 :", opts: ["Image reproductible, config par env, port publié", "Réseau et volumes", "CI/CD", "Kubernetes"], a: 0, exp: "Les murs restants = semaine 2." },
+    { type: "vf", q: "Les échecs de cette leçon (réseau, persistance) sont le programme de la semaine 2.", a: true, exp: "On apprend pourquoi avant comment." }
+  ],
+  final: {
+    title: "Exercice final — Le bilan de conteneurisation",
+    intro: `<p>On lance, on constate, on planifie.</p>`,
+    questions: [
+      { type: "qcm", q: "Le lancement complet :", opts: ["docker run -d --name ludo -p 8000:8000 -e ... ludotheque:0.1", "docker start ludotheque", "python manage.py runserver", "docker build"], a: 0, exp: "Port + env + image." },
+      { type: "qcm", q: "L'erreur attendue dans les logs :", opts: ["Can't connect to MySQL server", "404", "SyntaxError", "Permission denied"], a: 0, exp: "Pas de base joignable — encore." },
+      { type: "qcm", q: "localhost dans le conteneur désigne :", opts: ["Le conteneur lui-même", "l'hôte", "MySQL", "Docker Hub"], a: 0, exp: "Le mur n°1." },
+      { type: "qcm", q: "Les fichiers écrits dans le conteneur :", opts: ["Meurent avec lui (sans volume)", "Survivent toujours", "Vont dans l'image", "Vont dans Git"], a: 0, exp: "Le mur n°2." },
+      { type: "vf", q: "Semaine 2 : volumes, réseau, MySQL conteneurisé, Compose.", a: true, exp: "Exactement le plan." }
+    ],
+    solution: `<pre class="pseudo">$ docker run -d --name ludo -p 8000:8000 \\      # lance l'app conteneurisée en arrière-plan, port publié
+    -e DJANGO_SECRET_KEY=dev -e DB_PASSWORD=secret ludotheque:0.1   # avec sa config passée en variables (-e)
+
+$ docker logs ludo                                             # on lit les logs...
+OperationalError: Can't connect to MySQL on 'localhost'   # mur n°1 : réseau -> localhost = le conteneur, pas de MySQL dedans
+
+$ docker exec ludo touch /app/preuve.txt                       # on crée un fichier témoin dans le conteneur
+$ docker rm -f ludo && docker run -d --name ludo ... ludotheque:0.1   # on détruit puis recrée le conteneur
+$ docker exec ludo ls /app/preuve.txt                          # on cherche le fichier témoin...
+No such file                                              # mur n°2 : persistance -> la couche d'écriture est morte avec l'ancien conteneur
+
+Acquis : image ✔  config par env ✔  port ✔                      # ce qui marche déjà (semaine 1)
+Semaine 2 : volumes (8), réseau (9), config (10), MySQL (11), Compose (12-14)   # le plan pour abattre les deux murs</pre>
+<p>Fin de la semaine 1 — la Ludothèque est emballée. Lundi : faire survivre les données.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton rapport de conteneurisation…",
+  items: [
+  { id: "docker-l7", title: "Le rapport d'étape", level: 2,
+    statement: "Rédige le rapport d'étape (12-18 lignes) de la conteneurisation de la Ludothèque : la commande de lancement complète, les deux constats d'échec avec leur explication technique (localhost dans un conteneur ; couche d'écriture éphémère), les trois vérifications qui prouvent que l'image elle-même est bonne, et le plan de la semaine 2 en une ligne par leçon.",
+    hints: [
+      "Structure : Commande / Constats / Preuves / Plan.",
+      "Les preuves : manage.py check, pip list, et l'idée « même image = même comportement partout ».",
+      "Plan : volumes → réseau → config → MySQL → Compose → healthchecks → dev."
+    ],
+    solution: "RAPPORT — Conteneurisation de la Ludothèque (fin semaine 1)\n\nLancement :\ndocker run -d --name ludo -p 8000:8000 \\\n  -e DJANGO_SECRET_KEY=dev -e DB_PASSWORD=secret ludotheque:0.1\n\nConstat 1 — base injoignable : dans un conteneur, localhost désigne le\nconteneur lui-même ; notre app y cherche un MySQL qui n'y est pas (et ne\ndoit pas y être : un conteneur = un processus). Solution : un conteneur\nMySQL + un réseau Docker commun où les conteneurs se joignent par nom.\n\nConstat 2 — écritures éphémères : un fichier créé dans le conteneur\ndisparaît au rm ; la couche d'écriture meurt avec le conteneur.\nSolution : volumes nommés pour les données MySQL.\n\nPreuves que l'image est bonne :\n- docker exec ludo python manage.py check  -> aucun problème applicatif\n- docker exec ludo pip list                -> dépendances exactes, figées\n- l'image tournerait à l'identique sur toute machine : l'objectif\n  « ça marche partout » est atteint pour le code.\n\nPlan semaine 2 :\n8  volumes (données persistantes)     11 MySQL conteneurisé complet\n9  réseau (DB_HOST=bdd via DNS)       12 compose.yaml : tout en une commande\n10 config/--env-file sans secrets     13 healthchecks & ordre de démarrage\n                                      14 bind mounts pour le dev",
+    note: "Savoir dire « l'image est bonne, ce sont ses BRANCHEMENTS qui manquent » est le diagnostic clé de cette semaine : code et environnement d'exécution sont désormais deux problèmes séparés — c'était tout l'objectif. Le rapport sert aussi de plan de révision : chaque constat pointe la leçon qui le résout." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

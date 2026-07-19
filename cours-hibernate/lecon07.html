@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Le cycle de vie : transient, managed, detached",
+  subtitle: "Quatre états, une poignée de transitions : la carte qui explique tous les bugs des leçons 5 et 6.",
+  theory: `
+<h3>1. Pourquoi des états ?</h3>
+<p>Depuis deux leçons, tout tourne autour d'une question : <strong>cette entité est-elle surveillée par l'EntityManager ?</strong> Si oui, le dirty checking travaille ; si non, tes setters partent dans le vide. JPA formalise cela avec un <strong>cycle de vie</strong> : à tout instant, une entité est dans exactement un des quatre états suivants.</p>
+
+<h3>2. Les quatre états</h3>
+<p><strong>Transient</strong> (nouvelle) : l'objet vient d'un new, il n'a pas d'id, la base ne le connaît pas, personne ne le surveille. <strong>Managed</strong> (gérée) : elle est dans le contexte de persistance ; le dirty checking s'applique, chaque modification sera synchronisée. <strong>Detached</strong> (détachée) : elle a un id, elle correspond à une ligne en base, mais plus aucun contexte ne la surveille. <strong>Removed</strong> (supprimée) : encore gérée, mais condamnée — le DELETE partira au commit.</p>
+<pre class="pseudo">Jeu jeu = new Jeu("Dixit");        // TRANSIENT : inconnu de tous
+em.persist(jeu);                   // MANAGED  : surveillé, INSERT planifié
+tx.commit();                       // toujours MANAGED (et la ligne existe)
+em.close();                        // DETACHED : id présent, surveillance coupée
+// plus tard, autre EntityManager :
+Jeu gere = em2.merge(jeu);         // gere est MANAGED ; jeu reste DETACHED
+em2.remove(gere);                  // REMOVED : DELETE planifié
+tx2.commit();                      // la ligne disparaît de MySQL</pre>
+
+<h3>3. La carte des transitions</h3>
+<pre class="pseudo">        new Jeu(...)
+             |
+         TRANSIENT
+             |  persist()
+             v
+em.find() → MANAGED --- remove() ---&gt; REMOVED --commit--&gt; (ligne effacée)
+             |   ^                       |
+             |   |                       | persist() avant commit
+             |   +--- (copie via merge)  |     = suppression annulée
+             |                           v
+  detach() / clear() / close()        MANAGED
+             |
+             v
+         DETACHED --- merge() ---&gt; retourne une COPIE MANAGED
+                                   (l'original reste DETACHED)</pre>
+<p>Trois façons de détacher : <strong>em.detach(e)</strong> (une entité précise), <strong>em.clear()</strong> (tout le contexte), <strong>em.close()</strong> (fin de l'unité de travail). Et une subtilité élégante : persist sur une entité <em>removed</em> avant le commit annule la suppression — elle redevient managed.</p>
+
+<h3>4. Diagnostiquer : em.contains et les règles d'or</h3>
+<pre class="pseudo">em.contains(jeu)    // true → MANAGED (ou REMOVED) ; false → TRANSIENT ou DETACHED
+em.persist(detachee)   // EXCEPTION « detached entity passed to persist »
+em.remove(detachee)    // EXCEPTION : remove exige une entité gérée (leçon 5)
+detachee.setTitre(...) // aucun SQL, jamais : le bug silencieux de la leçon 6</pre>
+<p>Les règles à graver : le dirty checking ne concerne que <strong>managed</strong> ; persist ne s'applique qu'à <strong>transient</strong> (et removed) ; remove exige <strong>managed</strong> ; merge accepte tout et retourne toujours une copie gérée. Dernier avertissement pour plus tard : accéder à une relation paresseuse d'une entité détachée provoquera la fameuse LazyInitializationException — rendez-vous leçon 12.</p>
+
+<h3>5. Les mêmes états partout</h3>
+<p>Spring Data vit dans cette carte : les entités rendues par un repository à ton contrôleur sont le plus souvent déjà détachées (la transaction est finie), d'où le save() → merge de la leçon 6. EF Core expose les mêmes idées via EntityState (Added, Unchanged, Modified, Deleted, Detached), Eloquent avec l'attribut exists, Django en testant pk is None : tout ORM distingue « nouveau / suivi / décroché ».</p>
+<div class="warn">L'erreur de raisonnement classique : croire qu'un objet « avec un id » est forcément synchronisé avec la base. Non : une entité détachée a un id ET des modifications que personne n'écrira. L'id dit « la ligne existe », pas « quelqu'un me surveille ».</div>
+<div class="tip">Devant un comportement étrange, pose toujours LES deux questions : dans quel état est cette entité, et le contexte qui l'a chargée est-il encore ouvert ? En debug, em.contains(e) répond en une ligne. Ce réflexe résoudra 80 % des bugs JPA de ton projet du Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "Jeu j = new Jeu(\"Azul\"); — sans autre appel, j est dans l'état…", opts: ["managed", "transient", "detached", "removed"], a: 1, exp: "Un new tout nu : pas d'id, inconnu de la base et de l'EntityManager." },
+    { type: "input", q: "Comment s'appelle l'état d'une entité surveillée par le contexte de persistance ?", a: ["managed", "géré", "gérée", "gere", "geree", "manage"], ph: "un mot…", exp: "Managed (gérée) : le seul état où le dirty checking s'applique." },
+    { type: "qcm", q: "Après em.close(), les entités qui étaient gérées deviennent…", opts: ["transient", "removed", "detached", "supprimées de MySQL"], a: 2, exp: "Elles gardent id et données, mais la surveillance est coupée." },
+    { type: "qcm", q: "em.persist(jeu) fait passer une entité de…", opts: ["transient à managed", "managed à detached", "detached à removed", "removed à transient"], a: 0, exp: "persist place l'objet neuf sous surveillance et planifie l'INSERT." },
+    { type: "vf", q: "Une entité retournée par em.find est dans l'état managed.", a: true, exp: "find charge ET place sous surveillance : c'est pour ça que le dirty checking marchait leçon 6." },
+    { type: "qcm", q: "em.remove(jeu) place l'entité dans l'état…", opts: ["detached", "transient", "removed : le DELETE partira au commit", "archived"], a: 2, exp: "Removed = condamnée mais encore dans le contexte ; le SQL part au flush/commit." },
+    { type: "qcm", q: "Quelle méthode teste si une entité est actuellement gérée par le contexte ?", opts: ["em.contains(e)", "em.exists(e)", "e.isManaged()", "em.check(e)"], a: 0, exp: "true = gérée (ou removed) ; false = transient ou detached. L'outil de debug n°1." },
+    { type: "vf", q: "em.merge(detachee) fait passer l'objet passé en argument à l'état managed.", a: false, exp: "Piège de la leçon 6 : merge retourne une COPIE managed, l'argument reste détaché." },
+    { type: "qcm", q: "Tu modifies une entité détachée puis tu commites une transaction. En base :", opts: ["Rien ne change", "UPDATE automatique", "INSERT d'un doublon", "DELETE de la ligne"], a: 0, exp: "Hors du contexte, pas de dirty checking : c'est le bug silencieux à reconnaître au premier coup d'œil." },
+    { type: "input", q: "Quelle méthode de l'EntityManager détache d'un coup TOUTES les entités du contexte ?", a: ["clear", "em.clear", "clear()"], ph: "nom de la méthode…", exp: "em.clear() vide la salle d'attente ; em.detach(e) ne décroche qu'une entité." },
+    { type: "qcm", q: "em.persist(entiteDetachee) provoque…", opts: ["Une exception (detached entity passed to persist)", "Un UPDATE", "Un merge implicite", "Rien du tout"], a: 0, exp: "persist est réservé aux entités nouvelles ; pour une détachée, c'est merge." },
+    { type: "qcm", q: "Le dirty checking (leçon 6) ne s'applique qu'aux entités…", opts: ["transient", "detached", "removed", "managed"], a: 3, exp: "Toute la carte des états sert à savoir si tes setters seront écoutés." },
+    { type: "vf", q: "Appeler persist sur une entité removed avant le commit annule la suppression.", a: true, exp: "Elle redevient managed : le DELETE planifié est abandonné. Subtilité du standard JPA." },
+    { type: "qcm", q: "L'équivalent EF Core de cette carte d'états s'appelle…", opts: ["EntityState (Added, Modified, Detached…)", "GarbageState", "HttpStatus", "TrackMode.CSS"], a: 0, exp: "Mêmes concepts : Eloquent a exists, Django teste pk is None." },
+    { type: "qcm", q: "Dans une appli Spring classique, l'entité reçue par ton contrôleur après un appel repository est le plus souvent…", opts: ["transient", "detached (la transaction est déjà terminée)", "removed", "encore managed pour toujours"], a: 1, exp: "D'où le save() → merge quand elle revient modifiée : la boucle avec la leçon 6 est bouclée." }
+  ],
+  final: {
+    title: "Exercice final — L'itinéraire complet d'un jeu",
+    intro: `<p>Suis l'entité pas à pas : Jeu j = new Jeu("Splendor"); em.persist(j); tx.commit(); em.close(); puis, dans un second EntityManager : Jeu g = em2.merge(j); em2.remove(g); tx2.commit(); — donne l'état à chaque étape.</p>`,
+    questions: [
+      { type: "qcm", q: "Juste après new Jeu(\"Splendor\") :", opts: ["transient", "managed", "detached", "removed"], a: 0, exp: "Pas d'id, aucun contexte : nouvelle-née." },
+      { type: "qcm", q: "Après em.persist(j) puis tx.commit() :", opts: ["detached", "managed (et la ligne existe avec son id)", "transient", "removed"], a: 1, exp: "persist gère l'entité ; le commit exécute l'INSERT mais ne détache pas." },
+      { type: "input", q: "Après em.close(), j est dans l'état… (mot anglais)", a: ["detached", "détaché", "detachee", "détachée", "detache"], ph: "un mot…", exp: "close() coupe la surveillance : id présent, contexte disparu." },
+      { type: "vf", q: "Après Jeu g = em2.merge(j);, les DEUX objets j et g sont managed.", a: false, exp: "Seule la copie g est gérée par em2 ; j reste détaché à jamais." },
+      { type: "qcm", q: "Après em2.remove(g) puis tx2.commit(), la situation finale :", opts: ["g est passé par removed et la ligne est effacée de MySQL", "g est transient et la ligne existe encore", "j est removed", "Rien n'a été supprimé"], a: 0, exp: "remove exige une entité gérée (g convenait), le DELETE part au commit." }
+    ],
+    solution: `<pre class="pseudo">new Jeu("Splendor")   → TRANSIENT   (pas d'id, personne ne surveille)
+em.persist(j)         → MANAGED     (INSERT planifié)
+tx.commit()           → MANAGED     (INSERT exécuté, id attribué)
+em.close()            → DETACHED    (id présent, surveillance coupée)
+g = em2.merge(j)      → g : MANAGED (copie) · j : toujours DETACHED
+em2.remove(g)         → g : REMOVED (DELETE planifié)
+tx2.commit()          → ligne supprimée de MySQL
+
+Règles d'or : persist ← transient · remove ← managed
+              merge ← n'importe quoi, retourne une copie managed
+              dirty checking ← managed uniquement</pre>
+<p>Tu sais maintenant OÙ vit une entité. Il est temps de les relier entre elles : demain, la clé étrangère jeu_id de ta table location du Niveau 4 devient une vraie référence objet avec @ManyToOne.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l7", title: "L'audit d'états du service de location", level: 2,
+    statement: "Voici le squelette d'une méthode de service : (1) em = emf.createEntityManager(); tx.begin(); (2) Membre m = em.find(Membre.class, 7L); (3) Jeu j = new Jeu(\"Cascadia\"); (4) em.persist(j); (5) m.setEmail(\"nouveau@mail.be\"); (6) tx.commit(); (7) em.close(); (8) j.setStock(4); (9) return j; — Rédige un audit ligne par ligne : l'état de chaque entité (m et j) après chaque étape, le SQL exactement généré au commit (et pourquoi), et le devenir de la modification de la ligne 8. Termine par une recommandation pour l'appelant qui reçoit j.",
+    hints: [
+      "Deux entités à suivre en parallèle : m entre par find, j par new + persist — leurs points de départ diffèrent.",
+      "Au commit (ligne 6), liste TOUT ce que le flush doit écrire : une insertion planifiée et… qu'a détecté le dirty checking sur m ?",
+      "Ligne 8 : dans quel état est j après close(), et qui écoute encore ses setters ?"
+    ],
+    solution: "Ligne 1 : contexte ouvert, vide.\nLigne 2 : m → MANAGED (find charge + surveille ; snapshot pris).\nLigne 3 : j → TRANSIENT (new : pas d'id, hors contexte).\nLigne 4 : j → MANAGED (INSERT planifié, pas encore envoyé).\nLigne 5 : m modifié : toujours MANAGED, marqué « sale » vs son snapshot.\nLigne 6 : flush + commit →\n   INSERT INTO jeu (titre, ...) VALUES ('Cascadia', ...)   // persist de j\n   UPDATE membre SET email = 'nouveau@mail.be' WHERE id = 7 // dirty checking sur m\n   (aucun appel explicite pour m : c'est la leçon 6 en action)\nLigne 7 : em.close() → m et j passent DETACHED.\nLigne 8 : j.setStock(4) → modification en mémoire d'un DÉTACHÉ :\n   AUCUN SQL, ni maintenant ni jamais. Le stock en base reste l'ancien.\nLigne 9 : l'appelant reçoit un objet détaché dont l'état diverge de la base.\n\nRecommandation : soit déplacer setStock AVANT le commit,\nsoit documenter que le retour est détaché et que toute modification\nultérieure devra repasser par merge (ou repository.save) dans une\nnouvelle unité de travail. Ne jamais laisser croire que j est « connecté ».",
+    note: "Cet exercice d'annotation ligne par ligne est exactement ce que tu feras mentalement en relisant du code Spring au Niveau 6 : @Transactional déplace les frontières managed/detached sans les faire disparaître. Même gymnastique chez EF Core (portée du DbContext) et Django (fin de requête HTTP)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Authentification : session ou token ?",
+  subtitle: "POST /locations vient d'arriver. Qui loue Catan ? Ton API doit le savoir.",
+  theory: `
+<h3>1. Pourquoi authentifier ?</h3>
+<p><strong>Authentifier</strong>, c'est établir <em>qui</em> est l'auteur d'une requête (le prouver, pas seulement le prétendre). Jusqu'ici, la plupart de nos requêtes lisaient le catalogue : <code>GET /jeux</code> peut rester public. Mais <code>POST /locations</code> crée une location liée à un <strong>membre</strong> : le serveur doit savoir <strong>qui</strong> parle. Et souviens-toi de la leçon 1 : HTTP est <strong>stateless</strong> (sans mémoire), le serveur ne se souvient de rien entre deux requêtes. La preuve d'identité doit donc accompagner <em>chaque</em> requête protégée. Sans elle :</p>
+<pre class="pseudo">POST /locations HTTP/1.1                               # requête : créer une location (donc liée à un membre)
+Host: api.ludotheque.example                           # sur quel serveur on tape
+                                                       # (ligne vide : AUCUNE preuve d'identité fournie)
+← 401 Unauthorized        (« Qui es-tu ? Prouve-le. ») # réponse : 401 = identité manquante/invalide → refus</pre>
+<p>Deux grandes stratégies existent pour porter cette preuve : la <strong>session</strong> et le <strong>token</strong>.</p>
+
+<h3>2. Option A — la session et son cookie</h3>
+<p>Le schéma historique du web : au login (la connexion), le serveur crée une <strong>session</strong> (un état qu'il garde chez lui, en mémoire ou en base) et renvoie un <strong>cookie</strong> — un petit fichier que le navigateur stocke et renvoie tout seul — contenant l'identifiant de session. Le navigateur renvoie ensuite ce cookie <em>automatiquement</em> à chaque requête vers le même domaine.</p>
+<pre class="pseudo">POST /auth/login   { "email": "aicha@example.com", "mot_de_passe": "…" }   # on se connecte : identifiants dans le CORPS
+← 200 OK                                                                  # login réussi
+← Set-Cookie: sessionid=k3j2h1…   (le serveur garde l'état associé)       # le serveur crée une session et renvoie son id dans un COOKIE
+                                                                         # (ligne vide)
+GET /membres/12/locations                                                # requête suivante, vers le même domaine
+Cookie: sessionid=k3j2h1…         (envoyé automatiquement par le navigateur)   # le navigateur RENVOIE le cookie tout seul</pre>
+<p>C'est <strong>stateful</strong> (« avec état ») : le serveur garde l'état de la connexion. Parfait pour un <strong>site classique</strong> où front et back vivent sur le même domaine (l'admin Django fonctionne ainsi). Contrepartie : comme le cookie part tout seul, il faut se protéger du <strong>CSRF</strong> (Cross-Site Request Forgery) — un site tiers qui déclenche une requête à ton insu en profitant de ce cookie automatique. Le cours <em>Sécurité applicative</em> y consacre une leçon entière.</p>
+
+<h3>3. Option B — le token</h3>
+<p>Au login, le serveur renvoie un <strong>jeton</strong> (token) : une longue suite de caractères qui prouve l'identité. Le client le stocke et l'envoie <em>explicitement</em> à chaque requête, dans l'en-tête <code>Authorization</code> avec le schéma <code>Bearer</code> (« porteur » : quiconque porte ce jeton est considéré authentifié) :</p>
+<pre class="pseudo">POST /auth/login   { "email": "aicha@example.com", "mot_de_passe": "…" }   # login : identifiants dans le CORPS
+← 200 OK   { "token": "eyJhbGciOi…" }                                      # succès : le serveur renvoie un TOKEN dans le corps
+                                                                         # (ligne vide)
+GET /membres/12/locations HTTP/1.1                                        # requête protégée suivante
+Authorization: Bearer eyJhbGciOi…    (envoyé par TON code, à chaque requête)   # le client ajoute LUI-MÊME le token dans l'en-tête Authorization</pre>
+<p>Le serveur ne garde rien : c'est <strong>stateless</strong>, dans l'esprit de REST. Parfait pour une <strong>SPA</strong> (Single Page Application : une appli web qui tient dans une seule page et parle à l'API en JavaScript), une <strong>app mobile</strong>, des <strong>partenaires</strong> — tous les clients qui ne sont pas un simple navigateur sur le même domaine. C'est le choix de la <strong>Ludothèque</strong> : son front JavaScript et sa future app mobile enverront <code>Authorization: Bearer &lt;token&gt;</code>. Le format de token le plus répandu, le <strong>JWT</strong>, mérite sa propre leçon : c'est la prochaine.</p>
+
+<h3>4. Et les API keys ?</h3>
+<p>Troisième cas : le <strong>machine-à-machine</strong> (un programme parle à un autre, sans humain devant l'écran). Un comparateur de prix partenaire veut interroger ton catalogue toutes les heures — il n'y a pas d'utilisateur humain qui se connecte. On lui délivre une <strong>API key</strong> (clé d'API) : une longue clé propre à ce client, révocable indépendamment (on peut la désactiver sans toucher aux autres), souvent envoyée dans un en-tête dédié :</p>
+<pre class="pseudo">GET /jeux?categorie=strategie HTTP/1.1                # un partenaire interroge le catalogue
+X-API-Key: lud_live_9f2c47a1b…                        # sa clé d'API, dans un en-tête dédié (aucun humain derrière)
+                                                       # (ligne vide)
+→ le serveur identifie LE PARTENAIRE (pas une personne),   # la clé désigne un CLIENT/partenaire, pas un membre
+  peut mesurer son usage et couper sa clé sans toucher aux autres.   # avantage : usage mesurable, clé révocable isolément</pre>
+
+<h3>5. Les règles d'or (et les frameworks)</h3>
+<p>Quelle que soit la stratégie : <strong>jamais d'identifiants ni de token dans l'URL</strong> (les URL finissent dans les logs serveur, l'historique du navigateur, les en-têtes Referer) ; <strong>HTTPS obligatoire</strong>, sinon mot de passe et token circulent en clair sur le réseau — le cours <em>Sécurité applicative</em> approfondit HTTPS et TLS ; le login est un <code>POST /auth/login</code> qui reçoit les identifiants dans le <strong>corps</strong> et renvoie le token.</p>
+<pre class="pseudo"># Django REST Framework — settings.py : configuration de l'authentification
+REST_FRAMEWORK = {                                     # dictionnaire de réglages de DRF
+  "DEFAULT_AUTHENTICATION_CLASSES": [                  # la liste des façons d'authentifier acceptées
+    "rest_framework_simplejwt.authentication.JWTAuthentication",   # ici : authentification par JWT (le token de la leçon 16)
+  ],
+}                                                      # fin du réglage
+# (ou TokenAuthentication pour un simple token opaque) # variante : un token « opaque » (une clé sans contenu lisible)
+
+# Équivalents : Spring Security (Java) · Laravel Sanctum (PHP)   # mêmes rôles dans les autres frameworks
+#               ASP.NET Core Identity + JwtBearer (C#)           # équivalent côté C#</pre>
+<div class="warn">Un token dans une URL (<code>?token=…</code>) est une fuite garantie : logs, historique, captures d'écran, liens partagés. La preuve d'identité voyage dans l'en-tête <code>Authorization</code>, et uniquement sur HTTPS.</div>
+<div class="tip">Session et token ne sont pas ennemis : site classique même domaine → session ; SPA, mobile, partenaires → token. La Ludothèque choisit le token parce que ses clients sont un front JavaScript et une app mobile.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi POST /locations exige-t-il une authentification ?", opts: ["Parce que POST est toujours interdit", "Parce que le serveur doit savoir QUEL membre loue le jeu", "Pour ralentir les clients", "Parce que le JSON l'exige"], a: 1, exp: "Une location est liée à un membre : il faut savoir qui parle." },
+    { type: "qcm", q: "HTTP étant stateless, la preuve d'identité doit…", opts: ["Être envoyée une seule fois au login", "Être stockée dans l'URL", "Accompagner chaque requête protégée", "Être devinée par le serveur"], a: 2, exp: "Le serveur ne se souvient de rien entre deux requêtes." },
+    { type: "qcm", q: "Avec une session, l'état d'authentification vit…", opts: ["Côté serveur", "Dans l'URL", "Dans le code JavaScript", "Nulle part"], a: 0, exp: "Le serveur garde la session ; le client n'a que l'identifiant en cookie." },
+    { type: "qcm", q: "Avec un token, l'état vit…", opts: ["Sur le serveur, en base", "Chez le client, qui le renvoie à chaque requête", "Dans le DNS", "Dans le cookie CSRF"], a: 1, exp: "Le serveur ne garde rien : c'est stateless." },
+    { type: "qcm", q: "Le cookie de session est envoyé…", opts: ["Automatiquement par le navigateur vers le même domaine", "Manuellement par ton code à chaque fetch", "Uniquement en HTTPS", "Jamais"], a: 0, exp: "C'est justement cette automaticité qui crée le risque CSRF." },
+    { type: "qcm", q: "La session convient particulièrement à…", opts: ["Une app mobile", "Un partenaire machine-à-machine", "Un site classique où front et back partagent le même domaine", "Un script cron"], a: 2, exp: "Le navigateur gère le cookie tout seul sur le même domaine." },
+    { type: "qcm", q: "Le token convient particulièrement à…", opts: ["Un site 100 % généré côté serveur", "SPA, mobile et partenaires", "Un fichier statique", "Aucun client"], a: 1, exp: "Le client stocke le jeton et l'envoie explicitement : le choix de la Ludothèque." },
+    { type: "qcm", q: "Une API key sert avant tout à…", opts: ["Chiffrer la base de données", "Identifier un client machine-à-machine, révocable indépendamment", "Remplacer HTTPS", "Compresser le JSON"], a: 1, exp: "Pas d'humain derrière : on identifie le partenaire, pas une personne." },
+    { type: "qcm", q: "Que renvoie POST /auth/login dans une API à token ?", opts: ["Une page HTML", "Un cookie CSRF", "Un code 204 vide", "Le token, dans le corps de la réponse"], a: 3, exp: "Le client le stocke puis l'envoie dans Authorization: Bearer." },
+    { type: "qcm", q: "Le risque spécifique aux cookies de session à gérer est…", opts: ["Le CSRF", "Le manque de RAM", "La pagination", "Le code 418"], a: 0, exp: "Le cookie partant automatiquement, un site tiers peut déclencher une requête — voir le cours Sécurité applicative." },
+    { type: "vf", q: "Mettre le token dans l'URL (?token=…) est acceptable si l'API est en HTTPS.", a: false, exp: "Même en HTTPS, l'URL finit dans les logs et l'historique : en-tête Authorization uniquement." },
+    { type: "vf", q: "Une API authentifiée par token reste stateless : le serveur ne garde pas d'état de connexion.", a: true, exp: "Toute l'information voyage dans la requête, dans l'esprit de REST." },
+    { type: "vf", q: "HTTPS est optionnel si on utilise un token plutôt qu'un mot de passe.", a: false, exp: "Un token intercepté en clair donne accès au compte : HTTPS est obligatoire, point." },
+    { type: "input", q: "Quel en-tête HTTP transporte le jeton dans une API à token ?", a: ["Authorization", "authorization"], ph: "Nom de l'en-tête…", exp: "Authorization: Bearer &lt;token&gt; sur chaque requête protégée." },
+    { type: "input", q: "Quel mot-clé (schéma) précède le token dans cet en-tête ?", a: ["Bearer", "bearer"], ph: "Un mot…", exp: "Bearer = « porteur » : quiconque porte ce jeton est considéré authentifié." }
+  ],
+  final: {
+    title: "Exercice final — Choisir sa stratégie",
+    intro: `<p>La Ludothèque ouvre son API à un front SPA, une app mobile et un partenaire. Vérifions que tu sais qui reçoit quoi.</p>`,
+    questions: [
+      { type: "qcm", q: "Le front SPA et l'app mobile de la Ludothèque s'authentifient par…", opts: ["Cookie de session", "Token dans Authorization: Bearer", "API key dans l'URL", "Rien"], a: 1, exp: "Clients hors même-domaine : le token stateless s'impose." },
+      { type: "qcm", q: "Le comparateur de prix partenaire (machine-à-machine) reçoit…", opts: ["Une API key révocable", "Un cookie", "Un mot de passe partagé par email", "Un accès SSH"], a: 0, exp: "Pas d'humain : une clé par client, coupable sans toucher aux autres." },
+      { type: "vf", q: "Le code 401 Unauthorized signifie que la requête n'a pas de preuve d'identité valide.", a: true, exp: "« Qui es-tu ? » — à distinguer du 403, leçon 17." },
+      { type: "qcm", q: "Les identifiants du login voyagent…", opts: ["Dans l'URL", "Dans un en-tête Referer", "Dans le corps d'un POST, en HTTPS", "Dans un GET"], a: 2, exp: "POST /auth/login, corps JSON, connexion chiffrée." },
+      { type: "input", q: "Quel code de statut renvoie l'API quand la preuve d'identité manque ou est invalide ?", a: ["401"], ph: "Un nombre…", exp: "401 Unauthorized — malgré son nom, il parle bien d'authentification." }
+    ],
+    solution: `<pre class="pseudo">Session : état côté SERVEUR, cookie automatique                      # le serveur mémorise ; le navigateur renvoie le cookie seul
+          → site classique même domaine, gérer le CSRF              # convient au site même-domaine ; attention au CSRF
+Token   : état côté CLIENT, Authorization: Bearer &lt;token&gt;           # le client garde le jeton et l'envoie à chaque requête
+          → SPA, mobile, partenaires — choix de la Ludothèque       # stateless : idéal hors même-domaine
+API key : machine-à-machine, une clé par client, révocable          # pour les programmes sans humain (partenaires)
+                                                                    # (ligne vide)
+Règles d'or : rien dans l'URL · HTTPS obligatoire                   # jamais de secret dans l'URL ; transport chiffré
+              POST /auth/login → token dans le corps                # se connecter : identifiants et token dans le CORPS
+DRF : SimpleJWT / TokenAuthentication                               # implémentation côté Django…
+      (Spring Security · Laravel Sanctum · ASP.NET Identity + JwtBearer)</pre>  # …et ses équivalents ailleurs
+<p>La Ludothèque a choisi le token, et plus précisément le JWT. Demain, on l'ouvre en trois morceaux pour comprendre exactement ce qu'il contient.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l15", title: "La note d'architecture", level: 3,
+    statement: "L'équipe de la Ludothèque te demande une note d'architecture d'une page : quelle stratégie d'authentification pour l'API v1 ? Les clients prévus sont : le front SPA (React), une app mobile à venir, et un comparateur de prix partenaire qui interroge le catalogue toutes les heures. Pour chaque client, choisis session, token ou API key, justifie en une ou deux phrases, puis termine par les trois règles de sécurité non négociables que la note impose à toute l'équipe.",
+    hints: [
+      "Commence par classer chaque client : navigateur même domaine ? application distante ? machine sans humain ?",
+      "Le critère décisif : qui stocke l'état, et qui envoie la preuve à chaque requête ?",
+      "Les trois règles non négociables se trouvent dans la section 5 de la théorie : pense URL, transport, endpoint de login."
+    ],
+    solution: "NOTE D'ARCHITECTURE — Authentification de l'API Ludothèque v1\n\n1) Front SPA (React) → TOKEN (JWT)\n   Le front vit sur un autre domaine que l'API et gère lui-même ses requêtes.\n   Il stocke le token au login et l'envoie dans Authorization: Bearer <token>.\n   Stateless : aucun état de connexion côté serveur.\n\n2) App mobile → TOKEN (JWT), même mécanisme\n   Une app mobile n'a pas de navigateur qui gère des cookies : le token\n   est la seule option naturelle. Un seul mécanisme pour SPA + mobile\n   = une seule chaîne d'authentification à maintenir.\n\n3) Comparateur de prix partenaire → API KEY\n   Machine-à-machine, pas d'utilisateur humain. Une clé dédiée (X-API-Key),\n   propre à ce partenaire, révocable sans impacter les autres clients,\n   avec mesure d'usage possible.\n\n(La session + cookie n'est retenue pour aucun client : elle conviendrait\nà un site classique même domaine, ce que la Ludothèque n'est pas.)\n\nRÈGLES NON NÉGOCIABLES\n- Jamais d'identifiants, de token ou de clé dans une URL (logs, historique).\n- HTTPS partout, sans exception : token en clair = compte volé.\n- Login uniquement via POST /auth/login, identifiants dans le corps,\n  token renvoyé dans le corps de la réponse.",
+    note: "Cette note est exactement le genre de décision que tu prendras dans les capstones Ludothèque, quel que soit le framework : SimpleJWT en Django, Spring Security en Java, Sanctum en Laravel ou JwtBearer en ASP.NET n'en sont que les implémentations. Le pourquoi de la règle HTTPS et le fonctionnement du CSRF sont approfondis dans le cours Sécurité applicative du Niveau 7." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

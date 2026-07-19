@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Ressources et redémarrage : limites, restart policies",
+  subtitle: "Un voisinage civilisé : chacun sa part de mémoire et de CPU.",
+  theory: `
+<h3>1. Le problème du voisin gourmand</h3>
+<p>Sur une même machine, tous les conteneurs partagent la mémoire (RAM) et le processeur (CPU). Sans <strong>limite</strong>, un conteneur peut tout accaparer : une fuite dans l'app affame MySQL, et tout tombe. Rappel de la leçon 1 : les <strong>cgroups</strong> (« control groups ») sont le mécanisme du noyau qui permet de <strong>borner</strong> (fixer un plafond à) chaque conteneur.</p>
+
+<h3>2. Limiter la mémoire et le CPU</h3>
+<p>On plafonne chaque service. Attention à la différence de comportement : dépasser la <strong>mémoire</strong> fait TUER le conteneur (OOMKilled) ; dépasser le <strong>CPU</strong> le fait juste RALENTIR (« throttling », bridage).</p>
+<pre class="pseudo">services:
+  app:
+    mem_limit: 512m        # plafond mémoire de l'app : au-delà, le noyau la TUE (OOMKilled)
+    cpus: "1.0"            # plafond CPU : au plus 1 cœur (au-delà, elle est ralentie, pas tuée)
+  bdd:
+    mem_limit: 1g          # MySQL a droit à 1 Gio de mémoire
+    cpus: "2.0"            # et jusqu'à 2 cœurs de CPU</pre>
+<p>Dépassement mémoire → le noyau <strong>tue</strong> le conteneur (<code>OOMKilled: true</code> dans inspect). Dépassement CPU → simple <strong>ralentissement</strong> (throttling), pas de mort. La nuance est essentielle pour diagnostiquer.</p>
+
+<h3>3. Dimensionner : mesurer d'abord</h3>
+<p><strong>Dimensionner</strong>, c'est choisir la bonne limite. Jamais au hasard : on mesure l'usage réel avec <code>stats</code>, puis on ajoute une marge.</p>
+<pre class="pseudo">docker stats                     # observe l'usage RÉEL en charge normale (avant de fixer quoi que ce soit)
+# règle simple : limite ≈ usage max observé × 1,5 à 2   # on prend le pic observé et on ajoute une marge de sécurité
+# app ~120 MiB observés → 512m confortable               # 120 Mio de pic -> 512 Mio laisse de la marge
+# MySQL : dépend des données et réglages → mesurer, puis ajuster   # pas de valeur universelle : on mesure ce cas précis</pre>
+
+<h3>4. Les politiques de redémarrage (rappel appliqué)</h3>
+<p>On réapplique <code>restart: unless-stopped</code> (leçon 13), le bon choix de production.</p>
+<pre class="pseudo">restart: unless-stopped    # crash -> relance ; reboot du serveur -> relance ;
+                           # 'docker compose stop' volontaire -> respecté (pas de relance intempestive) ✔
+# un conteneur OOMKilled est RELANCÉ par la politique :        # après une mort mémoire, le service repart tout seul...
+# le service revient, mais le post-mortem reste à faire (stats, code)   # ...mais il faut quand même comprendre POURQUOI il est mort</pre>
+
+<h3>5. La boucle de crash</h3>
+<p>Attention au piège : <code>restart</code> relance, mais ne RÉPARE pas. Si la cause persiste, le conteneur meurt et renaît sans fin — une <strong>boucle de crash</strong>.</p>
+<pre class="pseudo">docker compose ps      # voit-on "Restarting (1) 5 seconds ago" qui se répète en boucle ?   # symptôme d'une boucle de crash
+docker compose logs --tail 50 app     # lit la cause, réaffichée à CHAQUE tentative de redémarrage
+# restart ne RÉPARE rien : il masque. Sans correctif, la boucle tourne indéfiniment.   # il faut traiter la cause, pas relancer plus fort</pre>
+<div class="warn">Une limite mémoire trop <strong>basse</strong> crée des OOM en cascade que <code>restart</code> transforme en boucle de crash silencieuse : le service « marche » par intermittence. Toujours croiser <code>stats</code> (usage réel) et la limite avant d'accuser le code.</div>
+<div class="tip">Limites + healthchecks + restart + rotation des logs : c'est le <strong>kit de production</strong> d'un compose. La leçon 20 assemble le tout pour le déploiement final.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans limites, un conteneur peut…", opts: ["Rien", "Consommer toute la mémoire/CPU de la machine", "S'auto-limiter", "Être plus lent"], a: 1, exp: "Et affamer ses voisins." },
+    { type: "qcm", q: "Le mécanisme noyau derrière les limites :", opts: ["Les cgroups", "Le BIOS", "La swap", "Docker Hub"], a: 0, exp: "Déjà croisés leçon 1." },
+    { type: "qcm", q: "mem_limit: 512m — au-delà :", opts: ["Ralentissement", "Le conteneur est tué (OOMKilled)", "Un warning", "Rien"], a: 1, exp: "La mémoire ne se throttle pas." },
+    { type: "qcm", q: "cpus: \"1.0\" — au-delà :", opts: ["Le conteneur est tué", "Ralentissement (throttling)", "Un email", "Un crash noyau"], a: 1, exp: "CPU ≠ mémoire : dégradation douce." },
+    { type: "qcm", q: "OOMKilled se vérifie par…", opts: ["docker inspect --format '{{.State.OOMKilled}}'", "docker ps", "les logs applicatifs", "le CSS"], a: 0, exp: "La leçon 18 sert déjà." },
+    { type: "qcm", q: "Dimensionner une limite :", opts: ["Au hasard", "Usage max observé (stats) × 1,5 à 2", "Toujours 512m", "Le maximum"], a: 1, exp: "Mesurer d'abord." },
+    { type: "vf", q: "On fixe les limites avant d'avoir jamais mesuré l'usage réel.", a: false, exp: "stats d'abord, limites ensuite." },
+    { type: "qcm", q: "Un conteneur OOMKilled avec restart: unless-stopped…", opts: ["Reste mort", "Est relancé (mais le post-mortem reste à faire)", "Supprime son volume", "Change d'image"], a: 1, exp: "Le service revient, la cause demeure." },
+    { type: "qcm", q: "« Restarting (1) 5 seconds ago » en boucle signale…", opts: ["Tout va bien", "Une boucle de crash : cause à lire dans les logs", "Une mise à jour", "Un backup"], a: 1, exp: "restart masque, ne répare pas." },
+    { type: "qcm", q: "Face à une boucle de crash :", opts: ["Augmenter restart", "Lire les logs, corriger la cause", "Supprimer le service", "Attendre"], a: 1, exp: "logs --tail 50 à chaque itération." },
+    { type: "qcm", q: "Une limite mémoire trop basse provoque…", opts: ["Des OOM en cascade masqués par restart", "Un gain de vitesse", "Rien", "Plus de logs"], a: 0, exp: "Le piège de la leçon." },
+    { type: "qcm", q: "Avant d'accuser le code d'une fuite, on croise…", opts: ["stats (usage) et la limite configurée", "Git et le CSS", "ps et images", "rien"], a: 0, exp: "Peut-être juste une limite trop basse." },
+    { type: "qcm", q: "MySQL et l'app ont…", opts: ["La même limite obligatoirement", "Des limites propres, dimensionnées séparément", "Aucune limite", "Une limite partagée"], a: 1, exp: "Chacun son profil mémoire." },
+    { type: "vf", q: "Après un reboot du serveur, unless-stopped relance les services.", a: true, exp: "Le kit de production." },
+    { type: "qcm", q: "Le kit de production d'un compose :", opts: ["Limites + healthchecks + restart + rotation des logs", "latest + --privileged", "Un seul gros conteneur", "Un cron"], a: 0, exp: "Assemblé leçon 20." }
+  ],
+  final: {
+    title: "Exercice final — Le voisinage civilisé",
+    intro: `<p>On borne les services de la Ludothèque.</p>`,
+    questions: [
+      { type: "qcm", q: "L'app observée à ~120 MiB reçoit :", opts: ["mem_limit: 512m (marge ×2 et plus)", "128m pile", "10g", "aucune limite"], a: 0, exp: "Confortable sans gâcher." },
+      { type: "qcm", q: "Un dépassement mémoire de l'app cause :", opts: ["OOMKilled de l'app seule, MySQL épargné", "la mort de tout", "un ralentissement", "rien"], a: 0, exp: "Le but des limites." },
+      { type: "qcm", q: "Un pic CPU de MySQL cause :", opts: ["Sa mort", "Son throttling à 2 cœurs", "L'OOM de l'app", "Un reboot"], a: 1, exp: "cpus: \"2.0\"." },
+      { type: "qcm", q: "Le service OOMKilled revient grâce à :", opts: ["restart: unless-stopped", "un admin la nuit", "latest", "rien"], a: 0, exp: "Puis post-mortem." },
+      { type: "vf", q: "stats permet de vérifier les limites effectives (USAGE / LIMIT).", a: true, exp: "La colonne le montre." }
+    ],
+    solution: `<pre class="pseudo">services:
+  app:
+    image: tonuser/ludotheque:1.0.0    # image versionnée du registre (leçon 17)
+    mem_limit: 512m                    # plafond mémoire (mesuré : ~120 Mio de pic)
+    cpus: "1.0"                        # plafond CPU : 1 cœur
+    restart: unless-stopped            # relance crash/reboot, respecte l'arrêt volontaire
+  bdd:
+    image: mysql:8.4
+    mem_limit: 1g                      # MySQL : 1 Gio de mémoire
+    cpus: "2.0"                        # jusqu'à 2 cœurs
+    restart: unless-stopped
+
+$ docker stats --no-stream            # on vérifie l'usage réel face aux limites
+ludo-app-1   118MiB / 512MiB          # app : bien en dessous de sa limite
+ludo-bdd-1   455MiB / 1GiB            # bdd : sain, marge confortable</pre>
+<p>Chacun sa part. Demain : le déploiement final en production.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton dimensionnement…",
+  items: [
+  { id: "docker-l19", title: "Le rapport de dimensionnement", level: 3,
+    statement: "Rédige le rapport de dimensionnement de la Ludothèque : la campagne de mesure (stats en charge normale + en pic simulé), le tableau usage observé → limite retenue (règle ×1,5-2) pour app et bdd, le bloc compose correspondant (limites + restart + rotation des logs), et le paragraphe « signaux d'alerte » (que surveiller après la mise en place).",
+    hints: [
+      "Mesure : docker stats --no-stream répété pendant une navigation type + un pic (ex. pagination massive).",
+      "Signaux : usage collé à la limite, OOMKilled, Restarting en boucle.",
+      "N'oublie pas la rotation des logs (leçon 18) dans le bloc final."
+    ],
+    solution: "RAPPORT DE DIMENSIONNEMENT — Ludothèque conteneurisée\n\nCampagne de mesure (docker stats, 30 min de navigation type + pic simulé) :\n  app : 95-130 MiB (pic 160 MiB lors des exports) ; CPU < 0,4 cœur\n  bdd : 380-460 MiB stable ; CPU pics à 1,2 cœur sur les recherches\n\nLimites retenues (règle : pic observé × 1,5 à 2) :\n  service | pic observé | limite mémoire | cpus\n  app     | 160 MiB     | 512m           | 1.0\n  bdd     | 460 MiB     | 1g             | 2.0\n\n# compose.yaml (extraits communs aux deux services)\n    mem_limit: 512m        # (1g pour bdd)\n    cpus: \"1.0\"            # (\"2.0\" pour bdd)\n    restart: unless-stopped\n    logging:\n      driver: json-file\n      options: { max-size: \"10m\", max-file: \"3\" }\n\nSignaux d'alerte à surveiller (7 premiers jours) :\n- stats : un service durablement > 80 % de sa limite -> réévaluer ;\n- inspect : tout OOMKilled=true -> post-mortem immédiat ;\n- compose ps : « Restarting » répété -> boucle de crash, lire les logs ;\n- croissance mémoire continue sans palier -> fuite applicative,\n  ouvrir un ticket AVANT d'augmenter la limite (l'augmentation masque).",
+    note: "La dernière ligne est la plus importante : augmenter une limite face à une fuite ne fait que retarder l'OOM — c'est un antalgique, pas un traitement. Le rapport sépare bien mesure (faits), décision (limites) et surveillance (signaux) : la même discipline que les index du capstone — mesurer, agir, vérifier." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Contrôle d'accès : IDOR et autorisation par ressource",
+  subtitle: "La faille n°1 du top OWASP : deviner un identifiant, accéder à ce qui n'est pas à soi.",
+  theory: `
+<h3>1. Le contrôle d'accès cassé (OWASP A01)</h3>
+<p>Deux mots essentiels à distinguer. L'<strong>authentification</strong> répond à « qui es-tu ? » (elle vérifie ton identité, via le mot de passe). L'<strong>autorisation</strong> répond à « as-tu le droit d'accéder à CET objet, ou de faire CETTE action ? ». Vérifier la première ne suffit pas : un utilisateur bien connecté peut tout de même essayer d'atteindre les données d'un autre. Il faut donc contrôler l'autorisation sur <strong>chaque</strong> accès, et toujours <strong>côté serveur</strong> (jamais en se fiant au navigateur, que l'utilisateur contrôle). Le manquement le plus courant à cette règle s'appelle l'<strong>IDOR</strong>. Dans la liste OWASP des risques web, cette catégorie « contrôle d'accès cassé » est classée A01 — la n°1.</p>
+
+<h3>2. L'IDOR (Insecure Direct Object Reference)</h3>
+<p><strong>IDOR</strong> = « référence directe à un objet, non sécurisée ». En clair : l'application donne accès à un objet uniquement d'après son <strong>identifiant</strong> (son numéro), sans vérifier qu'il appartient bien au demandeur. Si les numéros se suivent (42, 43, 44…), il suffit de changer le chiffre dans l'URL pour lire ce qui appartient aux autres. Analogie : un vestiaire où présenter le ticket n°42 ouvre le casier 42… même s'il n'est pas le tien.</p>
+<pre class="pseudo">def detail_location(request, pk):                       # pk = le numero (primary key) recu dans l'URL
+    loc = get_object_or_404(Location, pk=pk)            # va chercher la location n° pk... QUEL QUE SOIT l'utilisateur !
+    return render(request, "location.html", {"loc": loc})   # et l'affiche sans verifier a qui elle appartient
+# /locations/42 -> puis 43, 44, 45... -> on lit les locations de TOUS les clients
+# l'utilisateur est authentifie (connecte), mais l'objet n'est PAS le sien -> IDOR</pre>
+<p><code>get_object_or_404</code> est une fonction Django qui récupère un objet ou affiche une page « 404 introuvable » s'il n'existe pas. <code>pk</code> (primary key, clé primaire) est le numéro unique qui identifie chaque ligne en base.</p>
+
+<h3>3. La parade : filtrer par le propriétaire</h3>
+<p>La correction tient en un mot : ajouter au filtre la condition « ET cet objet appartient à l'utilisateur connecté ». Si le numéro ne lui appartient pas, l'objet est traité comme introuvable (404) — on ne révèle même pas son existence.</p>
+<pre class="pseudo">def detail_location(request, pk):
+    loc = get_object_or_404(Location, pk=pk, client=request.user)   # pk ET client = l'utilisateur connecte
+    return render(request, "location.html", {"loc": loc})           # un id qui n'est pas le sien -> 404
+
+# DRF (Django REST Framework, pour construire des API) :
+def get_queryset(self):                                             # definit la liste d'objets visibles
+    return Location.objects.filter(client=self.request.user)        # ne renvoie QUE les locations du demandeur</pre>
+<p>Un <strong>queryset</strong> est la « liste de résultats » d'une requête à la base ; le restreindre au bon utilisateur suffit à l'empêcher de voir autre chose. <strong>DRF</strong> (Django REST Framework) est l'outil qui sert à bâtir des API avec Django.</p>
+
+<h3>4. Deux dimensions complémentaires</h3>
+<p>L'autorisation se joue sur deux plans qu'il ne faut pas confondre :</p>
+<pre class="pseudo">Par ROLE      : ce TYPE d'utilisateur a-t-il le droit de faire cette action ?   # ex. seul le vendeur gere le stock (vu au capstone)
+Par RESSOURCE : mais uniquement sur SES propres objets ?                        # ex. ce client ne voit que SES locations (ici)
+Il faut LES DEUX. Le bon role sur l'objet d'un AUTRE = IDOR.                    # le role sans la ressource ne suffit pas</pre>
+
+<h3>5. Les pièges à éviter</h3>
+<pre class="pseudo">✘ se fier a l'URL ("la page admin n'est pas dans le menu")                  # une URL cachee reste tapable directement
+✘ se fier a un champ cache (&lt;input type="hidden" name="client_id"&gt;)     # l'utilisateur peut le modifier avant l'envoi
+✘ verifier seulement a l'affichage, pas a l'action (POST)                   # l'ecriture resterait non protegee
+✔ verifier sur CHAQUE acces (lecture ET ecriture), cote serveur, refuse par defaut   # la seule approche fiable</pre>
+<div class="warn">L'énumération d'identifiants séquentiels (1, 2, 3…) rend l'IDOR trivial à exploiter. Des identifiants non devinables (UUID) <strong>ralentissent</strong> mais ne <strong>corrigent pas</strong> : la vraie parade est la vérification du propriétaire, pas l'obscurité de l'id.</div>
+<div class="tip">Toutes les piles : le principe est universel (OWASP A01). Django (filtrer le queryset), Spring (<code>@PreAuthorize</code> + vérification propriétaire), C# (policies + resource-based authorization), Laravel (Policies). Le refus par défaut, l'autorisation explicite.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le contrôle d'accès cassé est, dans le top OWASP…", opts: ["Inexistant", "La faille n°1 (A01)", "Un détail", "Réservé aux API"], a: 1, exp: "La plus courante." },
+    { type: "qcm", q: "Authentification vs autorisation :", opts: ["Identiques", "Qui es-tu ? / As-tu le droit sur CET objet ?", "L'inverse", "Sans rapport"], a: 1, exp: "Les deux sont nécessaires." },
+    { type: "qcm", q: "IDOR signifie…", opts: ["Un chiffrement", "Insecure Direct Object Reference : accès à un objet par son id sans vérif", "Un cookie", "Un protocole"], a: 1, exp: "Deviner l'id suffit." },
+    { type: "qcm", q: "get_object_or_404(Location, pk=pk) sans client=… est…", opts: ["Sûr", "Vulnérable : renvoie l'objet à qui que ce soit", "Chiffré", "Rapide donc bon"], a: 1, exp: "IDOR." },
+    { type: "qcm", q: "La parade :", opts: ["Cacher l'URL", "Filtrer par le propriétaire (client=request.user)", "Un UUID seul", "HTTPS"], a: 1, exp: "Vérifier QUI accède." },
+    { type: "qcm", q: "Un id étranger, après correction, renvoie…", opts: ["L'objet", "404 (comme s'il n'existait pas)", "500", "Un cookie"], a: 1, exp: "Ne pas révéler l'existence." },
+    { type: "qcm", q: "En DRF, on sécurise via…", opts: ["get_queryset filtré par request.user", "un template", "un cookie", "le menu"], a: 0, exp: "La liste ne contient que ses objets." },
+    { type: "qcm", q: "Le contrôle par rôle SANS le contrôle par ressource donne…", opts: ["La sécurité parfaite", "Un IDOR (le bon rôle sur l'objet d'un autre)", "Un XSS", "Un CSRF"], a: 1, exp: "Il faut les deux." },
+    { type: "qcm", q: "Se fier au menu masqué pour cacher l'admin est…", opts: ["Suffisant", "Un piège : l'URL reste accessible directement", "Sécurisé", "Recommandé"], a: 1, exp: "Barrière serveur obligatoire." },
+    { type: "qcm", q: "Un champ caché <input hidden name=client_id> pour l'autorisation…", opts: ["Est fiable", "Est modifiable par l'utilisateur : jamais s'y fier", "Chiffre", "Protège"], a: 1, exp: "L'identité vient du serveur." },
+    { type: "qcm", q: "Vérifier seulement à l'affichage…", opts: ["Suffit", "Laisse l'action (POST) non protégée", "Est idéal", "Chiffre"], a: 1, exp: "Vérifier lecture ET écriture." },
+    { type: "qcm", q: "Des UUID au lieu de 1,2,3…", opts: ["Corrigent l'IDOR", "Le ralentissent mais ne le corrigent pas", "Chiffrent", "Sont inutiles"], a: 1, exp: "L'obscurité n'est pas une parade." },
+    { type: "qcm", q: "Le bon principe d'autorisation :", opts: ["Autorisé par défaut", "Refusé par défaut, autorisé explicitement", "Selon le menu", "Selon l'URL"], a: 1, exp: "Deny by default." },
+    { type: "qcm", q: "L'autorisation se vérifie…", opts: ["Une fois au login", "Sur CHAQUE accès, côté serveur", "Côté client", "Jamais"], a: 1, exp: "À chaque requête." },
+    { type: "vf", q: "L'IDOR touche autant la lecture que la modification d'objets.", a: true, exp: "Vérifier partout." }
+  ],
+  final: {
+    title: "Exercice final — Fermer l'IDOR",
+    intro: `<p>/api/locations/42 renvoie la location à qui la demande. On corrige.</p>`,
+    questions: [
+      { type: "qcm", q: "Le diagnostic :", opts: ["IDOR : pas de vérification du propriétaire", "XSS", "injection", "CSRF"], a: 0, exp: "Objet accédé par id seul." },
+      { type: "qcm", q: "La correction (vue) :", opts: ["get_object_or_404(Location, pk=pk, client=request.user)", "cacher l'URL", "un UUID", "un try"], a: 0, exp: "Filtrer par propriétaire." },
+      { type: "qcm", q: "La correction (DRF) :", opts: ["get_queryset filtré par request.user", "permission AllowAny", "un champ caché", "rien"], a: 0, exp: "La liste se restreint." },
+      { type: "qcm", q: "On garde aussi :", opts: ["Le contrôle par rôle du capstone", "seulement la ressource", "rien du capstone", "le menu masqué"], a: 0, exp: "Rôle ET ressource." },
+      { type: "vf", q: "Un id étranger doit renvoyer 404, pas l'objet.", a: true, exp: "Ni fuite, ni indice." }
+    ],
+    solution: `<pre class="pseudo"># VULNÉRABLE — IDOR
+def detail_location(request, pk):
+    loc = get_object_or_404(Location, pk=pk)                        # aucun controle du proprietaire -> IDOR
+    ...
+
+# CORRIGÉ — filtrer par le proprietaire
+def detail_location(request, pk):
+    loc = get_object_or_404(Location, pk=pk, client=request.user)   # pk ET proprietaire -> 404 si ce n'est pas le sien
+    ...
+
+# DRF
+def get_queryset(self):
+    return Location.objects.filter(client=self.request.user)       # la liste ne contient que ses objets
+
+# Role (capstone) + ressource (ici) : les deux dimensions          # ni l'un ni l'autre seul ne suffit</pre>
+<p>Fin de la semaine 1 : les grands classiques OWASP sont fermés. Lundi : les secrets et le transport.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton audit du contrôle d'accès…",
+  items: [
+  { id: "secu-l7", title: "L'audit du contrôle d'accès", level: 3,
+    statement: "Écris l'audit du contrôle d'accès de ton capstone : 1) la liste des vues/endpoints qui prennent un id d'objet en paramètre (locations, achats, jeux du vendeur…), 2) pour chacun, la question « le propriétaire/le rôle est-il vérifié ? », 3) la correction d'un cas IDOR trouvé, et 4) la règle d'équipe (refusé par défaut, filtrer par request.user, tester l'accès croisé).",
+    hints: [
+      "Repère les vues avec <pk> / <id> dans urls.py et les get_object_or_404 sans filtre propriétaire.",
+      "Un test de sécurité clé : le client A tente d'accéder à l'objet du client B → doit échouer (404/403).",
+      "Règle : chaque accès à un objet filtre par le propriétaire OU vérifie le rôle explicitement."
+    ],
+    solution: "AUDIT DU CONTRÔLE D'ACCÈS — [mon capstone]\n\n1. VUES PRENANT UN ID D'OBJET (urls.py)\n   /locations/<pk>/          -> propriétaire à vérifier\n   /achats/<pk>/             -> propriétaire à vérifier\n   /vendeur/jeux/<pk>/edit/  -> rôle vendeur/admin à vérifier\n   /api/locations/<pk>/      -> propriétaire (get_queryset)\n\n2. VÉRIFICATION\n   grep -n \"get_object_or_404\" catalogue/views.py\n   -> repérer ceux SANS client=request.user ni contrôle de rôle\n\n3. CORRECTION D'UN IDOR TROUVÉ\n# avant\ndef detail_achat(request, pk):\n    achat = get_object_or_404(Achat, pk=pk)\n# après\ndef detail_achat(request, pk):\n    achat = get_object_or_404(Achat, pk=pk, client=request.user)\n\n4. RÈGLE D'ÉQUIPE + TEST\n# Règle : refusé par défaut. Tout accès à un objet filtre par le\n# propriétaire (données perso) OU vérifie le rôle (gestion) — jamais l'un\n# sans l'autre quand les deux s'appliquent.\n# Test automatisé (à ajouter à la suite, cours CI/CD) :\ndef test_client_ne_voit_pas_les_locations_d_un_autre(self):\n    self.client.login(username=\"a@ludo.fr\", password=\"...\")\n    r = self.client.get(f\"/locations/{location_de_B.pk}/\")\n    self.assertEqual(r.status_code, 404)   # accès croisé refusé",
+    note: "Le test d'accès croisé (A tente d'atteindre l'objet de B) est le test de sécurité le plus rentable qui soit : il transforme « on filtre par propriétaire » en garantie vérifiée à chaque commit (via la CI). Beaucoup d'IDOR survivent parce que personne n'a jamais testé le cas hostile — seulement le cas nominal où chacun accède à ses propres données. Écrire le test hostile, c'est penser comme l'attaquant." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

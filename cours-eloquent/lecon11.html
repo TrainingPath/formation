@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "La relation 1-1 et hasManyThrough",
+  subtitle: "hasOne pour le tête-à-tête, hasManyThrough pour sauter par-dessus une table.",
+  theory: `
+<h3>1. Le 1-1 : un membre, une carte de fidélité</h3>
+<p>La Ludothèque lance sa carte de fidélité : <strong>un membre a au plus une carte, une carte appartient à un seul membre</strong> (relation <strong>1-1</strong>, un tête-à-tête). Au Niveau 4, tu sais qu'un 1-1 se modélise avec une clé étrangère UNIQUE d'un côté :</p>
+<pre class="pseudo">membres            carte_fidelites
+id | nom           id | membre_id (UNIQUE) | points | code
+12 | Dupont        1  |    12              |  340   | LF-0042
+
+// Migration :
+$table-&gt;foreignId('membre_id')-&gt;unique()-&gt;constrained('membres');   // FK vers membres + UNIQUE → une seule carte par membre</pre>
+<p>La contrainte UNIQUE est ce qui transforme un 1-N en 1-1 : sans elle, rien n'empêche deux cartes pour un membre.</p>
+
+<h3>2. hasOne et belongsTo : la paire du 1-1</h3>
+<pre class="pseudo">// Membre.php — côté SANS clé étrangère
+public function carte()                        // "un membre a une (seule) carte"
+{
+    return $this-&gt;hasOne(CarteFidelite::class); // hasOne → cherche carte_fidelites.membre_id
+}
+
+// CarteFidelite.php — côté AVEC la clé étrangère
+public function membre()                       // "une carte appartient à un membre"
+{
+    return $this-&gt;belongsTo(Membre::class);     // belongsTo → la FK membre_id est ici
+}
+
+$membre-&gt;carte-&gt;points;        // 340 (null-safe : $membre-&gt;carte?-&gt;points si pas de carte)
+$carte-&gt;membre-&gt;nom;           // Dupont : on remonte de la carte vers son membre</pre>
+<p>La règle de la leçon 8 ne change pas : <strong>belongsTo vit là où est la clé étrangère</strong>. hasOne est simplement le miroir « un seul » de hasMany (analogie : hasMany = « a plusieurs enfants », hasOne = « a un enfant unique »). Convention identique : hasOne(CarteFidelite::class) cherche carte_fidelites.membre_id. En JPA : @OneToOne ; en Django : OneToOneField ; en EF Core : deux navigation properties avec une FK unique.</p>
+<p>Créer la carte depuis le parent, sans manipuler la FK :</p>
+<pre class="pseudo">$membre-&gt;carte()-&gt;create(['code' =&gt; 'LF-0042', 'points' =&gt; 0]);   // crée la carte de ce membre
+// INSERT dans carte_fidelites avec membre_id = 12 automatiquement</pre>
+
+<h3>3. hasOne raffiné : « le dernier de la série »</h3>
+<p>hasOne sert aussi à extraire UN élément d'un hasMany existant — la dernière location d'un membre, l'avis le plus récent d'un jeu :</p>
+<pre class="pseudo">// Membre.php
+public function derniereLocation()
+{
+    return $this-&gt;hasOne(Location::class)-&gt;latestOfMany('date_location');   // la location la plus récente
+}
+
+$membre-&gt;derniereLocation-&gt;jeu-&gt;titre;   // titre du jeu loué en dernier</pre>
+<p>latestOfMany / oldestOfMany choisissent proprement une seule ligne par parent — bien plus sûr qu'un orderBy + first artisanal quand on charge plusieurs membres.</p>
+
+<h3>4. hasManyThrough : sauter une table</h3>
+<p>Question métier : « toutes les <strong>locations d'un éditeur</strong> » — or locations n'a pas de colonne editeur_id ! Le chemin passe par jeux : editeurs → jeux → locations. C'est exactement le rôle de <strong>hasManyThrough</strong> (« a plusieurs, à travers » — analogie : pour aller du grand-parent aux petits-enfants, on passe par le parent qui sert de couloir) :</p>
+<pre class="pseudo">// Editeur.php
+public function locations()
+{
+    // hasManyThrough(modèle FINAL, modèle INTERMÉDIAIRE)
+    return $this-&gt;hasManyThrough(Location::class, Jeu::class);   // chemin : editeurs → jeux → locations
+}
+
+$editeur-&gt;locations;   // toutes les locations de tous ses jeux
+// SQL : SELECT locations.* FROM locations
+//       JOIN jeux ON jeux.id = locations.jeu_id
+//       WHERE jeux.editeur_id = ?</pre>
+<p>Conventions utilisées : jeux.editeur_id (lien vers l'intermédiaire) et locations.jeu_id (lien vers le final). Les paramètres supplémentaires permettent de tout personnaliser si la base déroge. Équivalents : chaînage de requêtes chez Django (location_set via jeu__editeur), navigations transitives en JPA/EF Core via JPQL/LINQ.</p>
+
+<h3>5. hasOneThrough et le panorama complet</h3>
+<p>Le petit frère : <strong>hasOneThrough</strong> traverse aussi un intermédiaire mais ne ramène qu'UN modèle. Exemple : depuis une carte de fidélité, retrouver la dernière location du membre porteur — ou plus simplement : CarteFidelite → Membre → (hasOne) quelque chose.</p>
+<pre class="pseudo">RÉCAPITULATIF DES RELATIONS ELOQUENT (leçons 8 à 11)
+belongsTo        enfant → parent          Location → Jeu
+hasMany          parent → enfants         Jeu → Avis
+hasOne           parent → enfant unique   Membre → CarteFidelite
+belongsToMany    N-N via pivot            Jeu ↔ Categorie
+hasManyThrough   grand-parent → petits-enfants   Editeur → Locations (via Jeu)
+hasOneThrough    idem, un seul résultat</pre>
+<p>Avec ces six méthodes, tu sais exprimer TOUT le schéma de la Ludothèque en objets. Ce qui manque encore : les charger efficacement — le problème N+1 t'attend à la leçon 12.</p>
+<div class="warn">Un 1-1 sans contrainte UNIQUE sur la clé étrangère est un 1-N déguisé : hasOne retournera silencieusement « une » des lignes (la première trouvée), et ton bug sera invisible. La relation Eloquent ne remplace JAMAIS la contrainte en base — les deux se complètent, comme au Niveau 4.</div>
+<div class="tip">Avant de dégainer hasManyThrough, dessine le chemin : source → intermédiaire → final, et vérifie où vivent les deux clés étrangères. L'ordre des arguments (final d'abord, intermédiaire ensuite) se retient mal : le schéma sous les yeux, l'erreur devient impossible.</div>`,
+  exercises: [
+    { type: "qcm", q: "En base, un vrai 1-1 se garantit par…", opts: ["Deux tables identiques", "Une clé étrangère avec contrainte UNIQUE", "Un index FULLTEXT", "Une colonne JSON"], a: 1, exp: "Sans UNIQUE sur membre_id, deux cartes pour un membre restent possibles." },
+    { type: "qcm", q: "Dans le duo Membre / CarteFidelite, hasOne se déclare…", opts: ["Dans CarteFidelite (qui porte membre_id)", "Dans Membre (côté sans clé étrangère)", "Dans les deux", "Dans la migration"], a: 1, exp: "hasOne côté parent ; belongsTo côté porteur de la FK, comme toujours." },
+    { type: "input", q: "Quelle méthode déclare « un membre a une carte de fidélité » ?", a: ["hasOne", "hasone", "hasOne()"], ph: "nom de la méthode…", exp: "return $this->hasOne(CarteFidelite::class); dans Membre." },
+    { type: "qcm", q: "hasOne(CarteFidelite::class) dans Membre cherche par convention la colonne…", opts: ["carte_id dans membres", "membre_id dans carte_fidelites", "id_carte", "fidelite_id"], a: 1, exp: "La FK est chez l'enfant : carte_fidelites.membre_id." },
+    { type: "vf", q: "belongsTo disparaît dans un 1-1 : seul hasOne est nécessaire.", a: false, exp: "Le côté qui porte la FK déclare belongsTo — la paire hasOne/belongsTo est le miroir du 1-1." },
+    { type: "qcm", q: "$membre->carte()->create([...]) présente l'avantage de…", opts: ["Sauter la validation", "Créer la carte sans base", "Poser membre_id automatiquement", "Créer plusieurs cartes"], a: 2, exp: "Créer depuis la relation remplit la FK pour toi — même mécanique que save() sur hasMany (leçon 9)." },
+    { type: "qcm", q: "Si membre_id n'a PAS de contrainte UNIQUE et que deux cartes existent, $membre->carte retourne…", opts: ["Une exception", "Les deux cartes", "Silencieusement une seule des deux lignes", "null"], a: 2, exp: "Le bug invisible : la relation ne remplace pas la contrainte en base." },
+    { type: "input", q: "Quelle méthode sélectionne proprement « la plus récente » ligne d'un hasMany transformé en hasOne ?", a: ["latestOfMany", "latestOfMany()", "->latestOfMany()"], ph: "hasOne(...)->…", exp: "latestOfMany (et son miroir oldestOfMany) : un seul enregistrement par parent." },
+    { type: "qcm", q: "« Toutes les locations d'un éditeur » alors que locations n'a pas d'editeur_id :", opts: ["Impossible sans SQL brut", "hasManyThrough(Location::class, Jeu::class) dans Editeur", "belongsToMany(Location::class)", "hasMany(Location::class)"], a: 1, exp: "Le chemin editeurs → jeux → locations, en une déclaration." },
+    { type: "qcm", q: "Dans hasManyThrough(Location::class, Jeu::class), le premier argument est…", opts: ["Le modèle intermédiaire", "Le modèle final que l'on veut obtenir", "La table pivot", "La clé primaire"], a: 1, exp: "Final d'abord, intermédiaire ensuite — dessine le chemin pour ne pas inverser." },
+    { type: "qcm", q: "Les deux clés étrangères que hasManyThrough utilise par convention ici :", opts: ["jeux.editeur_id et locations.jeu_id", "editeurs.jeu_id et jeux.location_id", "locations.editeur_id seulement", "Aucune"], a: 0, exp: "Source → intermédiaire (editeur_id), intermédiaire → final (jeu_id)." },
+    { type: "vf", q: "hasOneThrough traverse un modèle intermédiaire mais ne retourne qu'un seul modèle.", a: true, exp: "Le petit frère de hasManyThrough, pour les chemins qui aboutissent à une seule ligne." },
+    { type: "qcm", q: "L'équivalent du 1-1 chez Django :", opts: ["ManyToManyField", "ForeignKey", "OneToOneField", "prefetch_related"], a: 2, exp: "OneToOneField — @OneToOne chez JPA, FK unique + navigations chez EF Core." },
+    { type: "qcm", q: "Le SQL généré par $editeur->locations (hasManyThrough) contient…", opts: ["Deux requêtes séparées obligatoires", "Un JOIN entre locations et jeux filtré sur jeux.editeur_id", "Un UNION", "Un DELETE"], a: 1, exp: "Une seule requête avec jointure : le chemin est traduit en JOIN." },
+    { type: "vf", q: "Avec belongsTo, hasMany, hasOne, belongsToMany et les Through, tout le schéma de la Ludothèque est exprimable en relations Eloquent.", a: true, exp: "Six méthodes suffisent — il reste à les charger efficacement (leçon 12)." }
+  ],
+  final: {
+    title: "Exercice final — Cartes de fidélité et raccourcis",
+    intro: `<p>La carte de fidélité arrive et la direction veut des statistiques par éditeur. Le moment de vérifier hasOne et les Through.</p>`,
+    questions: [
+      { type: "qcm", q: "La migration du 1-1 membre/carte doit contenir…", opts: ["foreignId('membre_id')->unique()->constrained('membres')", "string('membre_id')", "belongsTo('membres')", "id() seulement"], a: 0, exp: "FK + UNIQUE : le 1-1 est garanti par la base, pas seulement par le code." },
+      { type: "input", q: "Dans CarteFidelite, la relation vers Membre s'écrit avec quelle méthode ?", a: ["belongsTo", "belongsto", "belongsTo()"], ph: "nom de la méthode…", exp: "La carte porte membre_id, donc elle « appartient à » — règle de la leçon 8." },
+      { type: "qcm", q: "Afficher les points du membre 12, en tolérant l'absence de carte :", opts: ["$membre->carte->points sans précaution", "$membre->carte?->points ?? 0", "CarteFidelite::all()", "$membre->points"], a: 1, exp: "hasOne peut retourner null : l'opérateur null-safe évite l'erreur." },
+      { type: "qcm", q: "« La dernière location de chaque membre » en une relation propre :", opts: ["hasMany + first() dans une boucle", "hasOne(Location::class)->latestOfMany('date_location')", "belongsToMany(Location::class)", "orderBy sans relation"], a: 1, exp: "latestOfMany : une ligne par parent, chargeable proprement avec with()." },
+      { type: "vf", q: "hasManyThrough(Location::class, Jeu::class) dans Editeur exige d'ajouter une colonne editeur_id à la table locations.", a: false, exp: "Justement non : la relation traverse jeux, qui porte déjà editeur_id — c'est tout son intérêt." }
+    ],
+    solution: `<pre class="pseudo">1-1  : FK UNIQUE en base (migration) + paire hasOne / belongsTo
+       Membre.carte()          → hasOne(CarteFidelite::class)
+       CarteFidelite.membre()  → belongsTo(Membre::class)
+       Créer : $membre-&gt;carte()-&gt;create([...])  (FK posée seule)
+       Raffiné : hasOne(...)-&gt;latestOfMany()    (le dernier d'une série)
+
+THROUGH : Editeur → Jeu → Location
+       hasManyThrough(Location::class, Jeu::class)
+       JOIN généré via jeux.editeur_id et locations.jeu_id
+       hasOneThrough = même chemin, un seul résultat
+
+Panorama complet : belongsTo · hasMany · hasOne · belongsToMany ·
+                   hasManyThrough · hasOneThrough</pre>
+<p>Toutes les relations sont en place… mais mal utilisées, elles peuvent générer des centaines de requêtes. Leçon 12 : le problème N+1 et l'eager loading avec with().</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l11", title: "La carte du schéma complet en relations", level: 2,
+    statement: "Dresse la carte COMPLÈTE des relations Eloquent de la Ludothèque enrichie de la carte de fidélité : pour chaque paire de modèles (Jeu-Editeur, Jeu-Categorie, Jeu-Avis, Membre-Avis, Location-Jeu, Location-Membre, Membre-CarteFidelite, Editeur-Location), nomme la méthode Eloquent de chaque côté, la colonne ou table qui la soutient en base, et la contrainte SQL qui garantit la cardinalité. Termine en identifiant laquelle de ces relations est un « Through » et pourquoi elle n'exige aucune colonne nouvelle.",
+    hints: [
+      "Procède côté par côté : qui porte la FK ? Ce côté-là écrit belongsTo, l'autre hasMany ou hasOne.",
+      "La cardinalité 1-1 exige une contrainte de plus que le 1-N : laquelle, sur quelle colonne ?",
+      "Pour Editeur-Location, il n'y a AUCUNE colonne directe entre les deux tables : quel chemin la relation emprunte-t-elle ?"
+    ],
+    solution: "Paire                  | Côté A                     | Côté B                  | Base / contrainte\n-----------------------+----------------------------+-------------------------+--------------------------------\nJeu – Editeur          | Jeu.editeur() belongsTo    | Editeur.jeux() hasMany  | jeux.editeur_id (FK)\nJeu – Categorie        | Jeu.categories()           | Categorie.jeux()        | pivot categorie_jeu\n                       | belongsToMany              | belongsToMany           | (2 FK, UNIQUE sur le couple)\nJeu – Avis             | Jeu.avis() hasMany         | Avis.jeu() belongsTo    | avis.jeu_id (FK)\nMembre – Avis          | Membre.avis() hasMany      | Avis.membre() belongsTo | avis.membre_id (FK)\nLocation – Jeu         | Location.jeu() belongsTo   | Jeu.locations() hasMany | locations.jeu_id (FK)\nLocation – Membre      | Location.membre() belongsTo| Membre.locations()      | locations.membre_id (FK)\n                       |                            | hasMany                 |\nMembre – CarteFidelite | Membre.carte() hasOne      | CarteFidelite.membre()  | carte_fidelites.membre_id\n                       |                            | belongsTo               | FK + UNIQUE → cardinalité 1-1\nEditeur – Location     | Editeur.locations()        | (pas de méthode retour  | AUCUNE colonne nouvelle :\n                       | hasManyThrough(Location,   |  nécessaire)            | traverse jeux.editeur_id\n                       | Jeu)                       |                         | puis locations.jeu_id\n\nLe « Through » : Editeur → Location. Il n'exige rien de neuf car les deux\ntronçons du chemin existent déjà (editeurs→jeux, jeux→locations) ;\nla relation ne fait que composer deux FK en un JOIN.",
+    note: "Cette carte est l'équivalent objet de ton diagramme entité-association du Niveau 4 : mêmes cardinalités, nouveau vocabulaire. En JPA tu écrirais la même carte avec @ManyToOne/@OneToMany/@OneToOne/@ManyToMany, en Django avec ForeignKey/OneToOneField/ManyToManyField. Au Niveau 6, commencer le projet par cette carte t'évitera 80 % des erreurs de conception de la couche modèle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

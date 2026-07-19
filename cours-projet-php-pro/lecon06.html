@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 6</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "La couche service et les règles métier, sous CI",
+  subtitle: "Les décisions du métier, isolées et testées en millisecondes.",
+  theory: `
+<h3>1. Pourquoi une couche service</h3>
+<p>Les modèles portent l'état et l'accès aux données. Les <strong>décisions</strong> (peut-on louer ? quel tarif ?) vivent dans une classe <code>app/Services/JeuService</code> : testable isolément, réutilisable par l'API, le web et les commandes, indépendante des contrôleurs.</p>
+
+<h3>2. Une exception métier explicite</h3>
+<p>Une <strong>exception</strong> est un signal d'erreur qu'on « lance » (<code>throw</code>) pour interrompre le cours normal du programme quand quelque chose cloche ; un code plus haut peut l'« attraper » (<code>catch</code>) et réagir. Ici on crée une exception au <em>nom métier</em> parlant, <code>StockInsuffisantException</code>, qui <em>hérite</em> de <code>RuntimeException</code> (une exception standard signalant un problème survenu pendant l'exécution). Un nom clair vaut mieux qu'une <code>\Exception</code> anonyme.</p>
+<pre class="pseudo">// app/Exceptions/StockInsuffisantException.php
+class StockInsuffisantException extends \\RuntimeException {}   // exception au nom métier : héritée de RuntimeException, corps vide (le nom suffit)</pre>
+<p>Un nom métier, pas un <code>\\Exception</code> anonyme : l'intention se lit, et le Handler (leçon 8) la traduira en 409.</p>
+
+<h3>3. Le service</h3>
+<p>Le service regroupe les décisions du métier. <code>verifierStockLocation(Jeu $jeu): void</code> reçoit un jeu et ne renvoie rien (<code>void</code>) : soit tout va bien, soit il <em>lance</em> l'exception. <code>prixLocation(Jeu $jeu, int $nbJours = 7): string</code> calcule un tarif ; <code>= 7</code> est une valeur par défaut (si aucune durée n'est donnée, on suppose 7 jours). La syntaxe <code>"…{$jeu->titre}"</code> insère la valeur d'une variable directement dans un texte.</p>
+<pre class="pseudo">class JeuService
+{
+    public function verifierStockLocation(Jeu $jeu): void {          // reçoit un jeu ; ne renvoie rien (void)
+        if ($jeu->stock_location <= 0)                              // si le stock de location est épuisé (0 ou moins)
+            throw new StockInsuffisantException("Plus de stock pour {$jeu->titre}");   // LANCE l'exception métier avec un message clair
+    }
+    public function prixLocation(Jeu $jeu, int $nbJours = 7): string {   // calcule le tarif ; 7 jours par défaut ; renvoie une chaîne
+        $base = $jeu->prix_location;                                // prix de base pour 7 jours
+        return $nbJours <= 7 ? $base                                // jusqu'à 7 jours : le prix de base tel quel
+             : bcadd($base, bcmul((string)($nbJours - 7), '0.50', 2), 2);   // au-delà : base + 0,50 € par jour supplémentaire (calcul exact en bcmath)
+    }
+}</pre>
+
+<h3>4. Le test unitaire rapide</h3>
+<p>Un <strong>test unitaire</strong> vérifie une seule brique isolée, sans démarrer la base ni le reste de l'application — d'où sa rapidité. <code>new Jeu([...])</code> crée un jeu directement <em>en mémoire</em>. <code>assertSame('6.50', …)</code> exige que le résultat soit exactement égal à la chaîne <code>'6.50'</code> (même valeur ET même type). <code>expectException(…)</code> déclare qu'on s'attend à ce que le code lève telle exception : le test réussit si elle survient, échoue sinon.</p>
+<pre class="pseudo">class JeuServiceTest extends TestCase {   // pas de RefreshDatabase -> aucune base
+    public function test_tarif_prolongation(): void {              // test du calcul de tarif
+        $jeu = new Jeu(['prix_location' => '5.00']);               // un jeu en mémoire, prix de base 5,00 €
+        $this->assertSame('6.50', (new JeuService)->prixLocation($jeu, 10));   // 10 jours = 5 + 3×0,50 = 6,50 ; on vérifie l'égalité stricte
+    }
+    public function test_refuse_si_stock_nul(): void {             // test du refus sur stock épuisé
+        $this->expectException(StockInsuffisantException::class);  // on s'attend à ce que l'exception soit levée
+        (new JeuService)->verifierStockLocation(new Jeu(['stock_location' => 0]));   // stock 0 -> doit lever l'exception
+    }
+}</pre>
+<p>On instancie un <code>Jeu</code> en mémoire : aucune base, aucun bootstrap lourd. Ces tests tournent en <strong>millisecondes</strong>.</p>
+
+<h3>5. Calculer l'argent avec bcmath</h3>
+<div class="warn">Ne calcule jamais un prix avec des floats : <code>0.1 + 0.2 !== 0.3</code> en PHP comme ailleurs. <code>bcadd</code>/<code>bcmul</code> opèrent sur des <strong>chaînes</strong> à précision fixe — pas d'erreur d'arrondi sur une facture. Pour l'argent, on ne prend jamais de raccourci.</div>
+<div class="tip">Des tests unitaires en millisecondes, c'est la condition d'une CI < 10 min (cours CI/CD) : plus le projet grossit, plus il est vital que la majorité des tests soient rapides et sans base. On garde les tests fonctionnels (avec MySQL) pour ce qui l'exige vraiment (leçon 11).</div>`,
+  exercises: [
+    { type: "qcm", q: "Les décisions métier vivent dans…", opts: ["Les modèles", "Une classe Service", "Le contrôleur", "La base"], a: 1, exp: "Testable, réutilisable." },
+    { type: "qcm", q: "StockInsuffisantException est…", opts: ["Générique", "Une exception métier nommée", "Un test", "Un scope"], a: 1, exp: "L'intention se lit." },
+    { type: "qcm", q: "Le test du service utilise…", opts: ["Un vrai MySQL", "Un Jeu en mémoire (aucune base)", "La prod", "Rien"], a: 1, exp: "Sans base, en ms." },
+    { type: "qcm", q: "Ces tests tournent en…", opts: ["Minutes", "Millisecondes", "Heures", "Jamais"], a: 1, exp: "Pas de RefreshDatabase." },
+    { type: "qcm", q: "On calcule l'argent avec…", opts: ["+ sur des floats", "bcadd/bcmul (chaînes, précision fixe)", "round()", "int"], a: 1, exp: "Pas d'erreur d'arrondi." },
+    { type: "qcm", q: "0.1 + 0.2 en float…", opts: ["= 0.3 exactement", "!== 0.3 (erreur de flottant)", "= 0", "erreur"], a: 1, exp: "D'où bcmath pour l'argent." },
+    { type: "qcm", q: "expectException vérifie…", opts: ["Une valeur", "Qu'une exception est bien levée", "Le CSS", "La base"], a: 1, exp: "Test du chemin d'erreur." },
+    { type: "qcm", q: "prixLocation(jeu, 10) avec base 5 € =", opts: ["5,00 €", "6,50 €", "10 €", "0 €"], a: 1, exp: "5 + 3×0,50." },
+    { type: "qcm", q: "La couche service dépend des contrôleurs ?", opts: ["Oui", "Non — elle en est indépendante (réutilisable)", "Toujours", "Jamais de modèle"], a: 1, exp: "Découplage." },
+    { type: "qcm", q: "assertSame vs assertEquals sur '6.50' :", opts: ["Identiques", "assertSame vérifie aussi le type (string strict)", "assertSame déploie", "Aucun"], a: 1, exp: "Comparaison stricte." },
+    { type: "vf", q: "La majorité des tests doivent être rapides pour garder la CI < 10 min.", a: true, exp: "Vitesse = adoption." },
+    { type: "qcm", q: "Réutiliser prixLocation depuis l'API ET le web est possible car…", opts: ["C'est dans le contrôleur", "C'est dans le service (couche partagée)", "C'est en SQL", "Par magie"], a: 1, exp: "Une couche métier centrale." },
+    { type: "qcm", q: "Nommer l'exception (StockInsuffisant) aide…", opts: ["Rien", "La traduction HTTP ultérieure (409)", "Le CSS", "La base"], a: 1, exp: "Handler en leçon 8." },
+    { type: "qcm", q: "Un test unitaire de service ne démarre pas…", opts: ["PHP", "La base de données (RefreshDatabase)", "Rien", "PHPUnit"], a: 1, exp: "D'où sa rapidité." },
+    { type: "vf", q: "bcmath opère sur des chaînes à précision fixe.", a: true, exp: "Pas de flottant pour l'argent." }
+  ],
+  final: {
+    title: "Exercice final — Le métier isolé et testé",
+    intro: `<p>Service + exception métier + tests rapides.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service est :", opts: ["indépendant des contrôleurs (réutilisable)", "dans le contrôleur", "dans le modèle", "en SQL"], a: 0, exp: "Couche dédiée." },
+      { type: "qcm", q: "Le test du service :", opts: ["instancie un Jeu en mémoire (aucune base)", "démarre MySQL", "va en prod", "n'existe pas"], a: 0, exp: "Millisecondes." },
+      { type: "qcm", q: "On calcule l'argent avec :", opts: ["bcadd/bcmul (chaînes)", "des floats", "round()", "int"], a: 0, exp: "Précision fixe." },
+      { type: "qcm", q: "L'erreur métier est :", opts: ["une exception nommée (StockInsuffisant)", "un return -1", "un null", "un echo"], a: 0, exp: "Intention explicite." },
+      { type: "vf", q: "Des tests unitaires rapides gardent le pipeline véloce.", a: true, exp: "< 10 min." }
+    ],
+    solution: `<pre class="pseudo">class JeuService {                                          // la couche des décisions métier
+  public function verifierStockLocation(Jeu $j): void {     // vérifie qu'il reste du stock de location
+    if ($j->stock_location <= 0) throw new StockInsuffisantException(...);   // stock épuisé -> exception métier
+  }
+  public function prixLocation(Jeu $j, int $n = 7): string {   // calcule le tarif (n jours, 7 par défaut)
+    return $n <= 7 ? $j->prix_location                       // jusqu'à 7 jours : prix de base
+      : bcadd($j->prix_location, bcmul((string)($n-7), '0.50', 2), 2);   // au-delà : +0,50 €/jour, calcul exact
+  }
+}
+// test sans base : assertSame('6.50', (new JeuService)->prixLocation($jeu, 10));   // 10 jours -> 6,50 €</pre>
+<p>Le métier est isolé et testé. Demain : l'API REST et le job de tests avec MySQL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service et ses tests…",
+  items: [
+  { id: "proj6php-l6", title: "Le service métier et ses tests rapides", level: 2,
+    statement: "Écris JeuService (verifierStockLocation qui lève StockInsuffisantException, prixLocation en bcmath), l'exception métier, et deux tests rapides (le tarif de prolongation et le refus sur stock nul). Explique en 2-3 lignes pourquoi ces tests n'ont pas besoin de base et pourquoi on calcule l'argent avec bcmath.",
+    hints: [
+      "Test sans RefreshDatabase -> on instancie un Jeu en mémoire.",
+      "prixLocation : $n <= 7 ? base : bcadd(base, bcmul((string)($n-7), '0.50', 2), 2).",
+      "expectException(StockInsuffisantException::class) pour le refus."
+    ],
+    solution: "// app/Exceptions/StockInsuffisantException.php\nclass StockInsuffisantException extends \\RuntimeException {}   // exception au nom metier (heritee de RuntimeException)\n\n// app/Services/JeuService.php\nclass JeuService\n{\n    public function verifierStockLocation(Jeu $jeu): void {          // recoit un jeu ; ne renvoie rien\n        if ($jeu->stock_location <= 0)                              // si le stock de location est epuise\n            throw new StockInsuffisantException(\"Plus de stock pour {$jeu->titre}\");   // lance l'exception metier\n    }\n    public function prixLocation(Jeu $jeu, int $nbJours = 7): string {   // calcule le tarif (7 jours par defaut)\n        $base = $jeu->prix_location;                                // prix de base pour 7 jours\n        return $nbJours <= 7 ? $base                                // jusqu'a 7 jours : prix de base\n             : bcadd($base, bcmul((string)($nbJours - 7), '0.50', 2), 2);   // au-dela : +0,50 EUR/jour, calcul exact (bcmath)\n    }\n}\n\n// tests/Unit/JeuServiceTest.php (aucune base)\nclass JeuServiceTest extends TestCase {                             // tests unitaires rapides, sans base\n    public function test_tarif_prolongation(): void {              // teste le calcul du tarif\n        $jeu = new Jeu(['prix_location' => '5.00']);               // jeu en memoire, base 5,00\n        $this->assertSame('6.50', (new JeuService)->prixLocation($jeu, 10));   // 10 jours -> 6,50 (egalite stricte)\n    }\n    public function test_refuse_si_stock_nul(): void {             // teste le refus sur stock nul\n        $this->expectException(StockInsuffisantException::class);  // on attend l'exception\n        (new JeuService)->verifierStockLocation(new Jeu(['stock_location' => 0]));   // stock 0 -> exception levee\n    }\n}\n\n// POURQUOI SANS BASE, POURQUOI bcmath\n// verifierStockLocation et prixLocation sont du PHP pur : ils ne touchent pas la\n// base. En instanciant un Jeu en memoire (sans RefreshDatabase), le test ne migre\n// rien et s'execute en millisecondes. Comme ces tests unitaires sont la MAJORITE,\n// la CI reste sous 10 min meme quand le projet grossit -- condition de son adoption.\n// bcmath : additionner des prix avec des floats donne des erreurs d'arrondi\n// (0.1 + 0.2 !== 0.3). bcadd/bcmul operent sur des CHAINES a precision fixe : une\n// facture calculee au centime pres, sans surprise. Pour l'argent, jamais de float.",
+    note: "La séparation service / modèle rend le métier testable sans infrastructure. Le piège des floats sur l'argent mérite d'être connu par cœur : additionner des prix en flottant produit des centimes fantômes qui, cumulés, faussent une comptabilité. Isoler les décisions dans un service, c'est aussi ce qui permettra à l'API (demain) et au frontend (leçon 13) de partager exactement la même logique sans la dupliquer." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

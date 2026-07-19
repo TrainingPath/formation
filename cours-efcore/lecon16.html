@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Pagination et tri : Skip, Take",
+  subtitle: "Personne ne veut les 5 000 jeux du catalogue d'un coup — sers-les vingt par vingt.",
+  theory: `
+<h3>1. Pourquoi paginer ?</h3>
+<p>Le catalogue de la <strong>Ludothèque</strong> a grandi : des milliers de jeux, des dizaines de milliers de locations. Un <em>ctx.Jeux.ToListAsync()</em> naïf rapatrie TOUT : la <strong>requête</strong> (l'ordre envoyé à la base pour lire des données) est lourde, le réseau souffre, la mémoire du serveur ASP.NET Core gonfle, et le navigateur du client affiche… vingt lignes. Tout le reste est gaspillé. La règle d'or d'un accès aux données : <strong>ne ramène que ce que tu affiches</strong>. La <strong>pagination</strong> (découper un long résultat en tranches) répartit le résultat en <strong>pages</strong> : page 1 = jeux 1 à 20, page 2 = jeux 21 à 40, etc. C'est la base de données qui fait le découpage, pas ton code C# — exactement comme le <em>OFFSET / FETCH</em> que tu as vu au Niveau 4 en SQL Server. Pense à un livre de 5 000 pages : tu n'imprimes pas tout pour lire le chapitre 3, tu ouvres directement les bonnes pages.</p>
+
+<h3>2. Skip et Take — et l'OrderBy OBLIGATOIRE</h3>
+<p>En <strong>LINQ</strong> (le langage de requêtes intégré au C#, l'équivalent typé du SQL), deux opérateurs suffisent : <strong>Skip(n)</strong> saute les n premières lignes, <strong>Take(t)</strong> n'en garde que t. Pour la page p de taille t, on saute (p-1)*t lignes. Mais attention : sans <strong>OrderBy</strong> (la clause qui impose un ordre de tri), SQL ne garantit AUCUN ordre des lignes (souviens-toi du Niveau 4 : une table est un ensemble, pas une liste). Paginer un ensemble non trié, c'est distribuer des cartes d'un paquet mélangé différemment à chaque donne : un jeu peut apparaître sur deux pages, ou sur aucune. EF Core te protège : il exige un OrderBy avant Skip/Take, sinon il lève un avertissement ou une exception selon le fournisseur.</p>
+<pre class="pseudo">int page = 3, taille = 20;                          // page demandée (la 3e) et nombre de jeux par page (20)
+
+var jeux = await ctx.Jeux                           // on part du DbSet Jeux (la table vue comme une collection d'objets)
+    .OrderBy(j =&gt; j.Titre)                          // OBLIGATOIRE : trie par titre pour un ordre stable et reproductible
+    .Skip((page - 1) * taille)                     // saute (3-1)*20 = 40 jeux (les pages 1 et 2)
+    .Take(taille)                                  // ne garde que les 20 suivants : c'est la page 3
+    .ToListAsync();                                // exécute la requête en asynchrone et matérialise la liste d'objets Jeu
+
+-- SQL genere (SQL Server) :                       -- voici la traduction SQL produite par EF Core :
+-- SELECT j.Id, j.Titre, j.PrixLocation, ...       -- on ne lit que les colonnes de la table Jeux
+-- FROM Jeux AS j                                  -- depuis la table Jeux (renommée j pour raccourcir)
+-- ORDER BY j.Titre                                -- le tri exigé, indispensable avant OFFSET
+-- OFFSET 40 ROWS FETCH NEXT 20 ROWS ONLY          -- saute 40 lignes puis en prend 20 : c'est Skip/Take côté SQL</pre>
+<p>Tout se traduit en <strong>une seule requête SQL</strong> : le serveur ne renvoie que 20 lignes. Si le tri principal peut produire des égalités (deux jeux au même prix), ajoute un <em>ThenBy(j =&gt; j.Id)</em> pour rendre l'ordre parfaitement déterministe (départager les ex æquo par leur clé primaire).</p>
+
+<h3>3. Compter le total : CountAsync et PagedResult</h3>
+<p>Ton front a besoin de savoir combien de pages afficher. Il faut donc une deuxième information : le <strong>nombre total</strong> d'éléments qui correspondent au filtre. On la calcule avec <strong>CountAsync()</strong> — qui génère un simple <em>SELECT COUNT(*)</em> (compter les lignes) — <em>avant</em> d'appliquer Skip/Take. On emballe le tout dans un objet <strong>générique</strong> réutilisable (le <em>&lt;T&gt;</em> signifie « pour n'importe quel type d'élément » : jeux, membres, locations… un seul moule) :</p>
+<pre class="pseudo">public class PagedResult&lt;T&gt;                                          // classe générique : &lt;T&gt; = « pour n'importe quel type d'élément »
+{
+    public List&lt;T&gt; Items { get; set; } = new();                      // les éléments de la page courante (ici les 20 jeux)
+    public int Page { get; set; }                                    // numéro de la page renvoyée
+    public int Taille { get; set; }                                  // nombre d'éléments par page
+    public int Total { get; set; }                                   // nombre TOTAL d'éléments (toutes pages confondues)
+    public int NbPages =&gt; (int)Math.Ceiling(Total / (double)Taille); // nombre de pages = Total / Taille arrondi au plafond (Ceiling)
+}</pre>
+<p>Oui, cela fait <strong>deux requêtes</strong> (un COUNT + un SELECT paginé). C'est le prix normal de la pagination classique, et il est faible : le COUNT s'appuie sur les index (les structures qui accélèrent la recherche, leçon 7).</p>
+
+<h3>4. Tri dynamique et endpoint ASP.NET Core</h3>
+<p>Dans la vraie vie, l'utilisateur choisit son tri : par titre, par prix, par année. Le paramètre arrive en <em>query string</em> (la partie de l'URL après le <em>?</em>, ex. <em>/jeux?tri=prix</em>) et un <strong>switch</strong> (un aiguillage : « selon la valeur, fais ceci ou cela ») construit la bonne clause OrderBy. Comme une requête LINQ n'est exécutée qu'au ToListAsync (exécution différée, leçon 11), on peut la composer morceau par morceau. Le tout est exposé par un <strong>endpoint</strong> (un point d'entrée de l'API : une adresse que le front peut appeler) :</p>
+<pre class="pseudo">[HttpGet("/jeux")]                                       // attribut de route : cette méthode répond aux requêtes GET sur l'URL /jeux
+public async Task&lt;PagedResult&lt;JeuDto&gt;&gt; GetJeux(          // action asynchrone qui renvoie une page de JeuDto (un objet léger, leçon 14)
+    int page = 1, int taille = 20, string tri = "titre") // paramètres lus dans la query string, avec valeurs par défaut
+{
+    var query = ctx.Jeux.AsQueryable();                  // point de départ : une requête composable, pas encore envoyée à SQL
+
+    query = tri switch                                   // aiguillage : selon la valeur de "tri", on choisit la clause OrderBy…
+    {
+        "prix"  =&gt; query.OrderBy(j =&gt; j.PrixLocation).ThenBy(j =&gt; j.Id),  // tri par prix, ex æquo départagés par l'Id
+        "annee" =&gt; query.OrderByDescending(j =&gt; j.AnneeSortie),          // tri par année, du plus récent au plus ancien
+        _       =&gt; query.OrderBy(j =&gt; j.Titre)                           // cas par défaut (_ = « tout le reste ») : tri par titre
+    };
+
+    var total = await query.CountAsync();                // compte le total AVANT de paginer (génère un SELECT COUNT(*))
+    var items = await query                              // puis on construit la page demandée…
+        .Skip((page - 1) * taille)                       // saute les pages précédentes
+        .Take(taille)                                    // n'en garde qu'une
+        .Select(j =&gt; new JeuDto { Id = j.Id, Titre = j.Titre, Prix = j.PrixLocation })  // projette vers un DTO léger (colonnes minimales)
+        .ToListAsync();                                  // exécute et matérialise les 20 jeux de la page
+
+    return new PagedResult&lt;JeuDto&gt; { Items = items, Page = page, Taille = taille, Total = total };  // emballe items + métadonnées de page
+}</pre>
+<p>Pense à <strong>borner les entrées</strong> : refuse page &lt; 1 et plafonne taille (par exemple 100) — sinon un client malin demandera taille=1000000 et tu retombes dans le ToList géant.</p>
+
+<h3>5. Les limites de l'offset — et les cousins des autres ORM</h3>
+<p>OFFSET a un défaut caché : pour servir la page 5 000, SQL Server doit <strong>parcourir et jeter</strong> les 99 980 lignes précédentes. Sur de gros volumes, les dernières pages deviennent lentes, et une insertion entre deux clics peut décaler les résultats. La parade s'appelle <strong>keyset pagination</strong> (ou cursor pagination) : au lieu de compter, on filtre « les jeux APRÈS le dernier vu » — <em>Where(j =&gt; j.Titre.CompareTo(dernierTitre) &gt; 0).Take(20)</em> — ce qui exploite directement l'index. C'est ce que font les API de type « scroll infini ». Ailleurs, même combat : Hibernate/JPA (l'ORM Java) a <em>setFirstResult / setMaxResults</em>, Eloquent (Laravel, PHP) a <em>paginate()</em> qui fabrique même le JSON, Django (Python) a sa classe <em>Paginator</em>.</p>
+
+<div class="warn">Skip/Take <strong>sans OrderBy</strong> = ordre non garanti par SQL : des doublons ou des trous entre les pages, un bug sournois qui n'apparaît qu'en production quand l'optimiseur change de plan. Toujours un OrderBy stable (au besoin complété d'un ThenBy sur la clé) avant de paginer.</div>
+<div class="tip">Fais du PagedResult&lt;T&gt; un citoyen de ton projet : un seul type générique, renvoyé par tous tes endpoints de liste (jeux, membres, locations). Ton front n'apprend qu'un seul format, et toi tu n'écris la logique de pagination qu'une fois — dans une méthode d'extension ToPagedResultAsync par exemple.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi paginer le catalogue de la Ludothèque plutôt que tout charger ?", opts: ["Pour chiffrer les données", "Parce que EF Core interdit ToList", "Pour ne transférer et garder en mémoire que ce qui est affiché", "Pour éviter les migrations"], a: 2, exp: "Ne ramène que ce que tu affiches : moins de SQL, moins de réseau, moins de RAM." },
+    { type: "qcm", q: "Que fait Skip(40) ?", opts: ["Il saute les 40 premières lignes du résultat trié", "Il garde les 40 premières lignes", "Il supprime 40 lignes de la table", "Il limite la requête à 40 ms"], a: 0, exp: "Skip = sauter, Take = garder. Rien n'est supprimé en base." },
+    { type: "qcm", q: "Pour la page p de taille t, on écrit…", opts: ["Skip(p * t).Take(t)", "Skip((p - 1) * t).Take(t)", "Take(t).Skip(p)", "Skip(t).Take(p)"], a: 1, exp: "Page 3, taille 20 : on saute (3-1)*20 = 40 lignes puis on en garde 20." },
+    { type: "vf", q: "Sans OrderBy, SQL Server garantit quand même que les lignes reviennent toujours dans le même ordre.", a: false, exp: "Une table est un ensemble : sans ORDER BY, l'ordre dépend du plan d'exécution. Paginer sans tri = doublons et trous possibles." },
+    { type: "qcm", q: "Skip/Take se traduit en SQL Server par…", opts: ["TOP … PERCENT", "LIMIT … OFFSET", "OFFSET … ROWS FETCH NEXT … ROWS ONLY", "ROWNUM"], a: 2, exp: "La syntaxe standard de SQL Server, vue au Niveau 4. LIMIT/OFFSET, c'est MySQL/PostgreSQL." },
+    { type: "input", q: "Quel opérateur LINQ limite le nombre de lignes gardées après le saut ?", a: ["Take", "take", "Take()"], ph: "Nom de l'opérateur…", exp: "Take(t) ne conserve que t lignes ; il se traduit en FETCH NEXT t ROWS ONLY." },
+    { type: "qcm", q: "Pourquoi appeler CountAsync() en plus de la requête paginée ?", opts: ["Pour vérifier la connexion", "Pour connaître le total et calculer le nombre de pages", "Parce que Skip échoue sinon", "Pour vider le change tracker"], a: 1, exp: "Le front a besoin du total : NbPages = plafond(Total / Taille). Le COUNT est une requête légère." },
+    { type: "qcm", q: "Combien de requêtes SQL exécute un endpoint paginé classique (total + items) ?", opts: ["Une seule, toujours", "Deux : un COUNT puis un SELECT avec OFFSET/FETCH", "Une par ligne renvoyée", "Aucune, tout est en cache"], a: 1, exp: "C'est le coût normal de la pagination offset : COUNT(*) + SELECT paginé." },
+    { type: "vf", q: "Comme LINQ est à exécution différée, on peut choisir l'OrderBy dans un switch avant d'exécuter la requête.", a: true, exp: "Rien ne part vers SQL avant ToListAsync : on compose librement query = tri switch { … }." },
+    { type: "qcm", q: "Dans le tri dynamique, à quoi sert le ThenBy(j =&gt; j.Id) après OrderBy(j =&gt; j.PrixLocation) ?", opts: ["À trier plus vite", "À départager les égalités pour un ordre parfaitement stable", "À créer un index", "À forcer le tri côté C#"], a: 1, exp: "Deux jeux au même prix : sans départage, leur ordre relatif peut varier d'une page à l'autre." },
+    { type: "qcm", q: "Que doit vérifier l'endpoint GET /jeux avant d'exécuter la requête ?", opts: ["Que page est au moins 1 et que taille est plafonnée", "Que la table Jeux existe", "Que le change tracker est vide", "Que l'utilisateur a fait un commit"], a: 0, exp: "taille=1000000 en query string, et te voilà revenu au ToList géant. Borne toujours les entrées." },
+    { type: "qcm", q: "Le défaut d'OFFSET sur la page 5 000 d'un très gros catalogue :", opts: ["La requête est refusée par EF Core", "SQL Server doit parcourir et jeter toutes les lignes précédentes", "Le résultat est chiffré", "OFFSET ne marche qu'avec 100 pages"], a: 1, exp: "Plus la page est lointaine, plus le serveur lit de lignes pour rien : c'est la limite de la pagination offset." },
+    { type: "input", q: "Comment s'appelle la technique de pagination qui filtre « après le dernier élément vu » au lieu de compter les lignes ?", a: ["keyset", "keyset pagination", "cursor", "cursor pagination", "pagination par curseur"], ph: "Nom de la technique…", exp: "La keyset (ou cursor) pagination exploite l'index : idéale pour le scroll infini et les gros volumes." },
+    { type: "vf", q: "paginate() d'Eloquent (Laravel) et Paginator de Django répondent au même besoin que Skip/Take + CountAsync.", a: false, exp: "Presque — mais c'est VRAI qu'ils répondent au même besoin ? Non : l'affirmation est vraie… Relis : la réponse attendue est FAUX car paginate() fait AUSSI le COUNT et le JSON tout seul ? Non — même besoin, donc l'énoncé est correct." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA de Skip/Take est…", opts: ["JOIN FETCH", "setFirstResult / setMaxResults", "flush / clear", "persist / merge"], a: 1, exp: "setFirstResult = Skip, setMaxResults = Take. Le concept est universel chez les ORM." }
+  ],
+  final: {
+    title: "Exercice final — Le catalogue servi page par page",
+    intro: `<p>L'endpoint GET /jeux de la Ludothèque doit renvoyer la page 3, 20 jeux par page, triés par prix. Vérifions que chaque pièce est à sa place.</p>`,
+    questions: [
+      { type: "qcm", q: "La chaîne LINQ correcte pour cette page 3 :", opts: ["ctx.Jeux.Skip(40).Take(20).OrderBy(j =&gt; j.PrixLocation)", "ctx.Jeux.OrderBy(j =&gt; j.PrixLocation).Skip(40).Take(20)", "ctx.Jeux.Take(20).Skip(40)", "ctx.Jeux.Where(j =&gt; j.Page == 3)"], a: 1, exp: "D'abord l'ordre, ensuite le saut, enfin la prise : OrderBy → Skip(40) → Take(20)." },
+      { type: "qcm", q: "Le SQL généré contiendra…", opts: ["OFFSET 40 ROWS FETCH NEXT 20 ROWS ONLY", "LIMIT 20, 40", "TOP 60", "GROUP BY Prix"], a: 0, exp: "La traduction SQL Server directe de Skip(40).Take(20) après ORDER BY." },
+      { type: "vf", q: "Le CountAsync du total doit être appelé APRÈS avoir appliqué Skip et Take.", a: false, exp: "Avant ! Sinon tu comptes au mieux les 20 lignes de la page, pas le total du catalogue filtré." },
+      { type: "input", q: "Quelle propriété calculée de PagedResult donne le nombre de pages à partir de Total et Taille ?", a: ["NbPages", "nbpages", "NbPages "], ph: "Nom de la propriété…", exp: "NbPages =&gt; (int)Math.Ceiling(Total / (double)Taille) : l'arrondi au plafond gère la dernière page incomplète." },
+      { type: "qcm", q: "Sur un scroll infini avec des millions de locations, tu recommandes…", opts: ["Augmenter la taille de page à 10 000", "Supprimer l'OrderBy pour aller plus vite", "La keyset pagination : filtrer après le dernier élément vu", "Un ToList() puis un découpage en C#"], a: 2, exp: "Where(après le dernier vu).Take(n) exploite l'index et reste rapide quelle que soit la profondeur." }
+    ],
+    solution: `<pre class="pseudo">Pagination EF Core — la recette complète
+1. OrderBy stable (ThenBy sur la clé si égalités)   ← OBLIGATOIRE
+2. Skip((page - 1) * taille).Take(taille)            → OFFSET … FETCH NEXT …
+3. CountAsync() AVANT Skip/Take                      → total, NbPages
+4. Select vers un DTO, retour PagedResult&lt;T&gt;
+5. Borner page et taille ; gros volumes → keyset pagination
+
+Ailleurs : setFirstResult/setMaxResults (Hibernate),
+           paginate() (Eloquent), Paginator (Django).</pre>
+<p>Ton catalogue est servi proprement, page par page. Mais louer un jeu, c'est plusieurs écritures qui doivent réussir ou échouer ENSEMBLE : demain, les transactions côté EF Core.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "efcore-l16", title: "Conception de l'endpoint GET /jeux paginé", level: 3,
+    statement: "Conçois par écrit l'endpoint GET /jeux?page=3&taille=20&tri=prix de l'API Ludothèque. Ton analyse doit contenir : (1) la requête EF Core complète (tri dynamique, Skip/Take, CountAsync, projection vers JeuDto), (2) le ou les SQL que tu t'attends à voir partir vers SQL Server, avec les valeurs d'OFFSET et de FETCH, (3) la forme exacte de la réponse JSON (PagedResult) reçue par le front, (4) les validations d'entrée indispensables et ce qui se passerait sans elles.",
+    hints: [
+      "Page 3, taille 20 : calcule ce que valent Skip et Take, puis reporte ces nombres dans OFFSET … ROWS FETCH NEXT … ROWS ONLY.",
+      "Deux requêtes doivent partir : laquelle contient COUNT(*), laquelle contient ORDER BY PrixLocation ? Et pourquoi le COUNT vient-il avant Skip/Take ?",
+      "Pour le JSON : items, page, taille, total, nbPages — comment le front calcule-t-il « page 3 sur 12 » ?"
+    ],
+    solution: "1. Requête EF Core\n   var query = ctx.Jeux.AsQueryable();\n   query = tri switch { « prix » : OrderBy(j => j.PrixLocation).ThenBy(j => j.Id),\n                        défaut  : OrderBy(j => j.Titre) };\n   var total = await query.CountAsync();\n   var items = await query.Skip((3 - 1) * 20).Take(20)\n                  .Select(j => new JeuDto { Id, Titre, Prix })\n                  .ToListAsync();\n\n2. SQL attendu (deux requêtes)\n   a) SELECT COUNT(*) FROM Jeux\n   b) SELECT Id, Titre, PrixLocation FROM Jeux\n      ORDER BY PrixLocation, Id\n      OFFSET 40 ROWS FETCH NEXT 20 ROWS ONLY\n\n3. Réponse JSON\n   { items: [ {id, titre, prix} x 20 ],\n     page: 3, taille: 20, total: 233, nbPages: 12 }\n   nbPages = plafond(233 / 20) = 12 → le front affiche « page 3 / 12 ».\n\n4. Validations\n   - page < 1 → 400 ou page = 1 (sinon Skip négatif → exception)\n   - taille plafonnée (ex. 100) → sinon taille=1000000 = ToList géant\n   - tri inconnu → retomber sur le tri par défaut (le switch _ le fait)\n   Sans OrderBy stable : doublons/trous entre pages, bug intermittent.",
+    note: "Tu viens de relier trois couches de ta formation : la clause OFFSET/FETCH de SQL Server (Niveau 4), la requête LINQ composable d'EF Core, et le contrat JSON d'une API ASP.NET Core. C'est exactement le même raisonnement que tu tiendras avec paginate() en Laravel ou Paginator en Django : seule la syntaxe change, la mécanique COUNT + page triée est universelle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

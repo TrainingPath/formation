@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Tester son API",
+  subtitle: "xUnit et WebApplicationFactory : prouver que ça marche, automatiquement.",
+  theory: `
+<h3>1. Pourquoi des tests automatisés ?</h3>
+<p>Un <strong>test automatisé</strong> est un petit programme qui vérifie tout seul qu'une partie de ton code se comporte comme prévu. Chaque modification peut casser une fonctionnalité existante (une <strong>régression</strong> : quelque chose qui marchait et ne marche plus). Les tests rejouent TOUTES les vérifications en secondes : <code>dotnet test</code>. Le framework de test standard : <strong>xUnit</strong>.</p>
+<pre class="pseudo">dotnet new xunit -o GestionnaireTaches.Tests           # crée un projet de tests xUnit dans ce dossier
+dotnet add reference ../GestionnaireTaches             # référencer le projet testé (pour l'appeler depuis les tests)</pre>
+<h3>2. Tests unitaires : le service isolé</h3>
+<p>Un <strong>test unitaire</strong> vérifie UNE classe en isolation. Grâce à la DI (leçon 2), le service se teste SANS base ni HTTP : on injecte un faux stockage.</p>
+<pre class="pseudo">public class TacheServiceTests                          // la classe qui regroupe les tests du service
+{
+    [Fact]                                              // [Fact] = "ceci est un test"
+    public void Creer_refuse_au_dela_de_10_taches_en_cours()  // le nom décrit le comportement attendu
+    {
+        // Arrange : un faux stockage avec déjà 10 tâches en cours
+        var stockage = new StockageMemoire();           // stockage en mémoire (pas de vraie base)
+        for (int i = 0; i &lt; 10; i++)                    // on le remplit avec 10 tâches
+            stockage.Ajouter(new Tache { Titre = "T" + i });
+        var service = new TacheService(stockage);       // on injecte le faux stockage dans le service
+
+        // Act
+        var resultat = service.Creer(new Tache { Titre = "La onzième" });  // on tente la 11e (interdite)
+
+        // Assert
+        Assert.Null(resultat);                          // on VÉRIFIE : le service a refusé (null)
+        Assert.Equal(10, stockage.Toutes().Count);      // et rien n'a été ajouté (toujours 10)
+    }
+}</pre>
+<p><code>[Fact]</code> marque un test ; le squelette est universel : <strong>Arrange</strong> (préparer), <strong>Act</strong> (agir), <strong>Assert</strong> (vérifier).</p>
+<h3>3. Tests d'intégration : l'API de bout en bout</h3>
+<p>Un <strong>test d'intégration</strong> vérifie plusieurs couches ensemble. <strong>WebApplicationFactory</strong> démarre l'application EN MÉMOIRE (sans vrai serveur) et fournit un <code>HttpClient</code> (un objet capable d'envoyer des requêtes HTTP) :</p>
+<pre class="pseudo">public class TachesApiTests                             // les tests de l'API complète
+    : IClassFixture&lt;WebApplicationFactory&lt;Program&gt;&gt;      // partage UNE app en mémoire entre les tests
+{
+    private readonly HttpClient _client;                // le client pour appeler l'API
+    public TachesApiTests(WebApplicationFactory&lt;Program&gt; factory)  // la factory est injectée par xUnit
+        =&gt; _client = factory.CreateClient();            // on en tire un HttpClient prêt à l'emploi
+
+    [Fact]
+    public async Task Get_taches_repond_200()           // test : GET /api/taches doit répondre 200
+    {
+        var reponse = await _client.GetAsync("/api/taches");        // on envoie la requête
+        Assert.Equal(HttpStatusCode.OK, reponse.StatusCode);        // on vérifie le statut 200
+    }
+
+    [Fact]
+    public async Task Post_sans_titre_repond_400()      // test : un POST sans titre doit être rejeté
+    {
+        var reponse = await _client.PostAsJsonAsync("/api/taches",  // on envoie un POST…
+                                                    new { priorite = 3 });  // …sans titre (invalide)
+        Assert.Equal(HttpStatusCode.BadRequest, reponse.StatusCode);  // on vérifie le 400
+    }
+}</pre>
+<p>La requête traverse le VRAI pipeline : routage, validation, contrôleur… C'est l'équivalent d'un curl automatisé.</p>
+<h3>4. La base de test</h3>
+<p>Les tests d'intégration ne doivent JAMAIS toucher la vraie base : on remplace le DbContext par une base SQLite en mémoire (ou une base jetable) dans la factory. Chaque exécution part de zéro.</p>
+<h3>5. Les assertions xUnit</h3>
+<p>Une <strong>assertion</strong> est une vérification : « j'affirme que… ». Si l'affirmation est fausse, le test échoue :</p>
+<pre class="pseudo">Assert.Equal(attendu, obtenu);                         // vérifie l'égalité (attendu EN PREMIER)
+Assert.True(condition);   Assert.False(condition);     // vérifie qu'une condition est vraie / fausse
+Assert.Null(x);           Assert.NotNull(x);           // vérifie que x est null / n'est pas null
+Assert.Contains(element, collection);                  // vérifie qu'un élément est présent
+Assert.Throws&lt;RegleMetierException&gt;(() =&gt; service.Faire());  // vérifie qu'une exception précise est levée</pre>
+<div class="warn">Un test qui échoue n'est pas un ennemi : il vient de t'éviter de livrer un bug. Le vrai danger, ce sont les fonctionnalités jamais testées.</div>
+<div class="tip">Teste le cas nominal ET les cas d'erreur (400, 404, règle violée). Un bon testeur est un pessimiste organisé. Règle d'équipe : chaque bug corrigé reçoit le test qui le reproduit.</div>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce qu'une régression ?", opts: ["Un test qui rate", "Une fonctionnalité qui marchait et qu'une modification a cassée", "Une base qui rétrécit", "Un retour de version"], a: 1, exp: "Les tests automatisés sont le filet anti-régression." },
+    { type: "input", q: "Quelle commande lance tous les tests ?", a: ["dotnet test"], ph: "commande", exp: "dotnet test — avant chaque commit." },
+    { type: "qcm", q: "Quel attribut xUnit marque une méthode de test ?", opts: ["[Test]", "[Fact]", "[Run]", "[Check]"], a: 1, exp: "[Fact] (et [Theory] pour les tests paramétrés)." },
+    { type: "qcm", q: "Quel est le squelette universel d'un test ?", opts: ["Si/Sinon/Fin", "Arrange (préparer), Act (agir), Assert (vérifier)", "Créer/Lire/Supprimer", "Get/Post/Put"], a: 1, exp: "Trois temps, dans cet ordre, partout." },
+    { type: "qcm", q: "Pourquoi TacheService se teste-t-il sans base ni serveur ?", opts: ["Impossible", "Grâce à la DI : on lui injecte un stockage en mémoire à la construction", "Parce qu'il est statique", "xUnit simule tout"], a: 1, exp: "L'architecture en couches (leçon 7) paie ici." },
+    { type: "qcm", q: "Différence entre test unitaire et test d'intégration ?", opts: ["Aucune", "Unitaire : une classe isolée ; intégration : la traversée complète (routage → validation → contrôleur → …)", "L'intégration est manuelle", "L'unitaire est obsolète"], a: 1, exp: "Les deux se complètent : rapide et ciblé vs réaliste et global." },
+    { type: "qcm", q: "Que fait WebApplicationFactory<Program> ?", opts: ["Compile le projet", "Démarre l'application EN MÉMOIRE et fournit un HttpClient pour l'appeler", "Déploie en prod", "Ouvre un navigateur"], a: 1, exp: "Un curl automatisé, sans serveur réel ni port." },
+    { type: "qcm", q: "Post_sans_titre_repond_400 : que vérifie ce test exactement ?", opts: ["Que le titre est joli", "Que la validation ([Required], leçon 12) rejette bien un POST sans titre", "Que la base est vide", "Le temps de réponse"], a: 1, exp: "La validation est une fonctionnalité : on prouve qu'elle refuse." },
+    { type: "qcm", q: "Pourquoi une base de test séparée (SQLite en mémoire) ?", opts: ["Pour la vitesse seulement", "Les tests créent/suppriment des données : ils ne doivent JAMAIS toucher la vraie base", "SQLite est obligatoire", "Pour éviter les migrations"], a: 1, exp: "Chaque exécution part de zéro, sans risque." },
+    { type: "qcm", q: "Quelle assertion vérifie qu'une exception métier est bien levée ?", opts: ["Assert.Error()", "Assert.Throws<RegleMetierException>(() => ...)", "try/catch", "Assert.Fail()"], a: 1, exp: "Le comportement d'échec attendu se teste aussi." },
+    { type: "qcm", q: "Un test échoue après ta modification. Réaction professionnelle ?", opts: ["Supprimer le test", "Comprendre : bug dans ton code, ou test à faire évoluer avec le comportement voulu", "Le commenter", "Relancer en boucle"], a: 1, exp: "Le test est un messager — on ne tire pas sur le messager." },
+    { type: "qcm", q: "Que signifie IClassFixture<WebApplicationFactory<Program>> ?", opts: ["Un héritage", "xUnit partage UNE factory (l'app en mémoire) entre les tests de la classe et l'injecte au constructeur", "Une interface à implémenter", "Un mock"], a: 1, exp: "L'application n'est démarrée qu'une fois : les tests restent rapides." },
+    { type: "qcm", q: "Pourquoi tester AUSSI les cas d'erreur (400, 404) ?", opts: ["Pour le volume", "Les refus font partie du contrat de l'API : un 404 devenu 200 est une régression grave", "C'est inutile", "Pour la couverture uniquement"], a: 1, exp: "Le contrat complet : succès ET refus." },
+    { type: "vf", q: "Si tous les tests passent, l'application est garantie sans aucun bug.", a: false, exp: "Les tests prouvent ce qu'ils vérifient — rien de plus. Chaque test ajouté rétrécit le territoire des bugs." },
+    { type: "vf", q: "Les tests d'intégration avec WebApplicationFactory nécessitent de lancer dotnet run à côté.", a: false, exp: "Tout tourne en mémoire dans le processus de test : aucun serveur à démarrer." }
+  ],
+  final: {
+    title: "Exercice final — La suite de tests parle",
+    intro: `<p>Sortie de <code>dotnet test</code> après une modification :</p>
+<pre class="pseudo">  Passed  Get_taches_repond_200                        [45 ms]   # OK : la lecture répond 200
+  Passed  Post_valide_cree_la_tache                    [61 ms]   # OK : une création valide passe
+  Failed  Post_sans_titre_repond_400                   [38 ms]   # ÉCHEC : ce test ne passe plus
+  Error Message:                                                  # détail de l'échec :
+   Assert.Equal() Failure                                        # l'assertion a échoué
+   Expected: BadRequest                                          # on attendait un 400
+   Actual:   Created                                             # on a reçu un 201 (accepté !)
+
+  Failed!  - 1 test(s) failed, 2 passed                          # bilan : 1 échec, 2 succès</pre>
+<p>Le développeur vient de « nettoyer » le DTO : <code>// [Required] — enlevé, doublon avec le front</code></p>`,
+    questions: [
+      { type: "qcm", q: "Que révèle l'échec du test ?", opts: ["Un bug de xUnit", "La suppression du [Required] : un POST sans titre est maintenant ACCEPTÉ (201) — régression détectée", "Un problème réseau", "Un test mal écrit"], a: 1, exp: "Le test attendait un refus qui n'arrive plus." },
+      { type: "qcm", q: "Le commentaire du développeur (« doublon avec le front ») contient quelle erreur de raisonnement ?", opts: ["Aucune", "La validation front est contournable : la validation SERVEUR n'est jamais un doublon", "Le front n'existe pas", "Les DTO n'ont pas d'attributs"], a: 1, exp: "La leçon 12, prouvée par la leçon 15." },
+      { type: "qcm", q: "Sans ce test, quand le problème aurait-il été découvert ?", opts: ["Jamais ou en production, avec des données corrompues", "À la compilation", "Par le linter", "Au démarrage"], a: 0, exp: "La suppression d'une validation compile parfaitement — seul un test la voit." },
+      { type: "qcm", q: "La correction ?", opts: ["Supprimer le test", "Remettre [Required] sur le DTO, relancer dotnet test, tout vert", "Changer Expected en Created", "Vider la base"], a: 1, exp: "Le code se plie au comportement voulu — que le test documente." },
+      { type: "vf", q: "Les deux tests qui passent prouvent que la lecture (200) et la création valide (201) fonctionnent toujours.", a: true, exp: "Exactement ce qu'ils vérifient : le reste du contrat est intact." }
+    ],
+    solution: `<pre class="pseudo">// Ce qu'il faut retenir de la leçon 15 :
+// 1. dotnet test : le filet anti-régression, à lancer sans cesse.
+// 2. Unitaire : service + faux stockage injecté (merci la DI).
+// 3. Intégration : WebApplicationFactory = l'app en mémoire + HttpClient.
+// 4. Arrange / Act / Assert ; [Fact] ; Assert.Equal/Null/Throws…
+// 5. Base de test séparée, jamais la vraie.
+// 6. Tester le nominal ET les refus (400/404) : c'est le contrat complet.</pre>
+<p>L'API est prouvée. Prochaine étape : savoir QUI l'appelle — l'authentification par jetons JWT.</p>`
+  }
+};
+
+var ECRITURE = {
+  placeholder: "Écris ton test C# ici…",
+  items: [
+  { id: "dotnet-tests-membre", title: "Tester le service des membres", level: 3,
+    statement: "Écris deux tests xUnit pour <code>MembreService</code> (règle : <code>Inscrire(Membre m)</code> renvoie null si le pseudo existe déjà — insensible à la casse — sinon ajoute et renvoie le membre) : (1) <code>Inscrire_refuse_un_pseudo_deja_pris</code> avec « Aurélia » puis « AURÉLIA » ; (2) <code>Inscrire_accepte_un_pseudo_libre</code> qui vérifie le retour non-null ET la présence dans le stockage. Utilise un <code>StockageMemoire</code> injecté.",
+    hints: [
+      "Arrange : var stockage = new StockageMemoire(); var service = new MembreService(stockage);",
+      "Test 1 : service.Inscrire(new Membre { Pseudo = \"Aurélia\" }); puis Act avec AURÉLIA et Assert.Null.",
+      "Test 2 : Assert.NotNull(resultat) et Assert.Contains + une lambda sur le stockage."
+    ],
+    solution: "public class MembreServiceTests\n{\n    [Fact]\n    public void Inscrire_refuse_un_pseudo_deja_pris()\n    {\n        // Arrange : un stockage avec Aurélia déjà inscrite\n        var stockage = new StockageMemoire();\n        var service  = new MembreService(stockage);\n        service.Inscrire(new Membre { Pseudo = \"Aurélia\" });   // 1re inscription\n\n        // Act : même pseudo, casse différente\n        var resultat = service.Inscrire(new Membre { Pseudo = \"AURÉLIA\" });\n\n        // Assert : refus + rien ajouté\n        Assert.Null(resultat);                 // le service a refusé\n        Assert.Single(stockage.Tous());        // toujours un seul membre\n    }\n\n    [Fact]\n    public void Inscrire_accepte_un_pseudo_libre()\n    {\n        // Arrange : stockage vide + service\n        var stockage = new StockageMemoire();\n        var service  = new MembreService(stockage);\n\n        // Act : un pseudo libre\n        var resultat = service.Inscrire(new Membre { Pseudo = \"Marc\" });\n\n        // Assert : accepté + présent dans le stockage\n        Assert.NotNull(resultat);\n        Assert.Contains(stockage.Tous(), m => m.Pseudo == \"Marc\");\n    }\n}",
+    note: "Aucune base, aucun serveur, aucun mock complexe : l'injection d'un stockage en mémoire suffit. C'est l'architecture des leçons 2-7 qui rend ces tests si simples." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

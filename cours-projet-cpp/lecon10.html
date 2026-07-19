@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Authentification : hash et session",
+  subtitle: "Vérifier login + mot de passe sans jamais le stocker en clair — et renvoyer un std::optional.",
+  theory: `
+<h3>1. Pourquoi hacher ?</h3>
+<p>Un <strong>hachage</strong> (ou « hash ») transforme un mot de passe en une <strong>empreinte irréversible</strong> : un calcul à sens unique dont on ne peut pas revenir en arrière, comme un plat cuisiné dont on ne peut plus retrouver les ingrédients séparés. On stocke l'empreinte, jamais le mot de passe. Ainsi, si la base fuite, les mots de passe restent secrets. À la connexion, on hache la saisie et on compare les <strong>empreintes</strong> — si elles concordent, le mot de passe était bon.</p>
+<div class="warn">Un bon hachage de mot de passe est <strong>lent et salé</strong> (algorithmes argon2, bcrypt), et non un simple hachage rapide (MD5, SHA). Le <strong>sel</strong> est une valeur unique ajoutée avant le calcul, pour que deux mots de passe identiques donnent des empreintes différentes. En C++, on utilise une bibliothèque dédiée (par exemple <strong>libsodium</strong> : <code>crypto_pwhash_str</code> / <code>crypto_pwhash_str_verify</code>). Ici on schématise avec une fonction <code>verifierMotDePasse()</code>.</div>
+
+<h3>2. std::optional : un utilisateur ou rien</h3>
+<pre class="pseudo">#include &lt;optional&gt;                                          // apporte std::optional (une valeur... ou rien)
+std::optional&lt;Utilisateur&gt; AuthService::login(              // renvoie un Utilisateur OU rien
+        sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) {   // recoit login et mot de passe saisis
+    std::unique_ptr&lt;sql::PreparedStatement&gt; pstmt(con.prepareStatement(   // requete preparee (anti-injection)
+        "SELECT id, mot_de_passe_hash, role FROM utilisateur WHERE login=?"));   // cherche le compte par son login
+    pstmt-&gt;setString(1, login);                             // lie le login saisi (une donnee, pas du code)
+    std::unique_ptr&lt;sql::ResultSet&gt; res(pstmt-&gt;executeQuery());   // execute et recupere le resultat
+    if (!res-&gt;next())                                       // si aucun compte a ce login...
+        return std::nullopt;                 // login inconnu
+    if (!verifierMotDePasse(mdp, res-&gt;getString("mot_de_passe_hash")))   // compare le mdp saisi au hash stocke
+        return std::nullopt;                 // mauvais mot de passe
+    return Utilisateur(res-&gt;getInt("id"), login,            // succes : construit l'utilisateur connecte
+                       static_cast&lt;Role&gt;(res-&gt;getInt("role")));   // convertit l'entier role en enum class Role
+}</pre>
+<p><code>std::optional&lt;Utilisateur&gt;</code> est une boîte qui contient soit un utilisateur, soit <strong>rien</strong> : elle exprime « un utilisateur <strong>ou rien</strong> ». En cas d'échec on renvoie <code>std::nullopt</code> (« la boîte vide »), sans code d'erreur ni pointeur nul à manipuler.</p>
+
+<h3>3. Ne pas renseigner l'attaquant</h3>
+<div class="warn">On renvoie <code>nullopt</code> (et un message identique côté UI) aussi bien pour « login inconnu » que pour « mot de passe faux ». Distinguer les deux permettrait à un <strong>attaquant</strong> (une personne qui essaie de forcer un compte) de deviner quels comptes existent. Et l'on ne <strong>journalise</strong> (n'écrit dans les traces du programme) jamais le hash ni le mot de passe.</div>
+
+<h3>4. La « session »</h3>
+<pre class="pseudo">auto u = AuthService::login(con, login, mdp);              // tente la connexion ; u = un Utilisateur ou rien
+if (!u) { std::cout &lt;&lt; "Identifiants invalides\\n"; return; }   // si la boite est vide : refuse et sort
+// u-&gt;role(), u-&gt;id() : l'utilisateur connecté pour toute la session</pre>
+<p>Une <strong>session</strong> est la période pendant laquelle un utilisateur reste connecté. Après une connexion réussie, on garde l'<code>Utilisateur</code> courant (dans l'optional, que l'on teste comme un booléen : plein = vrai, vide = faux) pour toute la durée du programme.</p>
+
+<h3>5. Le login est une saisie</h3>
+<div class="tip">La récupération par login se fait par <strong>requête préparée</strong> (<code>setString</code>) : jamais de concaténation, car le login est une saisie. On lie le login, on lit le hash, on compare. <code>std::optional</code> rend l'« échec silencieux » élégant, sans lancer d'exception pour un cas d'usage banal (un mauvais mot de passe n'est pas une situation exceptionnelle).</div>`,
+  exercises: [
+    { type: "qcm", q: "Un hachage de mot de passe est…", opts: ["réversible", "irréversible (une empreinte)", "un chiffrement", "un login"], a: 1, exp: "On ne retrouve pas le mdp." },
+    { type: "qcm", q: "On stocke en base…", opts: ["le mdp en clair", "le hash du mdp", "le login seul", "rien"], a: 1, exp: "Jamais le mdp." },
+    { type: "qcm", q: "À la connexion, on compare…", opts: ["les mdp en clair", "hash(saisie) et hash stocké", "les logins", "les id"], a: 1, exp: "Des empreintes." },
+    { type: "qcm", q: "Un bon hachage est…", opts: ["rapide (MD5)", "lent et salé (argon2, bcrypt)", "un XOR", "réversible"], a: 1, exp: "Résiste au force-brute." },
+    { type: "qcm", q: "std::optional<Utilisateur> exprime…", opts: ["toujours un utilisateur", "un utilisateur OU rien (nullopt)", "un pointeur", "une exception"], a: 1, exp: "Échec élégant." },
+    { type: "qcm", q: "En cas d'échec, login renvoie…", opts: ["un Utilisateur vide", "std::nullopt", "-1", "une exception toujours"], a: 1, exp: "Optional vide." },
+    { type: "qcm", q: "Pour login inconnu / mdp faux, on…", opts: ["distingue les deux", "renvoie nullopt (message identique)", "affiche le hash", "logue le mdp"], a: 1, exp: "Ne pas renseigner l'attaquant." },
+    { type: "qcm", q: "La récupération par login se fait par…", opts: ["concaténation", "requête préparée (setString)", "un fichier", "l'UI"], a: 1, exp: "Login = saisie." },
+    { type: "qcm", q: "std::optional se teste…", opts: ["avec .size()", "comme un booléen (if (u))", "avec strcmp", "impossible"], a: 1, exp: "Présent ou vide." },
+    { type: "qcm", q: "On accède à la valeur d'un optional avec…", opts: ["u.get()", "u->role() ou (*u)", "u[0]", "u.value seulement"], a: 1, exp: "Après avoir vérifié qu'il est présent." },
+    { type: "vf", q: "Un hash rapide (MD5) est adapté aux mots de passe.", a: false, exp: "Faux : lent et salé (argon2/bcrypt)." },
+    { type: "qcm", q: "Quelle bibliothèque C++ pour hacher ?", opts: ["iostream", "libsodium (ou équivalent dédié)", "vector", "cmath"], a: 1, exp: "Pas un hash maison." },
+    { type: "qcm", q: "Le sel d'un hash sert à…", opts: ["accélérer", "rendre chaque empreinte unique (casse les tables précalculées)", "afficher", "trier"], a: 1, exp: "Deux mêmes mdp → hash différents." },
+    { type: "qcm", q: "L'authentification répond à…", opts: ["que peut faire l'utilisateur ?", "qui es-tu ? (identité)", "quel prix ?", "quel stock ?"], a: 1, exp: "Identité." },
+    { type: "qcm", q: "Journalise-t-on un hash ou un mdp ?", opts: ["oui", "jamais", "parfois", "toujours"], a: 1, exp: "Pas de secret dans les logs." }
+  ],
+  final: {
+    title: "Exercice final — Sécuriser la connexion",
+    intro: `<p>Une première version. Analyse :</p>
+<pre class="pseudo">bool login(sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) {   // version A CORRIGER
+    auto stmt = con.createStatement();                     // statement simple (fuite possible : pas de unique_ptr)
+    auto res = stmt-&gt;executeQuery(                          // PROBLEME : requete construite par concatenation...
+        "SELECT id FROM utilisateur WHERE login='" + login +   // ...le login saisi est colle dans le SQL (injection)
+        "' AND mot_de_passe='" + mdp + "'");               // ...et on compare le mdp EN CLAIR (a ne jamais faire)
+    return res-&gt;next();                                    // vrai si une ligne existe (fragile et dangereux)
+}</pre>`,
+    questions: [
+      { type: "qcm", q: "Faille n°1 — la concaténation :", opts: ["aucune", "injection SQL : requête préparée nécessaire", "trop lent", "trop long"], a: 1, exp: "Saisies collées." },
+      { type: "qcm", q: "Faille n°2 — comparer <code>mot_de_passe</code> en clair :", opts: ["correct", "on compare des hash, la base ne contient que des hash", "il faut LIKE", "rien"], a: 1, exp: "Jamais en clair." },
+      { type: "qcm", q: "Meilleur type de retour :", opts: ["bool", "std::optional<Utilisateur> (utilisateur ou rien)", "int", "void"], a: 1, exp: "Plus riche." },
+      { type: "qcm", q: "Message d'erreur recommandé :", opts: ["« login inconnu » précis", "un message générique identique dans les deux cas", "afficher le hash", "le mdp"], a: 1, exp: "Ne pas renseigner." },
+      { type: "qcm", q: "Le hash doit être produit par…", opts: ["un XOR maison", "une fonction dédiée lente et salée", "MD5", "rien"], a: 1, exp: "libsodium." }
+    ],
+    solution: `<pre class="pseudo">std::optional&lt;Utilisateur&gt; AuthService::login(             // renvoie un Utilisateur OU rien
+        sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) {   // login et mdp saisis
+    std::unique_ptr&lt;sql::PreparedStatement&gt; pstmt(con.prepareStatement(   // requete preparee (RAII)
+        "SELECT id, mot_de_passe_hash, role FROM utilisateur WHERE login=?"));   // cherche le compte par login
+    pstmt-&gt;setString(1, login);                  // requête préparée
+    std::unique_ptr&lt;sql::ResultSet&gt; res(pstmt-&gt;executeQuery());   // execute et recupere le resultat
+    if (!res-&gt;next()) return std::nullopt;        // login inconnu
+    if (!verifierMotDePasse(mdp, res-&gt;getString("mot_de_passe_hash")))   // compare le mdp saisi au hash stocke
+        return std::nullopt;                      // mauvais mdp (même résultat)
+    return Utilisateur(res-&gt;getInt("id"), login,             // succes : construit l'utilisateur connecte
+                       static_cast&lt;Role&gt;(res-&gt;getInt("role")));   // convertit le role (int) en enum class
+}</pre>
+<p>Requête préparée, comparaison de hash, <code>std::optional</code> pour l'échec neutre : une authentification sûre et idiomatique. Demain : l'autorisation par rôle.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pseudocode / code C++ ici…",
+  items: [
+  { id: "projcpp-l10", title: "Le flux d'authentification", level: 2,
+    statement: "Écris (en pseudocode C++ commenté) les étapes de AuthService::login, en soulignant : requête préparée pour le login, comparaison de hash, std::nullopt en cas d'échec (message neutre), et construction de l'Utilisateur si succès.",
+    hints: [
+      "1) lire le hash stocké par login (requête préparée).",
+      "2) vérifier le mot de passe saisi contre ce hash.",
+      "3) échec → std::nullopt ; succès → Utilisateur(...)."
+    ],
+    solution: "// AuthService::login(login, mdp) -> std::optional<Utilisateur>\n// 1) prepareStatement(\"... WHERE login=?\") ; setString(1, login)  // REQUETE PREPAREE\n//    si !res->next()  -> return std::nullopt                       // login inconnu (neutre)\n// 2) si !verifierMotDePasse(mdp, res->getString(\"mot_de_passe_hash\"))  // compare des HASH\n//        return std::nullopt                                        // meme resultat neutre\n// 3) return Utilisateur(res->getInt(\"id\"), login,\n//                       static_cast<Role>(res->getInt(\"role\")));     // session ouverte\n// Jamais : mot de passe en clair, concatenation SQL, hash dans les logs.",
+    note: "std::optional exprime « utilisateur ou rien » sans exception (le mauvais mot de passe n'est pas exceptionnel). Chaque étape porte une décision de sécurité : requête préparée, comparaison de hash, résultat neutre. C'est plus expressif que le code de retour du C." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

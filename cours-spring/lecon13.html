@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Gérer les erreurs : @ControllerAdvice",
+  subtitle: "Transformer les exceptions métier en réponses HTTP propres — une fois pour toutes.",
+  theory: `
+<h3>1. Le problème : des exceptions qui fuient</h3>
+<p>Rappel : une <strong>exception</strong> est un objet représentant une erreur ; la « lever » (<code>throw</code>), c'est signaler qu'un problème empêche de continuer. Depuis la leçon 7, nos services lèvent des <strong>exceptions métier</strong> (<code>LivreIntrouvableException</code>…). Non gérées, elles remontent jusqu'à Spring qui répond un <strong>500</strong> avec la <em>stack trace</em> (la liste technique des appels) — moche, imprécis, et ça révèle l'intérieur de ton application (mauvais pour la sécurité).</p>
+<h3>2. Les exceptions métier du projet</h3>
+<pre class="pseudo">public class LivreIntrouvableException extends RuntimeException {  // exception métier (non vérifiée)
+    public LivreIntrouvableException(Long id) {                   // reçoit l'id du livre concerné
+        super("Livre introuvable : " + id);                      // construit le message affichable
+    }                                                            // fin du constructeur
+}                                                                // fin de la classe
+// De même : MembreIntrouvableException, LivreIndisponibleException,
+//           PlafondEmpruntsAtteintException, EmailDejaUtiliseException...</pre>
+<p>Des <code>RuntimeException</code> (exceptions « non vérifiées », leçon Java 16) : les services les lèvent librement, sans <code>throws</code> en cascade dans les signatures.</p>
+<h3>3. Le gestionnaire global : @RestControllerAdvice</h3>
+<p><code>@RestControllerAdvice</code> désigne une classe qui « conseille » tous les contrôleurs : un endroit unique pour attraper les exceptions. Chaque méthode <code>@ExceptionHandler</code> traite un type d'exception, et <code>@ResponseStatus</code> fixe le code HTTP renvoyé.</p>
+<pre class="pseudo">@RestControllerAdvice          // « conseille » TOUS les contrôleurs (gestion d'erreurs centralisée)
+public class GestionErreurs {
+
+    @ExceptionHandler(LivreIntrouvableException.class)    // attrape ce type d'exception, partout
+    @ResponseStatus(HttpStatus.NOT_FOUND)                  // → 404
+    public ErreurDto livreIntrouvable(LivreIntrouvableException ex) {  // reçoit l'exception attrapée
+        return new ErreurDto(404, ex.getMessage());       // fabrique le corps de la réponse
+    }                                                     // fin du handler
+
+    @ExceptionHandler(LivreIndisponibleException.class)   // autre type d'exception
+    @ResponseStatus(HttpStatus.CONFLICT)                   // → 409
+    public ErreurDto indisponible(LivreIndisponibleException ex) {  // reçoit l'exception
+        return new ErreurDto(409, ex.getMessage());       // corps : statut + message
+    }                                                     // fin du handler
+}                                                         // fin de la classe
+
+public record ErreurDto(int status, String message) {}   // format d'erreur renvoyé (un record simple)</pre>
+<p>Chaque méthode <code>@ExceptionHandler</code> attrape UN type d'exception, où qu'elle soit levée dans l'application, et fabrique la réponse. Les contrôleurs restent purs : plus un seul try/catch chez eux.</p>
+<h3>4. Le cas spécial : les erreurs de validation</h3>
+<p>On tient la promesse de la leçon 12 — un joli corps pour les 400 :</p>
+<pre class="pseudo">@ExceptionHandler(MethodArgumentNotValidException.class)  // exception levée quand un @Valid échoue
+@ResponseStatus(HttpStatus.BAD_REQUEST)                   // → 400
+public Map&lt;String, String&gt; validation(MethodArgumentNotValidException ex) {  // renvoie une map champ→message
+    Map&lt;String, String&gt; erreurs = new HashMap&lt;&gt;();       // dictionnaire des erreurs (champ → message)
+    ex.getBindingResult().getFieldErrors().forEach(err -&gt;  // pour chaque champ en erreur…
+        erreurs.put(err.getField(), err.getDefaultMessage()));  // …on note champ → message
+    return erreurs;                                       // renvoyé au client en JSON
+}                                                         // fin du handler
+// → {"titre": "Le titre est obligatoire", "annee": "Année invalide"}</pre>
+<h3>5. Le filet final</h3>
+<pre class="pseudo">@ExceptionHandler(Exception.class)      // tout le reste (le filet de sécurité attrape-tout)
+@ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)        // → 500
+public ErreurDto imprevu(Exception ex) {                 // attrape n'importe quelle exception imprévue
+    // journaliser ex EN INTERNE (leçon 19)... mais ne rien révéler au client :
+    return new ErreurDto(500, "Une erreur interne est survenue");  // message générique, sans détail technique
+}                                                         // fin du handler</pre>
+<div class="warn">Ne renvoie JAMAIS ex.getMessage() d'une exception TECHNIQUE au client : les messages SQL ou de stack peuvent révéler la structure de ta base. Message générique dehors, détails dans les logs dedans.</div>
+<div class="tip">La table de traduction à retenir : Introuvable→404, Règle métier violée (conflit d'état)→409, Donnée invalide→400, Imprévu→500. Une exception métier = un code HTTP, toujours le même, partout.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que reçoit le client si une exception n'est gérée nulle part ?", opts: ["400", "500 avec des détails techniques : imprécis et dangereux", "404", "Rien"], a: 1, exp: "Le 500 par défaut expose la stack trace — à proscrire." },
+    { type: "qcm", q: "Quel est le rôle d'une classe @RestControllerAdvice ?", opts: ["Créer des routes", "Centraliser la gestion des exceptions de TOUS les contrôleurs", "Valider les DTO", "Configurer la base"], a: 1, exp: "Un seul endroit pour traduire exceptions → réponses HTTP." },
+    { type: "qcm", q: "Que fait @ExceptionHandler(LivreIntrouvableException.class) ?", opts: ["Empêche l'exception", "La méthode attrape cette exception, d'où qu'elle vienne, et fabrique la réponse", "Supprime le livre", "Relance l'application"], a: 1, exp: "Le « catch global » pour un type d'exception donné." },
+    { type: "qcm", q: "Quel code HTTP pour une exception « introuvable » ?", opts: ["400", "404 Not Found", "409", "500"], a: 1, exp: "Ressource absente = 404, notre vieille connaissance." },
+    { type: "qcm", q: "Quel code HTTP pour « le livre est déjà emprunté » (conflit d'état) ?", opts: ["404", "409 Conflict", "500", "201"], a: 1, exp: "La requête est bien formée, la ressource existe, mais l'état s'y oppose : 409." },
+    { type: "qcm", q: "Pourquoi nos exceptions métier héritent-elles de RuntimeException ?", opts: ["C'est plus rapide", "Non vérifiées : pas de throws à propager dans toutes les signatures", "RuntimeException est obligatoire", "Pour les logs"], a: 1, exp: "Les exceptions vérifiées imposeraient throws partout — lourd pour des cas gérés globalement." },
+    { type: "qcm", q: "Que fait @ResponseStatus(HttpStatus.NOT_FOUND) sur un handler ?", opts: ["Rien", "Fixe le code de statut de la réponse fabriquée par ce handler", "Bloque la requête", "Redirige"], a: 1, exp: "Le corps vient du return, le statut de l'annotation." },
+    { type: "qcm", q: "Après mise en place du @RestControllerAdvice, que deviennent les try/catch des contrôleurs ?", opts: ["Ils doublent", "Ils disparaissent : les contrôleurs délèguent et laissent remonter", "Ils sont obligatoires", "Ils passent dans les DTO"], a: 1, exp: "Contrôleurs purs + traduction centralisée = le but de la manœuvre." },
+    { type: "qcm", q: "Quelle exception Spring lève-t-il quand un @Valid échoue ?", opts: ["NullPointerException", "MethodArgumentNotValidException", "SQLException", "ValidationError"], a: 1, exp: "C'est elle qu'on attrape pour fabriquer le joli corps du 400." },
+    { type: "qcm", q: "Que contient idéalement le corps d'un 400 de validation ?", opts: ["Rien", "Un objet champ → message : {\"titre\": \"Le titre est obligatoire\"}", "La stack trace", "Le SQL de la requête"], a: 1, exp: "Le client sait exactement quel champ corriger et pourquoi." },
+    { type: "qcm", q: "Pourquoi le handler générique (Exception.class) renvoie-t-il un message vague ?", opts: ["Par paresse", "Ne jamais révéler les détails techniques internes : ils vont dans les logs, pas chez le client", "Les messages précis sont interdits", "Pour économiser la bande passante"], a: 1, exp: "Message générique dehors, diagnostic complet dedans." },
+    { type: "vf", q: "Un @ExceptionHandler défini dans le @RestControllerAdvice n'agit que sur les exceptions du contrôleur où l'erreur est survenue.", a: false, exp: "Advice = global : il couvre tous les contrôleurs de l'application." },
+    { type: "qcm", q: "PlafondEmpruntsAtteintException devrait produire quel statut ?", opts: ["404", "409 : la règle métier bloque l'opération dans l'état actuel", "500", "204"], a: 1, exp: "Même famille que « livre indisponible » : conflit avec l'état métier." },
+    { type: "qcm", q: "Où placer la classe ErreurDto ?", opts: ["Dans controller/", "Dans dto/ : elle fait partie du contrat de l'API", "Dans model/", "Dans la base"], a: 1, exp: "Le format d'erreur EST un contrat : les clients s'appuient dessus." },
+    { type: "qcm", q: "Quel est LE bénéfice d'un format d'erreur uniforme sur toute l'API ?", opts: ["C'est joli", "Les clients traitent toutes les erreurs avec le même code, quel que soit l'endpoint", "Ça compresse mieux", "Aucun"], a: 1, exp: "Prévisibilité = une API agréable à consommer." }
+  ],
+  final: {
+    title: "Exercice final — La panne du vendredi soir",
+    intro: `<p>Vendredi 17h58. Le client mobile de la bibliothèque affiche « Erreur inconnue » à chaque emprunt. Toi, tu as ton @RestControllerAdvice. Analyse les scénarios :</p>
+<pre class="pseudo">POST /api/emprunts  {"membreId": 12, "livreId": 3}       // la requête envoyée
+
+Scénario A : le livre 3 est déjà emprunté                 // conflit d'état → 409
+Scénario B : le membre 12 n'existe pas                    // ressource absente → 404
+Scénario C : le corps envoyé est {"membreId": 12}  (livreId absent, DTO validé @NotNull)  // validation → 400
+Scénario D : la base de données est tombée (SQLException au fond)  // imprévu → 500</pre>`,
+    questions: [
+      { type: "qcm", q: "Scénario A (livre déjà emprunté) : statut et pourquoi ?", opts: ["404", "409 : LivreIndisponibleException → handler → Conflict", "400", "500"], a: 1, exp: "Conflit d'état métier : la table de traduction s'applique mécaniquement." },
+      { type: "qcm", q: "Scénario B (membre inexistant) : statut ?", opts: ["409", "404 : MembreIntrouvableException → Not Found", "400", "204"], a: 1, exp: "Ressource référencée absente : 404, avec le message « Membre introuvable : 12 »." },
+      { type: "qcm", q: "Scénario C (livreId absent du JSON) : statut et corps ?", opts: ["500 vide", "400 avec {\"livreId\": \"...obligatoire...\"} grâce au handler de validation", "409", "404"], a: 1, exp: "@Valid échoue → MethodArgumentNotValidException → notre map champ → message." },
+      { type: "qcm", q: "Scénario D (base tombée) : que voit le client, et que vois-tu TOI ?", opts: ["Le client voit la SQLException", "Client : 500 « erreur interne » générique ; toi : l'exception complète dans les logs", "Client : 404 ; logs : rien", "Tout le monde voit tout"], a: 1, exp: "Filet Exception.class : discrétion dehors, diagnostic dedans." },
+      { type: "qcm", q: "Le développeur du client mobile te remercie lundi. Pourquoi ?", opts: ["Tu as payé le café", "Chaque erreur a désormais un statut fiable et un corps exploitable : il affiche des messages précis à l'utilisateur", "Tu as supprimé les erreurs", "L'API ne renvoie plus que des 200"], a: 1, exp: "Une API aux erreurs prévisibles, c'est la moitié de la qualité perçue." }
+    ],
+    solution: `<pre class="pseudo">// Le GestionErreurs complet du projet bibliothèque :
+@RestControllerAdvice                                            // gestion d'erreurs globale
+public class GestionErreurs {
+
+    @ExceptionHandler({LivreIntrouvableException.class,          // un handler pour PLUSIEURS types
+                       MembreIntrouvableException.class,
+                       EmpruntIntrouvableException.class})
+    @ResponseStatus(HttpStatus.NOT_FOUND)                          // 404
+    public ErreurDto introuvable(RuntimeException ex) {           // reçoit l'exception attrapée
+        return new ErreurDto(404, ex.getMessage());              // corps : statut + message métier
+    }
+
+    @ExceptionHandler({LivreIndisponibleException.class,         // les conflits d'état métier
+                       PlafondEmpruntsAtteintException.class,
+                       EmailDejaUtiliseException.class})
+    @ResponseStatus(HttpStatus.CONFLICT)                           // 409
+    public ErreurDto conflit(RuntimeException ex) {
+        return new ErreurDto(409, ex.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)      // 400 (échec de @Valid)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Map&lt;String, String&gt; validation(MethodArgumentNotValidException ex) {
+        Map&lt;String, String&gt; erreurs = new HashMap&lt;&gt;();           // dictionnaire champ→message
+        ex.getBindingResult().getFieldErrors().forEach(e -&gt;      // pour chaque champ invalide…
+            erreurs.put(e.getField(), e.getDefaultMessage()));   // …on note l'erreur
+        return erreurs;                                          // renvoyé en JSON
+    }
+
+    @ExceptionHandler(Exception.class)                             // 500 (le filet final)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ErreurDto imprevu(Exception ex) {
+        return new ErreurDto(500, "Une erreur interne est survenue");  // message générique
+    }
+}</pre>
+<p>Remarque : un handler peut attraper PLUSIEURS types ({A.class, B.class}). Quatre méthodes couvrent toute l'API — et chaque nouvelle exception métier trouvera sa place en une ligne.</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-advice-plafond", title: "L'exception du plafond d'emprunts", level: 2,
+    statement: "Écris (1) l'exception <code>PlafondEmpruntsAtteintException</code> qui reçoit l'id du membre et le plafond, avec un message du type « Le membre 12 a atteint son plafond de 5 emprunts » ; (2) sa levée dans <code>EmpruntService.emprunter(...)</code> quand <code>empruntRepo.countByMembreIdAndDateRetourIsNull(membreId) >= plafond</code> ; (3) le handler correspondant dans le @RestControllerAdvice (statut 409, corps ErreurDto).",
+    hints: [
+      "L'exception hérite de RuntimeException et construit son message dans super(...).",
+      "Dans le service, fais la vérification APRÈS avoir chargé le membre (sinon 404 prioritaire).",
+      "Le handler : @ExceptionHandler + @ResponseStatus(HttpStatus.CONFLICT) + return new ErreurDto(409, ex.getMessage())."
+    ],
+    solution: "// 1) L'exception métier, parlante et précise\npublic class PlafondEmpruntsAtteintException extends RuntimeException {\n    public PlafondEmpruntsAtteintException(Long membreId, int plafond) {\n        super(\"Le membre \" + membreId + \" a atteint son plafond de \"\n              + plafond + \" emprunts\");\n    }\n}\n\n// 2) Sa levée dans le service\npublic EmpruntDto emprunter(Long membreId, Long livreId) {\n    Membre m = membreRepo.findById(membreId)\n        .orElseThrow(() -> new MembreIntrouvableException(membreId)); // 404 d'abord\n\n    long enCours = empruntRepo.countByMembreIdAndDateRetourIsNull(membreId);\n    if (enCours >= maxEmprunts) {                    // maxEmprunts : @Value, leçon 3 !\n        throw new PlafondEmpruntsAtteintException(membreId, maxEmprunts);\n    }\n    // ... suite : charger le livre, vérifier la disponibilité, save ...\n}\n\n// 3) La traduction HTTP, dans GestionErreurs\n@ExceptionHandler(PlafondEmpruntsAtteintException.class)\n@ResponseStatus(HttpStatus.CONFLICT)                 // 409 : conflit d'état métier\npublic ErreurDto plafond(PlafondEmpruntsAtteintException ex) {\n    return new ErreurDto(409, ex.getMessage());      // message métier : montrable\n}",
+    note: "Trois fichiers, trois responsabilités : l'exception DIT ce qui s'est passé, le service DÉCIDE quand la lever, l'advice TRADUIT en HTTP. Personne ne marche sur les pieds de personne." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

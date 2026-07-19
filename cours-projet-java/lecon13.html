@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Acheter un jeu : paiement simulé, stock de vente",
+  subtitle: "La même mécanique que louer, sur l'autre stock.",
+  theory: `
+<h3>1. Acheter vs louer</h3>
+<p>L'achat reprend la structure de la location, mais agit sur <code>stockVente</code> (le stock destiné à la vente) et non <code>stockLocation</code>. Le montant payé est le <strong>prix d'achat</strong> du jeu. Les deux stocks distincts du modèle Merise prennent ici tout leur sens : un même jeu peut être disponible à la vente mais épuisé à la location, ou l'inverse.</p>
+
+<h3>2. Le service d'achat</h3>
+<pre class="pseudo">@Service                                              // couche métier gérée par Spring
+public class AchatService {                           // classe du service d'achat
+    private final JeuRepository jeux;                 // repository des jeux (injecté)
+    private final AchatRepository achats;             // repository des achats (injecté)
+    // constructeur…                                 // reçoit les deux repositories (injection)
+
+    @Transactional                                    // méthode atomique (tout ou rien)
+    public Achat acheter(Long idClient, Long idJeu) { // acheter le jeu idJeu pour le client idClient
+        Jeu j = jeux.findById(idJeu).orElseThrow();   // récupérer le jeu (ou exception si introuvable)
+        if (j.getStockVente() &lt;= 0)                   // s'il ne reste aucun exemplaire à vendre…
+            throw new StockInsuffisantException("Plus de stock de vente");   // …refuser via l'exception métier
+        BigDecimal montant = j.getPrixAchat();          // paiement simulé : on prend le prix d'achat comme montant
+        Achat a = achats.save(new Achat(idClient, idJeu, LocalDate.now(), montant));   // enregistrer l'achat (date du jour + montant)
+        j.setStockVente(j.getStockVente() - 1);       // retirer 1 du stock de vente
+        jeux.save(j);                                 // sauvegarder le jeu mis à jour
+        return a;                                     // renvoyer l'achat créé
+    }                                                 // fin de la méthode
+}                                                     // fin de la classe</pre>
+
+<h3>3. Le paiement : une frontière</h3>
+<p>Ici, le paiement est <strong>simulé</strong> : on enregistre juste le montant, sans vraiment débiter une carte. Dans une vraie application, on appellerait un <strong>prestataire externe</strong> (une société tierce comme Stripe ou PayPal) via un service dédié. On garde cette <em>frontière</em> propre — un point de branchement bien isolé — pour pouvoir connecter un vrai paiement plus tard sans toucher au reste du code.</p>
+
+<h3>4. Réutiliser plutôt que dupliquer</h3>
+<p>Louer et acheter vérifient tous deux « reste-t-il du stock ? ». Plutôt que de copier ce test à deux endroits (source d'incohérences), on le <strong>factorise</strong> : on l'écrit une seule fois dans une méthode partagée. C'est le principe <em>DRY</em> (« Don't Repeat Yourself », ne te répète pas).</p>
+<pre class="pseudo">// la vérification de stock est la même pour louer et acheter   // logique commune, écrite une seule fois
+private Jeu jeuAvecStock(Long idJeu, ToIntFunction&lt;Jeu&gt; stock, String msg) {   // reçoit une fonction qui lit LE bon stock
+    Jeu j = jeux.findById(idJeu).orElseThrow();       // récupérer le jeu (ou exception)
+    if (stock.applyAsInt(j) &lt;= 0) throw new StockInsuffisantException(msg);   // si le stock choisi est vide : refuser
+    return j;                                         // sinon renvoyer le jeu prêt à servir
+}                                                     // fin de la méthode</pre>
+<p><code>ToIntFunction&lt;Jeu&gt;</code> est une <em>fonction passée en paramètre</em> : on lui donne la façon de lire le bon stock (vente ou location), et la même méthode sert aux deux cas. Quand deux opérations partagent une logique, on la factorise pour éviter la duplication et les bugs.</p>
+
+<h3>5. Cohérence du domaine</h3>
+<div class="tip">Acheter et louer sont deux chemins vers le même but : servir un client tout en gardant les stocks justes. Grâce aux transactions, jamais de vente enregistrée sans stock décrémenté. Le domaine « acheter OU louer » du cahier des charges est désormais complet.</div>`,
+  exercises: [
+    { type: "qcm", q: "L'achat agit sur…", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "Stock de vente." },
+    { type: "qcm", q: "Le montant payé est…", opts: ["Le prix de location", "Le prix d'achat", "Zéro", "Aléatoire"], a: 1, exp: "prixAchat." },
+    { type: "qcm", q: "L'achat reprend la structure de…", opts: ["La suppression", "La location (transaction + stock)", "Un SELECT", "Un tri"], a: 1, exp: "Même mécanique." },
+    { type: "qcm", q: "Si stockVente <= 0, on…", opts: ["Vend quand même", "Lève StockInsuffisantException", "Met -1", "Ignore"], a: 1, exp: "Refus." },
+    { type: "qcm", q: "Le paiement est ici…", opts: ["Réel", "Simulé (on enregistre le montant)", "Absent", "Gratuit"], a: 1, exp: "Frontière propre." },
+    { type: "qcm", q: "Un vrai paiement passerait par…", opts: ["Le contrôleur", "Un service externe dédié (Stripe…)", "La base directement", "Le DTO"], a: 1, exp: "Prestataire externe." },
+    { type: "qcm", q: "Garder une frontière paiement propre permet…", opts: ["De ralentir", "De brancher un vrai paiement plus tard sans tout changer", "De supprimer le stock", "Rien"], a: 1, exp: "Évolutivité." },
+    { type: "qcm", q: "Factoriser la vérification de stock évite…", opts: ["La performance", "La duplication et les bugs", "Les tests", "La base"], a: 1, exp: "DRY." },
+    { type: "qcm", q: "acheter est annotée…", opts: ["@Async", "@Transactional", "@Cacheable", "rien"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "Après un achat réussi, stockVente…", opts: ["Augmente", "Diminue de 1", "Reste identique", "Passe à 0"], a: 1, exp: "Décrément." },
+    { type: "vf", q: "Les deux stocks distincts du modèle Merise servent à louer et acheter séparément.", a: true, exp: "Deux usages." },
+    { type: "qcm", q: "Louer et acheter partagent…", opts: ["Rien", "La vérification et le décrément du stock (logique commune)", "Le même stock", "Le même montant"], a: 1, exp: "Logique factorisable." },
+    { type: "vf", q: "Grâce à la transaction, jamais de vente sans stock décrémenté.", a: true, exp: "Cohérence." },
+    { type: "qcm", q: "Le domaine « acheter OU louer » vient…", opts: ["D'une invention", "Du cahier des charges de la Ludothèque", "Du hasard", "De Spring"], a: 1, exp: "Besoin métier." },
+    { type: "qcm", q: "AchatService dépend de…", opts: ["JeuRepository et AchatRepository", "Uniquement du DTO", "Du contrôleur", "De rien"], a: 0, exp: "Deux repositories." }
+  ],
+  final: {
+    title: "Exercice final — Le service d'achat",
+    intro: `<p>On code l'achat, jumeau de la location.</p>`,
+    questions: [
+      { type: "qcm", q: "Le stock à vérifier :", opts: ["stockLocation", "stockVente", "les deux", "aucun"], a: 1, exp: "Vente." },
+      { type: "qcm", q: "Le montant enregistré :", opts: ["prixLocation", "prixAchat", "0", "aléatoire"], a: 1, exp: "Prix d'achat." },
+      { type: "qcm", q: "Rendre l'opération atomique :", opts: ["@Transactional", "@Async", "@Cacheable", "rien"], a: 0, exp: "Transaction." },
+      { type: "qcm", q: "Stock épuisé → …", opts: ["StockInsuffisantException", "continuer", "stock = -1", "supprimer"], a: 0, exp: "Refus métier." },
+      { type: "vf", q: "acheter et louer se ressemblent, mais touchent des stocks différents.", a: true, exp: "Même motif, autre stock." }
+    ],
+    solution: `<pre class="pseudo">@Transactional                                        // méthode atomique (tout ou rien)
+public Achat acheter(Long idClient, Long idJeu) {     // acheter le jeu idJeu pour le client idClient
+  Jeu j = jeux.findById(idJeu).orElseThrow();         // récupérer le jeu (ou exception si introuvable)
+  if (j.getStockVente() &lt;= 0)                         // s'il ne reste aucun exemplaire à vendre…
+    throw new StockInsuffisantException("Plus de stock de vente");   // …refuser via l'exception métier
+  BigDecimal montant = j.getPrixAchat();       // paiement simulé   // montant = prix d'achat
+  Achat a = achats.save(new Achat(idClient, idJeu, LocalDate.now(), montant));   // enregistrer l'achat
+  j.setStockVente(j.getStockVente() - 1);            // retirer 1 du stock de vente
+  jeux.save(j);                                      // sauvegarder le jeu mis à jour
+  return a;                                          // renvoyer l'achat créé
+}</pre>
+<p>Le métier est complet (louer ET acheter). Demain : donner un visage à l'application avec Thymeleaf.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton service d'achat…",
+  items: [
+  { id: "projjava-l13", title: "Le total dépensé par un client", level: 2,
+    statement: "Écris une méthode totalAchats(idClient) dans AchatService qui renvoie la somme des montants de tous les achats d'un client (BigDecimal). Utilise le repository (requête dérivée pour lister ses achats) et additionne les montants ; renvoie 0 s'il n'a rien acheté.",
+    hints: [
+      "AchatRepository : List<Achat> findByIdClient(Long idClient).",
+      "Parcours la liste et additionne getMontant() dans un BigDecimal initialisé à BigDecimal.ZERO.",
+      "Un stream : achats.stream().map(Achat::getMontant).reduce(BigDecimal.ZERO, BigDecimal::add)."
+    ],
+    solution: "public BigDecimal totalAchats(Long idClient) {          // renvoie la somme depensee par un client\n  return achats.findByIdClient(idClient).stream()       // lister ses achats, puis ouvrir un flux (stream)\n      .map(Achat::getMontant)                           // ne garder que le montant de chaque achat\n      .reduce(BigDecimal.ZERO, BigDecimal::add);        // additionner tous les montants (0 si la liste est vide)\n}",
+    note: "On réutilise le repository pour lister les achats du client, puis on agrège en Java avec un stream et BigDecimal (jamais double pour de l'argent). reduce(BigDecimal.ZERO, ...) renvoie naturellement 0 si la liste est vide. Cette méthode alimentera l'espace client (leçon 16)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

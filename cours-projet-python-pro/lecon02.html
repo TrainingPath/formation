@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 2,
+  title: "Le squelette Django dans Docker Compose",
+  subtitle: "Créer le projet et sa base en conteneurs — aucune installation sur la machine.",
+  theory: `
+<h3>1. On ne « pip install » plus rien sur le poste</h3>
+<p>Django, MySQL, les dépendances : tout vit dans des conteneurs. Le seul prérequis machine est Docker. Résultat : chaque membre de l'équipe a <strong>exactement</strong> le même environnement, et « ça marche chez moi » disparaît (cours Docker).</p>
+<p>Rappel des termes : une <strong>dépendance</strong> est une bibliothèque de code déjà écrite que notre projet réutilise (comme un ingrédient acheté tout prêt plutôt que fabriqué soi-même). <strong>Django</strong> est le cadre de travail (« framework ») qui structure une application web en Python ; <strong>MySQL</strong> est la base de données. « <strong>pip install</strong> » est la commande qui installe une dépendance Python. Ici, rien de tout cela n'est posé sur ton ordinateur : tout est enfermé dans des <strong>conteneurs</strong> (des boîtes isolées et reproductibles), si bien que la seule chose à installer sur la machine est <strong>Docker</strong> lui-même.</p>
+
+<h3>2. Le Dockerfile de dev (première version)</h3>
+<pre class="pseudo">FROM python:3.14-slim   # image de base : l'interpreteur Python 3.14 en version « slim » (allegee)
+WORKDIR /app   # choisir /app comme dossier de travail a l'interieur du conteneur
+COPY requirements.txt .   # copier d'abord la seule liste des dependances dans l'image
+RUN pip install --no-cache-dir -r requirements.txt   # installer ces dependances ; --no-cache-dir n'archive rien (image plus legere)
+COPY . .   # copier ensuite tout le reste du code du projet dans /app
+EXPOSE 8000   # documenter que le conteneur ecoutera sur le port 8000
+CMD ["gunicorn", "ludotheque.wsgi:application", "--bind", "0.0.0.0:8000"]   # commande lancee au demarrage : servir l'app avec gunicorn sur le port 8000</pre>
+<p>Un <strong>Dockerfile</strong> est la recette de fabrication de l'image, lue de haut en bas. <code>FROM</code> choisit l'<strong>image de base</strong> sur laquelle on part (ici Python déjà installé). <code>WORKDIR</code> fixe le dossier de travail dans le conteneur. <code>COPY</code> recopie des fichiers depuis ton disque vers l'image. <code>RUN</code> exécute une commande <em>pendant</em> la construction — ici <code>pip install</code>, qui installe les dépendances listées. <code>EXPOSE</code> documente le port utilisé. <code>CMD</code> indique la commande lancée <em>au démarrage</em> du conteneur : <strong>gunicorn</strong>, un serveur robuste qui fait tourner l'application (via son point d'entrée <code>wsgi</code>). On copie <code>requirements.txt</code> <em>avant</em> le reste du code pour profiter du <strong>cache</strong> : tant que les dépendances ne changent pas, Docker réutilise l'étape déjà construite.</p>
+
+<h3>3. Le compose.yaml de dev</h3>
+<pre class="pseudo">services:   # la liste des conteneurs (« services ») a demarrer
+  app:   # premier service : notre application Django
+    build: .   # construire son image via le Dockerfile du dossier courant
+    ports: ["8000:8000"]   # relier le port 8000 de la machine au port 8000 du conteneur
+    env_file: .env.docker   # charger les variables de configuration depuis ce fichier
+    volumes: [".:/app"]   # bind mount : le code local est monte a chaud dans /app (dev seulement)
+    command: python manage.py runserver 0.0.0.0:8000   # commande de dev : le serveur integre de Django, a l'ecoute de tous
+    depends_on:   # dependances de demarrage de ce service
+      bdd: { condition: service_healthy }   # ne demarrer QUE lorsque la base « bdd » est declaree saine
+  bdd:   # second service : la base de donnees
+    image: mysql:8.4   # image officielle MySQL 8.4 (rien a construire, on la telecharge)
+    environment:   # variables de configuration transmises a MySQL
+      MYSQL_DATABASE: ludotheque   # nom de la base creee automatiquement au premier demarrage
+      MYSQL_USER: ludo_app   # compte utilisateur applicatif cree automatiquement
+      MYSQL_PASSWORD: \${MYSQL_PASSWORD}   # mot de passe interpole depuis .env — jamais ecrit en clair ici
+      MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD}   # mot de passe administrateur, egalement fourni par .env
+    volumes: ["donnees-mysql:/var/lib/mysql"]   # volume nomme : les donnees de MySQL survivent aux redemarrages
+    healthcheck:   # sonde qui verifie regulierement que la base est prete
+      test: ["CMD","mysqladmin","ping","-h","localhost"]   # commande testee : MySQL repond-il au ping ?
+      interval: 5s   # refaire ce test toutes les 5 secondes
+      retries: 10   # considerer le service malade apres 10 echecs de suite
+volumes: { donnees-mysql: {} }   # declarer le volume nomme utilise plus haut</pre>
+<p>Le <strong>compose.yaml</strong> est écrit en <strong>YAML</strong>, un format où l'imbrication se marque par l'<em>indentation</em> (le décalage vers la droite). Il décrit des <strong>services</strong> (chaque service = un conteneur). Pour <code>app</code> : <code>build</code> construit l'image, <code>ports</code> relie un port de la machine à un port du conteneur, <code>env_file</code> charge la configuration, <code>volumes</code> monte le code, <code>command</code> remplace la commande de démarrage, et <code>depends_on</code> impose un ordre de démarrage. Pour <code>bdd</code> : <code>image</code> tire une image toute faite, <code>environment</code> passe des réglages, et le <strong>healthcheck</strong> est une sonde répétée qui vérifie que la base est réellement <em>prête</em> (et pas seulement « démarrée »). Le <code>volume</code> nommé conserve les données au-delà de la vie du conteneur.</p>
+
+<h3>4. La connexion à MySQL par le réseau interne</h3>
+<pre class="pseudo"># settings.py
+DATABASES = {"default": {   # reglages de la base de donnees, sous la cle « default »
+    "ENGINE": "django.db.backends.mysql",   # quel moteur/pilote utiliser : ici MySQL
+    "NAME": "ludotheque", "USER": "ludo_app",   # nom de la base et compte de connexion
+    "PASSWORD": os.environ["DB_PASSWORD"],   # mot de passe lu dans les variables d'environnement (os.environ)
+    "HOST": os.environ.get("DB_HOST", "bdd"),   # adresse de la base : par defaut « bdd », le nom du service (DNS interne)
+    "PORT": "3306",   # port reseau standard de MySQL
+}}   # fin du dictionnaire de configuration</pre>
+<p>Le fichier <strong>settings.py</strong> contient la configuration de Django. <code>DATABASES</code> est un <strong>dictionnaire</strong> (une table d'associations clé → valeur) décrivant la base. <code>ENGINE</code> désigne le <em>pilote</em> à utiliser (MySQL). <code>os.environ</code> est le tableau des <strong>variables d'environnement</strong> — les réglages fournis par l'extérieur au démarrage ; on y lit le mot de passe pour ne jamais l'écrire dans le code. <code>HOST</code> est l'adresse de la base et <code>PORT</code> son numéro de porte (3306, le standard de MySQL).</p>
+<p><code>DB_HOST=bdd</code> fonctionne grâce au <strong>DNS interne</strong> du réseau Compose : chaque service est joignable par son nom (cours Docker).</p>
+
+<h3>5. Lancer et vérifier</h3>
+<pre class="pseudo">docker compose up -d   # construire et lancer tous les conteneurs en arriere-plan (-d = detache)
+docker compose exec app python manage.py check   # executer dans le conteneur app le diagnostic interne de Django
+docker compose logs -f app   # afficher et suivre en direct (-f) les journaux du service app</pre>
+<div class="warn">Le <code>depends_on: condition: service_healthy</code> est indispensable : sans lui, l'app démarre avant que MySQL n'accepte les connexions et plante au boot. Le healthcheck sonde le service réel — « démarré » n'est pas « prêt ».</div>
+<div class="tip">Le bind mount <code>.:/app</code> est réservé au <strong>dev</strong> : le code local est monté à chaud, <code>runserver</code> recharge à chaque sauvegarde. La prod, elle, exécutera le code figé dans l'image (leçon 17) — jamais un bind mount.</div>`,
+  exercises: [
+    { type: "qcm", q: "Au Niveau 8, on installe Django et MySQL…", opts: ["Sur chaque poste", "Dans des conteneurs (seul Docker est requis)", "En prod seulement", "Jamais"], a: 1, exp: "Même environnement pour tous." },
+    { type: "qcm", q: "Le service app démarre après…", opts: ["Immédiatement", "Que bdd soit healthy (condition: service_healthy)", "10 s fixes", "Le déploiement"], a: 1, exp: "Prêt ≠ démarré." },
+    { type: "qcm", q: "DB_HOST=bdd fonctionne car…", opts: ["bdd est une IP", "Le DNS interne du réseau Compose résout le nom de service", "MySQL le devine", "C'est magique"], a: 1, exp: "Réseau Docker." },
+    { type: "qcm", q: "Le volume donnees-mysql sert à…", opts: ["Accélérer", "Faire survivre les données au-delà du conteneur", "Chiffrer", "Rien"], a: 1, exp: "État persistant." },
+    { type: "qcm", q: "Le healthcheck MySQL utilise…", opts: ["curl", "mysqladmin ping", "un SELECT applicatif", "rien"], a: 1, exp: "Sonde le serveur SQL." },
+    { type: "qcm", q: "MYSQL_PASSWORD: ${MYSQL_PASSWORD} …", opts: ["Est un secret en dur", "Est interpolé depuis le fichier .env (hors Git)", "Est vide", "Est ignoré"], a: 1, exp: "Le YAML reste sans secret." },
+    { type: "qcm", q: "Le bind mount .:/app sert…", opts: ["À la production", "Au dev : code local à chaud, runserver recharge", "Aux sauvegardes", "Au registre"], a: 1, exp: "Jamais en prod." },
+    { type: "qcm", q: "Vérifier que l'app est saine :", opts: ["docker compose exec app python manage.py check", "un ping", "git log", "rien"], a: 0, exp: "Diagnostic dans le conteneur." },
+    { type: "qcm", q: "Le mot de passe de la base vient…", opts: ["De settings en clair", "De os.environ (variable d'environnement)", "Du template", "De Git"], a: 1, exp: "Config hors code." },
+    { type: "qcm", q: "requirements.txt est copié avant le code pour…", opts: ["Le style", "Réutiliser le cache pip quand seul le code change", "La sécurité", "Rien"], a: 1, exp: "Ordre des couches (Docker)." },
+    { type: "vf", q: "Sans depends_on service_healthy, l'app peut planter au démarrage.", a: true, exp: "MySQL pas encore prêt." },
+    { type: "qcm", q: "runserver 0.0.0.0:8000 (pas 127.0.0.1) car…", opts: ["C'est plus court", "127.0.0.1 dans le conteneur est injoignable de l'extérieur", "C'est obligatoire en dev", "Aucune raison"], a: 1, exp: "Écouter toutes les interfaces." },
+    { type: "qcm", q: "Tout démarrer :", opts: ["docker compose up -d", "python manage.py runserver sur l'hôte", "docker run app", "make"], a: 0, exp: "Une commande." },
+    { type: "qcm", q: "Les données MySQL après docker compose down (sans -v)…", opts: ["Disparaissent", "Survivent (le volume reste)", "Sont chiffrées", "Sont poussées"], a: 1, exp: "-v détruirait le volume." },
+    { type: "vf", q: "Chaque membre de l'équipe obtient le même environnement via docker compose up.", a: true, exp: "Reproductibilité." }
+  ],
+  final: {
+    title: "Exercice final — Le squelette qui tourne",
+    intro: `<p>On lance le projet Django et sa base, tout en conteneurs.</p>`,
+    questions: [
+      { type: "qcm", q: "Le service bdd déclare :", opts: ["image mysql:8.4 + env + volume + healthcheck", "juste l'image", "un bind mount du code", "-p 3306 public"], a: 0, exp: "Initialisé, persistant, sondé." },
+      { type: "qcm", q: "app attend bdd via :", opts: ["depends_on: condition: service_healthy", "un sleep", "l'ordre du YAML", "rien"], a: 0, exp: "La santé, pas le démarrage." },
+      { type: "qcm", q: "La connexion base : HOST =", opts: ["bdd (nom du service, DNS interne)", "localhost", "127.0.0.1", "une IP fixe"], a: 0, exp: "Réseau Compose." },
+      { type: "qcm", q: "Vérification :", opts: ["docker compose exec app python manage.py check", "curl bdd", "docker ps seul", "un reboot"], a: 0, exp: "Sain dans le conteneur." },
+      { type: "vf", q: "Personne n'a installé Python ni MySQL sur son poste.", a: true, exp: "Tout est conteneurisé." }
+    ],
+    solution: `<pre class="pseudo">services:   # la liste des conteneurs a lancer
+  app:   # le service applicatif Django
+    build: .   # image construite depuis le Dockerfile local
+    ports: ["8000:8000"]   # port 8000 de la machine relie au port 8000 du conteneur
+    env_file: .env.docker   # configuration chargee depuis ce fichier
+    volumes: [".:/app"]   # code local monte a chaud (dev)
+    command: python manage.py runserver 0.0.0.0:8000   # serveur de dev de Django
+    depends_on: { bdd: { condition: service_healthy } }   # demarre apres que la base soit saine
+  bdd:   # le service base de donnees
+    image: mysql:8.4   # image officielle MySQL 8.4
+    environment: { MYSQL_DATABASE: ludotheque, MYSQL_USER: ludo_app,   # config MySQL : base et utilisateur crees au demarrage…
+      MYSQL_PASSWORD: \${MYSQL_PASSWORD}, MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD} }   # …mots de passe interpoles depuis .env (hors Git)
+    volumes: ["donnees-mysql:/var/lib/mysql"]   # volume : donnees persistantes
+    healthcheck: { test: ["CMD","mysqladmin","ping","-h","localhost"], interval: 5s, retries: 10 }   # sonde : MySQL repond-il ? toutes les 5 s, 10 essais
+volumes: { donnees-mysql: {} }   # declaration du volume nomme
+
+$ docker compose up -d && docker compose exec app python manage.py check   # tout lancer puis verifier l'app dans le conteneur</pre>
+<p>Le projet vit en conteneurs. Demain : le pipeline, dès le premier commit.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton compose de dev…",
+  items: [
+  { id: "proj6py-l2", title: "Le compose de dev complet", level: 3,
+    statement: "Écris le compose.yaml de développement de la Ludothèque pro, avec les secrets interpolés depuis .env (jamais en dur), le bind mount du code, le healthcheck MySQL et l'attente service_healthy. Ajoute le bloc DATABASES de settings.py (lecture os.environ, HOST par défaut « bdd »), et les 3 commandes du cycle (up, migrate, logs).",
+    hints: [
+      "environment: MYSQL_PASSWORD: ${MYSQL_PASSWORD} — interpolé par Compose depuis .env.",
+      "settings : HOST = os.environ.get(\"DB_HOST\", \"bdd\").",
+      "Cycle : docker compose up -d ; exec app migrate ; logs -f app."
+    ],
+    solution: "# .env (racine, hors Git — lu par Compose)\n# MYSQL_PASSWORD=secret\n# MYSQL_ROOT_PASSWORD=root-secret\n\n# compose.yaml (dev) — aucun secret en clair\nservices:   # la liste des conteneurs a lancer\n  app:   # service applicatif Django\n    build: .   # image construite via le Dockerfile local\n    ports: [\"8000:8000\"]   # port 8000 machine relie au port 8000 conteneur\n    env_file: .env.docker   # configuration chargee depuis ce fichier\n    volumes: [\".:/app\"]   # bind mount : code local a chaud (dev)\n    command: python manage.py runserver 0.0.0.0:8000   # serveur de dev de Django, a l'ecoute de tous\n    depends_on:   # ordre de demarrage\n      bdd: { condition: service_healthy }   # attendre que la base soit saine\n  bdd:   # service base de donnees\n    image: mysql:8.4   # image officielle MySQL 8.4\n    environment:   # reglages passes a MySQL\n      MYSQL_DATABASE: ludotheque   # base creee au premier demarrage\n      MYSQL_USER: ludo_app   # utilisateur applicatif cree\n      MYSQL_PASSWORD: ${MYSQL_PASSWORD}   # mot de passe interpole depuis .env (pas en clair)\n      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}   # mot de passe admin, aussi depuis .env\n    volumes: [\"donnees-mysql:/var/lib/mysql\"]   # volume : donnees persistantes\n    healthcheck:   # sonde de sante de la base\n      test: [\"CMD\",\"mysqladmin\",\"ping\",\"-h\",\"localhost\"]   # tester si MySQL repond au ping\n      interval: 5s   # un test toutes les 5 secondes\n      timeout: 3s   # chaque test doit repondre en moins de 3 s\n      retries: 10   # malade apres 10 echecs de suite\nvolumes: { donnees-mysql: {} }   # declaration du volume nomme\n\n# settings.py\nDATABASES = {\"default\": {   # configuration de la base sous la cle « default »\n    \"ENGINE\": \"django.db.backends.mysql\",   # pilote utilise : MySQL\n    \"NAME\": \"ludotheque\", \"USER\": \"ludo_app\",   # nom de la base et compte de connexion\n    \"PASSWORD\": os.environ[\"DB_PASSWORD\"],   # mot de passe lu depuis l'environnement\n    \"HOST\": os.environ.get(\"DB_HOST\", \"bdd\"),   # adresse : par defaut « bdd » (nom du service)\n    \"PORT\": \"3306\",   # port standard de MySQL\n}}   # fin du dictionnaire DATABASES\n\n# Cycle\n# docker compose up -d\n# docker compose exec app python manage.py migrate\n# docker compose logs -f app",
+    note: "Ce fichier réunit trois acquis en un : Compose (structure), le healthcheck (démarrage fiable) et les secrets par interpolation (hors du YAML commité). L'app ne sait même pas qu'elle tourne en conteneur — elle lit son environnement, exactement comme en prod. C'est la parité dev/prod qui rend le déploiement sans surprise." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

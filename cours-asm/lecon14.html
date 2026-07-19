@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Lire au clavier (syscall read)",
+  subtitle: "Recevoir une saisie : l'appel système read, symétrique de write, et le tampon en .bss.",
+  theory: `
+<h3>1. read : lire des octets</h3>
+<p>Avant tout, quelques mots de vocabulaire de base. Un <strong>bit</strong> est la plus petite information possible : il vaut soit 0, soit 1 (comme un interrupteur éteint/allumé). Un <strong>octet</strong> (en anglais « byte ») est un paquet de 8 bits ; c'est la plus petite « case » de mémoire qu'on manipule couramment, et il peut contenir un nombre de 0 à 255, ou un caractère (une lettre, un chiffre…).</p>
+<p>Un <strong>registre</strong> est une minuscule case de rangement située à l'intérieur du processeur : ultra-rapide, on y met les valeurs sur lesquelles on travaille. Un <strong>appel système</strong> (en anglais « syscall ») est une demande de service adressée au <strong>noyau</strong> (le programme « chef d'orchestre » du système d'exploitation, celui qui a le droit de parler au matériel). Notre programme ne touche jamais directement le clavier ou l'écran : il demande poliment au noyau de le faire pour lui.</p>
+<pre class="pseudo">read(fd, adresse, longueur)              ; demande au noyau : lis des octets et range-les en mémoire
+  fd = 0  → entrée standard (le clavier) ; fd = "descripteur de fichier", un numéro qui désigne une source ; 0 = clavier</pre>
+<p><code>read</code> est le symétrique de <code>write</code> : il lit jusqu'à <code>longueur</code> octets depuis un <strong>descripteur</strong> (un simple numéro qui identifie une source de données) et les range à l'<strong>adresse</strong> donnée (la position en mémoire où déposer les octets). Il renvoie (dans le registre <code>rax</code>) le nombre d'octets réellement lus.</p>
+
+<h3>2. Réserver un tampon (.bss)</h3>
+<p>Un <strong>tampon</strong> (en anglais « buffer ») est une zone de mémoire mise de côté pour y stocker temporairement des données — ici, ce que l'utilisateur va taper. Une <strong>section</strong> est une région du programme qui regroupe des choses de même nature ; la section <code>.bss</code> contient la mémoire réservée mais <strong>non initialisée</strong> (vide, remplie de zéros au démarrage).</p>
+<pre class="pseudo">section .bss              ; début de la zone mémoire réservée mais vide au départ
+    buf resb 16         ; réserver 16 octets pour la saisie (resb = "reserve bytes", réserve N octets)</pre>
+<p>La saisie doit aller quelque part : on réserve un <strong>tampon</strong> en section <code>.bss</code> (mémoire non initialisée).</p>
+
+<h3>3. L'appel read</h3>
+<p>Pour faire un appel système, on remplit certains registres avec les bons numéros et arguments, puis on exécute l'<strong>instruction</strong> <code>syscall</code> (une instruction = un ordre élémentaire pour le processeur ; ses <strong>opérandes</strong> sont les valeurs sur lesquelles elle agit). L'instruction <code>mov dest, source</code> signifie « copie la valeur source dans dest ».</p>
+<pre class="pseudo">    mov rax, 0          ; met 0 dans rax : 0 est le numéro du syscall "read"
+    mov rdi, 0          ; met 0 dans rdi : 1er argument = fd 0 = entrée standard (clavier)
+    mov rsi, buf        ; met l'adresse du tampon dans rsi : 2e argument = où ranger les octets
+    mov rdx, 16         ; met 16 dans rdx : 3e argument = nombre maximum d'octets à lire
+    syscall             ; déclenche l'appel : le noyau lit le clavier et remplit le tampon
+    ; rax = nombre d'octets lus   ; au retour, rax contient combien d'octets ont vraiment été lus</pre>
+
+<h3>4. Exploiter la saisie</h3>
+<pre class="pseudo">    movzx rdi, byte [buf]     ; copie le 1er octet du tampon dans rdi (movzx = move + remplit de zéros) ; ex. 'A' = 65
+; l'utilisateur tape 'A' → buf[0] = 65   ; buf[0] = le tout premier octet du tampon (crochets = "la valeur à cette adresse")</pre>
+<div class="warn">read lit des <strong>octets bruts</strong>, y compris le saut de ligne final (touche Entrée). Pour obtenir un nombre saisi (ex. « 42 »), il faut convertir les caractères '4' et '2' en la valeur 42 — read ne le fait pas, contrairement à <code>scanf</code>.</div>
+
+<h3>5. Les trois cibles</h3>
+<pre class="pseudo">NASM   mov rax,0 ; mov rdi,0 ; mov rsi,buf ; mov rdx,16 ; syscall     ; x86-64 : read = 0, on remplit rax/rdi/rsi/rdx puis syscall
+ARM64  mov x8,63 ; mov x0,0 ; ldr x1,=buf ; mov x2,16 ; svc 0   (read = 63)   ; ARM64 : mêmes arguments dans x8/x0/x1/x2, mais read = 63 et l'appel se fait avec svc 0</pre>
+<div class="tip">read et write forment la base des entrées/sorties Unix : « tout est fichier », et on lit/écrit des octets sur des descripteurs. L'écran (fd 1), le clavier (fd 0), un fichier ouvert, une socket réseau… se manipulent tous avec ces deux appels. C'est le socle sur lequel le C construit <code>scanf</code>/<code>printf</code>.</div>`,
+  exercises: [
+    { type: "qcm", q: "read est le symétrique de…", opts: ["exit", "write", "add", "cmp"], a: 1, exp: "Lire vs écrire des octets." },
+    { type: "qcm", q: "Le fd de l'entrée standard (clavier) est…", opts: ["1", "0", "2", "60"], a: 1, exp: "rdi = 0." },
+    { type: "qcm", q: "Le numéro du syscall read (x86-64) est…", opts: ["1", "0", "60", "63"], a: 1, exp: "rax = 0." },
+    { type: "qcm", q: "read range les octets lus à…", opts: ["l'écran", "l'adresse donnée dans rsi (le tampon)", "rax", "un fichier système"], a: 1, exp: "rsi = adresse." },
+    { type: "qcm", q: "read renvoie (dans rax)…", opts: ["l'adresse", "le nombre d'octets réellement lus", "0 toujours", "le caractère"], a: 1, exp: "Utile pour savoir combien on a lu." },
+    { type: "qcm", q: "Où réserver le tampon de saisie ?", opts: [".text", ".bss (resb)", ".data seulement", "un registre"], a: 1, exp: "Mémoire non initialisée." },
+    { type: "qcm", q: "read lit-il un nombre formaté (comme scanf) ?", opts: ["oui", "non : des octets bruts, à convertir soi-même", "parfois", "seulement les int"], a: 1, exp: "Aucun formatage." },
+    { type: "qcm", q: "Si l'utilisateur tape 'A', buf[0] vaut…", opts: ["'A' texte", "65 (code ASCII)", "0", "1"], a: 1, exp: "Octet brut." },
+    { type: "qcm", q: "La taille max à lire va dans…", opts: ["rax", "rdx (3e argument)", "rdi", "rbp"], a: 1, exp: "rdi=fd, rsi=adresse, rdx=taille." },
+    { type: "qcm", q: "read inclut-il le saut de ligne (Entrée) ?", opts: ["non", "oui, il fait partie des octets lus", "parfois", "jamais"], a: 1, exp: "À gérer soi-même." },
+    { type: "vf", q: "read et write manipulent des octets sur des descripteurs de fichiers.", a: true, exp: "« Tout est fichier »." },
+    { type: "qcm", q: "En ARM64, read est le syscall…", opts: ["0", "63 (x8=63)", "60", "1"], a: 1, exp: "Numéros différents." },
+    { type: "qcm", q: "Pour obtenir la valeur 42 depuis « 42 » tapé, il faut…", opts: ["rien", "convertir les caractères '4','2' en nombre", "un registre spécial", "read le fait"], a: 1, exp: "Conversion manuelle." },
+    { type: "qcm", q: "L'écran, le clavier, un fichier, une socket se manipulent avec…", opts: ["des instructions différentes", "read et write (descripteurs)", "que write", "rien"], a: 1, exp: "Socle Unix." },
+    { type: "qcm", q: "movzx rdi, byte [buf] récupère…", opts: ["toute la saisie", "le premier octet lu", "l'adresse", "0"], a: 1, exp: "Un caractère." }
+  ],
+  final: {
+    title: "Exercice final — Lire un caractère",
+    intro: `<p>On lit un caractère et on le renvoie. Analyse :</p>
+<pre class="pseudo">section .bss
+    buf resb 1           ; réserver 1 octet pour stocker le caractère saisi
+section .text            ; début de la section du code exécutable
+    global _start        ; rend l'étiquette _start visible : c'est le point d'entrée du programme
+_start:                  ; ici commence l'exécution
+    mov rax, 1           ; met 1 dans rax... mais 1 = write ! (ce sera l'erreur à corriger)
+    mov rdi, 0           ; fd 0 = entrée standard (clavier)
+    mov rsi, buf         ; adresse du tampon où ranger l'octet lu
+    mov rdx, 1           ; lire au maximum 1 octet
+    syscall              ; déclenche l'appel système</pre>`,
+    questions: [
+      { type: "qcm", q: "Erreur — <code>mov rax, 1</code> :", opts: ["correct", "1 est write ; pour lire, read est 0", "il faut 60", "rien"], a: 1, exp: "read = 0." },
+      { type: "qcm", q: "rdi = 0 signifie…", opts: ["write", "fd 0 = entrée standard (clavier)", "exit", "rien"], a: 1, exp: "Bon fd pour lire." },
+      { type: "qcm", q: "rsi = buf indique…", opts: ["la longueur", "où ranger les octets lus", "le fd", "0"], a: 1, exp: "Adresse du tampon." },
+      { type: "qcm", q: "Pour renvoyer le caractère lu, on charge…", opts: ["rax", "movzx rdi, byte [buf]", "buf entier", "l'adresse"], a: 1, exp: "Le premier octet." },
+      { type: "qcm", q: "Que manque-t-il ensuite ?", opts: ["rien", "l'exit (rax=60)", "un add", "un ret"], a: 1, exp: "Terminer." }
+    ],
+    solution: `<pre class="pseudo">section .bss
+    buf resb 1               ; 1 octet réservé pour le caractère lu
+section .text                ; section du code exécutable
+    global _start            ; point d'entrée visible pour l'éditeur de liens (le lieur)
+_start:                      ; début de l'exécution
+    mov rax, 0          ; read (pas write !) : 0 = numéro du syscall read
+    mov rdi, 0          ; fd 0 = clavier (entrée standard)
+    mov rsi, buf        ; où ranger l'octet lu (adresse du tampon)
+    mov rdx, 1          ; lire 1 octet au maximum
+    syscall             ; le noyau lit une touche et la place dans buf
+    movzx rdi, byte [buf]   ; le caractère lu (ex. 'A' = 65) copié dans rdi comme code de sortie
+    mov rax, 60         ; syscall exit (numéro 60) : demander l'arrêt du programme
+    syscall             ; rend la main au système ; le code de sortie = la valeur dans rdi
+# echo -n A | ./prog ; echo $?  -> 65   # test shell : on envoie 'A', puis on affiche le code de sortie (65)</pre>
+<p>read = syscall 0, fd 0 pour le clavier. On récupère l'octet lu et on le renvoie. Demain : l'adressage et les pointeurs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton assembleur (NASM) ici…",
+  items: [
+  { id: "asm-l14", title: "Lire puis afficher", level: 3,
+    statement: "Écris un programme qui lit jusqu'à 16 octets depuis le clavier (read) dans un tampon, puis les réécrit à l'écran (write) — un « écho ». Utilise le nombre d'octets lus (retour de read dans rax) comme longueur pour write.",
+    hints: [
+      "buf resb 16 en .bss.",
+      "read : rax=0, rdi=0, rsi=buf, rdx=16 ; le retour (rax) = octets lus.",
+      "Sauve ce nombre, puis write : rax=1, rdi=1, rsi=buf, rdx=<octets lus>."
+    ],
+    solution: "section .bss           ; zone mémoire réservée mais vide au départ\n    buf resb 16         ; réserver 16 octets pour la saisie\nsection .text          ; zone du code exécutable\n    global _start       ; point d'entrée visible pour le lieur\n_start:                 ; début de l'exécution\n    mov rax, 0          ; syscall read (numéro 0)\n    mov rdi, 0          ; fd 0 = clavier (entrée standard)\n    mov rsi, buf        ; adresse du tampon où ranger les octets lus\n    mov rdx, 16         ; lire au maximum 16 octets\n    syscall             ; le noyau lit le clavier et remplit buf ; rax = octets lus\n    mov rdx, rax        ; nombre d'octets lus -> longueur pour write\n\n    mov rax, 1          ; syscall write (numéro 1)\n    mov rdi, 1          ; fd 1 = écran (sortie standard)\n    mov rsi, buf        ; adresse des octets à écrire (le tampon)\n    syscall             ; rdx contient deja la longueur : réaffiche la saisie\n\n    mov rax, 60         ; syscall exit (numéro 60)\n    mov rdi, 0          ; code de sortie 0 = succès\n    syscall             ; termine le programme\n# echo \"Bonjour\" | ./prog  ->  reaffiche Bonjour",
+    note: "read renvoie dans rax le nombre d'octets réellement lus : on le réutilise comme longueur pour write, ce qui réaffiche exactement la saisie. read/write sur des tampons : voilà tout le socle des entrées/sorties Unix, sans aucune fonction de haut niveau." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

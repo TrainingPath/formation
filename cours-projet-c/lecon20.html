@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Compilation de release, Makefile et mise en service",
+  subtitle: "Construire l'application complète, lancer les tests, et la préparer pour la production.",
+  theory: `
+<h3>1. Le Makefile du projet</h3>
+<p>Un <strong>Makefile</strong> est un fichier-<em>recette</em> : il décrit comment construire le programme, pour ne pas retaper les commandes à la main. L'outil <code>make</code> le lit et exécute les étapes. Chaque bloc s'appelle une <strong>cible</strong> (<em>target</em>) : un nom, ses <strong>dépendances</strong> (ce dont elle a besoin), puis les commandes à lancer (indentées par une tabulation).</p>
+<pre class="pseudo">CC      = gcc                                              # le compilateur utilisé (gcc)
+CFLAGS  = -Wall -Wextra -std=c11 $(shell mysql_config --cflags)   # options de compilation : tous les avertissements + norme C11 + chemins MySQL
+LDLIBS  = $(shell mysql_config --libs)                    # bibliothèques à lier : celles de MySQL
+SRC     = main.c ui.c services.c dao.c db.c               # la liste des fichiers source .c du projet
+OBJ     = $(SRC:.c=.o)                                    # la même liste, avec .o à la place de .c (fichiers compilés)
+
+app: $(OBJ)                                               # pour construire "app", il faut d'abord tous les .o
+	$(CC) $(OBJ) -o app $(LDLIBS)                          # assemble (lie) les .o en un programme nommé app
+
+test: tests.c services.o                                  # la cible "test" dépend du code de test et de services
+	$(CC) $(CFLAGS) tests.c services.o -o tests $(LDLIBS)  # compile le programme de test
+	./tests                                               # puis l'exécute (renvoie 1 si un test échoue → make s'arrête)
+
+clean:                                                    # la cible "clean" : faire le ménage
+	rm -f $(OBJ) app tests                                # supprime les fichiers générés (.o et binaires)
+
+.PHONY: test clean                                        # "test" et "clean" sont des actions, pas des fichiers</pre>
+<p>Décryptons. <code>CC</code>, <code>CFLAGS</code>, <code>LDLIBS</code> sont des <strong>variables</strong> du Makefile. <code>-Wall</code> et <code>-Wextra</code> activent <strong>tous les avertissements</strong> du compilateur (des alertes sur du code douteux). <code>-std=c11</code> choisit la version de la norme C. <code>mysql_config</code> fournit les chemins pour utiliser MySQL. Compiler produit des fichiers <code>.o</code> (« objets », du code machine intermédiaire) ; les <strong>lier</strong> (<em>linking</em>) assemble ces objets en un programme final. <code>make</code> ne recompile que les fichiers modifiés. <code>make test</code> construit et exécute le harnais : s'il échoue (code 1), la construction s'arrête.</p>
+
+<h3>2. Debug vs release</h3>
+<p>On compile de deux façons selon l'objectif : une version de <strong>debug</strong> (pour chasser les bugs) et une version de <strong>release</strong> (la version livrée).</p>
+<pre class="pseudo">debug   : -g -fsanitize=address     # -g garde les infos de débogage, -fsanitize=address traque les bugs mémoire (dev)
+release : -O2 -DNDEBUG              # -O2 optimise la vitesse, -DNDEBUG retire les vérifications de debug (prod)</pre>
+<div class="warn">On <strong>développe</strong> avec les sanitizers et <code>-Wall -Wextra</code> (lents mais sûrs), et on <strong>livre</strong> une version optimisée (<code>-O2</code>). On ne met jamais en production un binaire de debug instrumenté (il est lent et expose des détails internes).</div>
+
+<h3>3. Avant de mettre en service</h3>
+<p>Voici la <strong>liste de contrôle</strong> (checklist) à dérouler avant de lancer le programme pour de vrai :</p>
+<pre class="pseudo">1. make test          → tous les tests au vert
+2. valgrind ./app     → zéro fuite
+3. variables DB_* définies dans l'environnement de prod
+4. schéma SQL appliqué sur la base de production
+5. make (release)     → binaire optimisé</pre>
+
+<h3>4. Lancer en production</h3>
+<p><code>export</code> est une commande du terminal qui définit des variables d'environnement pour la session. Le programme les lira ensuite avec <code>getenv</code> (leçon 19).</p>
+<pre class="pseudo">export DB_HOST=... DB_USER=... DB_PASSWORD=... DB_NAME=...   # définit les identifiants dans l'environnement de la session
+./app                                                       # lance le programme, qui lira ces variables via getenv</pre>
+<div class="tip">Cette liste de contrôle (tests verts, pas de fuite, config prête, schéma à jour, binaire optimisé) est la version « à la main » de ce qu'un pipeline CI/CD automatisera dans la version outillée du projet. La discipline d'aujourd'hui devient l'automatisation de demain.</div>`,
+  exercises: [
+    { type: "qcm", q: "make ne recompile que…", opts: ["tout à chaque fois", "les fichiers modifiés", "le main", "rien"], a: 1, exp: "Compilation incrémentale." },
+    { type: "qcm", q: "make test fait…", opts: ["afficher le menu", "construire et exécuter le harnais de tests", "se connecter à MySQL", "nettoyer"], a: 1, exp: "Un test rouge stoppe la construction." },
+    { type: "qcm", q: "Les flags de développement typiques :", opts: ["-O2 -DNDEBUG", "-g -fsanitize=address", "aucun", "-lm"], a: 1, exp: "Debug et sanitizers." },
+    { type: "qcm", q: "Les flags de release typiques :", opts: ["-g -fsanitize=address", "-O2 -DNDEBUG", "-Wall seulement", "aucun"], a: 1, exp: "Optimisé, sans instrumentation." },
+    { type: "qcm", q: "Met-on un binaire de debug instrumenté en production ?", opts: ["oui", "non : on livre la version optimisée", "toujours", "peu importe"], a: 1, exp: "Debug = dev ; release = prod." },
+    { type: "qcm", q: "Avant la mise en service, on vérifie d'abord…", opts: ["rien", "que tous les tests passent (make test)", "la couleur du menu", "la vitesse du réseau"], a: 1, exp: "Tests au vert." },
+    { type: "qcm", q: "valgrind ./app sert à vérifier…", opts: ["la vitesse", "l'absence de fuite mémoire", "le rôle", "le SQL"], a: 1, exp: "Zéro fuite avant prod." },
+    { type: "qcm", q: "Les variables DB_* de prod sont fournies…", opts: ["dans le code", "dans l'environnement de production", "dans le Makefile", "dans l'UI"], a: 1, exp: "Config externalisée." },
+    { type: "qcm", q: ".PHONY sert à…", opts: ["accélérer", "déclarer des cibles qui ne sont pas des fichiers (test, clean)", "compiler", "lier MySQL"], a: 1, exp: "Éviter les conflits de noms." },
+    { type: "qcm", q: "$(SRC:.c=.o) transforme…", opts: ["rien", "la liste des .c en liste de .o", "les .h en .c", "les tests"], a: 1, exp: "Substitution de suffixe." },
+    { type: "vf", q: "On peut livrer en production le binaire compilé avec -fsanitize=address.", a: false, exp: "Faux : instrumenté et lent ; on livre la version -O2." },
+    { type: "qcm", q: "Le schéma SQL de prod doit être…", opts: ["ignoré", "appliqué avant le lancement", "recréé à chaque requête", "optionnel"], a: 1, exp: "La base doit exister." },
+    { type: "qcm", q: "La liste de contrôle avant service préfigure…", opts: ["rien", "le pipeline CI/CD (version outillée)", "un test manuel unique", "l'UI"], a: 1, exp: "L'automatisation de demain." },
+    { type: "qcm", q: "make clean sert à…", opts: ["tester", "supprimer les fichiers générés (.o, binaires)", "déployer", "compiler"], a: 1, exp: "Repartir propre." },
+    { type: "qcm", q: "La cible app dépend de…", opts: ["rien", "$(OBJ) (les .o compilés)", "tests.c", "le schéma SQL"], a: 1, exp: "On lie les objets." }
+  ],
+  final: {
+    title: "Exercice final — Une cible de test",
+    intro: `<p>On veut que la construction échoue si les tests échouent. Analyse ce Makefile :</p>
+<pre class="pseudo">app: main.c services.c            # cible app : dépend de ces deux sources
+	gcc main.c services.c -o app  # les compile en un binaire app (sans avertissements ni flags MySQL)
+
+test:                             # cible test : ne dépend de rien
+	gcc tests.c -o tests          # compile les tests… mais ne les EXÉCUTE pas (il manque ./tests)</pre>`,
+    questions: [
+      { type: "qcm", q: "La cible test construit les tests mais…", opts: ["c'est parfait", "elle ne les EXÉCUTE pas (il manque ./tests)", "elle est trop lente", "rien"], a: 1, exp: "Construire ≠ exécuter." },
+      { type: "qcm", q: "Que manque-t-il aux compilations ?", opts: ["rien", "-Wall -Wextra et les flags MySQL", "un printf", "un rôle"], a: 1, exp: "Avertissements et lib MySQL." },
+      { type: "qcm", q: "Pour lier services dans les tests, il faut…", opts: ["rien", "compiler/inclure services.c (ou services.o)", "un COMMIT", "un malloc"], a: 1, exp: "Les tests appellent les services." },
+      { type: "qcm", q: "test et clean devraient être déclarés…", opts: ["rien", ".PHONY", "en premier", "en release"], a: 1, exp: "Cibles non-fichiers." },
+      { type: "qcm", q: "Un make test qui échoue doit…", opts: ["continuer", "stopper (les tests renvoient 1)", "ignorer", "recompiler"], a: 1, exp: "Le code de sortie bloque." }
+    ],
+    solution: `<pre class="pseudo">CC     = gcc                                             # compilateur
+CFLAGS = -Wall -Wextra -std=c11 $(shell mysql_config --cflags)   # avertissements + norme + chemins MySQL
+LDLIBS = $(shell mysql_config --libs)                   # bibliothèques MySQL à lier
+
+app: main.c services.c dao.c db.c ui.c                  # app dépend de toutes les sources
+	$(CC) $(CFLAGS) $^ -o app $(LDLIBS)                  # $^ = toutes les dépendances ; compile et lie en "app"
+
+test: tests.c services.c                                # test dépend du code de test et des services
+	$(CC) $(CFLAGS) $^ -o tests $(LDLIBS)               # compile le programme de test
+	./tests                 # exécute : renvoie 1 si un test échoue → make s'arrête
+
+clean:                                                  # ménage
+	rm -f app tests *.o                                 # supprime les binaires et les .o
+
+.PHONY: test clean                                      # ce sont des actions, pas des fichiers</pre>
+<p>Les tests sont construits <em>et</em> exécutés, avec les bons flags. Un échec stoppe tout. La Ludothèque C est prête à être livrée. Demain : le récapitulatif et l'examen.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton Makefile ici…",
+  items: [
+  { id: "projc-l20", title: "Une cible « check » complète", level: 3,
+    statement: "Écris une cible Makefile « check » qui compile les tests avec -Wall -Wextra et les flags MySQL, les exécute, et (dans un commentaire) rappelle qu'un échec (code 1) doit arrêter la chaîne. Déclare-la en .PHONY.",
+    hints: [
+      "check: tests.c services.c → compile puis lance ./tests.",
+      "Utilise $(shell mysql_config --cflags --libs).",
+      "make s'arrête automatiquement si ./tests renvoie un code non nul."
+    ],
+    solution: "CC     = gcc                                          # le compilateur\nCFLAGS = -Wall -Wextra -std=c11 $(shell mysql_config --cflags)   # avertissements + norme C11 + chemins MySQL\nLDLIBS = $(shell mysql_config --libs)                 # bibliotheques MySQL a lier\n\ncheck: tests.c services.c                             # cible check : depend du test et des services\n\t$(CC) $(CFLAGS) $^ -o tests $(LDLIBS)                 # compile le programme de test ($^ = les dependances)\n\t./tests        # make s'arrete ici si ./tests renvoie un code != 0\n\n.PHONY: check                                         # check est une action, pas un fichier",
+    note: "La cible compile ET exécute les tests. Comme make interrompt la chaîne dès qu'une commande échoue, un test rouge (return 1) bloque la suite — exactement ce qu'un pipeline CI reproduira automatiquement." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

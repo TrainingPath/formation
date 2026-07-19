@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Louer un jeu : transaction et test d'intégration (MockMvc)",
+  subtitle: "Le cœur métier, écrit atomique et verrouillé — et prouvé de bout en bout.",
+  theory: `
+<h3>1. Pourquoi une transaction</h3>
+<p>Une <strong>transaction</strong> est un groupe d'opérations sur la base traitées comme un tout indivisible : soit elles réussissent toutes, soit aucune n'est appliquée — comme un virement bancaire, où débiter un compte sans créditer l'autre serait catastrophique. On appelle cette propriété l'<strong>atomicité</strong> (« insécable »). Une <strong>écriture</strong> est une modification enregistrée en base (créer ou changer une ligne).</p>
+<p>Louer, c'est deux écritures — créer la location et décrémenter (baisser de 1) le stock — qui doivent réussir <strong>ensemble ou pas du tout</strong>. Deuxième piège : la <strong>concurrence</strong>, quand plusieurs clients agissent au même instant. Deux clients simultanés ne doivent pas louer le dernier exemplaire tous les deux — c'est la <em>course au stock</em>, où chacun lit « il en reste 1 » avant que l'autre n'ait décrémenté.</p>
+
+<h3>2. Le verrou pessimiste</h3>
+<p>Un <strong>verrou</strong> réserve temporairement une ligne de la base pour un seul client, comme la porte fermée d'une cabine d'essayage : les autres attendent leur tour. « Pessimiste » car on suppose le conflit probable et on le bloque d'avance. <code>JpaRepository</code> est le dépôt fourni tout prêt qui parle à la base ; <code>@Query</code> permet d'y écrire une requête sur mesure ; <code>Optional</code> est une boîte qui contient « le résultat » ou « rien » (pour gérer proprement le cas où le jeu n'existe pas).</p>
+<pre class="pseudo">public interface JeuRepository extends JpaRepository<Jeu, Long> {   // depot des jeux : herite des methodes toutes pretes de JpaRepository
+    @Lock(LockModeType.PESSIMISTIC_WRITE)                           // pose un verrou d'ECRITURE sur la ligne lue : les autres attendent
+    @Query("select j from Jeu j where j.id = :id")                 // requete sur mesure : recupere le jeu dont l'id vaut :id
+    Optional<Jeu> findByIdForUpdate(@Param("id") Long id);         // renvoie le jeu (ou rien) ; @Param relie :id au parametre id
+}</pre>
+<p><code>PESSIMISTIC_WRITE</code> pose un verrou <strong>SQL</strong> (le langage des bases de données) via <code>SELECT … FOR UPDATE</code> : le second client attend la fin de la transaction du premier — pas de survente (vendre plus que le stock).</p>
+
+<h3>3. Le service transactionnel</h3>
+<p><code>@Transactional</code> enveloppe la méthode dans une transaction : à la moindre <strong>exception</strong> (un incident signalé par le code), tout est <strong>annulé</strong> — on appelle cela un <em>rollback</em>, comme rembobiner une bande pour effacer ce qu'on venait d'enregistrer.</p>
+<pre class="pseudo">@Transactional                                   // tout ou rien : a la moindre exception, TOUT est annule (rollback)
+public Location louer(Utilisateur client, Long jeuId, int nbJours) {   // le client loue le jeu jeuId pour nbJours jours
+    Jeu jeu = repo.findByIdForUpdate(jeuId).orElseThrow(EntityNotFoundException::new);   // recupere le jeu VERROUILLE ; s'il n'existe pas -> erreur 404
+    if (jeu.getStockLocation() <= 0)             // si le stock de location est epuise (0 ou moins)…
+        throw new StockInsuffisantException("Plus de stock de location");   // …on refuse en levant une exception (declenche le rollback)
+    jeu.setStockLocation(jeu.getStockLocation() - 1);   // sinon : on baisse le stock de 1 (un exemplaire part en location)
+    return locationRepo.save(new Location(client, jeu, LocalDate.now(), nbJours));   // on enregistre la nouvelle location (datee d'aujourd'hui) et on la renvoie
+}</pre>
+<p>Si l'exception est levée, <code>@Transactional</code> annule <strong>tout</strong> : aucune location fantôme, stock intact.</p>
+
+<h3>4. Le contrôleur protégé</h3>
+<p>Le <strong>contrôleur</strong> est la couche qui reçoit les requêtes web et les confie au service métier. Écrire (louer, acheter) se fait toujours en <strong>POST</strong> et jamais en GET (voir plus bas). <strong>CSRF</strong> (requête forgée à votre insu depuis un autre site) est neutralisé par un <em>jeton</em> secret que Spring glisse dans chaque formulaire.</p>
+<pre class="pseudo">@PostMapping("/louer/{jeuId}")                    // POST (jamais GET pour écrire)   // repond au POST sur /louer/… ; {jeuId} est un morceau variable de l'URL
+public String louer(@PathVariable Long jeuId, @AuthenticationPrincipal Utilisateur u) {   // @PathVariable lit le jeuId de l'URL ; u = l'utilisateur connecte
+    jeuService.louer(u, jeuId, 7);               // delegue au service metier : loue ce jeu pour 7 jours
+    return "redirect:/mes-locations";             // Post-Redirect-Get   // apres l'ecriture, on REDIRIGE vers la liste (evite la double soumission)
+}
+// CSRF activé par défaut (Spring Security) : le formulaire porte le jeton   // le jeton anti-CSRF est verifie automatiquement a chaque POST</pre>
+
+<h3>5. Le test d'intégration</h3>
+<p>Un <strong>test d'intégration</strong> vérifie que toutes les couches fonctionnent <em>ensemble</em> (de la requête HTTP jusqu'à la base), là où un test unitaire n'en isole qu'une. <code>assertThat(...).isEqualTo(...)</code> se lit « j'affirme que ceci vaut cela » : si c'est faux, le test rougit.</p>
+<pre class="pseudo">@Test @WithMockUser                              // test automatique, exécuté comme un utilisateur connecte
+void louerDecrementeLeStock() throws Exception {  // scenario : louer doit faire baisser le stock
+    mockMvc.perform(post("/louer/" + jeu.getId()).with(csrf()));   // faux navigateur : POST pour louer le jeu, avec le jeton CSRF (.with(csrf()))
+    assertThat(repo.findById(jeu.getId()).get().getStockLocation()).isEqualTo(2);   // on AFFIRME que le stock est bien passe a 2 (il valait 3)
+}
+@Test @WithMockUser                              // second test : le refus propre quand il n'y a plus de stock
+void stockNulRefuseSansLocationFantome() throws Exception {
+    jeu.setStockLocation(0); repo.save(jeu);     // on met le stock a 0 en base (situation « epuise »)
+    mockMvc.perform(post("/louer/" + jeu.getId()).with(csrf()))   // on tente quand meme de louer (POST + jeton CSRF)
+        .andExpect(status().isConflict());       // on EXIGE un 409 Conflict (la demande est refusee proprement)
+    assertThat(locationRepo.count()).isZero();   // et on VERIFIE qu'aucune location n'a ete creee (zero fantome grace au rollback)
+}</pre>
+<div class="warn">Le test d'intégration traverse toute la chaîne (HTTP -> contrôleur -> service -> transaction -> base). Écrit avec la fonctionnalité, il tourne en CI sur un vrai MySQL : la règle métier la plus précieuse du projet est verrouillée dès sa naissance — impossible de la casser sans un job rouge.</div>
+<div class="tip">Écrire (louer, acheter) se fait toujours en <strong>POST</strong>, jamais en GET : un GET est rejouable, indexable, préchargeable — un lien qui loue tout seul serait un désastre. Le Post-Redirect-Get évite en plus la double soumission au rafraîchissement.</div>`,
+  exercises: [
+    { type: "qcm", q: "Louer implique…", opts: ["Une écriture", "Deux écritures atomiques (location + stock)", "Une lecture", "Rien"], a: 1, exp: "Ensemble ou pas du tout." },
+    { type: "qcm", q: "@Transactional garantit…", opts: ["La vitesse", "Tout ou rien (rollback sur exception)", "Le CSS", "Le cache"], a: 1, exp: "Atomicité." },
+    { type: "qcm", q: "PESSIMISTIC_WRITE pose…", opts: ["Un cache", "Un verrou SQL (SELECT FOR UPDATE)", "Un index", "Un cookie"], a: 1, exp: "Anti-course au stock." },
+    { type: "qcm", q: "Sans verrou, deux clients peuvent…", opts: ["Rien", "Louer le dernier exemplaire tous les deux", "Se déconnecter", "Chiffrer"], a: 1, exp: "Survente." },
+    { type: "qcm", q: "Si l'exception est levée…", opts: ["La location reste", "Tout est annulé (rollback)", "Le stock baisse quand même", "Rien"], a: 1, exp: "Aucune location fantôme." },
+    { type: "qcm", q: "Louer se fait en…", opts: ["GET", "POST", "PUT vers l'URL", "HEAD"], a: 1, exp: "Écrire = POST." },
+    { type: "qcm", q: "Un GET qui écrirait serait…", opts: ["Idéal", "Dangereux (rejouable, indexable, préchargé)", "Rapide", "Sûr"], a: 1, exp: "Jamais d'écriture en GET." },
+    { type: "qcm", q: "Le Post-Redirect-Get évite…", opts: ["Le login", "La double soumission au rafraîchissement", "Le CSS", "Le cache"], a: 1, exp: "Redirection après POST." },
+    { type: "qcm", q: "Le jeton CSRF est…", opts: ["Absent", "Activé par défaut par Spring Security", "Optionnel", "Dans l'URL"], a: 1, exp: "Formulaire protégé." },
+    { type: "qcm", q: "Le test d'intégration traverse…", opts: ["Le CSS seul", "HTTP -> contrôleur -> service -> transaction -> base", "Rien", "Le cache"], a: 1, exp: "Toute la chaîne." },
+    { type: "vf", q: "Le test tourne en CI sur un vrai MySQL.", a: true, exp: "Règle verrouillée." },
+    { type: "qcm", q: "findByIdForUpdate renvoie…", opts: ["Sans verrou", "Le jeu verrouillé pour la transaction", "Le rôle", "Le cookie"], a: 1, exp: "FOR UPDATE." },
+    { type: "qcm", q: "Sur stock nul, le test vérifie…", opts: ["Rien", "409 ET aucune location créée", "Un 200", "Le CSS"], a: 1, exp: "Pas de fantôme." },
+    { type: "qcm", q: ".with(csrf()) dans le test…", opts: ["Chiffre", "Fournit le jeton CSRF attendu", "Ralentit", "Déploie"], a: 1, exp: "Sinon 403." },
+    { type: "vf", q: "La règle métier la plus précieuse est verrouillée dès sa naissance par son test.", a: true, exp: "Par conception." }
+  ],
+  final: {
+    title: "Exercice final — Louer, atomique et prouvé",
+    intro: `<p>Transaction + verrou + POST + test d'intégration.</p>`,
+    questions: [
+      { type: "qcm", q: "L'atomicité vient de :", opts: ["@Transactional", "un try/catch", "la chance", "un cache"], a: 0, exp: "Tout ou rien." },
+      { type: "qcm", q: "La course au stock est bloquée par :", opts: ["un verrou pessimiste (FOR UPDATE)", "plus de RAM", "un index", "rien"], a: 0, exp: "Second client en attente." },
+      { type: "qcm", q: "L'écriture se fait en :", opts: ["POST (+ redirect)", "GET", "HEAD", "OPTIONS"], a: 0, exp: "Jamais en GET." },
+      { type: "qcm", q: "La preuve : le test d'intégration vérifie :", opts: ["stock -1, et refus propre sur stock nul", "le CSS", "le port", "rien"], a: 0, exp: "Toute la chaîne." },
+      { type: "vf", q: "Sur stock nul, aucune location fantôme n'est créée.", a: true, exp: "Rollback." }
+    ],
+    solution: `<pre class="pseudo">@Lock(PESSIMISTIC_WRITE) findByIdForUpdate(id)   // lecture VERROUILLEE du jeu : les autres clients attendent
+
+@Transactional Location louer(Utilisateur c, Long id, int n){   // @Transactional : tout ou rien
+  Jeu j = repo.findByIdForUpdate(id).orElseThrow();   // recupere le jeu verrouille (erreur s'il n'existe pas)
+  if (j.getStockLocation() <= 0) throw new StockInsuffisantException(...);   // stock epuise ? on refuse -> rollback
+  j.setStockLocation(j.getStockLocation()-1);         // sinon : un exemplaire part, stock -1
+  return locationRepo.save(new Location(c, j, now(), n));   // on enregistre et renvoie la location
+}
+@PostMapping("/louer/{id}") ... redirect:/mes-locations   // ecriture en POST puis redirection (Post-Redirect-Get)
+// test : post + csrf -> stock -1 ; stock 0 -> 409 + 0 location   // preuve de bout en bout : decrement OK, refus sans fantome</pre>
+<p>Louer est verrouillé. Demain : acheter — prix figé et couverture (JaCoCo).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta transaction de location et son test…",
+  items: [
+  { id: "proj6java-l11", title: "Louer : transaction verrouillée + test d'intégration", level: 3,
+    statement: "Écris la requête verrouillée (findByIdForUpdate), le service louer (@Transactional, contrôle de stock, décrément), le contrôleur POST protégé (Post-Redirect-Get), et deux tests d'intégration MockMvc (décrément OK ; stock nul -> 409 sans location fantôme). Explique en 3-4 lignes le rôle du verrou pessimiste et pourquoi POST et pas GET.",
+    hints: [
+      "@Lock(LockModeType.PESSIMISTIC_WRITE) + @Query pour le SELECT ... FOR UPDATE.",
+      "@Transactional : l'exception annule tout (pas de location si stock nul).",
+      "Tests : .with(csrf()) ; vérifier le stock ET le nombre de locations."
+    ],
+    solution: "public interface JeuRepository extends JpaRepository<Jeu, Long> {\n    @Lock(LockModeType.PESSIMISTIC_WRITE)\n    @Query(\"select j from Jeu j where j.id = :id\")\n    Optional<Jeu> findByIdForUpdate(@Param(\"id\") Long id);\n}\n\n@Service\npublic class JeuService {\n    @Transactional\n    public Location louer(Utilisateur client, Long jeuId, int nbJours) {\n        Jeu jeu = repo.findByIdForUpdate(jeuId)\n            .orElseThrow(EntityNotFoundException::new);\n        if (jeu.getStockLocation() <= 0)\n            throw new StockInsuffisantException(\"Plus de stock de location\");\n        jeu.setStockLocation(jeu.getStockLocation() - 1);\n        return locationRepo.save(new Location(client, jeu, LocalDate.now(), nbJours));\n    }\n}\n\n@PostMapping(\"/louer/{jeuId}\")\npublic String louer(@PathVariable Long jeuId, @AuthenticationPrincipal Utilisateur u) {\n    jeuService.louer(u, jeuId, 7);\n    return \"redirect:/mes-locations\";        // Post-Redirect-Get\n}\n\n@Test @WithMockUser\nvoid louerDecremente() throws Exception {\n    mockMvc.perform(post(\"/louer/\" + jeu.getId()).with(csrf()));\n    assertThat(repo.findById(jeu.getId()).get().getStockLocation()).isEqualTo(2);\n}\n@Test @WithMockUser\nvoid stockNulRefuseSansFantome() throws Exception {\n    jeu.setStockLocation(0); repo.save(jeu);\n    mockMvc.perform(post(\"/louer/\" + jeu.getId()).with(csrf()))\n        .andExpect(status().isConflict());\n    assertThat(locationRepo.count()).isZero();\n}\n\n// LE VERROU ET LE CHOIX DE POST\n// Verrou pessimiste : deux clients qui louent le DERNIER exemplaire en meme\n// temps liraient tous deux stock=1 et decrementeraient a 0... apres avoir cree\n// DEUX locations (survente). FOR UPDATE force le second a attendre la fin de la\n// transaction du premier : il relit stock=0 et se voit refuser. Correct sous charge.\n// POST et pas GET : un GET est rejouable, prefetche par le navigateur, indexe par\n// les moteurs -- un lien qui loue tout seul serait un desastre. Ecrire = POST,\n// toujours, suivi d'une redirection pour eviter la double soumission.",
+    note: "La transaction verrouillée est le même patron qu'au Niveau 6, mais ici elle naît avec son test d'intégration qui la prouve sur un vrai MySQL, en CI, à chaque commit. C'est la différence décisive : au Niveau 6 on espérait que la concurrence était gérée ; au Niveau 8 on le vérifie mécaniquement. Le verrou pessimiste convient à un stock disputé ; pour des cas moins contentieux, on préférerait le verrou optimiste (@Version) — mais le principe reste : la correction sous charge n'est jamais laissée au hasard." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

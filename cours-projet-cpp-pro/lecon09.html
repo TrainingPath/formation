@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Utilisateurs, rôles et authentification durcie",
+  subtitle: "Hacher fort, comparer des empreintes, renvoyer un résultat neutre — jamais de mot de passe en clair.",
+  theory: `
+<h3>1. Le modèle : Utilisateur et Role</h3>
+<p>L'<strong>authentification</strong> répond à la question « qui es-tu ? » : elle vérifie l'identité d'une personne. On modélise d'abord un utilisateur et son rôle.</p>
+<pre class="pseudo">enum class Role { Client = 0, Vendeur = 1, Admin = 2 }; // liste fermee de roles possibles (chacun a un numero)
+class Utilisateur {                                    // classe representant un compte
+    int id_; std::string login_; Role role_;           // champs prives : identifiant, identifiant de connexion, role
+public:                                                // partie accessible de l'exterieur
+    Utilisateur(int id, std::string login, Role r)     // constructeur : recoit id, login et role
+      : id_(id), login_(std::move(login)), role_(r) {} // remplir les champs (move = deplacer le texte sans copie)
+    int id() const { return id_; }                     // getter const de l'id
+    Role role() const { return role_; }                // getter const du role
+};                                                     // fin de la classe (point-virgule obligatoire)</pre>
+<p>Le rôle est une <strong>enum class</strong> (énumération « fortement typée ») : une liste fixe et fermée de valeurs nommées, ici <code>Client</code>, <code>Vendeur</code>, <code>Admin</code>. C'est plus sûr qu'un simple entier, car on ne peut pas y glisser une valeur farfelue. Point crucial : le mot de passe n'est <strong>pas</strong> un champ de l'objet métier — seule son empreinte (le <em>hash</em>) vit en base.</p>
+
+<h3>2. Hacher fort et salé</h3>
+<p>Un <strong>hash</strong> (empreinte) est le résultat d'un calcul à sens unique appliqué au mot de passe : à partir du mot de passe on obtient l'empreinte, mais on ne peut pas revenir en arrière — comme un hachoir qui transforme la viande sans qu'on puisse la reconstituer. On ne stocke donc jamais le mot de passe, seulement son empreinte.</p>
+<div class="warn">On stocke un <strong>hash lent et salé</strong> (algorithmes argon2 ou bcrypt, via la bibliothèque <strong>libsodium</strong> : <code>crypto_pwhash_str</code> pour créer l'empreinte, <code>crypto_pwhash_str_verify</code> pour la vérifier), jamais un hachage rapide (comme MD5/SHA) ni un mot de passe en clair. Le <strong>sel</strong> est une donnée aléatoire ajoutée avant le calcul : il rend chaque empreinte unique, même pour deux mots de passe identiques. La lenteur volontaire résiste à l'attaque par <strong>force brute</strong> (essayer des millions de combinaisons à la chaîne).</div>
+
+<h3>3. Le login : requête préparée + résultat neutre</h3>
+<p><code>std::optional&lt;Utilisateur&gt;</code> est un type qui contient <em>soit</em> un utilisateur, <em>soit</em> rien (<code>std::nullopt</code>) — comme une boîte qui peut être pleine ou vide. Parfait pour dire « connexion réussie (voici l'utilisateur) ou échouée (rien) » sans lever d'exception.</p>
+<pre class="pseudo">std::optional&lt;Utilisateur&gt; AuthService::login(                     // renvoie un Utilisateur si la connexion reussit, sinon rien
+        sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) { // recoit connexion, login et mot de passe saisis
+    std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement( // requete preparee a trou
+        "SELECT id,mot_de_passe_hash,role FROM utilisateur WHERE login=?")); // chercher la ligne du login (? = le login)
+    p-&gt;setString(1, login);                                        // remplir le ? avec le login saisi (valeur liee)
+    std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery());          // executer ; r contient la ligne trouvee (ou aucune)
+    if (!r-&gt;next()) return std::nullopt;                           // login inconnu -> renvoyer "rien" (resultat neutre)
+    if (!verifierMotDePasse(mdp, r-&gt;getString("mot_de_passe_hash")))// comparer le mdp saisi a l'empreinte stockee
+        return std::nullopt;                                       // mot de passe faux -> "rien" (le MEME resultat)
+    return Utilisateur(r-&gt;getInt("id"), login,                     // succes : construire l'utilisateur connecte...
+                       static_cast&lt;Role&gt;(r-&gt;getInt("role")));      // ...en convertissant l'entier "role" de la base en enum Role
+}                                                                  // fin de la fonction</pre>
+
+<h3>4. Ne pas renseigner l'attaquant</h3>
+<div class="tip">Même résultat (<code>std::nullopt</code>, message identique) pour « login inconnu » et « mot de passe faux » : on ne révèle jamais quels comptes existent. <code>static_cast&lt;Role&gt;</code> est une <strong>conversion de type explicite</strong> (on transforme volontairement l'entier lu en base en valeur de l'énumération <code>Role</code>). On ne journalise ni le mot de passe, ni le hash, ni la requête qui les contient.</div>
+
+<h3>5. Durcir : limiter les tentatives</h3>
+<p>« <strong>Durcir</strong> » une authentification, c'est la rendre plus résistante aux attaques : ajouter une <strong>temporisation</strong> (attente forcée) ou un <strong>verrouillage temporaire</strong> du compte après plusieurs échecs, éventuellement un facteur supplémentaire (un code envoyé par SMS, par exemple). Le principe reste : stocker des empreintes, comparer des empreintes, ne rien divulguer.</p>
+`,
+  exercises: [
+    { type: "qcm", q: "Le rôle est modélisé par…", opts: ["un int nu", "une enum class (fortement typée)", "une string", "un bool"], a: 1, exp: "Sûreté de type." },
+    { type: "qcm", q: "Le mot de passe est stocké…", opts: ["en clair", "sous forme de hash lent et salé", "chiffré réversiblement", "dans l'objet Utilisateur"], a: 1, exp: "Jamais en clair." },
+    { type: "qcm", q: "Un bon hachage de mot de passe est…", opts: ["rapide (MD5/SHA)", "lent et salé (argon2/bcrypt)", "réversible", "un XOR"], a: 1, exp: "Résiste au force-brute." },
+    { type: "qcm", q: "Le sel sert à…", opts: ["accélérer", "rendre chaque empreinte unique", "afficher", "trier"], a: 1, exp: "Casse les tables précalculées." },
+    { type: "qcm", q: "Le login se récupère par…", opts: ["concaténation", "requête préparée (setString)", "un fichier", "l'UI"], a: 1, exp: "Saisie liée." },
+    { type: "qcm", q: "login renvoie…", opts: ["un bool", "std::optional<Utilisateur>", "un int", "void"], a: 1, exp: "Utilisateur ou rien." },
+    { type: "qcm", q: "Login inconnu et mdp faux donnent…", opts: ["des messages différents", "le même résultat neutre (nullopt)", "un plantage", "le hash"], a: 1, exp: "Ne pas renseigner l'attaquant." },
+    { type: "qcm", q: "On journalise…", opts: ["le mot de passe", "ni mdp, ni hash, ni la requête qui les contient", "le hash seul", "tout"], a: 1, exp: "Pas de secret dans les logs." },
+    { type: "qcm", q: "Durcir l'auth, c'est par exemple…", opts: ["accélérer le hash", "limiter/temporiser les tentatives", "logger le mdp", "enlever le sel"], a: 1, exp: "Anti-force-brute." },
+    { type: "qcm", q: "Le mot de passe est-il un champ de l'objet Utilisateur ?", opts: ["oui, en clair", "non : seul le hash vit en base", "oui, haché dans l'objet toujours exposé", "jamais utilisé"], a: 1, exp: "Exposition minimale." },
+    { type: "vf", q: "Comparer des empreintes évite de manipuler le mot de passe en clair.", a: true, exp: "Hash vs hash." },
+    { type: "qcm", q: "static_cast<Role>(r->getInt(\"role\")) …", opts: ["est inutile", "convertit l'entier de la base en enum class", "logge", "trie"], a: 1, exp: "Conversion explicite." },
+    { type: "qcm", q: "crypto_pwhash_str_verify appartient à…", opts: ["iostream", "libsodium", "vector", "MySQL"], a: 1, exp: "Bibliothèque de crypto." },
+    { type: "qcm", q: "std::optional se teste…", opts: ["avec .size()", "comme un booléen (if (u))", "avec strcmp", "impossible"], a: 1, exp: "Présent ou vide." },
+    { type: "qcm", q: "L'authentification répond à…", opts: ["que peut-il faire ?", "qui es-tu ? (identité)", "quel prix ?", "quel stock ?"], a: 1, exp: "Identité." }
+  ],
+  final: {
+    title: "Exercice final — Durcir une connexion naïve",
+    intro: `<p>Version dangereuse :</p>
+<pre class="pseudo">bool login(sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) { // renvoie juste vrai/faux
+    auto r = con.createStatement()-&gt;executeQuery(                 // DANGER : requete NON preparee (pointeur nu, aucun RAII)
+        "SELECT id FROM utilisateur WHERE login='" + login +      // DANGER : login COLLE dans le SQL -> injection possible
+        "' AND mot_de_passe='" + mdp + "'");                      // DANGER : mot de passe compare EN CLAIR (aucun hash)
+    return r-&gt;next();                                             // vrai si une ligne correspond
+}                                                                // fin : trois failles graves cumulees</pre>
+`,
+    questions: [
+      { type: "qcm", q: "Faille n°1 :", opts: ["aucune", "concaténation : injection SQL", "trop lent", "trop long"], a: 1, exp: "Requête préparée nécessaire." },
+      { type: "qcm", q: "Faille n°2 :", opts: ["correct", "comparaison du mot de passe en clair (la base ne doit contenir que des hash)", "il faut LIKE", "rien"], a: 1, exp: "Jamais en clair." },
+      { type: "qcm", q: "Meilleur type de retour :", opts: ["bool", "std::optional<Utilisateur>", "int", "void"], a: 1, exp: "Plus riche." },
+      { type: "qcm", q: "Message en cas d'échec :", opts: ["préciser « login inconnu »", "un message neutre identique dans les deux cas", "afficher le hash", "le mdp"], a: 1, exp: "Ne pas renseigner." },
+      { type: "qcm", q: "Durcissement supplémentaire :", opts: ["aucun", "limiter les tentatives (temporisation/verrou)", "accélérer le hash", "logger le mdp"], a: 1, exp: "Anti-brute-force." }
+    ],
+    solution: `<pre class="pseudo">std::optional&lt;Utilisateur&gt; AuthService::login(                     // renvoie l'utilisateur si la connexion reussit, sinon rien
+        sql::Connection&amp; con, const std::string&amp; login, const std::string&amp; mdp) { // connexion, login et mot de passe saisis
+    std::unique_ptr&lt;sql::PreparedStatement&gt; p(con.prepareStatement( // requete preparee a trou
+        "SELECT id,mot_de_passe_hash,role FROM utilisateur WHERE login=?")); // chercher la ligne du login
+    p-&gt;setString(1, login);                          // remplir le ? : valeur liee (requete preparee)
+    std::unique_ptr&lt;sql::ResultSet&gt; r(p-&gt;executeQuery()); // executer ; r possede le resultat (RAII)
+    if (!r-&gt;next()) return std::nullopt;              // login inconnu -> resultat neutre
+    if (!verifierMotDePasse(mdp, r-&gt;getString("mot_de_passe_hash"))) // comparer au HASH stocke, jamais au clair
+        return std::nullopt;                          // mdp faux -> le MEME resultat neutre
+    return Utilisateur(r-&gt;getInt("id"), login,        // succes : construire l'utilisateur connecte...
+                       static_cast&lt;Role&gt;(r-&gt;getInt("role"))); // ...en convertissant l'entier role en enum Role
+}                                                     // fin de la fonction</pre>
+<p>Requête préparée, comparaison de hash, résultat neutre : une auth sûre et durcissable. Demain : autorisation par rôle et par ressource (anti-IDOR).</p>
+`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton code C++ ici…",
+  items: [
+  { id: "projcpppro-l09", title: "Le flux d'authentification durcie", level: 3,
+    statement: "Écris (en pseudocode C++ commenté) les étapes d'AuthService::login en soulignant les décisions de sécurité : requête préparée sur le login, comparaison de HASH (jamais de clair), std::nullopt neutre en cas d'échec, aucune journalisation de secret, et une idée de durcissement (limiter les tentatives).",
+    hints: [
+      "1) prepareStatement(\"... WHERE login=?\") ; setString.",
+      "2) comparer le mot de passe saisi au HASH stocké.",
+      "3) echec -> nullopt neutre ; jamais logger mdp/hash ; limiter les essais."
+    ],
+    solution: "// AuthService::login(login, mdp) -> std::optional<Utilisateur>\n// 1) prepareStatement(\"... WHERE login=?\"); setString(1, login)   // anti-injection\n//    if (!res->next()) return std::nullopt;                        // login inconnu (neutre)\n// 2) if (!verifierMotDePasse(mdp, res->getString(\"mot_de_passe_hash\")))\n//        return std::nullopt;                                      // meme resultat neutre\n//    // comparaison de HASH (argon2/bcrypt) : jamais de mot de passe en clair\n// 3) return Utilisateur(id, login, static_cast<Role>(role));       // session ouverte\n// Durcissement : compter les echecs par compte/IP -> temporiser ou verrouiller.\n// Jamais : mot de passe en clair, concatenation SQL, secret dans les logs.",
+    note: "Chaque étape porte une décision de sécurité : lier le login, comparer des empreintes, renvoyer un résultat neutre qui ne révèle pas quels comptes existent, ne rien journaliser de sensible. Le durcissement (limitation des tentatives) ralentit le force-brute. std::optional exprime « utilisateur ou rien » sans transformer un mauvais mot de passe en exception." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

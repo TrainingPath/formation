@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "La couche de persistance de la Ludothèque (synthèse)",
+  subtitle: "Toutes les pièces s'assemblent : entités, DAO, requêtes, transactions — l'architecture complète.",
+  theory: `
+<h3>1. Le modèle complet : six entités, toutes les relations du cours</h3>
+<p>Dix-neuf leçons de briques ; aujourd'hui, le bâtiment. Voici le modèle objet complet de la Ludothèque, fidèle au schéma MySQL du Niveau 4 (ddl-auto=validate le vérifie à chaque démarrage, leçon 4) :</p>
+<pre class="pseudo">@Entity public class Categorie {                       // entité Categorie
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;  // clé primaire auto-incrémentée
+  @Column(nullable = false, length = 60, unique = true) private String nom; // nom : NOT NULL, VARCHAR(60), unique
+}                                                      // fin de Categorie
+
+@Entity public class Jeu {                             // entité Jeu
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;  // clé primaire
+  @Column(nullable = false, length = 150) private String titre;            // titre : NOT NULL, VARCHAR(150)
+  @Column(name = "prix_location") private BigDecimal prixLocation;         // prix de location (BigDecimal, précis)
+  @ManyToOne(fetch = FetchType.LAZY)                    // N jeux → 1 catégorie, LAZY (leçon 8 + 12)
+  @JoinColumn(name = "categorie_id") private Categorie categorie;          // FK categorie_id → référence objet
+  @OneToMany(mappedBy = "jeu")                          // 1 jeu → N avis, côté inverse (leçon 9)
+  private List&lt;Avis&gt; avis = new ArrayList&lt;&gt;();          // liste des avis, initialisée vide
+}                                                      // fin de Jeu
+
+@Entity public class Membre {                          // entité Membre
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;  // clé primaire
+  @Column(nullable = false, length = 40, unique = true) private String pseudo;  // pseudo : NOT NULL, VARCHAR(40), unique
+  @Embedded private Adresse adresse;                    // adresse embarquée dans la table membre (leçon 11)
+  @ManyToMany                                           // N membres ↔ N jeux favoris (leçon 10)
+  @JoinTable(name = "membre_jeu_favori",                // la table de jonction des favoris...
+    joinColumns = @JoinColumn(name = "membre_id"),      // ...FK vers Membre (moi)
+    inverseJoinColumns = @JoinColumn(name = "jeu_id"))  // ...FK vers Jeu (l'autre)
+  private Set&lt;Jeu&gt; favoris = new HashSet&lt;&gt;();           // ensemble de jeux favoris (Set = sans doublon)
+}                                                      // fin de Membre
+
+@Embeddable public class Adresse {                      // classe embarquée (pas d'@Id : un composant, leçon 11)
+  private String rue;  private String ville;            // rue et ville (colonnes fondues dans la table membre)
+  @Column(name = "code_postal", length = 10) private String codePostal;   // code_postal : VARCHAR(10)
+}                                                      // fin de Adresse
+
+@Entity public class Location {                        // entité Location
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;  // clé primaire
+  @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "jeu_id", nullable = false)  // N locations → 1 jeu, LAZY, FK obligatoire
+  private Jeu jeu;                                      // le jeu loué
+  @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "membre_id", nullable = false) // N locations → 1 membre, LAZY, FK obligatoire
+  private Membre membre;                               // le membre qui loue
+  @Column(name = "date_debut", nullable = false) private LocalDate dateDebut;             // date de début (NOT NULL)
+  @Column(name = "date_retour_prevue", nullable = false) private LocalDate dateRetourPrevue; // date de retour prévue (NOT NULL)
+  @Column(name = "date_retour_reelle") private LocalDate dateRetourReelle; // null = location encore en cours
+}                                                      // fin de Location
+
+@Entity public class Avis {                            // entité Avis
+  @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;  // clé primaire
+  @Column(nullable = false) private int note;           // note : NOT NULL, de 1 à 5
+  @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "jeu_id") private Jeu jeu;         // N avis → 1 jeu, LAZY
+  @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "membre_id") private Membre membre; // N avis → 1 membre, LAZY
+}                                                      // fin de Avis</pre>
+<p>Relis ce bloc lentement : chaque annotation est une leçon. LAZY partout sur les @ManyToOne (leçon 12), mappedBy côté inverse (leçon 9), @JoinTable pour le many-to-many (leçon 10), @Embeddable sans identité propre (leçon 11).</p>
+
+<h3>2. Le motif DAO : isoler la persistance</h3>
+<p>On ne sème pas des em.find() dans toute l'application : on regroupe l'accès aux données par entité dans un <strong>DAO</strong> (Data Access Object, « objet d'accès aux données »), aussi appelé Repository. Une classe, un EntityManager injecté, des méthodes nommées métier :</p>
+<pre class="pseudo">public class JeuDao {                              // DAO : accès aux données des Jeu
+  private final EntityManager em;                 // l'EntityManager, injecté par le constructeur
+  public JeuDao(EntityManager em) { this.em = em; }  // constructeur : on reçoit l'EntityManager
+
+  public Optional&lt;Jeu&gt; trouverParId(Long id) {    // chercher un jeu par son identifiant
+    return Optional.ofNullable(em.find(Jeu.class, id));   // find rend le jeu ou null → Optional (leçon 5)
+  }                                               // fin de trouverParId
+  public List&lt;Jeu&gt; cataloguePagine(int page, int taille) {  // une page du catalogue (leçon 16)
+    return em.createQuery(                        // construire la requête JPQL...
+        "SELECT j FROM Jeu j JOIN FETCH j.categorie ORDER BY j.titre", Jeu.class)  // JOIN FETCH : évite le N+1 (leçon 18)
+      .setFirstResult(page * taille).setMaxResults(taille).getResultList();  // découpage OFFSET/LIMIT + exécution
+  }                                               // fin de cataloguePagine
+  public void sauvegarder(Jeu jeu) {              // enregistrer un jeu (création OU mise à jour)
+    if (jeu.getId() == null) em.persist(jeu);     // pas d'id → nouveau → persist (leçon 5)
+    else em.merge(jeu);                           // id présent → détaché → merge (leçon 6)
+  }                                               // fin de sauvegarder
+}                                                 // fin du DAO</pre>
+<p>Avantages : les requêtes JPQL vivent en un seul endroit, testable et remplaçable ; le reste de l'application parle métier (« cataloguePagine »), jamais SQL.</p>
+
+<h3>3. Les requêtes clés du projet</h3>
+<pre class="pseudo">// Locations en retard (leçons 13-14) : LocationDao
+SELECT l FROM Location l JOIN FETCH l.jeu JOIN FETCH l.membre   -- charger location + jeu + membre en UNE requête
+WHERE l.dateRetourReelle IS NULL AND l.dateRetourPrevue &lt; :aujourdhui  -- pas encore rendue ET échéance dépassée
+ORDER BY l.dateRetourPrevue                                     -- les plus en retard en premier
+
+// Note moyenne d'un jeu (leçon 14, agrégat) : AvisDao
+SELECT AVG(a.note) FROM Avis a WHERE a.jeu.id = :jeuId          -- moyenne des notes du jeu donné (calcul côté MySQL)
+
+// Catalogue filtré par catégorie, paginé (leçons 13, 16, 18)
+SELECT j FROM Jeu j JOIN FETCH j.categorie c                    -- jeux + leur catégorie (JOIN FETCH anti-N+1)
+WHERE c.nom = :nomCategorie ORDER BY j.titre                    -- filtrés par nom de catégorie, triés par titre
+  → setFirstResult / setMaxResults                              -- puis découpés en pages</pre>
+<p>Remarque le réflexe désormais automatique : chaque requête d'affichage qui traverse une relation embarque son <strong>JOIN FETCH</strong> (leçon 18) — le N+1 est éliminé à la conception, pas en pompier.</p>
+
+<h3>4. Les opérations métier transactionnelles</h3>
+<p>louerJeu et rendreJeu sont les cœurs battants de l'application : plusieurs écritures qui doivent réussir ou échouer <strong>ensemble</strong> (leçon 17) :</p>
+<pre class="pseudo">public Location louerJeu(Long jeuId, Long membreId) {  // opération métier : louer un jeu
+  EntityManager em = emf.createEntityManager();        // ouvrir l'EntityManager (session courte)
+  EntityTransaction tx = em.getTransaction();          // récupérer la transaction
+  try {                                                // bloc protégé
+    tx.begin();                                        // ouvrir la transaction
+    Jeu jeu = em.find(Jeu.class, jeuId);               // charger le jeu
+    Membre membre = em.find(Membre.class, membreId);   // charger le membre
+    if (jeu == null || membre == null) throw new IntrouvableException();  // refuser si l'un manque
+    if (locationDao.jeuDejaLoue(em, jeuId)) throw new JeuIndisponibleException();  // refuser si déjà loué
+    Location loc = new Location(jeu, membre,           // créer la location...
+        LocalDate.now(), LocalDate.now().plusDays(14));  // ...aujourd'hui, retour prévu dans 14 jours
+    em.persist(loc);                                   // planifier l'INSERT
+    tx.commit();                       // tout passe... ou rien (flush + COMMIT)
+    return loc;                                        // renvoyer la location créée
+  } catch (RuntimeException ex) {                      // en cas d'erreur...
+    if (tx.isActive()) tx.rollback();  // jamais de tx orpheline : on annule tout
+    throw ex;                                          // relancer l'erreur
+  } finally { em.close(); }            // session courte (leçon 19) : toujours fermer
+}                                                      // fin de louerJeu
+// rendreJeu : find(Location) → setDateRetourReelle(now)
+// → AUCUN appel d'update : le dirty checking s'en charge (leçon 6)</pre>
+
+<h3>5. La check-list finale — et la passerelle vers Spring Data</h3>
+<pre class="pseudo">CHECK-LIST DE LA COUCHE DE PERSISTANCE
+[x] ddl-auto = validate : le schéma du Niveau 4 reste la référence
+[x] entités = POJO + constructeur sans argument, jamais final
+[x] toutes les associations @ManyToOne/@OneToMany en LAZY
+[x] côté inverse : mappedBy ; collections initialisées à la déclaration
+[x] un DAO par agrégat, EntityManager injecté, JPQL centralisé
+[x] JOIN FETCH sur chaque requête d'affichage traversant une relation
+[x] pagination systématique des listes (setFirstResult/setMaxResults)
+[x] écritures = transaction ; rollback dans le catch ; close en finally
+[x] sessions courtes ; flush/clear par paquets pour les imports</pre>
+<p>Regarde une dernière fois ton JeuDao : trouverParId, cataloguePagine, sauvegarder… Au Niveau 6, Spring Data JPA <strong>générera exactement ces méthodes</strong> à partir d'une interface : <em>interface JeuRepository extends JpaRepository&lt;Jeu, Long&gt;</em> te donnera findById, findAll(Pageable), save — mêmes persist/merge, même EntityManager, mêmes transactions via @Transactional. Tu ne découvriras rien de nouveau : tu reconnaîtras tout. EF Core, Eloquent et Django ORM organisent leurs projets selon le même triptyque entités / repositories / services transactionnels.</p>
+<div class="warn">Une synthèse n'est pas un copier-coller : si tu reprends ce modèle sans savoir justifier CHAQUE annotation (pourquoi LAZY ici, pourquoi mappedBy là, pourquoi merge et pas persist), retourne à la leçon correspondante avant l'examen de demain. L'examen balaie les 20 leçons.</div>
+<div class="tip">Range ton projet en trois paquets : <strong>entites</strong> (les 6 classes mappées), <strong>dao</strong> (JeuDao, MembreDao, LocationDao, AvisDao), <strong>service</strong> (LocationService avec louerJeu/rendreJeu et les transactions). Cette séparation deviendra naturellement entity/repository/service dans ton projet Spring Boot du Niveau 6.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans le modèle final, la relation Location → Jeu est mappée par…", opts: ["@OneToMany(mappedBy = \"jeu\")", "@ManyToOne(fetch = FetchType.LAZY) + @JoinColumn(name = \"jeu_id\")", "@ManyToMany", "@Embedded"], a: 1, exp: "Plusieurs locations pour un jeu : @ManyToOne côté Location, porteur de la FK jeu_id (leçon 8)." },
+    { type: "qcm", q: "Le côté Jeu de la relation avec Avis porte @OneToMany(mappedBy = \"jeu\") : cela signifie…", opts: ["Jeu porte la clé étrangère", "Le côté propriétaire est Avis.jeu ; Jeu n'est que le miroir", "La relation est EAGER", "Avis n'a pas de FK"], a: 1, exp: "mappedBy désigne l'attribut propriétaire côté Avis : une seule FK, deux points de vue (leçon 9)." },
+    { type: "qcm", q: "Adresse est annotée @Embeddable et non @Entity car…", opts: ["Elle n'a pas d'identité propre : ses colonnes vivent dans la table membre", "Elle est trop petite", "MySQL l'interdit", "Elle est final"], a: 0, exp: "Un composant embarqué : pas d'@Id, pas de table dédiée (leçon 11)." },
+    { type: "input", q: "Quel attribut de @OneToMany désigne le champ propriétaire du côté opposé ?", a: ["mappedBy", "mappedby", "mapped by"], ph: "nom de l'attribut…", exp: "mappedBy = \"jeu\" : le côté inverse ne génère ni FK ni table de jointure (leçon 9)." },
+    { type: "qcm", q: "Le rôle du motif DAO/Repository :", opts: ["Accélérer MySQL", "Centraliser l'accès aux données d'une entité derrière des méthodes métier", "Remplacer les transactions", "Générer le CSS"], a: 1, exp: "Le JPQL vit en un seul endroit ; le reste du code parle métier, pas SQL." },
+    { type: "qcm", q: "Dans JeuDao.sauvegarder, on choisit entre persist et merge selon…", opts: ["La taille de l'objet", "id null → persist (nouveau) ; id présent → merge (détaché)", "Le jour de la semaine", "Le type de la base"], a: 1, exp: "Nouveau = transient à persister ; déjà identifié = détaché à réconcilier (leçons 5-7)." },
+    { type: "qcm", q: "La requête des locations en retard filtre sur…", opts: ["dateRetourReelle IS NULL AND dateRetourPrevue &lt; :aujourdhui", "dateDebut = :aujourdhui", "note &lt; 3", "prixLocation IS NULL"], a: 0, exp: "Pas encore rendue (NULL) et échéance dépassée : la définition métier du retard." },
+    { type: "input", q: "Quelle fonction d'agrégat JPQL calcule la note moyenne d'un jeu ?", a: ["AVG", "avg", "AVG()", "avg()"], ph: "fonction…", exp: "SELECT AVG(a.note) FROM Avis a WHERE a.jeu.id = :jeuId — le calcul reste côté MySQL (leçon 14)." },
+    { type: "qcm", q: "Les requêtes d'affichage de la synthèse embarquent toutes JOIN FETCH parce que…", opts: ["C'est plus joli", "Le N+1 se prévient à la conception, requête par requête", "EAGER est activé partout", "MySQL l'exige"], a: 1, exp: "LAZY au mapping + fetch explicite au besoin : la doctrine des leçons 12 et 18." },
+    { type: "vf", q: "Dans rendreJeu, il faut appeler explicitement une méthode update() après setDateRetourReelle.", a: false, exp: "L'entité est gérée : le dirty checking génère l'UPDATE au commit (leçon 6)." },
+    { type: "qcm", q: "Dans louerJeu, begin/commit englobent les vérifications ET le persist parce que…", opts: ["C'est obligatoire pour les SELECT", "L'opération métier doit être atomique : tout réussit ou tout est annulé", "Le cache l'exige", "show_sql ne marche pas sinon"], a: 1, exp: "Une location à moitié créée est pire que pas de location : rollback si problème (leçon 17)." },
+    { type: "qcm", q: "Le try/catch de louerJeu contient « if (tx.isActive()) tx.rollback() » pour…", opts: ["Ne jamais laisser une transaction ouverte après un échec", "Relancer la requête", "Vider le cache de 2e niveau", "Fermer MySQL"], a: 0, exp: "Transaction orpheline = verrous conservés et connexion polluée : le rollback est non négociable." },
+    { type: "vf", q: "ddl-auto=validate garantit que les entités restent conformes au schéma MySQL du Niveau 4 sans jamais le modifier.", a: true, exp: "Hibernate vérifie au démarrage et refuse de démarrer en cas de divergence : la base reste la référence (leçon 4)." },
+    { type: "qcm", q: "Au Niveau 6, l'équivalent Spring Data de JeuDao sera…", opts: ["interface JeuRepository extends JpaRepository&lt;Jeu, Long&gt;", "class JeuRepository extends EntityManager", "un fichier jeu-repository.xml", "@RestController JeuDao"], a: 0, exp: "findById, findAll(Pageable), save : les méthodes que tu as écrites à la main, générées." },
+    { type: "vf", q: "L'organisation entites / dao / service est propre à Java et n'existe pas dans les autres piles.", a: false, exp: "EF Core, Eloquent et Django suivent le même triptyque : modèles, repositories/managers, services." }
+  ],
+  final: {
+    title: "Exercice final — La revue d'architecture",
+    intro: `<p>Dernière ligne droite avant l'examen : tu passes en revue la couche de persistance assemblée aujourd'hui, comme dans une vraie revue de code d'équipe. Chaque décision doit être défendable.</p>`,
+    questions: [
+      { type: "qcm", q: "Un collègue propose de mapper Membre.favoris en List avec EAGER « pour simplifier ». Ta réponse :", opts: ["D'accord, c'est plus simple", "Non : LAZY par défaut, Set pour l'unicité des favoris, et JOIN FETCH quand l'écran des favoris en a besoin", "On supprime la relation", "On passe en SQL natif partout"], a: 1, exp: "EAGER sur un @ManyToMany chargerait les favoris à CHAQUE lecture d'un membre (leçons 10, 12, 18)." },
+      { type: "qcm", q: "Où doit vivre la requête « locations en retard » ?", opts: ["Dans LocationDao, derrière une méthode nommée locationsEnRetard()", "Copiée-collée dans chaque écran", "Dans l'entité Location", "Dans le contrôleur"], a: 0, exp: "Le DAO centralise le JPQL : un seul endroit à corriger, tester, optimiser." },
+      { type: "vf", q: "louerJeu qui échoue après le persist mais avant le commit laisse une location fantôme en base.", a: false, exp: "Le rollback annule tout : l'INSERT planifié n'est jamais validé — c'est exactement le rôle de la transaction (leçon 17)." },
+      { type: "input", q: "Quelle valeur de ddl-auto verrouille le schéma en production ?", a: ["validate", "ddl-auto=validate", "hibernate.hbm2ddl.auto=validate"], ph: "valeur…", exp: "validate : Hibernate compare et refuse de démarrer si entités et tables divergent (leçon 4)." },
+      { type: "qcm", q: "Ce que Spring Data JPA changera au Niveau 6 dans cette architecture :", opts: ["Tout : il faudra réapprendre", "La forme seulement : interfaces générées et @Transactional remplacent tes DAO et begin/commit — la mécanique dessous est celle de ce cours", "Il supprimera les entités", "Il remplacera MySQL"], a: 1, exp: "Sous JpaRepository : le même EntityManager, le même persist/merge, le même dirty checking." }
+    ],
+    solution: `<pre class="pseudo">ARCHITECTURE FINALE DE LA LUDOTHÈQUE
+  entites/  : Jeu, Membre, Location, Avis, Categorie (+ Adresse @Embeddable)  // le mapping
+              → mapping fidèle au schéma Niveau 4, ddl-auto=validate
+  dao/      : JeuDao, MembreDao, LocationDao, AvisDao                         // l'accès aux données
+              → EntityManager injecté, JPQL centralisé, JOIN FETCH d'office
+              → cataloguePagine, locationsEnRetard, noteMoyenne(jeuId)
+  service/  : LocationService.louerJeu / rendreJeu                            // les opérations métier
+              → begin → vérifications → persist / dirty checking → commit
+              → rollback si échec, close en finally, session courte
+
+  DÉCISIONS DÉFENDUES EN REVUE
+  LAZY partout          → le coût se paie requête par requête (l.12, 18)
+  mappedBy côté inverse → une seule FK, pas de table parasite (l.9)
+  merge vs persist      → détaché vs nouveau (l.6, 7)
+  transaction métier    → atomicité de louerJeu (l.17)
+  pagination d'office   → jamais de findAll nu sur le catalogue (l.16)
+
+  NIVEAU 6 : interface JeuRepository extends JpaRepository&lt;Jeu, Long&gt;
+  + @Transactional sur les services = cette architecture, générée.</pre>
+<p>La couche de persistance de la Ludothèque est complète, cohérente et défendable ligne par ligne. Demain, dernier rendez-vous : l'examen de sortie qui balaie les 21 leçons — révise la check-list, et viens confiant.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "hibernate-l20", title: "La revue d'architecture écrite", level: 3,
+    statement: "Rédige la revue d'architecture officielle de ta couche de persistance, comme si tu la présentais à un lead developer qui découvre le projet. Pour chacun des cinq points suivants, décris le choix retenu ET la raison qui le rend meilleur que l'alternative : (1) stratégie de fetch des associations, (2) répartition des responsabilités entités / DAO / services, (3) gestion des transactions dans louerJeu et rendreJeu, (4) stratégie anti-N+1 sur les écrans de liste, (5) politique ddl-auto et rapport au schéma du Niveau 4. Termine par le paragraphe « dette et limites » : ce que cette architecture ne couvre pas encore.",
+    hints: [
+      "Pour chaque point, la structure gagnante : choix → alternative écartée → critère de décision (performance, cohérence, maintenabilité).",
+      "Le point 3 se juge sur un scénario d'échec : que se passe-t-il si la vérification de disponibilité passe mais que le commit échoue ?",
+      "Dette honnête : concurrence (deux louerJeu simultanés sur le même jeu), cache de 2e niveau non traité, migrations de schéma outillées (Flyway, Niveau 7)."
+    ],
+    solution: "REVUE D'ARCHITECTURE — couche de persistance Ludothèque\n\n1. FETCH : LAZY sur toutes les associations\n   Alternative écartée : EAGER ciblé « pour éviter les exceptions ».\n   Critère : avec EAGER, le coût est payé par TOUTES les requêtes ;\n   avec LAZY + JOIN FETCH, chaque écran paie exactement ce qu'il consomme.\n   La LazyInitializationException est traitée à la source : le fetch est\n   décidé dans le DAO, jamais dans la vue.\n\n2. RESPONSABILITÉS\n   Entités = mapping pur, fidèles au schéma Niveau 4, zéro logique d'accès.\n   DAO = tout le JPQL, une classe par agrégat, méthodes nommées métier.\n   Services = orchestration + transactions (louerJeu, rendreJeu).\n   Alternative écartée : em.find() disséminés — introuvables, intestables.\n\n3. TRANSACTIONS\n   Une transaction = une opération métier complète.\n   Scénario d'échec : vérification OK, persist planifié, commit qui échoue\n   (contrainte, connexion) → catch, tx.isActive() ? rollback, close en\n   finally. Aucune location fantôme possible : la base reste cohérente\n   par construction, pas par chance.\n\n4. ANTI-N+1\n   Règle : toute requête de liste qui traverse une relation embarque son\n   JOIN FETCH (locations + jeu + membre ; catalogue + catégorie).\n   Les agrégats (note moyenne) se calculent en JPQL (AVG), jamais en\n   itérant une collection LAZY. Vérification : revue show_sql par écran.\n\n5. SCHÉMA\n   ddl-auto=validate : la base MySQL du Niveau 4 est l'unique référence ;\n   Hibernate vérifie, ne modifie jamais. Alternative écartée : update,\n   qui dérive silencieusement et ne supprime jamais rien.\n\nDETTE ET LIMITES (assumées)\n   - Concurrence : deux louerJeu simultanés sur le même jeu peuvent passer\n     la vérification ensemble ; il faudra un verrou ou une contrainte\n     d'unicité en base (location active par jeu).\n   - Pas de cache de 2e niveau : choix volontaire, sessions courtes d'abord.\n   - Migrations de schéma manuelles : un outil type Flyway arrive au Niveau 7.",
+    note: "Cette revue est le livrable qui prouve la maîtrise : chaque annotation défendue par un critère, chaque limite connue et datée. Au Niveau 6, tu reprendras ce document quasi tel quel pour ton projet Spring Boot — seuls les mots changeront (JpaRepository, @Transactional), pas une seule décision." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

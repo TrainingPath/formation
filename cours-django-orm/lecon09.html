@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 9</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "La relation 1-N : related_name et les managers inverses",
+  subtitle: "loc.jeu fonctionne déjà ; place au sens inverse : « toutes les locations de Catan », en une phrase naturelle.",
+  theory: `
+<h3>1. Une relation se lit dans les deux sens</h3>
+<p>La leçon 8 t'a donné le sens N → 1 : <em>loc.jeu</em> remonte de la location vers son jeu. Mais la question métier la plus fréquente va dans l'autre sens : <strong>« toutes les locations de Catan »</strong>, « tous les avis de zelda42 » — le sens 1 → N (« un-à-plusieurs » : un jeu, plusieurs locations). Bonne nouvelle : tu n'as <strong>rien à déclarer</strong>. Dès qu'une ForeignKey existe, Django ouvre automatiquement le chemin inverse sur le modèle pointé, sous la forme d'un <strong>manager inverse</strong> (un « guichet » de requêtes déjà filtré pour cet objet) au nom par défaut : le nom du modèle en minuscules suivi de <em>_set</em> (« ensemble »).</p>
+<pre class="pseudo">&gt;&gt;&gt; loc.jeu                        # sens N → 1 (leçon 8)   # de la location vers son jeu
+&lt;Jeu: Catan&gt;                       # on obtient l'objet Jeu
+
+&gt;&gt;&gt; catan.location_set             # sens 1 → N : le manager inverse   # le guichet des locations de ce jeu
+&lt;django.db.models...RelatedManager object&gt;   # ce n'est pas une liste, c'est un manager
+&gt;&gt;&gt; catan.location_set.all()        # .all() = toutes les locations liees a Catan
+&lt;QuerySet [&lt;Location: Catan → zelda42&gt;, &lt;Location: Catan → mario_b&gt;]&gt;   # deux locations trouvees
+
+&gt;&gt;&gt; zelda.avis_set.all()           # même mécanique pour Avis   # les avis ecrits par zelda
+&lt;QuerySet [&lt;Avis: Avis de zelda42 sur Catan&gt;]&gt;   # un avis trouve</pre>
+
+<h3>2. location_set est un vrai manager</h3>
+<p>Ce n'est pas une simple liste : c'est un manager du même calibre que <em>Location.objects</em>, pré-filtré sur le jeu. Tout ce que tu connais s'applique — et tout reste des <strong>QuerySets paresseux</strong> (leçon 7) : construire ne coûte rien, seule l'évaluation requête.</p>
+<pre class="pseudo">&gt;&gt;&gt; catan.location_set.count()                              # → 12   # compte les locations de Catan (1 requete)
+&gt;&gt;&gt; en_cours = catan.location_set.filter(date_retour__isnull=True)   # date_retour vide = non rendu = en cours
+&gt;&gt;&gt; # 0 requête pour l'instant : paresse ordinaire (leçon 7)   # on n'a fait que decrire, rien n'est evalue
+
+&gt;&gt;&gt; catan.location_set.create(membre=zelda, prix_location=3.50)   # cree une location liee a Catan
+&gt;&gt;&gt; # create() via le manager inverse remplit jeu=catan TOUT SEUL   # inutile de repeter jeu=catan</pre>
+<p>Le <em>create()</em> du manager inverse est un petit bijou : il sait déjà pour quel jeu il travaille, inutile de répéter <em>jeu=catan</em>.</p>
+
+<h3>3. related_name : donner un vrai nom au sens inverse</h3>
+<p><em>catan.location_set</em> fonctionne, mais la phrase est laide. L'option <strong>related_name</strong> (« nom de la relation ») de la ForeignKey renomme le manager inverse. Nous l'adoptons définitivement pour la Ludothèque — voici les modèles mis à jour, canoniques pour toute la suite du cours :</p>
+<pre class="pseudo">class Location(models.Model):                          # modele Location
+    jeu = models.ForeignKey(Jeu, on_delete=models.PROTECT,   # FK vers Jeu (leçon 8)
+                            related_name="locations")        # sens inverse : catan.locations
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE,   # FK vers Membre
+                               related_name="locations")           # sens inverse : zelda.locations
+    ...                                                # (les autres champs, resumes)
+
+class Avis(models.Model):                              # modele Avis
+    jeu = models.ForeignKey(Jeu, on_delete=models.CASCADE,   # FK vers Jeu
+                            related_name="avis")             # sens inverse : catan.avis
+    membre = models.ForeignKey(Membre, on_delete=models.CASCADE,   # FK vers Membre
+                               related_name="avis")               # sens inverse : zelda.avis
+    ...                                                # (les autres champs, resumes)
+
+&gt;&gt;&gt; catan.locations.all()          # adieu location_set   # nouveau nom, plus lisible
+&gt;&gt;&gt; zelda.avis.count()             # compte les avis de zelda</pre>
+<p>Faut-il migrer ? Regarde ce que change related_name : le <strong>nom Python</strong> du chemin inverse, rien d'autre. Ni colonne, ni contrainte, ni index — <strong>la table MySQL ne change pas d'un octet</strong>. Lance makemigrations par propreté : ce qu'il génère éventuellement n'altère pas le schéma de la base.</p>
+
+<h3>4. Le related_name sert AUSSI dans les lookups inverses</h3>
+<p>Un <strong>lookup</strong> (« recherche ») est le mot-clé qu'on met dans un filter(). Le nom que tu choisis devient le mot-clé des filtres qui traversent la relation <strong>à rebours</strong> (du modèle pointé vers celui qui pointe), toujours avec le double underscore de la leçon 8 :</p>
+<pre class="pseudo">&gt;&gt;&gt; qs = Jeu.objects.filter(locations__membre__pseudo="zelda42")   # les jeux loues par zelda : Jeu -> locations -> membre
+&gt;&gt;&gt; print(qs.query)                # le réflexe, encore et toujours   # afficher le SQL prevu
+SELECT ... FROM ludotheque_jeu                                        -- on part de la table jeu
+INNER JOIN ludotheque_location ON (jeu.id = location.jeu_id)          -- jointure vers location
+INNER JOIN ludotheque_membre ON (location.membre_id = membre.id)      -- jointure vers membre
+WHERE ludotheque_membre.pseudo = zelda42                             -- condition sur le pseudo
+
+&gt;&gt;&gt; Membre.objects.filter(avis__note=5)            # les auteurs d'un 5/5   # Membre -> avis (note = 5)
+&gt;&gt;&gt; Membre.objects.filter(avis__note=5).distinct() # sans doublons !   # .distinct() supprime les repetitions</pre>
+<p>Attention au piège du JOIN inverse : un membre qui a laissé trois avis à 5 sort <strong>trois fois</strong> dans le résultat — une ligne de jointure par avis. <em>.distinct()</em> (« distinct ») élimine les doublons.</p>
+
+<h3>5. Collisions et lisibilité</h3>
+<p>Deux ForeignKey du même modèle vers la même cible ne peuvent pas partager le nom inverse par défaut : Django refuse au contrôle du modèle (collision d'accesseurs, c'est-à-dire deux chemins qui voudraient le même nom) et impose des <strong>related_name distincts</strong>. Convention : un <strong>pluriel parlant</strong>.</p>
+<pre class="pseudo">class Message(models.Model):                              # un message entre deux membres
+    expediteur = models.ForeignKey(Membre, on_delete=models.CASCADE,   # 1re FK vers Membre : l'envoyeur
+                                   related_name="messages_envoyes")     # sens inverse : zelda.messages_envoyes
+    destinataire = models.ForeignKey(Membre, on_delete=models.CASCADE,   # 2e FK vers Membre : le receveur
+                                     related_name="messages_recus")       # sens inverse : zelda.messages_recus
+
+&gt;&gt;&gt; zelda.messages_envoyes.count(), zelda.messages_recus.count()   # deux compteurs distincts</pre>
+<p>Même idée ailleurs : <strong>@OneToMany(mappedBy=…)</strong> chez Hibernate/JPA, la propriété de collection chez EF Core, <strong>hasMany</strong> chez Eloquent.</p>
+<div class="warn">Dès que tu poses related_name="locations", l'ancien <em>location_set</em> <strong>disparaît</strong> — les deux noms ne coexistent pas. Tout code écrit avec l'ancien nom casse : pose tes related_name tôt dans la vie du projet, pas après dix mille lignes.</div>
+<div class="tip">Choisis le related_name en lisant la phrase à voix haute : « catan.locations », « zelda.avis » — si la phrase est naturelle, le nom est bon. Un pluriel qui se lit comme du français est presque toujours le bon choix.</div>`,
+  exercises: [
+    { type: "qcm", q: "Sans related_name, le manager inverse de la FK jeu de Location s'appelle…", opts: ["catan.locations", "catan.location_set", "catan.get_locations()", "catan.inverse"], a: 1, exp: "Nom du modèle en minuscules + _set : c'est le défaut de Django." },
+    { type: "qcm", q: "La règle de nommage du manager inverse par défaut :", opts: ["Nom du modèle lié en minuscules suivi de _set", "Nom du champ suivi de _all", "Nom de la table MySQL", "Toujours related_objects"], a: 0, exp: "Location → location_set, Avis → avis_set : dérivé du nom du MODÈLE, pas du champ." },
+    { type: "qcm", q: "catan.location_set.filter(date_retour__isnull=True) renvoie…", opts: ["Les locations terminées de Catan", "Une erreur : un manager inverse ne se filtre pas", "Les locations en cours de Catan (pas encore rendues)", "Tous les jeux actuellement loués"], a: 2, exp: "date_retour NULL = jeu pas encore rendu ; le manager inverse se filtre comme objects." },
+    { type: "qcm", q: "catan.locations.create(membre=zelda, prix_location=2.50)…", opts: ["Échoue : il manque l'argument jeu", "Crée la location en remplissant jeu=catan automatiquement", "Crée un nouveau jeu", "Ne fait rien tant qu'on n'appelle pas save()"], a: 1, exp: "Le manager inverse sait pour quel jeu il travaille : jeu est rempli tout seul." },
+    { type: "vf", q: "Les résultats du manager inverse sont des QuerySets paresseux, comme ceux de la leçon 7.", a: true, exp: "Construire catan.locations.filter(...) ne coûte rien ; seule l'évaluation déclenche la requête." },
+    { type: "input", q: "L'option de ForeignKey qui renomme le manager inverse :", a: ["related_name", "related name"], ph: "un argument…", exp: "related_name='locations' → catan.locations remplace catan.location_set." },
+    { type: "qcm", q: "Après related_name='locations' sur Location.jeu, « toutes les locations de Catan » s'écrit…", opts: ["catan.location_set.all()", "catan.related.all()", "Jeu.locations.all()", "catan.locations.all()"], a: 3, exp: "Le nouveau nom remplace l'ancien, sur l'instance de Jeu." },
+    { type: "vf", q: "Après avoir posé related_name='locations', l'ancien catan.location_set continue de fonctionner en parallèle.", a: false, exp: "Les deux noms ne coexistent pas : location_set disparaît, le code qui l'utilisait casse." },
+    { type: "qcm", q: "Ajouter ou changer un related_name modifie-t-il la table MySQL ?", opts: ["Oui, la colonne jeu_id est renommée", "Oui, un index est ajouté", "Non : c'est un nom purement Python, le schéma de la table ne change pas", "Oui, la table est recréée"], a: 2, exp: "Ni colonne, ni contrainte, ni index : seul le nom du chemin inverse côté Python change." },
+    { type: "qcm", q: "Jeu.objects.filter(locations__membre__pseudo='zelda42') renvoie…", opts: ["Les jeux qu'a loués zelda42", "Les locations de zelda42", "Les membres qui ont loué Catan", "Une erreur : locations n'est pas un champ de Jeu"], a: 0, exp: "Le related_name sert de mot-clé dans les lookups inverses : on part de Jeu et on traverse à rebours." },
+    { type: "qcm", q: "Membre.objects.filter(avis__note=5) génère en SQL…", opts: ["Un JOIN de ludotheque_membre vers ludotheque_avis", "Deux requêtes successives", "Un UPDATE", "Une boucle Python sur les avis"], a: 0, exp: "Le lookup inverse se traduit en JOIN, comme au sens direct — print(qs.query) pour le voir." },
+    { type: "input", q: "La méthode à chaîner pour éliminer les doublons d'un lookup inverse :", a: ["distinct", "distinct()", ".distinct()"], ph: "qs.…", exp: "Un membre avec trois avis à 5 sortirait trois fois : .distinct() dédoublonne." },
+    { type: "qcm", q: "Deux ForeignKey d'un même modèle vers Membre (expediteur et destinataire d'un Message) exigent…", opts: ["Un seul related_name partagé", "Aucune précaution particulière", "Deux related_name distincts, sinon Django refuse (collision des accesseurs inverses)", "De renoncer à la seconde FK"], a: 2, exp: "Deux chemins inverses ne peuvent pas porter le même nom : messages_envoyes / messages_recus." },
+    { type: "qcm", q: "L'équivalent Hibernate/JPA du sens inverse d'une ForeignKey :", opts: ["@ManyToOne", "@OneToMany(mappedBy=…)", "@JoinColumn", "@Inverse"], a: 1, exp: "mappedBy joue le rôle du related_name ; EF Core expose une propriété de collection, Eloquent un hasMany." },
+    { type: "vf", q: "Un bon test de related_name : lire la phrase à voix haute — si « catan.locations » sonne naturel, le nom est bon.", a: true, exp: "Convention : un pluriel parlant, lisible comme du français." }
+  ],
+  final: {
+    title: "Exercice final — La relation à double sens",
+    intro: `<p>ForeignKey à l'aller (leçon 8), manager inverse au retour : vérifions que tu circules dans les deux sens sans regarder la carte.</p>`,
+    questions: [
+      { type: "qcm", q: "Sans aucun related_name, « toutes les locations de Catan » s'écrit…", opts: ["catan.location_set.all()", "catan.locations.all()", "Location.objects.inverse(catan)", "catan.all_locations()"], a: 0, exp: "Le défaut : nom du modèle en minuscules + _set." },
+      { type: "qcm", q: "Avec related_name='avis' sur Avis.membre, « les avis de zelda » s'écrit…", opts: ["zelda.avis_set.all()", "zelda.avis.all()", "Avis.zelda.all()", "zelda.get_avis()"], a: 1, exp: "Le related_name remplace le défaut avis_set." },
+      { type: "vf", q: "Poser un related_name exige un ALTER TABLE sur MySQL.", a: false, exp: "Aucun changement de schéma : c'est un renommage purement Python du chemin inverse." },
+      { type: "input", q: "Le suffixe du manager inverse par défaut :", a: ["_set", "set"], ph: "location…", exp: "location_set, avis_set — jusqu'à ce qu'un related_name le remplace." },
+      { type: "qcm", q: "Membre.objects.filter(locations__jeu__titre='Catan').distinct() renvoie…", opts: ["Les membres ayant loué Catan, sans doublons", "Les locations de Catan", "Les jeux loués par zelda42", "Une erreur"], a: 0, exp: "Lookup inverse en deux sauts (locations puis jeu), dédoublonné car un membre peut avoir loué Catan plusieurs fois." }
+    ],
+    solution: `<pre class="pseudo">Sens N → 1  : loc.jeu (leçon 8)                                        # de la location vers son jeu
+Sens 1 → N  : manager inverse automatique — défaut : location_set, avis_set   # du jeu vers ses locations
+Vrai manager: .all() / .filter(...) / .count() / .create(...) (jeu rempli seul)   # comme Location.objects, pre-filtre
+              → QuerySets paresseux, comme toujours (leçon 7)          # rien n'est evalue avant le besoin
+related_name: renomme le sens inverse → catan.locations, zelda.avis    # noms lisibles
+              (location_set disparaît ; la table MySQL ne change pas)  # renommage purement Python
+Lookups     : Jeu.objects.filter(locations__membre__pseudo='zelda42')  # filtrer a rebours via le related_name
+              Membre.objects.filter(avis__note=5).distinct()  ← doublons !   # .distinct() dedoublonne
+Collisions  : deux FK vers le même modèle = deux related_name distincts   # sinon Django refuse
+Ailleurs    : @OneToMany(mappedBy=…) (JPA) · collection (EF Core) · hasMany (Eloquent)   # equivalents</pre>
+<p>1-N maîtrisé dans les deux sens. Reste le cas où chaque côté en a plusieurs : leçon 10, « La relation N-N : ManyToManyField (les catégories de jeux) ».</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l9", title: "L'audit des sens inverses", level: 2,
+    statement: "Tu reprends le projet Ludothèque d'un ancien stagiaire : ses modèles Location et Avis n'ont AUCUN related_name, et son code est truffé de location_set et d'avis_set. Rédige un audit en trois parties. 1) Propose les related_name à poser sur les quatre ForeignKey (Location.jeu, Location.membre, Avis.jeu, Avis.membre) en justifiant chaque nom par le test de la phrase à voix haute. 2) Réécris ces cinq requêtes avec les nouveaux noms : catan.location_set.all() ; catan.location_set.filter(date_retour__isnull=True) ; zelda.avis_set.count() ; Jeu.objects.filter(location__membre__pseudo='zelda42') ; Membre.objects.filter(location__prix_location__gt=5). 3) Le stagiaire panique : « il va falloir migrer la base de production ! » — explique-lui précisément pourquoi la table MySQL ne bouge pas, et ce qui casse réellement dans son code.",
+    hints: [
+      "Le test de la phrase : « catan.??? » doit se lire comme « les locations de Catan » ; même exercice pour zelda et ses avis.",
+      "Dans les lookups inverses, le mot-clé par défaut est le nom du modèle en minuscules SANS _set (location__...) ; après renommage, c'est le related_name qui sert de mot-clé.",
+      "related_name ne touche ni colonne, ni contrainte, ni index — mais tout le code Python écrit avec les anciens noms, lui, casse immédiatement."
+    ],
+    solution: "1) Choix des related_name\n- Location.jeu → related_name='locations' : « catan.locations », les locations de Catan — naturel.\n- Location.membre → related_name='locations' : « zelda.locations », les locations de zelda — naturel aussi (pas de collision : les deux FK partent de Location mais visent des modèles différents).\n- Avis.jeu → related_name='avis' : « catan.avis », les avis sur Catan.\n- Avis.membre → related_name='avis' : « zelda.avis », les avis de zelda.\n\n2) Les cinq requêtes réécrites\n- catan.location_set.all() → catan.locations.all()\n- catan.location_set.filter(date_retour__isnull=True) → catan.locations.filter(date_retour__isnull=True)\n- zelda.avis_set.count() → zelda.avis.count()\n- Jeu.objects.filter(location__membre__pseudo='zelda42') → Jeu.objects.filter(locations__membre__pseudo='zelda42')\n- Membre.objects.filter(location__prix_location__gt=5) → Membre.objects.filter(locations__prix_location__gt=5)\n(et penser à .distinct() si un même jeu ou membre peut sortir plusieurs fois)\n\n3) Pourquoi la base ne bouge pas\n- related_name ne définit que le NOM PYTHON du chemin inverse : aucune colonne, contrainte ou index ne porte ce nom dans MySQL.\n- ludotheque_location garde exactement ses colonnes jeu_id et membre_id : le schéma de production est identique avant/après.\n- Ce qui casse vraiment : tout le code Python (vues, admin, scripts) écrit avec location_set et avis_set — les anciens noms disparaissent dès que les related_name sont posés. L'audit du code est obligatoire, pas celui de la base.",
+    note: "Ce travail de nommage est le prolongement direct de ta rigueur Merise du Niveau 4 : les cardinalités n'ont pas changé, seule la façon de les prononcer en Python s'améliore. Au Niveau 3, tes templates Django itéraient déjà sur ces relations sans que tu voies le manager inverse dessous. Au Niveau 6, des related_name lisibles rendront tes vues et tes serializers presque auto-documentés — et mappedBy (JPA) ou hasMany (Eloquent) te demanderont exactement le même soin." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

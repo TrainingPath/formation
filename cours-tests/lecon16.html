@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Tester le web : le client de test Django",
+  subtitle: "Un navigateur simulé en une ligne : self.client.get, et ta vue passe à l'interrogatoire.",
+  theory: `
+<h3>1. self.client : une requête HTTP sans serveur</h3>
+<p>Tester une vue à la main, c'est lancer le serveur, ouvrir le navigateur, cliquer… et recommencer à chaque modification. Django fournit mieux : chaque <code>TestCase</code> possède un <strong>client de test</strong> qui fabrique une requête <strong>HTTP</strong> (le langage par lequel un navigateur et un serveur web dialoguent : une demande d'un côté, une réponse de l'autre), la fait traverser <code>urls.py</code> (qui associe une adresse à une vue), la <strong>vue</strong> (la fonction qui traite la demande) et le <strong>template</strong> (le gabarit HTML qui met en forme la page), et te rend la réponse — sans serveur ni navigateur.</p>
+<pre class="pseudo">class TestListeJeux(TestCase):                      # regroupe les tests de la page liste des jeux
+    def test_la_page_repond(self):                  # test : la page /jeux/ repond-elle correctement ?
+        reponse = self.client.get("/jeux/")         # le client simule un navigateur qui DEMANDE la page /jeux/
+        self.assertEqual(reponse.status_code, 200)  # on verifie que le serveur a repondu 200 (= tout va bien)</pre>
+<p>En une ligne : Java a Spring MockMvc, ASP.NET Core a WebApplicationFactory, Laravel (PHP) a ses tests HTTP intégrés — la même idée partout.</p>
+
+<h3>2. Vérifier la réponse</h3>
+<p>Trois assertions couvrent l'essentiel. <code>status_code</code> : 200 (OK), 302 (redirection), 404 (introuvable). <code>assertTemplateUsed</code> : le bon template a servi. <code>assertContains</code> : le HTML contient un texte donné — et vérifie le status 200 au passage.</p>
+<pre class="pseudo">reponse = self.client.get("/jeux/")                 # on demande la page et on garde la reponse
+self.assertEqual(reponse.status_code, 200)          # 1) le code de statut vaut bien 200 (OK)
+self.assertTemplateUsed(reponse, "jeux/liste.html") # 2) c'est bien le bon gabarit HTML qui a servi
+self.assertContains(reponse, "Catan")               # 3) le HTML rendu contient le texte "Catan" (et status 200)</pre>
+
+<h3>3. La vue liste des jeux</h3>
+<p>On prépare un jeu disponible et un jeu loué, puis on vérifie ce que voit le visiteur : les jeux disponibles s'affichent, les jeux loués sont marqués indisponibles.</p>
+<pre class="pseudo">class TestListeJeux(TestCase):                      # tests de la liste, avec des donnees preparees
+    @classmethod
+    def setUpTestData(cls):                         # donnees creees une seule fois pour la classe
+        cls.catan = Jeu.objects.create(titre="Catan", prix_jour=2)   # un jeu DISPONIBLE
+        cls.dixit = Jeu.objects.create(titre="Dixit", prix_jour=1)   # un second jeu...
+        alice = Membre.objects.create(nom="Alice")  # un membre, pour pouvoir creer une location
+        Location.objects.create(jeu=cls.dixit, membre=alice)   # ...Dixit est LOUE par Alice (donc indisponible)
+
+    def test_jeu_loue_marque_indisponible(self):    # test : la page distingue-t-elle dispo et loue ?
+        reponse = self.client.get("/jeux/")         # on demande la liste
+        self.assertContains(reponse, "Catan")       # Catan (disponible) apparait bien
+        self.assertContains(reponse, "Indisponible")   # et le mot "Indisponible" apparait (pour Dixit)</pre>
+
+<h3>4. Le POST qui loue un jeu</h3>
+<p>Une action réussie redirige (302) puis <strong>modifie la base</strong>. Le test vérifie les deux : <code>assertRedirects</code> contrôle le voyage HTTP, la requête en base contrôle l'effet réel. Un POST qui redirige sans rien écrire est un bug que le status code seul ne verrait jamais.</p>
+<pre class="pseudo">    def test_louer_un_jeu(self):                    # test : un POST loue reellement le jeu
+        self.client.force_login(self.alice.user)    # on connecte Alice directement (sans le formulaire)
+        reponse = self.client.post(f"/jeux/{self.catan.id}/louer/")   # POST = action ; f"..." insere l'id du jeu dans l'URL
+        self.assertRedirects(reponse, "/jeux/")     # apres l'action, on doit etre redirige vers /jeux/
+        self.assertTrue(Location.objects.filter(    # et surtout : on verifie en BASE...
+            jeu=self.catan, date_retour=None).exists())   # ...qu'une location ACTIVE de Catan existe vraiment</pre>
+
+<h3>5. L'authentification</h3>
+<p><code>force_login</code> connecte un utilisateur d'un coup, sans rejouer le formulaire de connexion : tu testes TA vue, pas celle de Django. Et on vérifie qu'un anonyme est bien redirigé vers la page de connexion :</p>
+<pre class="pseudo">    def test_anonyme_redirige_vers_connexion(self):  # test : un visiteur non connecte ne peut pas louer
+        reponse = self.client.post("/jeux/1/louer/") # il tente l'action sans etre connecte
+        self.assertRedirects(                        # il doit etre renvoye...
+            reponse, "/connexion/?next=/jeux/1/louer/")   # ...vers la page de connexion (?next = ou revenir apres)
+
+    def test_membre_connecte_peut_louer(self):       # test : un membre connecte, lui, est autorise
+        self.client.force_login(self.alice.user)     # on connecte Alice
+        reponse = self.client.post("/jeux/1/louer/") # elle tente la location
+        self.assertEqual(reponse.status_code, 302)   # 302 = redirection : l'action a ete acceptee</pre>
+<div class="warn">Vise des textes précis : <code>assertContains(reponse, "Jeu")</code> passera presque toujours, même si la vue est cassée. Vérifie « Catan » ou « Indisponible », pas un mot générique — un test qui ne peut pas échouer ne protège rien.</div>
+<div class="tip">Ces tests traversent urls, vue, template et base : ils sont plus lents que les unitaires. Pyramide toujours — quelques tests de vues bien choisis (liste, action, droits d'accès), et la logique métier reste testée en unitaire.</div>`,
+  exercises: [
+    { type: "qcm", q: "self.client.get(« /jeux/ ») fait quoi ?", opts: ["Simule une requête HTTP à travers urls, vue et template, sans serveur", "Lance un vrai navigateur", "Envoie une requête sur internet", "Démarre le serveur de développement"], a: 0, exp: "Tout se passe en mémoire : rapide et reproductible." },
+    { type: "qcm", q: "Le code de statut d'une page servie normalement :", opts: ["404", "500", "200", "302"], a: 2, exp: "200 = OK ; 302 = redirection ; 404 = introuvable." },
+    { type: "qcm", q: "Le code de statut d'une redirection :", opts: ["302", "200", "404", "418"], a: 0, exp: "C'est ce que renvoie un POST réussi qui redirige vers la liste." },
+    { type: "input", q: "Quelle assertion vérifie qu'un template précis a servi à rendre la page ?", a: ["assertTemplateUsed"], ph: "assert…", exp: "self.assertTemplateUsed(reponse, « jeux/liste.html »)." },
+    { type: "qcm", q: "assertContains(reponse, « Catan ») vérifie…", opts: ["seulement le status 200", "que le HTML contient le texte ET que le status est 200", "que la base contient Catan", "l'orthographe du template"], a: 1, exp: "Deux contrôles en une assertion." },
+    { type: "qcm", q: "Pour tester qu'un jeu loué apparaît indisponible, on prépare…", opts: ["un mock du navigateur", "un jeu et sa Location dans setUpTestData, puis un GET", "un fichier de config", "rien : Django devine"], a: 1, exp: "Données en base → requête → assertion sur le HTML rendu." },
+    { type: "qcm", q: "Après un POST qui loue un jeu, un bon test vérifie…", opts: ["uniquement le status code", "uniquement le HTML", "la redirection ET l'effet en base (la Location existe)", "la version de Django"], a: 2, exp: "Un POST qui redirige sans écrire en base est un bug invisible au status code." },
+    { type: "input", q: "Quelle assertion suit une redirection et vérifie sa cible ?", a: ["assertRedirects"], ph: "assert…", exp: "Elle contrôle le 302 et charge la page d'arrivée." },
+    { type: "qcm", q: "force_login sert à…", opts: ["créer un mot de passe", "connecter un utilisateur sans passer par le formulaire", "forcer la déconnexion", "bloquer les anonymes"], a: 1, exp: "On teste sa propre vue, pas le mécanisme de connexion de Django." },
+    { type: "qcm", q: "Un visiteur anonyme qui tente de louer un jeu est…", opts: ["accepté silencieusement", "redirigé vers la page de connexion (avec ?next=…)", "supprimé de la base", "mis en attente"], a: 1, exp: "Et le test le prouve avec assertRedirects." },
+    { type: "vf", q: "Le client de test Django nécessite que runserver tourne dans un autre terminal.", a: false, exp: "Aucun serveur : la requête traverse le code Django directement." },
+    { type: "vf", q: "Un POST peut rediriger correctement tout en n'écrivant rien en base ; il faut vérifier les deux.", a: true, exp: "assertRedirects pour le HTTP, une requête ORM pour l'effet réel." },
+    { type: "qcm", q: "L'équivalent Java du client de test Django :", opts: ["Checkstyle", "JUnit seul", "Spring MockMvc", "dotnet format"], a: 2, exp: "MockMvc simule les requêtes HTTP dans Spring, sans serveur." },
+    { type: "qcm", q: "Dans la pyramide, les tests de vues sont…", opts: ["plus nombreux que les unitaires", "aussi rapides que les unitaires", "à éviter complètement", "plus lents → moins nombreux, bien choisis"], a: 3, exp: "Liste, action, droits d'accès : l'essentiel, pas un test par pixel." },
+    { type: "vf", q: "assertContains(reponse, « Jeu ») est un test solide pour la liste des jeux.", a: false, exp: "Trop générique : il passerait même avec une vue cassée. Vise « Catan » ou « Indisponible »." }
+  ],
+  final: {
+    title: "Exercice final — La vue location au banc d'essai",
+    intro: `<p>Tu écris la suite de tests de la vue « louer un jeu ». Dernier contrôle des réflexes.</p>`,
+    questions: [
+      { type: "qcm", q: "self.client.get traverse dans l'ordre…", opts: ["template → vue → urls", "urls → vue → template", "la base seulement", "le navigateur"], a: 1, exp: "Le routage trouve la vue, la vue rend le template." },
+      { type: "input", q: "Quelle méthode du client envoie un formulaire ?", a: ["post", "client.post", "self.client.post"], ph: "get ou … ?", exp: "self.client.post(url, donnees) — le GET lit, le POST agit." },
+      { type: "qcm", q: "Le test complet d'un POST de location :", opts: ["assertRedirects + vérification en base", "status_code == 200 suffit", "un print de la réponse", "aucun test : c'est du HTML"], a: 0, exp: "Voyage HTTP + effet réel : les deux moitiés du contrat." },
+      { type: "vf", q: "force_login évite de rejouer le formulaire de connexion dans chaque test.", a: true, exp: "Un seul test dédié au parcours de connexion suffit ; les autres utilisent force_login." },
+      { type: "qcm", q: "Laravel (PHP) propose la même approche avec…", opts: ["ses tests HTTP intégrés", "black", "pytest-cov", "git bisect"], a: 0, exp: "Chaque framework web moderne a son client de test." }
+    ],
+    solution: `<pre class="pseudo">client.get / client.post : requête HTTP sans serveur ni navigateur
+Réponse   : status_code (200, 302, 404), assertTemplateUsed,
+            assertContains (texte précis !)
+Liste     : jeux disponibles affichés, loués marqués Indisponible
+POST      : assertRedirects + effet vérifié en base
+Auth      : force_login pour les tests ; anonyme → redirection
+            /connexion/?next=...</pre>
+<p>Ta Ludothèque est testée de la fonction pure jusqu'à la page web. Prochaine leçon : les robots qui relisent ton code avant les humains — flake8, black et les autres.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "tests-l16", title: "La vue « louer » sous surveillance", level: 3,
+    statement: "Rédige le plan de tests de la vue « louer un jeu » de la Ludothèque avec le client de test Django. Couvre au moins cinq scénarios : le GET de la liste, le POST réussi, le POST sur un jeu déjà loué, l'anonyme, le membre connecté. Pour chaque scénario, indique la requête envoyée (méthode + URL), les assertions HTTP (status, redirection, contenu) et, quand c'est pertinent, la vérification en base. Conclus en une phrase : lequel de ces scénarios attraperait un bug que les tests de modèles (leçon 15) ne voient pas ?",
+    hints: [
+      "Chaque ligne du plan : requête → assertion HTTP → assertion base (si le scénario modifie des données).",
+      "Le POST sur un jeu déjà loué doit échouer proprement : quel status ou quel message attends-tu, et surtout combien de Locations en base après ?",
+      "Les tests de modèles ne voient ni les URLs, ni les droits d'accès : cherche le scénario qui teste précisément cela."
+    ],
+    solution: "Scénario                | Requête                     | Assertions HTTP                      | Base\n------------------------+-----------------------------+--------------------------------------+---------------------------\nListe des jeux          | GET /jeux/                  | 200, template liste.html,            | —\n                        |                             | contient « Catan », « Indisponible » |\nLocation réussie        | POST /jeux/1/louer/         | assertRedirects vers /jeux/          | Location active existe\n(connecté, jeu dispo)   | après force_login           |                                      |\nJeu déjà loué           | POST /jeux/2/louer/         | 200 avec message d'erreur            | toujours 1 seule Location\n                        |                             | (ou redirection + message)           |\nAnonyme                 | POST /jeux/1/louer/         | assertRedirects vers                 | aucune Location créée\n                        | sans login                  | /connexion/?next=...                 |\nMembre connecté (GET)   | GET /jeux/1/louer/          | 200, formulaire affiché              | —\n\nConclusion : le scénario « anonyme » attrape un bug invisible aux tests\nde modèles — un décorateur login_required oublié laisse la base parfaite\nmais l'application grande ouverte.",
+    note: "Ce plan mélange volontairement HTTP et base : c'est la signature des tests de vues. Le scénario « anonyme » est aussi un test de sécurité — le cours sécurité web parlera de contrôle d'accès, et ta CI (cours CI/CD) rejouera ce garde-fou à chaque push." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

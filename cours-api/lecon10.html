@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 10</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Query params : filtrer, trier, paginer",
+  subtitle: "Le catalogue a grossi : 87 jeux d'un bloc, plus personne n'en veut.",
+  theory: `
+<h3>1. Le problème : la collection grossit</h3>
+<p>La Ludothèque a maintenant 87 jeux. Demain, 500. <code>GET /jeux</code> qui renvoie tout d'un bloc devient lent, lourd, inutilisable pour un écran mobile. La solution vit après le <code>?</code> de l'URL : la <strong>query string</strong> (vue leçon 1), une liste de paires <code>cle=valeur</code> séparées par <code>&amp;</code>. Un mot sur les <strong>query params</strong> (« paramètres de requête ») du titre : ce sont justement ces paires — de petites options qu'on accroche à l'URL pour préciser sa demande. Règle d'or de la leçon : <strong>le chemin identifie la ressource, la query string la raffine</strong>. <code>/jeux?disponible=true</code> reste la collection des jeux — juste une vue réduite.</p>
+
+<h3>2. Filtrer et chercher</h3>
+<p><strong>Filtrer</strong>, c'est ne garder que les éléments qui répondent à un critère. Un filtre = un champ + une valeur attendue. Ils se combinent librement avec <code>&amp;</code> (logique ET : toutes les conditions doivent être vraies). Pour une <strong>recherche</strong> texte libre (retrouver un mot n'importe où), la convention est un paramètre nommé <code>q</code> (comme <em>query</em>).</p>
+<pre class="pseudo">GET /jeux?disponible=true                        → les jeux louables       # ?disponible=true : filtre → ne garder que les jeux disponibles
+GET /jeux?categorie=strategie                    → les jeux de stratégie   # filtre sur le champ "categorie"
+GET /jeux?categorie=strategie&amp;disponible=true    → les deux à la fois      # deux filtres liés par &amp; = logique ET (les DEUX conditions)
+GET /jeux?q=catan                                → recherche « catan »     # ?q=… : recherche texte libre…
+                                                   (titre, éditeur…)        # …cherchée dans le titre, l'éditeur, etc.</pre>
+<p>Le serveur renvoie <strong>200 + un tableau</strong>, éventuellement vide — un filtre sans résultat n'est pas une erreur.</p>
+
+<h3>3. Trier</h3>
+<p><strong>Trier</strong>, c'est ranger les résultats dans un certain ordre. Un paramètre de tri désigne le champ ; un <code>-</code> (signe moins) placé devant inverse l'ordre. La Ludothèque adopte <code>tri</code> (beaucoup d'API disent <code>ordering</code> ou <code>sort</code> — peu importe, du moment que c'est documenté et cohérent).</p>
+<pre class="pseudo">GET /jeux?tri=titre        → ordre alphabétique des titres   # ?tri=titre : trie par titre, ordre croissant (A → Z)
+GET /jeux?tri=-annee       → du plus récent au plus ancien   # le « - » devant le champ INVERSE l'ordre (décroissant)
+GET /jeux?categorie=strategie&amp;tri=-annee                     # on COMBINE un filtre (catégorie) ET un tri sur la même requête
+                           → filtre + tri combinés           # résultat : jeux de stratégie, du plus récent au plus ancien</pre>
+
+<h3>4. Paginer : par pages ou par curseur d'offset</h3>
+<p><strong>Paginer</strong>, c'est découper une grande collection en petits paquets (des « pages ») pour ne pas tout envoyer d'un coup. Deux styles dominent : <code>page</code> + <code>page_size</code> (« donne-moi la page 2, par paquets de 20 ») ou <code>limit</code> + <code>offset</code> (« donne-moi 20 résultats à partir du 40<sup>e</sup> » — l'<em>offset</em> étant le nombre d'éléments à sauter au début). La Ludothèque adopte le style page, celui de DRF, avec une <strong>enveloppe</strong> — un objet qui emballe la page ET les informations pour naviguer :</p>
+<pre class="pseudo">GET /jeux?page=2&amp;page_size=20                    # demande la PAGE 2, par paquets de 20 résultats
+                                               # (ligne vide : voici la réponse du serveur)
+HTTP/1.1 200 OK                                # succès
+{                                              # début de l'« enveloppe » de pagination (un objet JSON)
+  "count": 87,                                 # count = nombre TOTAL de résultats (toutes pages confondues)
+  "next": "https://api.ludotheque.example/jeux?page=3&amp;page_size=20",     # next = URL toute prête de la page SUIVANTE
+  "previous": "https://api.ludotheque.example/jeux?page=1&amp;page_size=20", # previous = URL de la page PRÉCÉDENTE
+  "results": [ { "id": 21, "titre": "7 Wonders", ... }, ... ]              # results = les 20 jeux de la page demandée
+}                                              # fin de l'enveloppe</pre>
+<p><code>count</code> = total de résultats, <code>next</code>/<code>previous</code> = URLs prêtes à l'emploi (ou <code>null</code> en bout de liste), <code>results</code> = la page demandée. Le front n'a rien à calculer : il suit les liens.</p>
+
+<h3>5. Valider les paramètres — et une ligne de DRF par besoin</h3>
+<p>Que faire de <code>?page=abc</code> ou <code>?tri=prix_magique</code> ? Une valeur <strong>invalide</strong> mérite un <strong>400</strong> avec un message clair. Pour un paramètre <strong>inconnu</strong>, deux écoles : l'ignorer silencieusement ou renvoyer 400 ; la Ludothèque choisit 400 (une faute de frappe silencieuse, c'est un bug invisible). Choisis et documente. Côté implémentation, DRF fait tout ça en une ligne par besoin :</p>
+<pre class="pseudo">class JeuViewSet(viewsets.ModelViewSet):             # la vue CRUD des jeux (vue à la leçon 9)
+    queryset = Jeu.objects.all()                     # les données de départ : tous les jeux
+    serializer_class = JeuSerializer                 # le traducteur JSON de la ressource
+    filterset_fields = ["categorie", "disponible"]   # active les filtres ?categorie=… et ?disponible=…
+    ordering_fields = ["titre", "annee"]             # autorise le tri ?ordering=-annee (ou titre)
+    search_fields = ["titre", "editeur"]             # active la recherche texte ?search=catan</pre>
+<p>Équivalents une ligne : Spring <code>@RequestParam</code>, Laravel <code>$request-&gt;query('categorie')</code>, ASP.NET Core <code>[FromQuery]</code>.</p>
+<div class="warn">Ne publie JAMAIS une collection sans pagination par défaut : le jour où la table atteint 100 000 lignes, chaque GET assomme la base de données et le réseau. Une <code>page_size</code> par défaut (20) et un maximum (100) protègent le serveur ET les clients.</div>
+<div class="tip">Relis chaque URL avec la règle d'or : <em>le chemin identifie, la query raffine</em>. Si un paramètre change la NATURE de ce qui est renvoyé (autre ressource), c'est un signe qu'il te faut plutôt un autre chemin.</div>`,
+  exercises: [
+    { type: "qcm", q: "La query string commence après quel caractère ?", opts: ["#", "?", "/", "!"], a: 1, exp: "/jeux?disponible=true — tout ce qui suit le ? raffine." },
+    { type: "qcm", q: "Le rôle de ?disponible=true sur GET /jeux :", opts: ["Créer un jeu disponible", "Filtrer la collection : seulement les jeux louables", "Modifier tous les jeux", "Changer de ressource"], a: 1, exp: "Même ressource, vue réduite." },
+    { type: "qcm", q: "?categorie=strategie&amp;disponible=true signifie…", opts: ["Stratégie OU disponible", "Stratégie ET disponible", "Une erreur de syntaxe", "Le tri par catégorie"], a: 1, exp: "Les filtres combinés par &amp; s'additionnent (logique ET)." },
+    { type: "qcm", q: "?tri=-annee renvoie les jeux…", opts: ["Sans leur année", "De l'année la plus récente à la plus ancienne", "De la plus ancienne à la plus récente", "D'une année négative"], a: 1, exp: "Le - devant le champ inverse l'ordre." },
+    { type: "qcm", q: "page/page_size et limit/offset sont…", opts: ["Deux styles de pagination", "Un filtre et un tri", "Des en-têtes HTTP", "Des codes de statut"], a: 0, exp: "La Ludothèque choisit page/page_size, le style de DRF." },
+    { type: "qcm", q: "Dans l'enveloppe DRF, « count » contient…", opts: ["Le nombre d'éléments de la page", "Le nombre total de résultats de la recherche", "Le numéro de page", "Le temps de réponse"], a: 1, exp: "87 jeux au total, même si la page n'en montre que 20." },
+    { type: "qcm", q: "Quand il n'y a pas de page suivante, « next » vaut…", opts: ["0", "La première page", "null", "Une erreur 404"], a: 2, exp: "Le client sait qu'il est en bout de liste." },
+    { type: "qcm", q: "GET /jeux?page=abc devrait renvoyer…", opts: ["200 avec la page 1", "400 avec un message clair", "404", "500"], a: 1, exp: "Valeur invalide = erreur du client = 400." },
+    { type: "qcm", q: "Un filtre qui ne trouve aucun jeu renvoie…", opts: ["404", "204", "400", "200 avec un tableau vide"], a: 3, exp: "La collection existe, elle est juste vide : pas une erreur." },
+    { type: "qcm", q: "Dans DRF, les filtres par champ s'activent avec…", opts: ["filterset_fields", "@RequestParam", "Route::apiResource", "[FromQuery]"], a: 0, exp: "Les trois autres sont Spring, Laravel et ASP.NET Core." },
+    { type: "vf", q: "La query string change la ressource identifiée par le chemin.", a: false, exp: "Elle la RAFFINE : /jeux?disponible=true reste la collection des jeux." },
+    { type: "vf", q: "Une page_size par défaut et un maximum protègent le serveur.", a: true, exp: "Sinon, un client peut demander 100 000 lignes d'un coup." },
+    { type: "vf", q: "?q=catan est une convention courante pour la recherche texte.", a: true, exp: "q comme query — on la voit partout, de Google aux API REST." },
+    { type: "input", q: "Le caractère qui sépare deux paramètres dans la query string :", a: ["&", "&amp;", "et commercial"], ph: "caractère", exp: "?categorie=strategie&amp;tri=titre." },
+    { type: "input", q: "Le champ de l'enveloppe DRF qui donne le total de résultats :", a: ["count", "\"count\""], ph: "champ", exp: "count: 87 — le front peut afficher « 87 jeux trouvés »." }
+  ],
+  final: {
+    title: "Exercice final — Raffiner sans dénaturer",
+    intro: `<p>Filtres, tri, pagination : la collection /jeux est désormais utilisable à n'importe quelle taille.</p>`,
+    questions: [
+      { type: "qcm", q: "L'URL pour la 2e page des jeux de stratégie, 20 par page :", opts: ["/jeux/strategie/page/2", "/jeux?categorie=strategie&amp;page=2&amp;page_size=20", "/page2/jeux?categorie=strategie", "/jeux/2?taille=20"], a: 1, exp: "Le chemin reste /jeux ; tout le raffinage vit dans la query string." },
+      { type: "qcm", q: "La règle d'or de la leçon :", opts: ["La query identifie, le chemin raffine", "Le chemin identifie la ressource, la query string la raffine", "Un paramètre par requête maximum", "Toujours trier par id"], a: 1, exp: "À réciter avant de concevoir chaque URL." },
+      { type: "vf", q: "Grâce à next et previous, le client navigue sans calculer d'URL.", a: true, exp: "Il suit les liens fournis par l'enveloppe." },
+      { type: "input", q: "La valeur du paramètre tri pour l'année décroissante :", a: ["-annee", "tri=-annee", "-année"], ph: "valeur", exp: "Le - inverse l'ordre : du plus récent au plus ancien." },
+      { type: "input", q: "Le code de statut pour ?page=abc (valeur invalide) :", a: ["400"], ph: "code", exp: "Erreur côté client : 400 Bad Request avec un message clair." }
+    ],
+    solution: `<pre class="pseudo">Filtrer  : /jeux?disponible=true · ?categorie=strategie · combinés par &amp;   # un filtre = un champ + une valeur ; & = logique ET
+Chercher : /jeux?q=catan                                                    # ?q= : recherche texte libre
+Trier    : /jeux?tri=titre · /jeux?tri=-annee (décroissant)                 # le « - » inverse l'ordre
+Paginer  : /jeux?page=2&amp;page_size=20                                        # découper la collection en pages
+           → { "count": 87, "next": "…", "previous": "…", "results": […] }  # l'enveloppe : total + liens + page
+Valider  : valeur invalide → 400 ; page_size par défaut + maximum           # refuser proprement les paramètres fautifs
+                                                                            # ↓ à retenir ↓
+Règle d'or : le chemin IDENTIFIE, la query string RAFFINE.</pre>              # la phrase-clé de la leçon
+<p>Notre collection sait se raffiner. Prochaine leçon : relier les ressources entre elles — les avis d'un jeu, les locations d'un membre, et le chemin /jeux/5/avis.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "api-l10", title: "La query string de GET /locations", level: 2,
+    statement: "L'équipe front de la Ludothèque a besoin d'un tableau de bord des locations : voir les locations en cours, celles d'un membre donné, celles qui ont commencé entre deux dates, les plus récentes d'abord, par pages de 25. Conçois la query string complète de GET /locations : liste chaque paramètre (nom, valeurs possibles, exemple), montre deux URLs complètes combinant plusieurs paramètres, et précise le comportement pour un paramètre invalide.",
+    hints: [
+      "Un filtre par champ du JSON de location : statut, membre, jeu… Quel nom et quelles valeurs pour chacun ?",
+      "Un intervalle de dates demande DEUX paramètres (par exemple date_debut_min et date_debut_max) — un seul ne suffit pas.",
+      "N'oublie ni le tri (quel champ par défaut ? le - pour inverser) ni la pagination (page, page_size, valeurs par défaut), ni le code pour ?statut=nimporte_quoi."
+    ],
+    solution: "Paramètres de GET /locations :\n- statut          : en_cours | terminee        ex. ?statut=en_cours\n- membre          : id de membre               ex. ?membre=12\n- jeu             : id de jeu                  ex. ?jeu=5\n- date_debut_min  : date AAAA-MM-JJ (incluse)  ex. ?date_debut_min=2026-07-01\n- date_debut_max  : date AAAA-MM-JJ (incluse)  ex. ?date_debut_max=2026-07-31\n- tri             : date_debut | -date_debut (défaut : -date_debut)\n- page, page_size : pagination (défauts : page=1, page_size=25, max 100)\n\nExemples combinés :\nGET /locations?statut=en_cours&membre=12&tri=-date_debut\nGET /locations?date_debut_min=2026-07-01&date_debut_max=2026-07-31&page=2&page_size=25\n\nComportement d'erreur :\n?statut=nimporte_quoi ou ?page=abc → 400 + message indiquant\nle paramètre fautif et les valeurs acceptées.\nRéponse normale : enveloppe { count, next, previous, results }.",
+    note: "Ce cahier des charges se traduit presque mot à mot en filterset_fields et ordering côté DRF, en @RequestParam côté Spring ou en [FromQuery] côté ASP.NET Core. Et c'est exactement ce que consommera ton front dans le capstone : un tableau de bord paginé n'est rien d'autre qu'une boucle sur next." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

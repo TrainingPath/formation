@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 7</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "L'architecture en couches",
+  subtitle: "Controller → Service → Repository : chaque classe à sa place.",
+  theory: `
+<h3>1. Pourquoi des couches ?</h3>
+<p>Une <strong>couche</strong> est un étage de l'application regroupant des classes qui jouent le même rôle. Tu as vu apparaître trois familles de classes. Ce n'est pas un hasard : c'est LE modèle d'<strong>architecture</strong> (l'organisation générale du code) des applications Spring. <strong>Analogie</strong> : un restaurant a une salle (le serveur prend la commande), une cuisine (le chef décide et cuisine) et un garde-manger (on y range et on y prend les ingrédients). Chacun son rôle, personne ne fait le travail de l'autre.</p>
+<pre class="pseudo">        REQUÊTE HTTP                            // une requête arrive du navigateur
+             ↓
+┌───────────────────────────┐
+│  CONTROLLER (couche web)  │  reçoit, valide la forme, répond   // le "serveur" de salle
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│  SERVICE (couche métier)  │  règles de gestion, décisions      // le "chef" en cuisine
+└─────────────┬─────────────┘
+              ↓
+┌───────────────────────────┐
+│ REPOSITORY (couche données)│ lit/écrit la base de données      // le "magasinier"
+└───────────────────────────┘</pre>
+<h3>2. La règle d'or : chacun son métier</h3>
+<ul>
+<li><strong>Controller</strong> : traduit HTTP ↔ Java. AUCUNE règle métier. Pas de SQL. Mince comme une feuille.</li>
+<li><strong>Service</strong> : le cerveau. « Un membre ne peut pas emprunter plus de 5 livres », « un livre indisponible ne peut pas être emprunté ». Ne connaît RIEN de HTTP (pas de ResponseEntity ici !).</li>
+<li><strong>Repository</strong> : le magasinier. Stocke et retrouve. AUCUNE décision.</li>
+</ul>
+<h3>3. Exemple complet : emprunter un livre</h3>
+<pre class="pseudo">// CONTROLLER — traduit la requête, délègue, traduit la réponse
+@PostMapping("/{livreId}/emprunts")                      // POST /api/livres/{livreId}/emprunts
+public ResponseEntity&lt;Emprunt&gt; emprunter(@PathVariable int livreId,      // livre concerné (dans le chemin)
+                                         @RequestBody EmpruntDto dto) {  // données de l'emprunt (dans le corps)
+    Emprunt e = empruntService.emprunter(dto.getMembreId(), livreId);   // le contrôleur DÉLÈGUE au service
+    return ResponseEntity.status(201).body(e);           // 201 Created + l'emprunt créé
+}                                                        // fin de la méthode
+
+// SERVICE — les règles, et rien que les règles
+@Service                                                 // classe de logique métier
+public class EmpruntService {
+    public Emprunt emprunter(int membreId, int livreId) {  // la vraie logique de l'emprunt
+        Membre m = membreRepo.parId(membreId);           // on récupère le membre depuis le repository
+        Livre l = livreRepo.parId(livreId);              // on récupère le livre
+        if (!l.estDisponible())              // règle 1 : le livre doit être disponible
+            throw new LivreIndisponibleException(livreId);  // sinon on lève une exception métier
+        if (m.nbEmpruntsEnCours() >= 5)      // règle 2 : pas plus de 5 emprunts par membre
+            throw new PlafondAtteintException(membreId);    // sinon exception métier
+        l.setDisponible(false);                          // le livre devient indisponible
+        return empruntRepo.enregistrer(new Emprunt(m, l));  // on enregistre et on renvoie l'emprunt
+    }                                                    // fin de la méthode
+}                                                        // fin de la classe</pre>
+<h3>4. Le sens unique des dépendances</h3>
+<p>Une <strong>dépendance</strong> va toujours vers le bas : une couche peut appeler celle du dessous, jamais celle du dessus.</p>
+<pre class="pseudo">Controller → Service → Repository       ✅ toujours vers le bas
+Repository → Service                    ❌ JAMAIS vers le haut
+Controller → Repository (direct)        ❌ on ne saute pas d'étage</pre>
+<h3>5. Les paquets du projet</h3>
+<pre class="pseudo">com.exemple.biblio                                     // paquet racine
+├── controller/   LivreController, MembreController    // couche web
+├── service/      CatalogueService, EmpruntService     // couche métier
+├── repository/   LivreRepository, MembreRepository    // couche données
+├── model/        Livre, Membre, Emprunt               // les objets du domaine
+└── dto/          CreationLivreDto, InscriptionDto      // les contrats d'échange</pre>
+<div class="warn">Le test infaillible : si tu vois ResponseEntity dans un service, ou un calcul de plafond dans un contrôleur, ou un if métier dans un repository — quelque chose est au mauvais étage.</div>
+<div class="tip">Pourquoi tant d'efforts ? Parce que demain tu remplaceras le repository « en mémoire » par une vraie base (leçon 9) SANS TOUCHER ni au service ni au contrôleur. C'est ça, la récompense du découplage.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelles sont les trois couches classiques d'une application Spring ?", opts: ["HTML, CSS, JS", "Controller, Service, Repository", "Main, Classe, Objet", "GET, POST, DELETE"], a: 1, exp: "Web → métier → données : chaque requête descend les trois étages." },
+    { type: "qcm", q: "Où doit vivre la règle « maximum 5 emprunts par membre » ?", opts: ["Controller", "Service", "Repository", "Dans le navigateur"], a: 1, exp: "C'est une règle de gestion : couche métier." },
+    { type: "qcm", q: "Où écrit-on le code qui lit/écrit les données ?", opts: ["Controller", "Service", "Repository", "DTO"], a: 2, exp: "Le repository est le seul à toucher au stockage." },
+    { type: "qcm", q: "Que fait un contrôleur bien conçu ?", opts: ["Tout", "Il traduit HTTP ↔ Java et délègue au service", "Les calculs métier", "Les requêtes SQL"], a: 1, exp: "Recevoir, déléguer, répondre — rien d'autre." },
+    { type: "qcm", q: "Pourquoi un service ne doit-il pas manipuler ResponseEntity ?", opts: ["C'est trop lent", "ResponseEntity appartient au monde HTTP : le service doit rester indépendant de la couche web", "C'est interdit par le compilateur", "Question de mode"], a: 1, exp: "Un service qui parle HTTP n'est plus réutilisable (batch, tests, autre interface…)." },
+    { type: "qcm", q: "Un contrôleur qui appelle directement le repository, c'est…", opts: ["Une optimisation", "Un saut d'étage : les règles métier seraient contournées", "Obligatoire", "La nouvelle norme"], a: 1, exp: "Toute lecture/écriture doit passer par le service, gardien des règles." },
+    { type: "qcm", q: "Dans quel sens vont les dépendances ?", opts: ["Repository → Service → Controller", "Controller → Service → Repository", "Dans les deux sens", "Aucune dépendance"], a: 1, exp: "Toujours du haut vers le bas, jamais l'inverse." },
+    { type: "qcm", q: "Que fait le service quand une règle est violée (livre indisponible) ?", opts: ["Il renvoie un 404", "Il lève une exception métier (LivreIndisponibleException)", "Il fait un System.exit", "Il ignore"], a: 1, exp: "Le service signale par exception ; la traduction en code HTTP viendra à la leçon 13." },
+    { type: "qcm", q: "Dans quel paquet ranger CreationLivreDto ?", opts: ["controller/", "dto/", "model/", "repository/"], a: 1, exp: "Les DTO ont leur paquet : ils appartiennent au contrat de l'API." },
+    { type: "vf", q: "Le grand avantage des couches : on peut remplacer le stockage (mémoire → base SQL) sans modifier services ni contrôleurs.", a: true, exp: "Chaque couche ne connaît que l'interface de celle du dessous." },
+    { type: "qcm", q: "Un if (membre.nbEmprunts() >= 5) dans LivreController est…", opts: ["Parfait", "Une règle métier égarée dans la couche web : à déplacer dans le service", "Une règle de routage", "Obligatoire"], a: 1, exp: "Test infaillible : les if métier vivent dans les services." },
+    { type: "qcm", q: "Quelle couche est la plus facile à tester unitairement (sans serveur, sans base) ?", opts: ["Controller", "Service : de la logique Java pure avec des dépendances remplaçables", "Repository", "Aucune"], a: 1, exp: "Un service reçoit ses dépendances : on lui injecte des faux et on teste la logique." },
+    { type: "qcm", q: "La classe Livre (id, titre, auteur, disponible) appartient à quelle famille ?", opts: ["Controller", "Le modèle (model/) : elle représente les données du domaine", "Service", "Configuration"], a: 1, exp: "Ni web, ni logique, ni stockage : c'est le domaine, utilisé par toutes les couches." },
+    { type: "vf", q: "Un repository peut appeler un service pour vérifier une règle avant d'enregistrer.", a: false, exp: "Jamais vers le haut ! Les règles se vérifient AVANT, dans le service." },
+    { type: "qcm", q: "L'anti-modèle du « contrôleur obèse », c'est…", opts: ["Un contrôleur avec trop de routes", "Un contrôleur qui contient règles métier et accès aux données", "Un contrôleur trop commenté", "Un gros fichier CSS"], a: 1, exp: "Tout dans le contrôleur = intestable, induplicable, illisible. Les couches existent pour ça." }
+  ],
+  final: {
+    title: "Exercice final — Remettre chaque chose à sa place",
+    intro: `<p>Un stagiaire a écrit ce contrôleur. Fonctionnel… mais tout est au mauvais étage :</p>
+<pre class="pseudo">@RestController                                          // contrôleur d'API JSON
+@RequestMapping("/api/emprunts")                         // préfixe commun
+public class EmpruntController {
+    private final LivreRepository livreRepo;             // ⚠ le contrôleur touche DIRECTEMENT 3 repositories
+    private final MembreRepository membreRepo;           //   (saut d'étage : mauvais signe)
+    private final EmpruntRepository empruntRepo;
+    // ... constructeur ...                              // injection des 3 repositories
+
+    @PostMapping                                         // POST /api/emprunts
+    public ResponseEntity&lt;Emprunt&gt; emprunter(@RequestBody EmpruntDto dto) {  // données de l'emprunt
+        Livre l = livreRepo.parId(dto.getLivreId());     // ⚠ accès aux données depuis le contrôleur
+        Membre m = membreRepo.parId(dto.getMembreId());  // ⚠ idem
+        if (!l.estDisponible()) return ResponseEntity.status(409).build();       // ⚠ règle métier dans la couche web
+        if (m.nbEmpruntsEnCours() >= 5) return ResponseEntity.status(409).build();  // ⚠ autre règle métier égarée
+        l.setDisponible(false);                          // ⚠ modification de l'état ici
+        Emprunt e = empruntRepo.enregistrer(new Emprunt(m, l));  // ⚠ écriture directe en base
+        return ResponseEntity.status(201).body(e);       // 201 Created
+    }                                                    // fin de la méthode
+}                                                        // fin de la classe</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel est le problème architectural principal ?", opts: ["Trop de lignes", "Le contrôleur contient les règles métier et appelle directement 3 repositories", "Le nom de la classe", "Le statut 201"], a: 1, exp: "Saut d'étage + logique métier dans la couche web : le duo classique." },
+      { type: "qcm", q: "Que risque-t-on si une autre partie du code (un batch de nuit) doit aussi créer des emprunts ?", opts: ["Rien", "Dupliquer les règles (plafond, disponibilité) : elles sont enfermées dans le contrôleur", "Le batch est impossible en Java", "Les repositories vont planter"], a: 1, exp: "Règles dans un service = réutilisables partout. Dans un contrôleur = prisonnières du HTTP." },
+      { type: "qcm", q: "Première étape du refactoring :", opts: ["Tout supprimer", "Créer EmpruntService et y déplacer vérifications et enregistrement", "Renommer le contrôleur", "Passer en GET"], a: 1, exp: "Le service reçoit les repositories ; le contrôleur ne garde que la traduction HTTP." },
+      { type: "qcm", q: "Dans le service, que deviennent les deux « return 409 » ?", opts: ["Ils restent identiques", "Des exceptions métier (LivreIndisponibleException, PlafondAtteintException)", "Des return null", "Des System.out.println"], a: 1, exp: "Le service ne connaît pas les codes HTTP : il lève des exceptions parlantes." },
+      { type: "qcm", q: "Après refactoring, combien de dépendances le contrôleur garde-t-il ?", opts: ["3 repositories", "1 seule : EmpruntService", "0", "5"], a: 1, exp: "Le contrôleur ne voit plus que le service — l'architecture respire." }
+    ],
+    solution: `<pre class="pseudo">// SERVICE : les règles déménagent ici
+@Service                                                 // couche métier
+public class EmpruntService {
+    private final LivreRepository livreRepo;             // dépendances (repositories) injectées
+    private final MembreRepository membreRepo;
+    private final EmpruntRepository empruntRepo;
+    // ... constructeur d'injection ...
+
+    public Emprunt emprunter(int membreId, int livreId) {  // toute la logique est ICI, réutilisable
+        Livre l = livreRepo.parId(livreId);              // lecture des données
+        Membre m = membreRepo.parId(membreId);           // lecture des données
+        if (!l.estDisponible()) throw new LivreIndisponibleException(livreId);       // règle 1 → exception métier
+        if (m.nbEmpruntsEnCours() >= 5) throw new PlafondAtteintException(membreId);  // règle 2 → exception métier
+        l.setDisponible(false);                          // mise à jour de l'état
+        return empruntRepo.enregistrer(new Emprunt(m, l));  // enregistrement
+    }                                                    // fin de la méthode
+}                                                        // fin de la classe
+
+// CONTROLLER : mince à nouveau
+@RestController                                          // couche web
+@RequestMapping("/api/emprunts")                         // préfixe commun
+public class EmpruntController {
+    private final EmpruntService service;                // UNE seule dépendance : le service
+    public EmpruntController(EmpruntService service) { this.service = service; }  // injection
+
+    @PostMapping                                         // POST /api/emprunts
+    public ResponseEntity&lt;Emprunt&gt; emprunter(@RequestBody EmpruntDto dto) {  // données de l'emprunt
+        Emprunt e = service.emprunter(dto.getMembreId(), dto.getLivreId());  // délégation totale au service
+        return ResponseEntity.status(201).body(e);       // 201 Created + emprunt
+    }                                                    // fin de la méthode
+}                                                        // fin de la classe</pre>
+<p>Semaine 1 terminée ! Tu sais créer un projet, injecter des dépendances, exposer une API CRUD et l'organiser en couches. Semaine 2 : on branche une vraie base de données.</p>`
+  }
+};
+var ECRITURE = {
+  placeholder: "Écris ton code Java/Spring ici…",
+  items: [
+  { id: "spring-couches-retour", title: "Le retour d'un livre, en couches", level: 3,
+    statement: "Implémente le retour d'un livre dans les règles de l'art. Dans <code>EmpruntService</code> : une méthode <code>rendre(int empruntId)</code> qui récupère l'emprunt via <code>empruntRepo.parId(empruntId)</code> (lève <code>EmpruntIntrouvableException</code> si null), remet le livre disponible (<code>e.getLivre().setDisponible(true)</code>), clôture l'emprunt (<code>e.cloturer()</code>) et l'enregistre. Dans <code>EmpruntController</code> : la route <code>DELETE /api/emprunts/{id}</code> qui appelle le service et répond 204.",
+    hints: [
+      "Deux morceaux de code : la méthode du service (règles) et la méthode du contrôleur (HTTP).",
+      "Le service ne renvoie rien et ne parle jamais de ResponseEntity : il lève une exception si problème.",
+      "Le contrôleur : @DeleteMapping(\"/{id}\") + @PathVariable, puis ResponseEntity.noContent().build()."
+    ],
+    solution: "// --- SERVICE : les règles ---\n@Service\npublic class EmpruntService {\n    // ... dépendances et constructeur ...\n\n    public void rendre(int empruntId) {\n        Emprunt e = empruntRepo.parId(empruntId);   // chercher l'emprunt\n        if (e == null) {\n            // le service signale par exception, pas par code HTTP\n            throw new EmpruntIntrouvableException(empruntId);\n        }\n        e.getLivre().setDisponible(true);            // le livre redevient empruntable\n        e.cloturer();                                // date de retour, statut...\n        empruntRepo.enregistrer(e);                  // persistance de l'état\n    }\n}\n\n// --- CONTROLLER : la traduction HTTP ---\n@DeleteMapping(\"/{id}\")                            // DELETE /api/emprunts/12\npublic ResponseEntity<Void> rendre(@PathVariable int id) {\n    service.rendre(id);                              // délégation totale\n    return ResponseEntity.noContent().build();       // 204 : fait, rien à dire\n}",
+    note: "Et si l'exception EmpruntIntrouvableException remonte ? Pour l'instant : erreur 500. La leçon 13 (@ControllerAdvice) la transformera proprement en 404." }
+  ]
+};
+</script>
+<script src="engine.js"></script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "SQL brut quand il le faut : DB::raw et selectRaw",
+  subtitle: "L'ORM n'est pas une prison : il sait laisser passer du vrai SQL, proprement.",
+  theory: `
+<h3>1. Quand l'ORM ne suffit plus</h3>
+<p>Eloquent couvre 95 % de tes besoins : where, relations, agrégats. Mais parfois tu as besoin d'une <strong>fonction MySQL</strong> que l'ORM n'expose pas (DATEDIFF, YEAR, CONCAT), d'un <strong>calcul dans le SELECT</strong>, ou d'une requête très optimisée écrite à la main. Le <strong>SQL brut</strong> (« raw » = brut, cru) est cette porte de sortie : tu écris du vrai SQL au milieu de ta requête Eloquent (analogie : passer la voiture automatique en conduite manuelle le temps d'un virage difficile, puis revenir à l'automatique).</p>
+<pre class="pseudo">Besoin : la durée moyenne des locations par membre.
+En SQL pur : AVG(DATEDIFF(date_retour, date_location))
+→ aucune méthode Eloquent ne s'appelle avgDatediff(). On passe en raw.</pre>
+<p><em>Toutes les piles ont la même soupape : @Query natif chez Hibernate/JPA, FromSqlRaw chez EF Core, raw() chez l'ORM Django.</em></p>
+
+<h3>2. selectRaw et DB::raw : des colonnes calculées</h3>
+<p><strong>selectRaw</strong> remplace select() par une expression SQL libre. Le résultat arrive comme des attributs normaux sur tes modèles.</p>
+<pre class="pseudo">$stats = Location::selectRaw('membre_id, COUNT(*) AS nb, AVG(DATEDIFF(date_retour, date_location)) AS duree_moyenne')   // expression SQL libre dans le SELECT
+    -&gt;groupBy('membre_id')                                  // regroupe par membre
+    -&gt;get();                                                // exécute la requête
+
+foreach ($stats as $s) {                                    // parcourt chaque ligne de synthèse
+    echo $s-&gt;nb . ' locations, ' . $s-&gt;duree_moyenne . ' jours en moyenne';   // affiche les colonnes calculées
+}</pre>
+<p><strong>DB::raw</strong> injecte une expression brute au milieu d'un select() classique. N'oublie pas l'import : <strong>use Illuminate\\Support\\Facades\\DB;</strong></p>
+<pre class="pseudo">use Illuminate\\Support\\Facades\\DB;   // importe la façade DB (nécessaire pour DB::raw)
+
+$jeux = Jeu::select('titre', 'prix_location', DB::raw('prix_location * 30 AS prix_mensuel'))   // 2 colonnes réelles + 1 calculée
+    -&gt;get();                                                                                    // exécute la requête</pre>
+
+<h3>3. whereRaw, orderByRaw, havingRaw</h3>
+<p>Même principe pour les autres clauses. Les valeurs variables passent en <strong>bindings</strong> via un tableau : chaque <strong>?</strong> est remplacé par MySQL, jamais par concaténation (analogie : la valeur voyage dans une enveloppe scellée que MySQL ouvre à part, sans jamais la lire comme du code).</p>
+<pre class="pseudo">// Les jeux ajoutés une année donnée
+Jeu::whereRaw('YEAR(created_at) = ?', [2025])-&gt;get();   // fonction YEAR() ; 2025 passe en binding ?
+
+// Ruptures de stock en dernier, puis ordre alphabétique
+Jeu::orderByRaw('stock = 0, titre ASC')-&gt;get();         // tri par expression SQL brute
+
+// Membres avec une durée moyenne de location élevée
+Location::selectRaw('membre_id, AVG(DATEDIFF(date_retour, date_location)) AS duree')   // durée moyenne calculée en SQL
+    -&gt;groupBy('membre_id')                              // regroupe par membre
+    -&gt;havingRaw('duree &gt; ?', [10])                       // filtre les groupes (durée > 10) ; 10 en binding
+    -&gt;get();                                            // exécute la requête</pre>
+
+<h3>4. DB::select : la requête 100 % manuelle</h3>
+<p>Quand toute la requête est du SQL, <strong>DB::select</strong> l'exécute telle quelle, avec des bindings. Attention : le retour est un <strong>tableau d'objets stdClass</strong> (des objets bruts et génériques, sans méthodes), pas des modèles Eloquent. Pas de relations, pas de casts, pas de save().</p>
+<pre class="pseudo">$rows = DB::select(                            // exécute une requête SQL entièrement manuelle
+    'SELECT j.titre, COUNT(l.id) AS nb         -- titre du jeu + nombre de locations
+     FROM jeux j                               -- table des jeux
+     JOIN locations l ON l.jeu_id = j.id       -- jointure avec les locations
+     WHERE l.date_location &gt;= ?                 -- ? = binding fourni plus bas
+     GROUP BY j.titre                          -- une ligne par titre
+     ORDER BY nb DESC',                         -- du plus loué au moins loué
+    ['2026-01-01']                             // valeur du binding ?
+);                                             // fin de l'appel DB::select
+echo $rows[0]-&gt;titre;   // objet stdClass brut : lecture seule en pratique</pre>
+<p>Il existe aussi DB::insert, DB::update, DB::delete et DB::statement (pour du DDL). À réserver aux cas où Eloquent coince vraiment.</p>
+
+<h3>5. Le danger absolu : l'injection SQL</h3>
+<p>Dès que tu écris du raw, <strong>la protection automatique d'Eloquent disparaît</strong>. Un where('titre', $x) classique binde tout seul. Un whereRaw avec concaténation, lui, envoie la saisie utilisateur directement à MySQL : c'est la faille d'<strong>injection SQL</strong> vue au cours MySQL (analogie : coller la phrase du visiteur telle quelle dans un ordre officiel — s'il y glisse un ordre malveillant, il sera exécuté).</p>
+<pre class="pseudo">// CATASTROPHE : $titre vient d'un formulaire
+Jeu::whereRaw("titre = '" . $titre . "'")-&gt;get();   // saisie concaténée = faille d'injection
+// saisie : x' OR '1'='1  → toute la table sort
+
+// CORRECT : binding, la valeur reste une donnée
+Jeu::whereRaw('titre = ?', [$titre])-&gt;get();        // $titre voyage en binding, jamais comme du SQL</pre>
+<p>Règle unique : dans une chaîne raw, <strong>aucune valeur ne se concatène</strong>. Les noms de colonnes fixes, oui ; les valeurs, toujours en ?.</p>
+<div class="warn">Tout ce que tu passes à selectRaw, whereRaw, orderByRaw ou DB::select part <strong>tel quel</strong> vers MySQL. Une seule concaténation d'une saisie utilisateur suffit à ouvrir une injection SQL. Bindings « ? » systématiques, sans exception.</div>
+<div class="tip">Commence toujours par l'API fluide d'Eloquent ; ne passe en raw que quand une fonction SQL manque, et garde l'expression brute la plus courte possible (une colonne calculée, pas toute la requête). Ton code reste lisible et portable.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quand est-il légitime de passer au SQL brut avec Eloquent ?", opts: ["Dès qu'une requête a deux where", "Quand une fonction SQL ou un calcul n'est pas exprimable avec l'API fluide", "Jamais, c'est interdit", "Uniquement en production"], a: 1, exp: "L'ORM d'abord ; le raw est la soupape pour DATEDIFF, YEAR, calculs…" },
+    { type: "qcm", q: "selectRaw sert à…", opts: ["Supprimer des lignes", "Créer une table", "Écrire des colonnes calculées en SQL dans le SELECT", "Trier les résultats"], a: 2, exp: "Exemple : COUNT(*) AS nb, AVG(DATEDIFF(…)) AS duree." },
+    { type: "qcm", q: "Pour injecter une expression brute AU MILIEU d'un select() classique, on utilise…", opts: ["DB::raw('…')", "raw::DB('…')", "sql('…')", "DB::statement('…')"], a: 0, exp: "Jeu::select('titre', DB::raw('prix_location * 30 AS prix_mensuel'))." },
+    { type: "vf", q: "Jeu::whereRaw(\"titre = '\" . $saisie . \"'\") est une écriture sûre.", a: false, exp: "Concaténer une saisie utilisateur dans du raw = injection SQL. Toujours des bindings ?." },
+    { type: "qcm", q: "Dans une chaîne raw, les valeurs variables passent par…", opts: ["Des accolades", "La concaténation avec .", "Le symbole ? et un tableau de bindings", "Des guillemets triples"], a: 2, exp: "whereRaw('YEAR(created_at) = ?', [2025]) : MySQL reçoit la valeur séparément." },
+    { type: "input", q: "Quelle méthode permet de trier selon une expression SQL brute (ex : stock = 0, titre ASC) ?", a: ["orderByRaw", "orderbyraw", "orderByRaw()"], ph: "nom de la méthode…", exp: "orderByRaw('stock = 0, titre ASC') : les ruptures de stock passent en dernier." },
+    { type: "qcm", q: "DB::select('SELECT …', [bindings]) renvoie…", opts: ["Une collection de modèles Eloquent", "Un tableau d'objets stdClass, sans relations ni casts", "Un booléen", "Une chaîne JSON"], a: 1, exp: "Résultat brut : pas de save(), pas de relations, pas de casts." },
+    { type: "qcm", q: "L'import correct de la façade DB :", opts: ["use App\\Models\\DB;", "use Laravel\\DB;", "use DB\\Facade;", "use Illuminate\\Support\\Facades\\DB;"], a: 3, exp: "La façade vit dans Illuminate\\Support\\Facades." },
+    { type: "vf", q: "Les objets renvoyés par DB::select ont accès aux relations définies dans les modèles.", a: false, exp: "Ce sont des stdClass bruts : Eloquent n'est pas passé par là." },
+    { type: "qcm", q: "Durée moyenne des locations par membre : la bonne combinaison est…", opts: ["selectRaw('membre_id, AVG(DATEDIFF(date_retour, date_location)) AS duree') + groupBy('membre_id')", "avg('duree')", "where('duree', 'moyenne')", "orderBy('AVG')"], a: 0, exp: "selectRaw pour le calcul SQL, groupBy pour le regroupement — vu au cours MySQL." },
+    { type: "input", q: "Chez EF Core (C#), la méthode équivalente pour exécuter une requête SQL brute s'appelle…", a: ["FromSqlRaw", "fromsqlraw", "FromSqlRaw()"], ph: "nom de la méthode…", exp: "FromSqlRaw chez EF Core, @Query natif chez JPA, raw() chez Django : même soupape partout." },
+    { type: "qcm", q: "Pourquoi les bindings ? protègent-ils de l'injection SQL ?", opts: ["Ils chiffrent la requête", "Ils suppriment les apostrophes", "Ils limitent la longueur de la saisie", "La valeur est envoyée séparément de la requête et traitée comme une donnée, jamais comme du code"], a: 3, exp: "MySQL ne peut pas confondre la valeur avec du SQL : requête et données voyagent à part." },
+    { type: "vf", q: "Un where('titre', $saisie) classique d'Eloquent binde automatiquement la valeur.", a: true, exp: "L'API fluide est protégée d'office ; c'est en raw que la responsabilité te revient." },
+    { type: "qcm", q: "havingRaw sert à…", opts: ["Poser une condition sur un résultat d'agrégat après groupBy", "Filtrer avant le regroupement", "Créer un index", "Vider une table"], a: 0, exp: "havingRaw('duree > ?', [10]) filtre les groupes, comme HAVING en SQL." },
+    { type: "input", q: "Chez l'ORM Django, la méthode pour exécuter du SQL brut sur un modèle s'appelle…", a: ["raw", "raw()", ".raw()"], ph: "nom de la méthode…", exp: "Jeu.objects.raw('SELECT …') : même idée, mêmes précautions d'injection." }
+  ],
+  final: {
+    title: "Exercice final — Le raw sous contrôle",
+    intro: `<p>Le tableau de bord de la Ludothèque réclame des statistiques que l'API fluide ne sait pas écrire. Vérifions que tu sais ouvrir la porte du SQL sans ouvrir de faille.</p>`,
+    questions: [
+      { type: "qcm", q: "Afficher titre et prix_location * 30 AS prix_mensuel sur les modèles Jeu :", opts: ["DB::select sans bindings", "Jeu::select('titre', DB::raw('prix_location * 30 AS prix_mensuel'))->get()", "Jeu::all()->multiply(30)", "whereRaw('prix * 30')"], a: 1, exp: "DB::raw pour la colonne calculée, le reste reste de l'Eloquent normal." },
+      { type: "qcm", q: "Les jeux créés en 2025, écrit proprement :", opts: ["whereRaw('YEAR(created_at) = 2025' . $an)", "whereRaw(\"YEAR(created_at) = '$an'\")", "Jeu::whereRaw('YEAR(created_at) = ?', [2025])->get()", "DB::statement('2025')"], a: 2, exp: "Fonction SQL dans la chaîne, valeur dans les bindings." },
+      { type: "vf", q: "DB::select renvoie des modèles Jeu complets avec leurs relations.", a: false, exp: "Tableau de stdClass bruts : pour des modèles, reste sur Jeu::…->get()." },
+      { type: "qcm", q: "Le symptôme d'un code vulnérable à l'injection SQL :", opts: ["Une valeur utilisateur concaténée dans une chaîne raw", "Un binding ? dans whereRaw", "Un where() classique", "Un orderBy('titre')"], a: 0, exp: "La concaténation transforme une donnée en code SQL exécutable." },
+      { type: "qcm", q: "L'équivalent du SQL brut chez Hibernate/JPA :", opts: ["FromSqlRaw", "raw()", "tinker", "@Query en mode natif"], a: 3, exp: "@Query(nativeQuery = true) chez JPA ; FromSqlRaw chez EF Core ; raw() chez Django." }
+    ],
+    solution: `<pre class="pseudo">selectRaw('COUNT(*) AS nb')        → colonnes calculées, agrégats SQL
+DB::raw('expr AS alias')           → expression brute dans un select()
+whereRaw / orderByRaw / havingRaw  → clauses libres, bindings ? obligatoires
+DB::select('SELECT …', [b])        → requête manuelle, retour stdClass
+
+RÈGLE D'OR : jamais de concaténation d'une valeur dans du raw.
+            ? + tableau de bindings, toujours.
+Ailleurs   : @Query natif (JPA), FromSqlRaw (EF Core), raw() (Django).</pre>
+<p>Tu sais désormais calculer n'importe quelle statistique. Reste à ne pas renvoyer 3 000 jeux d'un coup au navigateur : leçon suivante, la pagination.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "eloquent-l15", title: "Raw ou pas raw ?", level: 3,
+    statement: "Le tableau de bord de la Ludothèque doit afficher : (1) les jeux avec un prix mensuel calculé (prix_location * 30), (2) la durée moyenne des locations par membre, (3) les jeux dont le titre contient une saisie utilisateur, (4) le classement des éditeurs par nombre de jeux. Pour chacune de ces quatre requêtes, décide par écrit : API fluide Eloquent ou SQL brut ? Justifie, écris l'appel choisi (ou son squelette), et signale précisément où se cache le risque d'injection et comment tu le neutralises.",
+    hints: [
+      "Le critère : existe-t-il une méthode Eloquent qui exprime le besoin ? withCount et where('titre', 'like', …) existent ; AVG(DATEDIFF(…)) non.",
+      "Pour la saisie utilisateur : compare where('titre', 'like', '%'.$q.'%') (bindé automatiquement) et un whereRaw concaténé (faille).",
+      "Quand tu choisis le raw, isole la plus petite expression possible et mets chaque valeur variable dans le tableau de bindings."
+    ],
+    solution: "Requête                              | Choix        | Écriture / justification\n-------------------------------------+--------------+---------------------------------------------\n(1) prix mensuel = prix * 30         | raw partiel  | Jeu::select('titre', DB::raw('prix_location * 30 AS prix_mensuel'))\n                                     |              | calcul SQL simple, pas de valeur externe → aucun risque\n(2) duree moyenne par membre         | raw partiel  | Location::selectRaw('membre_id, AVG(DATEDIFF(date_retour, date_location)) AS duree')->groupBy('membre_id')\n                                     |              | DATEDIFF n'existe pas dans l'API fluide\n(3) titre contient une saisie        | API fluide   | Jeu::where('titre', 'like', '%' . $q . '%')\n                                     |              | where() binde tout seul → protégé d'office\n                                     |              | (en raw il aurait fallu : whereRaw('titre LIKE ?', ['%'.$q.'%']))\n(4) classement des éditeurs          | API fluide   | Editeur::withCount('jeux')->orderByDesc('jeux_count')\n                                     |              | l'ORM sait déjà faire, inutile de sortir du cadre\n\nBilan : raw seulement quand une fonction SQL manque (1, 2) ;\nchaque valeur variable passe en binding ? ; les saisies utilisateur\nrestent de préférence dans l'API fluide, bindée automatiquement.",
+    note: "Ce réflexe d'arbitrage vaut pour tous les ORM : @Query natif en Hibernate, FromSqlRaw en EF Core ou raw() en Django posent exactement le même dilemme lisibilité/puissance/sécurité. Au Niveau 6, ton tableau de bord full-stack mélangera les deux styles, et c'est la discipline des bindings qui protégera l'application, comme au cours MySQL sur les requêtes préparées." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

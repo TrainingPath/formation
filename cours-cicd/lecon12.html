@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Construire l'image Docker en CI",
+  subtitle: "Prouver, à chaque commit, que l'artefact s'emballe et démarre.",
+  theory: `
+<h3>1. Pourquoi construire en CI ?</h3>
+<p>Un <strong>artefact</strong> est le <strong>produit fini</strong> d'une construction : ici, l'<strong>image Docker</strong> (le paquet contenant l'application prête à tourner). Le code peut être vert (tests, lint) et l'image quand même <strong>cassée</strong> : dépendance système manquante, <code>.dockerignore</code> (fichier listant ce que Docker ne copie pas) trop large, instruction <code>COPY</code> ratée dans le Dockerfile. Sans job de <strong>build</strong> (construction), on le découvre… au moment de livrer. Le job <code>image</code> le découvre <strong>au commit</strong>.</p>
+
+<h3>2. Le job image</h3>
+<pre class="pseudo">  image:                                        # un job nommé "image"
+    runs-on: ubuntu-latest                      # sur une machine Ubuntu neuve
+    needs: [tests, qualite]                     # needs = ATTENDRE : ce job ne démarre que si tests ET qualite sont verts (inutile d'emballer du code cassé)
+    steps:
+      - uses: actions/checkout@v4               # récupérer le code du dépôt
+      - name: Build                             # libellé de l'étape
+        run: docker build -t ludotheque:${'$'}{{ github.sha }} .   # construire l'image ; -t = lui donner un nom:tag ; github.sha = l'identifiant du commit ; "." = contexte (dossier courant)</pre>
+<p><code>needs:</code> dessine le <strong>graphe</strong> du pipeline (l'ordre et les dépendances entre jobs) : tests et qualité en parallèle, l'image seulement si les deux sont verts. <code>github.sha</code> est une variable fournie par GitHub qui vaut l'identifiant exact du commit ; l'utiliser comme <strong>tag</strong> (étiquette de l'image) lie l'image au commit — la traçabilité est native.</p>
+
+<h3>3. Le smoke test</h3>
+<pre class="pseudo">      - name: Smoke test                                     # test de démarrage minimal
+        run: |                                               # | = plusieurs lignes de shell
+          docker run --rm \\                                 # lancer un conteneur ; --rm = le supprimer à la fin ; \\ = la commande continue à la ligne
+            -e DJANGO_SECRET_KEY=smoke -e DB_HOST=absent \\   # -e = variables d'environnement bidon (juste pour démarrer)
+            ludotheque:${'$'}{{ github.sha }} \\              # l'image qu'on vient de construire
+            python manage.py check                          # la commande exécutée dans le conteneur : contrôle que le projet se charge</pre>
+<p>Le smoke test ne reteste pas le métier (déjà fait par le job tests) : il prouve seulement que l'image <strong>démarre</strong> — Python présent, dépendances installées, code copié. Le bug d'emballage classique meurt ici.</p>
+
+<h3>4. Le contexte : les runners ont Docker</h3>
+<p><code>ubuntu-latest</code> inclut Docker : <code>docker build</code> et <code>docker run</code> fonctionnent tels quels, sans installation. Le Dockerfile utilisé est celui du cours Docker — <strong>multi-stage</strong> (construit en plusieurs étapes pour alléger l'image finale) et <strong>non-root</strong> (l'app tourne sans les droits d'administrateur, par sécurité) — sans aucune modification.</p>
+
+<h3>5. Construire ≠ publier</h3>
+<pre class="pseudo">CI  (chaque commit)  : build + smoke test → l'image est JETÉE       # on PROUVE qu'elle s'emballe, puis on la jette
+CD  (chaque tag, l.16) : build + push au registre → l'image est PUBLIÉE   # push = envoyer l'image ; "registre" = entrepôt d'images ; on garde les versions choisies</pre>
+<p>Un <strong>registre</strong> (en anglais <em>registry</em>) est un entrepôt en ligne d'images Docker (par exemple GitHub Container Registry, Docker Hub). <strong>Publier</strong>, c'est y <em>pousser</em> une image pour la conserver et la partager.</p>
+<div class="warn">Ne publie pas l'image de chaque commit : le registre se remplirait de centaines d'images intermédiaires sans valeur. La CI <strong>prouve</strong> que ça s'emballe ; la release (semaine 3) <strong>publie</strong> les versions choisies.</div>
+<div class="tip">Si le build d'image est lent en CI, les suspects sont les mêmes qu'en local (cours Docker) : ordre des couches et contexte trop gros. Le cache de build peut aussi être partagé entre runs (actions dédiées) — optimisation pour plus tard.</div>`,
+  exercises: [
+    { type: "qcm", q: "Code vert mais image cassée : cause typique…", opts: ["Impossible", "Dépendance système manquante, .dockerignore trop large, COPY raté", "MySQL", "Le CSS"], a: 1, exp: "Le bug d'emballage." },
+    { type: "qcm", q: "Sans job de build, l'image cassée se découvre…", opts: ["Au commit", "Au moment de livrer", "Jamais", "En revue"], a: 1, exp: "Le pire moment." },
+    { type: "qcm", q: "needs: [tests, qualite] signifie…", opts: ["Les trois en parallèle", "image ne démarre que si tests ET qualite sont verts", "image tourne d'abord", "Rien"], a: 1, exp: "Le graphe du pipeline." },
+    { type: "qcm", q: "Pourquoi ne pas construire avant les tests ?", opts: ["Docker est lent", "Inutile d'emballer du code cassé", "C'est interdit", "Le YAML refuse"], a: 1, exp: "L'ordre a un sens." },
+    { type: "qcm", q: "github.sha est…", opts: ["Un secret", "L'identifiant du commit qui a déclenché le run", "Le nom du runner", "Un mot de passe"], a: 1, exp: "Tague l'image avec le commit exact." },
+    { type: "qcm", q: "Taguer l'image avec le sha donne…", opts: ["Un joli nom", "La traçabilité image ↔ commit native", "De la vitesse", "Rien"], a: 1, exp: "On sait toujours d'où elle vient." },
+    { type: "qcm", q: "Le smoke test vérifie…", opts: ["Tout le métier à nouveau", "Que l'image démarre (Python, deps, code présents)", "La prod", "Le style"], a: 1, exp: "manage.py check dans le conteneur." },
+    { type: "vf", q: "Le smoke test remplace les tests métier.", a: false, exp: "Complémentaires : métier déjà testé, emballage prouvé ici." },
+    { type: "qcm", q: "docker build fonctionne sur ubuntu-latest car…", opts: ["On l'installe à chaque run", "Docker est préinstallé sur les runners", "C'est un service", "Non, ça ne marche pas"], a: 1, exp: "Prêt à l'emploi." },
+    { type: "qcm", q: "Le Dockerfile utilisé en CI est…", opts: ["Une version simplifiée", "Celui du cours Docker (multi-stage, non-root), tel quel", "Généré", "Absent"], a: 1, exp: "Un seul Dockerfile, partout." },
+    { type: "qcm", q: "L'image construite par la CI est…", opts: ["Publiée au registre", "Jetée après le smoke test", "Déployée en prod", "Envoyée par email"], a: 1, exp: "La CI prouve ; la release publie." },
+    { type: "qcm", q: "Publier chaque commit au registre causerait…", opts: ["Rien", "Des centaines d'images intermédiaires sans valeur", "Plus de sécurité", "Un gain de place"], a: 1, exp: "Le registre n'est pas une poubelle." },
+    { type: "qcm", q: "La publication des versions choisies arrive…", opts: ["Leçon 16 (release, sur tag)", "Jamais", "Leçon 3", "En local"], a: 0, exp: "La semaine 3." },
+    { type: "qcm", q: "Un build lent en CI : les suspects…", opts: ["GitHub", "Ordre des couches et contexte trop gros (Docker l.6)", "MySQL", "ruff"], a: 1, exp: "Mêmes causes qu'en local." },
+    { type: "vf", q: "Après cette leçon, le contrat de CI de la leçon 8 est entièrement implémenté.", a: true, exp: "Tests + qualité + image : les trois jobs existent." }
+  ],
+  final: {
+    title: "Exercice final — L'artefact prouvé",
+    intro: `<p>Le job image complète le pipeline de CI.</p>`,
+    questions: [
+      { type: "qcm", q: "La dépendance du job :", opts: ["needs: [tests, qualite]", "aucune", "needs: [deploy]", "needs: [main]"], a: 0, exp: "Après les verts seulement." },
+      { type: "qcm", q: "Le tag de l'image de CI :", opts: ["ludotheque:${{ github.sha }}", "latest", "v1.0.0", "prod"], a: 0, exp: "Le commit exact." },
+      { type: "qcm", q: "Le smoke test lance :", opts: ["docker run --rm ... python manage.py check", "les 50 tests à nouveau", "un déploiement", "rien"], a: 0, exp: "L'image démarre." },
+      { type: "qcm", q: "Cette image est ensuite :", opts: ["Jetée (la publication attend la release)", "poussée au registre", "déployée", "sauvegardée 10 ans"], a: 0, exp: "CI prouve, CD publie." },
+      { type: "vf", q: "Le pipeline complet : tests + qualite en parallèle, puis image.", a: true, exp: "Le graphe du contrat." }
+    ],
+    solution: `<pre class="pseudo">  image:                                        # le job image
+    runs-on: ubuntu-latest                      # machine neuve
+    needs: [tests, qualite]                     # attend que tests ET qualite soient verts
+    steps:
+      - uses: actions/checkout@v4               # récupérer le code
+      - name: Build
+        run: docker build -t ludotheque:${'$'}{{ github.sha }} .   # construire l'image, taguée avec le commit
+      - name: Smoke test
+        run: |                                  # bloc de commandes shell
+          docker run --rm \\                     # lancer le conteneur et le supprimer à la fin
+            -e DJANGO_SECRET_KEY=smoke -e DB_HOST=absent \\   # variables bidon juste pour démarrer
+            ludotheque:${'$'}{{ github.sha }} \\  # l'image construite
+            python manage.py check              # vérifier que le projet se charge dans l'image</pre>
+<p>Le contrat de CI est tenu : tests, qualité, artefact. Demain : les secrets dont le CD aura besoin.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton job image…",
+  items: [
+  { id: "cicd-l12", title: "Le bug d'emballage attrapé", level: 3,
+    statement: "Scénario : une PR ajoute l'export PDF (dépendance weasyprint, qui exige des libs système). Tests verts, qualite verte… job image ROUGE : « libgobject not found » au smoke test. Écris : le diagnostic (pourquoi les tests n'ont rien vu), le correctif du Dockerfile (apt-get des libs dans l'étage final), et la morale sur ce que le job image protège exactement.",
+    hints: [
+      "Les tests tournent sur le runner (libs système présentes) ; l'image slim ne les a pas.",
+      "RUN apt-get update && apt-get install -y --no-install-recommends libgobject-2.0-0 ... && rm -rf /var/lib/apt/lists/*",
+      "Morale : le job image teste l'ENVIRONNEMENT d'exécution, pas le code."
+    ],
+    solution: "# DIAGNOSTIC\n# Le job tests tourne sur ubuntu-latest : les libs système y sont déjà\n# (le runner est une machine complète). weasyprint s'y installe et marche.\n# L'image python:3.14-slim, elle, est MINIMALE : libgobject absente.\n# -> le code est bon, l'EMBALLAGE ne l'est pas. Seul le job image le voit.\n\n# CORRECTIF — Dockerfile, étage final\nFROM python:3.14-slim\nWORKDIR /app\n\n# libs système exigées par weasyprint (export PDF)\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n        libgobject-2.0-0 libpango-1.0-0 libpangocairo-1.0-0 \\\n    && rm -rf /var/lib/apt/lists/*\n\nCOPY --from=builder /wheels /wheels\nRUN pip install --no-cache-dir /wheels/* && rm -rf /wheels\n...\n\n# On pousse le correctif sur la MÊME branche : la PR se met à jour,\n# le job image repasse au vert, le smoke test démarre. Mergeable.\n\n# MORALE\n# tests   : le CODE fait ce qu'il doit (sur une machine généreuse)\n# image   : l'ENVIRONNEMENT d'exécution réel contient tout ce qu'il faut\n# Les deux sont nécessaires : sans le job image, ce bug partait en prod\n# et se découvrait au premier export PDF d'un client.",
+    note: "C'est LE scénario qui justifie le job image à lui seul : une dépendance qui marche « partout » sauf dans l'image minimale. Le smoke test l'attrape car manage.py check importe les apps — donc weasyprint — donc la lib manquante explose. Plus l'image est slim (une vertu, Docker l.15), plus ce job est indispensable." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

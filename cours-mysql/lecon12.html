@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Fonctions de fenêtrage (OVER, MySQL 8)",
+  subtitle: "Classer et calculer sans écraser les lignes.",
+  theory: `
+<h3>1. L'idée du fenêtrage</h3>
+<p>Rappel : un <code>GROUP BY</code> RÉDUIT chaque groupe à une seule ligne de résumé (on perd le détail). Une <strong>fonction de fenêtrage</strong> (window function) fait un calcul sur un groupe de lignes MAIS <strong>garde chaque ligne</strong> individuelle. La « <strong>fenêtre</strong> » est justement l'ensemble de lignes sur lequel porte le calcul (comme regarder un sous-ensemble de lignes à travers un cadre, sans les fusionner). C'est disponible depuis <strong>MySQL 8.0</strong> et s'écrit avec la clause <code>OVER(...)</code> qui définit cette fenêtre.</p>
+
+<h3>2. ROW_NUMBER, RANK, DENSE_RANK</h3>
+<p>Trois fonctions pour NUMÉROTER ou CLASSER les lignes selon un tri. Elles s'emploient toujours avec <code>OVER (ORDER BY …)</code> qui indique dans quel ordre attribuer les numéros :</p>
+<pre class="pseudo">SELECT titre, prixLocation,
+  ROW_NUMBER() OVER (ORDER BY prixLocation DESC) AS numero,  -- ROW_NUMBER() = numérote 1,2,3… selon le prix décroissant (OVER … ORDER BY = ordre de numérotation)
+  RANK()       OVER (ORDER BY prixLocation DESC) AS rang     -- RANK() = attribue un rang, avec le MÊME rang aux ex æquo
+FROM JEU;</pre>
+<p>Différences sur les égalités : <code>ROW_NUMBER</code> numérote 1, 2, 3… <strong>sans ex æquo</strong> (chaque ligne un numéro unique). <code>RANK</code> donne le même rang aux égalités puis <strong>saute</strong> (1, 1, 3). <code>DENSE_RANK</code> donne le même rang aux égalités mais <strong>ne saute pas</strong> (1, 1, 2).</p>
+
+<h3>3. PARTITION BY</h3>
+<p><code>PARTITION BY</code> découpe les lignes en groupes (des « partitions ») et RELANCE le calcul à zéro pour chaque groupe — sans fusionner les lignes, contrairement à GROUP BY. Ici, la numérotation repart de 1 dans chaque catégorie :</p>
+<pre class="pseudo">SELECT titre, idCategorie,
+  ROW_NUMBER() OVER (PARTITION BY idCategorie ORDER BY prixLocation DESC) AS rang  -- PARTITION BY idCategorie = un classement séparé par catégorie ; ORDER BY prixLocation DESC = du plus cher au moins cher dans chaque catégorie
+FROM JEU;</pre>
+
+<h3>4. Agrégats fenêtrés</h3>
+<p>Les agrégats habituels (AVG, SUM, COUNT…) peuvent aussi s'employer AVEC <code>OVER</code>. Au lieu de réduire le groupe, ils ajoutent le résultat à CHAQUE ligne. Pratique pour comparer une ligne à la moyenne de son groupe :</p>
+<pre class="pseudo">SELECT titre, prixLocation,
+  AVG(prixLocation) OVER (PARTITION BY idCategorie) AS moyenne_categorie  -- ajoute sur CHAQUE ligne la moyenne des prix de SA catégorie (les lignes restent, rien n'est fusionné)
+FROM JEU;</pre>
+
+<h3>5. Le « top N par groupe »</h3>
+<p>Un besoin très fréquent qu'un simple GROUP BY ne sait PAS faire : « le jeu le plus cher DE CHAQUE catégorie ». On combine une CTE (leçon 11), <code>ROW_NUMBER</code> et un filtre sur le rang :</p>
+<pre class="pseudo">WITH classe AS (                         -- CTE "classe" : on numérote les jeux dans chaque catégorie
+  SELECT titre, idCategorie,
+    ROW_NUMBER() OVER (PARTITION BY idCategorie ORDER BY prixLocation DESC) AS r  -- r = 1 pour le plus cher de la catégorie, 2 pour le suivant, etc.
+  FROM JEU
+)
+SELECT titre, idCategorie FROM classe WHERE r = 1;  -- on ne garde que r = 1 : le premier de chaque catégorie</pre>
+<div class="tip">Le motif « CTE + ROW_NUMBER + WHERE r = 1 » récupère le premier de chaque groupe — impossible avec un simple <code>GROUP BY</code>. Le fenêtrage est l'une des grandes nouveautés de MySQL 8.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une fonction de fenêtrage…", opts: ["Réduit chaque groupe à une ligne", "Calcule sur un groupe MAIS conserve chaque ligne", "Supprime des lignes", "Trie seulement"], a: 1, exp: "Contrairement à GROUP BY." },
+    { type: "qcm", q: "Le fenêtrage est disponible depuis…", opts: ["MySQL 5.5", "MySQL 8.0", "Toujours", "MariaDB seulement"], a: 1, exp: "MySQL 8." },
+    { type: "qcm", q: "On l'active avec…", opts: ["GROUP BY", "OVER(...)", "HAVING", "LIMIT"], a: 1, exp: "La clause OVER." },
+    { type: "qcm", q: "ROW_NUMBER() numérote…", opts: ["Avec ex æquo", "1, 2, 3… sans égalité", "Au hasard", "Par clé"], a: 1, exp: "Numéro unique." },
+    { type: "qcm", q: "RANK() sur des égalités…", opts: ["Ne saute jamais", "Donne le même rang puis saute (1,1,3)", "Numérote 1,2,3", "Trie"], a: 1, exp: "Rang avec saut." },
+    { type: "qcm", q: "DENSE_RANK() …", opts: ["Saute les rangs", "Ne saute pas (1,1,2)", "Est aléatoire", "Compte"], a: 1, exp: "Rang dense." },
+    { type: "qcm", q: "PARTITION BY sert à…", opts: ["Trier", "Redémarrer le calcul pour chaque groupe", "Supprimer", "Indexer"], a: 1, exp: "Une fenêtre par groupe." },
+    { type: "qcm", q: "AVG(prix) OVER (PARTITION BY idCategorie) …", opts: ["Fusionne les lignes", "Ajoute à chaque ligne la moyenne de sa catégorie", "Trie", "Compte"], a: 1, exp: "Agrégat fenêtré." },
+    { type: "qcm", q: "Le « top 1 par groupe » :", opts: ["GROUP BY seul", "CTE + ROW_NUMBER + WHERE r = 1", "LIMIT 1", "HAVING"], a: 1, exp: "Motif classique." },
+    { type: "qcm", q: "Différence GROUP BY / fenêtrage :", opts: ["Aucune", "GROUP BY réduit, le fenêtrage conserve les lignes", "Le fenêtrage supprime", "GROUP BY est plus récent"], a: 1, exp: "Conservation des lignes." },
+    { type: "vf", q: "Une fonction de fenêtrage garde toutes les lignes du résultat.", a: true, exp: "Son intérêt." },
+    { type: "qcm", q: "ROW_NUMBER sans PARTITION BY numérote…", opts: ["Par groupe", "Sur tout le résultat", "Rien", "Par clé"], a: 1, exp: "Fenêtre globale." },
+    { type: "vf", q: "Avant MySQL 8, il n'y avait pas de fonctions de fenêtrage.", a: true, exp: "Nouveauté de la 8." },
+    { type: "qcm", q: "Classer les jeux dans leur catégorie :", opts: ["OVER (PARTITION BY idCategorie ORDER BY prixLocation DESC)", "GROUP BY titre", "LIMIT 1", "ORDER BY seul"], a: 0, exp: "PARTITION + ORDER dans OVER." },
+    { type: "qcm", q: "Le fenêtrage s'utilise souvent avec une…", opts: ["Table temporaire", "CTE pour filtrer ensuite sur le rang", "Clé étrangère", "Vue matérialisée"], a: 1, exp: "CTE + WHERE sur le rang." }
+  ],
+  final: {
+    title: "Exercice final — Classements",
+    intro: `<p>JEU(idJeu, titre, prixLocation, idCategorie). MySQL 8.</p>`,
+    questions: [
+      { type: "qcm", q: "Numéroter du plus cher au moins cher :", opts: ["ROW_NUMBER() OVER (ORDER BY prixLocation DESC)", "RANK sans OVER", "GROUP BY", "LIMIT"], a: 0, exp: "ROW_NUMBER + OVER." },
+      { type: "qcm", q: "Classer DANS chaque catégorie :", opts: ["PARTITION BY idCategorie dans le OVER", "GROUP BY idCategorie", "LIMIT par catégorie", "HAVING"], a: 0, exp: "PARTITION BY." },
+      { type: "qcm", q: "Moyenne de la catégorie sur chaque ligne :", opts: ["AVG(prixLocation) OVER (PARTITION BY idCategorie)", "AVG avec GROUP BY", "LIMIT", "COUNT"], a: 0, exp: "Agrégat fenêtré." },
+      { type: "qcm", q: "Le plus cher de chaque catégorie :", opts: ["GROUP BY titre", "CTE avec ROW_NUMBER puis WHERE r = 1", "LIMIT 1 global", "MAX(titre)"], a: 1, exp: "Motif top-N par groupe." },
+      { type: "vf", q: "DENSE_RANK ne laisse pas de trou dans les rangs, contrairement à RANK.", a: true, exp: "1,1,2 vs 1,1,3." }
+    ],
+    solution: `<pre class="pseudo">WITH classe AS (                         -- CTE : numérote les jeux par catégorie, du plus cher au moins cher
+  SELECT titre, idCategorie,
+    ROW_NUMBER() OVER (PARTITION BY idCategorie   -- une numérotation séparée par catégorie
+                       ORDER BY prixLocation DESC) AS r  -- r = 1 = le plus cher de la catégorie
+  FROM JEU
+)
+SELECT titre, idCategorie FROM classe WHERE r = 1;  -- on garde le premier (r = 1) de chaque catégorie</pre>
+<p>Tu classes sans perdre le détail. Demain : UNION et les opérateurs d'ensemble.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête de fenêtrage…",
+  items: [
+  { id: "mysql-l12", title: "Podium par catégorie", level: 3,
+    statement: "À partir de JEU(idJeu, titre, prixLocation, idCategorie), écris une requête (MySQL 8) qui affiche, pour chaque catégorie, les DEUX jeux les plus chers à la location, avec leur rang (1 ou 2) dans la catégorie. Utilise une CTE et ROW_NUMBER.",
+    hints: [
+      "Dans la CTE : ROW_NUMBER() OVER (PARTITION BY idCategorie ORDER BY prixLocation DESC) AS rang.",
+      "Requête principale : WHERE rang <= 2.",
+      "Sélectionne idCategorie, titre, prixLocation, rang."
+    ],
+    solution: "WITH classe AS (\n    SELECT idCategorie, titre, prixLocation,\n           ROW_NUMBER() OVER (PARTITION BY idCategorie\n                              ORDER BY prixLocation DESC) AS rang\n    FROM JEU\n)\nSELECT idCategorie, titre, prixLocation, rang\nFROM classe\nWHERE rang <= 2\nORDER BY idCategorie, rang;",
+    note: "PARTITION BY redémarre la numérotation à chaque catégorie ; ORDER BY dans le OVER fixe le critère du classement. Filtrer rang <= 2 dans une CTE donne le « top 2 par groupe » — l'une des grandes nouveautés de MySQL 8, impossible auparavant." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+<script src="fil-rouge-data.js"></script>
+<script src="fil-rouge.js"></script>
+</body>
+</html>

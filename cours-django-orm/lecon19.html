@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leçon 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "SQL brut et raw() quand il le faut ; values et values_list",
+  subtitle: "L'ORM sait presque tout dire — et quand il cale, Django te tend du SQL brut, à une condition absolue : ne JAMAIS coller une saisie dans la requête.",
+  theory: `
+<h3>1. Le principe : l'ORM d'abord, le SQL en dernier recours</h3>
+<p>Dix-huit leçons durant, l'ORM a écrit tout ton SQL — et il continuera de le faire dans 95 % des cas. Mais deux besoins finissent toujours par surgir. Un : une requête que l'API ne sait pas dire — une fonction MySQL très spécifique, un vieux rapport SQL hérité du Niveau 4. Deux : l'inverse — tu n'as <strong>pas besoin</strong> d'objets complets, juste de deux colonnes pour un <em>export</em> (sortir les données vers un fichier) ou une liste d'ids. Django assume les deux avec des portes de sortie officielles, à emprunter <strong>dans l'ordre</strong> :</p>
+<pre class="pseudo">Besoin                                        Outil                       # a lire de haut en bas
+-------------------------------------------   ---------------------------  # (ligne de separation)
+La requête s'écrit avec l'API                 filter, F, Q, annotate…      # 1er choix : l'ORM
+Des objets du modèle, mais un SQL introuvable Manager.raw('SELECT …')      # 2e : SQL brut -> objets
+Pas d'objets du tout (stats, maintenance)     connection.cursor()          # 3e : SQL brut -> tuples
+Moins de colonnes, pas d'objets               values() / values_list()     # alleger sans SQL brut</pre>
+<p>Retiens la hiérarchie : l'ORM échappe les valeurs (les rend inoffensives), reste lisible et portable ; le SQL brut se paie en sécurité et en maintenance. On ne le dégaine qu'après avoir vérifié que filter, F, Q et annotate ne savent vraiment pas le dire.</p>
+
+<h3>2. raw() : du SQL qui renvoie de vrais objets</h3>
+<p>La gérante veut une recherche plein-texte sur les titres : le <em>MATCH … AGAINST</em> de MySQL (une recherche de texte avancée) n'existe pas dans l'API de l'ORM. <strong>Manager.raw()</strong> (« brut ») prend ton SELECT et te rend quand même des <strong>objets du modèle</strong> :</p>
+<pre class="pseudo">&gt;&gt;&gt; jeux = Jeu.objects.raw(                    # raw() = execute du SQL ecrit a la main
+...     "SELECT id, titre, prix FROM ludotheque_jeu "   # on liste les colonnes voulues (id obligatoire !)
+...     "WHERE MATCH(titre) AGAINST ('aventure')")      # fonction MySQL absente de l'API de l'ORM
+&gt;&gt;&gt; for jeu in jeux:                           # on parcourt le resultat
+...     print(jeu.titre, jeu.prix)     # de vraies instances de Jeu   # ce sont bien des objets Jeu
+Les Aventuriers du Rail  Decimal('44.90')      # exemple de resultat</pre>
+<p>Quatre règles gouvernent ce <strong>RawQuerySet</strong>. Il est <strong>paresseux</strong> (rien ne part avant l'itération, comme en leçon 7) mais <strong>non chaînable</strong> : pas de .filter() ni de .order_by() derrière. Le mapping se fait <strong>par nom de colonne</strong> (un alias AS peut faire coïncider les noms). La <strong>clé primaire est obligatoire</strong> : un SELECT sans <em>id</em> lève une exception, Django ne pouvant pas construire l'objet. Enfin, les colonnes omises sont <strong>chargées à la demande</strong> — une requête par accès, un mini N+1 (leçon 18) si tu y touches en boucle.</p>
+
+<h3>3. L'injection SQL : pourquoi jamais de concaténation</h3>
+<p>Ton cours SQL du Niveau 4 t'avait montré l'attaque ; la voici dans la Ludothèque. L'<strong>injection SQL</strong> = glisser du code SQL malveillant à travers un champ de saisie. Le stagiaire branche la recherche sur la saisie du visiteur en <strong>concaténant</strong> (en collant bout à bout des morceaux de texte) :</p>
+<pre class="pseudo"># CATASTROPHE ANNONCÉE : la saisie est collée DANS le SQL
+mot = request.GET['q']                         # le texte tape par le visiteur
+Jeu.objects.raw(
+    "SELECT id, titre FROM ludotheque_jeu WHERE titre LIKE '%" + mot + "%'")   # mot colle dans la requete !
+
+# Un visiteur saisit :   ' OR '1'='1            # une saisie piegee
+# SQL réellement exécuté :
+#   SELECT id, titre FROM ludotheque_jeu
+#   WHERE titre LIKE '%' OR '1'='1%'      ← condition toujours vraie   -- toute la table sort
+# Toute la table sort. Variante pire : un UNION SELECT
+# vers ludotheque_membre, et les emails de tes membres fuient.   -- fuite de donnees personnelles
+
+# LA SEULE FORME ACCEPTABLE : le placeholder %s + params
+Jeu.objects.raw(
+    "SELECT id, titre FROM ludotheque_jeu WHERE titre LIKE %s",   # %s = emplacement reserve pour la valeur
+    ['%' + mot + '%'])                                            # la valeur voyage a part, dans params</pre>
+<p>Avec <strong>params</strong> (la liste des valeurs), la valeur voyage <strong>à part</strong> du texte SQL : le pilote MySQL la transmet comme une donnée, jamais interprétée comme du code — le principe des requêtes préparées du Niveau 4. Concaténation, f-string, str.format() : trois écritures différentes du même trou de sécurité. Et souviens-toi : filter(titre__icontains=mot) échappe tout automatiquement — l'ORM est ta première ligne de défense.</p>
+
+<h3>4. connection.cursor() : hors des modèles</h3>
+<p>Dernier étage de la fusée : le rapport mensuel de la gérante — chiffre d'affaires par mois — ne correspond à <strong>aucun modèle</strong>. Un <strong>curseur</strong> est un objet qui envoie une commande à la base et récupère les lignes. Inutile de forcer raw() à fabriquer des objets : <strong>connection.cursor()</strong> parle à MySQL directement, et rend des <em>tuples</em> bruts (des lignes de valeurs) :</p>
+<pre class="pseudo">from django.db import connection               # on importe la connexion active
+
+with connection.cursor() as cursor:            # with = ouvre puis referme proprement le curseur
+    cursor.execute(                            # execute() envoie le SQL
+        "SELECT MONTH(date_debut), SUM(prix_location) "   # MONTH() = mois, SUM() = somme
+        "FROM ludotheque_location "                        # depuis la table location
+        "WHERE YEAR(date_debut) = %s "                     # YEAR() = annee ; %s = valeur passee a part
+        "GROUP BY MONTH(date_debut)", [2026])              # regroupe par mois ; params = [2026]
+    lignes = cursor.fetchall()      # [(1, Decimal('54.00')), (2, …), …]   # fetchall() = recupere toutes les lignes</pre>
+<p>Même discipline qu'en raw() : le <strong>%s</strong> et la liste de paramètres, systématiquement. Le <em>with</em> referme le curseur proprement, comme un fichier.</p>
+
+<h3>5. values() et values_list() : alléger sans SQL brut</h3>
+<p>Souvent, ce qui pousse vers le SQL brut n'est pas la requête mais le <strong>poids</strong> : pour un export CSV de 50 000 jeux, hydrater 50 000 objets Python est un gâchis. <strong>values()</strong> rend des dictionnaires, <strong>values_list()</strong> des tuples — et <em>flat=True</em> (« à plat »), réservé au cas d'un seul champ, aplatit tout en liste simple :</p>
+<pre class="pseudo">&gt;&gt;&gt; Jeu.objects.values('titre', 'prix')       # renvoie des dictionnaires (une cle par colonne demandee)
+&lt;QuerySet [{'titre': 'Azul', 'prix': Decimal('39.90')}, …]&gt;   # liste de dicts
+
+&gt;&gt;&gt; Jeu.objects.values_list('titre', 'prix')  # renvoie des tuples (une valeur par colonne)
+&lt;QuerySet [('Azul', Decimal('39.90')), ('Catan', Decimal('34.90')), …]&gt;   # liste de tuples
+
+&gt;&gt;&gt; ids = Jeu.objects.filter(disponible=True).values_list('id', flat=True)   # flat=True : une seule colonne aplatie
+&lt;QuerySet [1, 2, 5, 8, …]&gt;         # parfait pour un futur filter(jeu_id__in=ids)   # une liste plate d'entiers</pre>
+<p>Contrairement à raw(), ce sont de <strong>vrais QuerySets</strong> : paresseux, chaînables, et la syntaxe __ traverse les relations — values('jeu__titre') te rappelle le values() posé devant annotate() en leçon 15. SELECT réduit aux colonnes demandées, zéro objet construit : c'est l'outil des exports, des listes déroulantes et des ids. Une ligne pour tes futurs langages : @Query(nativeQuery=true) chez Hibernate/JPA, FromSqlRaw chez EF Core, DB::select avec bindings chez Eloquent — et partout la même règle sur les paramètres.</p>
+<div class="warn">JAMAIS de concaténation, de f-string ni de format() pour construire du SQL — ni dans raw(), ni dans cursor.execute(), même pour une valeur « interne » qui semble inoffensive. Toujours le placeholder <strong>%s</strong> et la liste params. L'injection SQL reste l'une des attaques les plus exploitées au monde, et une seule requête concaténée suffit à offrir ta table ludotheque_membre entière.</div>
+<div class="tip">Avant de dégainer raw(), écris et valide ta requête directement dans le client mysql du Niveau 4, puis colle-la dans raw() en remplaçant chaque valeur par %s. Et pose-toi d'abord LA question : si tu ne gardes que quelques colonnes, la vraie réponse est souvent values_list(), pas le SQL brut.</div>`,
+  exercises: [
+    { type: "qcm", q: "Face à une requête difficile, l'ordre sain des recours est…", opts: ["raw() d'abord : le SQL est toujours plus rapide", "L'API de l'ORM (filter, F, Q, annotate) → raw() → connection.cursor()", "connection.cursor() pour tout, par cohérence", "Changer de base de données"], a: 1, exp: "L'ORM échappe, optimise et reste lisible ; le SQL brut est le dernier recours, pas le premier réflexe." },
+    { type: "qcm", q: "Jeu.objects.raw('SELECT id, titre FROM ludotheque_jeu') renvoie…", opts: ["Une liste de dictionnaires", "Un RawQuerySet qui produit de vrais objets Jeu", "Un QuerySet chaînable avec filter()", "Le texte brut du résultat MySQL"], a: 1, exp: "raw() mappe chaque ligne sur une instance du modèle — mais sans la machinerie chaînable du QuerySet." },
+    { type: "qcm", q: "La colonne qu'un SELECT passé à raw() doit obligatoirement rapporter :", opts: ["titre", "La clé primaire (id)", "Toutes les colonnes de la table", "jeu_id"], a: 1, exp: "Sans le pk, Django ne peut pas construire l'objet : il lève une exception." },
+    { type: "vf", q: "Jeu.objects.raw('SELECT …').filter(prix__lt=20) est une syntaxe valide.", a: false, exp: "Un RawQuerySet s'itère mais ne se chaîne pas : filter, order_by et compagnie n'existent plus." },
+    { type: "qcm", q: "Un visiteur tape ' OR '1'='1 dans la recherche concaténée. Résultat :", opts: ["Une erreur de syntaxe arrête tout", "MySQL ignore la saisie", "La condition devient toujours vraie : toute la table sort", "Django échappe automatiquement l'intérieur de la chaîne de raw()"], a: 2, exp: "La saisie est devenue du code SQL : c'est l'injection — et un UNION SELECT peut ensuite viser les emails des membres." },
+    { type: "qcm", q: "La seule façon sûre de passer une valeur dans raw() :", opts: ["Une f-string, plus lisible", "La concaténation avec +", "Le placeholder %s et l'argument params", "str.format()"], a: 2, exp: "La valeur voyage à part du SQL : le pilote MySQL ne l'interprétera jamais comme du code." },
+    { type: "input", q: "Le placeholder qui remplace une valeur dans le SQL de raw() ou de cursor.execute() :", a: ["%s"], ph: "WHERE titre LIKE …", exp: "Toujours %s — même pour un nombre — et les valeurs dans la liste params." },
+    { type: "vf", q: "Une colonne absente du SELECT de raw() est chargée plus tard, par une requête supplémentaire au premier accès.", a: true, exp: "Le chargement différé dépanne — mais dans une boucle, il recrée un N+1 (leçon 18)." },
+    { type: "qcm", q: "Pour le rapport « chiffre d'affaires par mois », qui ne correspond à aucun modèle, on utilise…", opts: ["Manager.raw()", "connection.cursor() et execute()", "values_list()", "get_or_create()"], a: 1, exp: "cursor() rend des tuples bruts, sans modèle : l'outil des stats et de la maintenance." },
+    { type: "input", q: "La méthode de QuerySet qui renvoie des dictionnaires au lieu d'objets :", a: ["values", "values()", ".values()"], ph: "Jeu.objects.…", exp: "values('titre', 'prix') → [{'titre': …, 'prix': …}, …] — déjà croisée devant annotate() en leçon 15." },
+    { type: "qcm", q: "Jeu.objects.values_list('titre', 'prix') renvoie…", opts: ["Des dictionnaires", "Des objets Jeu allégés", "Des tuples ('Azul', Decimal('39.90'))", "Une chaîne CSV prête à écrire"], a: 2, exp: "values_list = des tuples ; values = des dictionnaires. Deux formes, même SELECT réduit." },
+    { type: "qcm", q: "flat=True dans values_list s'utilise…", opts: ["Avec exactement un champ, pour obtenir une liste de valeurs simples", "Avec deux champs minimum", "Uniquement sur les clés primaires", "Pour aplatir les relations ManyToMany"], a: 0, exp: "values_list('id', flat=True) → [1, 2, 3, …] ; avec deux champs, Django lève une erreur." },
+    { type: "qcm", q: "Pourquoi values() convient-il mieux qu'un QuerySet d'objets pour exporter 50 000 lignes en CSV ?", opts: ["Il trie plus vite", "Aucun objet à hydrater : SELECT réduit, moins de mémoire, plus rapide", "Il contourne MySQL", "Il gère l'encodage UTF-8"], a: 1, exp: "On ne fabrique pas 50 000 objets Python pour recopier deux colonnes dans un fichier." },
+    { type: "vf", q: "values('jeu__titre') traverse les relations avec la même syntaxe __ que les lookups.", a: true, exp: "Le double underscore traverse partout : lookups, order_by, values, annotate — un seul langage." },
+    { type: "qcm", q: "L'équivalent de raw() chez EF Core (C#) :", opts: ["FromSqlRaw", "Include", "GroupBy", "SaveChanges"], a: 0, exp: "FromSqlRaw ; chez Hibernate/JPA : @Query(nativeQuery=true) ; chez Eloquent : DB::select avec bindings." }
+  ],
+  final: {
+    title: "Exercice final — La requête blindée",
+    intro: `<p>La recherche libre du catalogue part en production, exposée à tout Internet : on vérifie que le SQL brut de la Ludothèque est inattaquable — et qu'il n'est utilisé que là où il le faut.</p>`,
+    questions: [
+      { type: "qcm", q: "La recherche du stagiaire concatène la saisie du visiteur dans le SQL de raw(). Le risque exact :", opts: ["Une simple faute de style", "L'injection SQL : la saisie devient du code exécuté par MySQL", "Un léger ralentissement", "Aucun : raw() échappe tout seul"], a: 1, exp: "raw() n'échappe RIEN de ce que tu colles dans la chaîne : seul params est protégé." },
+      { type: "qcm", q: "La correction :", opts: ["raw('SELECT id, titre FROM ludotheque_jeu WHERE titre LIKE %s', ['%' + mot + '%'])", "Interdire les apostrophes dans le formulaire HTML", "Passer la saisie en majuscules", "Un try/except autour du raw()"], a: 0, exp: "La valeur part dans params : transmise hors du SQL, inexploitable comme code." },
+      { type: "input", q: "L'argument de raw() qui transporte les valeurs :", a: ["params", "params=[]", "params=[...]"], ph: "raw(sql, …)", exp: "raw(sql, params) — et la même discipline vaut pour cursor.execute(sql, params)." },
+      { type: "qcm", q: "Pour récupérer uniquement les ids des jeux disponibles (destinés à un futur __in) :", opts: ["Jeu.objects.filter(disponible=True).values_list('id', flat=True)", "raw('SELECT id FROM ludotheque_jeu')", "Jeu.objects.all() puis une boucle Python", "aggregate(Count('id'))"], a: 0, exp: "Une liste plate d'entiers, sans hydrater un seul objet — et 100 % ORM, donc 100 % échappé." },
+      { type: "vf", q: "Si filter, F, Q ou annotate savent écrire la requête, raw() reste le mauvais choix.", a: true, exp: "Le SQL brut se paie en lisibilité, portabilité et sécurité : on ne le dégaine qu'en dernier recours." }
+    ],
+    solution: `<pre class="pseudo">Hiérarchie : ORM (filter/F/Q/annotate) → raw() → connection.cursor()        # du plus sur au plus brut
+raw()      : Manager.raw('SELECT id, … FROM …') → RawQuerySet d'objets       # SQL brut -> objets du modele
+             paresseux · itérable · NON chaînable · id (pk) OBLIGATOIRE       # 4 regles a retenir
+             colonnes omises = chargées à l'accès (mini N+1)                  # attention en boucle
+Injection  : JAMAIS de concaténation / f-string / format()                   # la faille a eviter
+             raw('… WHERE titre LIKE %s', ['%' + mot + '%'])                  # %s + params, toujours
+cursor()   : with connection.cursor() as c: c.execute(sql, params)           # hors modeles
+             → fetchall(), tuples bruts, hors modèles                        # pour les stats/rapports
+values()   : dictionnaires · values_list() : tuples · flat=True (1 champ)     # alleger sans SQL brut
+             vrais QuerySets : paresseux, chaînables, __ traverse (jeu__titre)   # 100% ORM
+Ailleurs   : @Query(nativeQuery=true) (JPA) · FromSqlRaw (EF Core)           # equivalents
+             · DB::select + bindings (Eloquent)</pre>
+<p>Ta boîte à outils est désormais complète, du modèle jusqu'au SQL brut sous escorte. Il est temps de tout assembler en une seule pièce : leçon 20, <strong>La couche de persistance de la Ludothèque (synthèse)</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton analyse…",
+  items: [
+  { id: "djangoorm-l19", title: "Le moteur de recherche du stagiaire", level: 3,
+    statement: "Le stagiaire de la Ludothèque a livré la recherche du catalogue ainsi : mot = request.GET['q'] ; jeux = Jeu.objects.raw(\"SELECT titre FROM ludotheque_jeu WHERE titre LIKE '%\" + mot + \"%'\") — puis il affiche jeu.titre et jeu.prix dans la boucle. Rédige l'audit de sécurité complet. 1) Démontre l'attaque : donne une saisie malveillante précise, écris le SQL réellement exécuté et décris les dégâts possibles (jusqu'à la fuite des emails de ludotheque_membre) ; signale aussi les DEUX autres bugs du code (clé primaire absente du SELECT, et jeu.prix non sélectionné dans la boucle). 2) Réécris deux corrections : la version raw() sûre avec %s et params, puis la version 100 % ORM avec titre__icontains — et si seule la paire (titre, prix) est affichée, la variante values_list. 3) Conclus par la hiérarchie des recours du cours et cite deux cas où raw() ou cursor() restent légitimes.",
+    hints: [
+      "Pour l'attaque, pars de la saisie ' OR '1'='1 et écris le WHERE résultant caractère par caractère ; puis souviens-toi des deux règles de raw() : id obligatoire, colonnes omises chargées à l'accès (que fait jeu.prix dans la boucle ?).",
+      "La version sûre garde la même requête mais remplace la valeur par %s et passe ['%' + mot + '%'] en params ; la version ORM tient en un filter(titre__icontains=mot) — qui échappe tout automatiquement.",
+      "Hiérarchie : API de l'ORM d'abord, raw() si le SQL est introuvable dans l'API (MATCH AGAINST…), cursor() si le résultat ne correspond à aucun modèle (rapport par mois) — et values_list quand le vrai besoin n'était que deux colonnes."
+    ],
+    solution: "1) L'attaque\nSaisie : ' OR '1'='1\nSQL exécuté :\nSELECT titre FROM ludotheque_jeu WHERE titre LIKE '%' OR '1'='1%'\nLa condition est toujours vraie : tout le catalogue sort, quel que soit le mot.\nPire : une saisie du type ' UNION SELECT email FROM ludotheque_membre -- \npeut exfiltrer les emails des membres — l'injection lit ce qu'elle veut.\nDeux bugs supplémentaires :\n- le SELECT ne rapporte pas id : raw() exige la clé primaire → exception ;\n- prix n'est pas sélectionné : jeu.prix déclenche une requête différée PAR jeu\n  dans la boucle — un mini N+1 (leçon 18).\n\n2) Les corrections\nVersion raw() sûre (si l'on tient au SQL brut) :\njeux = Jeu.objects.raw(\n    'SELECT id, titre, prix FROM ludotheque_jeu WHERE titre LIKE %s',\n    ['%' + mot + '%'])\nLa valeur part dans params : le pilote MySQL la transmet comme donnée,\njamais comme code.\nVersion 100 % ORM (la bonne ici) :\njeux = Jeu.objects.filter(titre__icontains=mot)\nicontains génère le LIKE insensible à la casse ET échappe la saisie.\nSi seule la paire (titre, prix) est affichée :\nJeu.objects.filter(titre__icontains=mot).values_list('titre', 'prix')\n→ SELECT réduit, zéro objet hydraté.\n\n3) Conclusion\nHiérarchie : ORM (filter/F/Q/annotate) → raw(sql, params) → connection.cursor().\nCas légitimes de SQL brut : une fonction hors API comme MATCH … AGAINST\n(recherche plein-texte MySQL) pour raw() ; un rapport sans modèle comme le\nchiffre d'affaires par mois (GROUP BY MONTH) pour cursor(). Partout ailleurs,\nl'ORM d'abord — il échappe, il reste lisible, il reste portable.",
+    note: "L'injection SQL démontée ici est la même que celle vue au Niveau 4 avec les requêtes préparées — params en est l'habillage Django. Au Niveau 6, chaque champ de recherche de ton projet full-stack sera une porte d'entrée publique : la règle « %s + params, jamais de concaténation » y sera non négociable, et tu la retrouveras mot pour mot chez Hibernate/JPA (paramètres nommés), EF Core (FromSqlRaw paramétré) et Eloquent (bindings)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>
