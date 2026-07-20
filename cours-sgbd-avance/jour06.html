@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 06</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Rechercher et remplacer : REPLACE",
+  subtitle: "Le chercher-remplacer du traitement de texte, appliqué à des millions de lignes.",
+  theory: `
+<h3>1. Ce que fait REPLACE</h3>
+<p><code>REPLACE(texte, ancien, nouveau)</code> remplace <strong>toutes</strong> les occurrences de <code>ancien</code> par <code>nouveau</code> dans <code>texte</code>. C'est exactement le « Rechercher / Remplacer » d'un traitement de texte, mais appliqué à une colonne entière.</p>
+<p>Trois points essentiels : REPLACE remplace <strong>toutes</strong> les occurrences (pas seulement la première), il est <strong>sensible à la casse</strong> sur la plupart des SGBD, et il ne renvoie <strong>aucune erreur</strong> si le texte cherché est absent — il rend alors la chaîne inchangée.</p>
+<pre class="pseudo">SELECT REPLACE('081/22.33.44', '.', '');    -- '081/223344'  : TOUS les points sont supprimes
+SELECT REPLACE('Namur', 'x', 'y');          -- 'Namur'       : 'x' absent, la chaine revient intacte
+SELECT REPLACE('aaa', 'a', 'b');            -- 'bbb'         : les trois occurrences sont traitees
+SELECT REPLACE(NULL, 'a', 'b');             -- NULL          : un NULL en entree donne un NULL en sortie</pre>
+<div class="tip">Supprimer, c'est remplacer par une <strong>chaîne vide</strong> : <code>REPLACE(tel, ' ', '')</code> retire tous les espaces, y compris ceux du milieu — ce que TRIM ne sait pas faire.</div>
+
+<h3>2. REPLACE contre TRIM : la différence capitale</h3>
+<p>TRIM ne touche que les <strong>bords</strong>. REPLACE agit <strong>partout</strong>. Les deux sont complémentaires, pas interchangeables.</p>
+<pre class="pseudo">-- Sur la valeur '  Jean  Paul  ' :
+
+TRIM('  Jean  Paul  ')                  -- 'Jean  Paul'   : bords nettoyes, milieu preserve
+REPLACE('  Jean  Paul  ', ' ', '')      -- 'JeanPaul'     : TOUS les espaces disparaissent, meme utiles
+
+-- Le bon reflexe pour normaliser les espaces multiples SANS tout coller :
+TRIM(REPLACE(REPLACE('  Jean  Paul  ', '  ', ' '), '  ', ' '))   -- 'Jean Paul'
+-- on remplace les doubles espaces par un simple, deux fois (pour les triples), puis on rogne les bords</pre>
+<div class="warn">Erreur fréquente : utiliser <code>REPLACE(nom, ' ', '')</code> pour « nettoyer » un nom. Résultat : 'Jean Paul Dupont' devient 'JeanPaulDupont'. REPLACE est un bulldozer, il ne fait aucune distinction entre un espace parasite et un espace nécessaire.</div>
+
+<h3>3. Imbriquer plusieurs REPLACE</h3>
+<p>Pour retirer plusieurs caractères différents, on emboîte les appels. L'évaluation se fait de l'intérieur vers l'extérieur : le résultat du REPLACE le plus interne devient l'entrée du suivant.</p>
+<pre class="pseudo">-- Normaliser un numero de telephone ecrit de mille facons :
+SELECT telephone AS avant,
+       REPLACE(                                   -- 4) puis les parentheses fermantes
+         REPLACE(                                 -- 3) puis les parentheses ouvrantes
+           REPLACE(                               -- 2) puis les points
+             REPLACE(telephone, ' ', ''),         -- 1) d'abord les espaces
+           '.', ''),
+         '(', ''),
+       ')', '') AS apres
+FROM CLIENT;
+
+-- AVANT : '081 / 22.33.44'  -&gt; APRES : '081/223344'
+-- AVANT : '(081) 22 33 44'  -&gt; APRES : '081223344'</pre>
+<div class="tip">Au-delà de trois ou quatre REPLACE imbriqués, le code devient illisible. C'est le signal qu'il faut passer aux <strong>expressions régulières</strong> (demain) : une seule expression y remplace tout ce qui n'est pas un chiffre.</div>
+
+<h3>4. La sensibilité à la casse</h3>
+<p>REPLACE compare le texte cherché exactement, casse comprise, sur PostgreSQL, SQL Server (avec une collation CS) et Oracle. MySQL, dont les collations sont insensibles par défaut, se comporte différemment — mais son REPLACE, lui, <strong>est</strong> sensible à la casse.</p>
+<pre class="pseudo">REPLACE('Namur NAMUR namur', 'Namur', 'Liege');
+-- resultat : 'Liege NAMUR namur'   -- seule l'occurrence a la casse exacte est remplacee
+
+-- Parade portable : normaliser la casse d'abord
+REPLACE(UPPER('Namur NAMUR namur'), 'NAMUR', 'LIEGE');   -- 'LIEGE LIEGE LIEGE'
+-- inconvenient : on perd la casse d'origine du reste du texte</pre>
+
+<h3>5. Les différences entre SGBD</h3>
+<div class="tip"><strong>MySQL / MariaDB</strong> : <code>REPLACE(texte, ancien, nouveau)</code>, sensible à la casse.<br>
+<strong>PostgreSQL</strong> : identique, plus <code>REGEXP_REPLACE</code> et <code>TRANSLATE(texte, 'abc', 'xyz')</code> qui remplace caractère par caractère.<br>
+<strong>SQL Server</strong> : identique, mais la sensibilité à la casse suit la <em>collation</em> de la colonne. Bonus : <code>STUFF(texte, debut, longueur, remplacement)</code> remplace par position plutôt que par contenu.<br>
+<strong>Oracle</strong> : <code>REPLACE</code> et <code>TRANSLATE</code>. Attention, en Oracle une chaîne vide <code>''</code> est traitée comme NULL.</div>
+<pre class="pseudo">-- TRANSLATE (PostgreSQL, Oracle) : substitution caractere par caractere, tres pratique pour les accents
+SELECT TRANSLATE('Lefèvre Noël', 'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc');   -- 'Lefevre Noel'
+-- chaque caractere de la 2e chaine est remplace par celui de MEME RANG dans la 3e
+
+-- STUFF (SQL Server) : remplace 4 caracteres a partir de la position 1
+SELECT STUFF('2024-05-12', 1, 4, '2025');   -- '2025-05-12'</pre>
+
+<h3>6. Le cycle complet de correction</h3>
+<pre class="pseudo">-- 1) MESURER : combien de lignes contiennent le motif fautif ?
+SELECT COUNT(*) AS nb_concernees
+FROM CLIENT
+WHERE telephone LIKE '%.%';        -- LIKE avec % : « contient un point quelque part »
+
+-- 2) TESTER en SELECT, avant / apres
+SELECT id,
+       telephone                        AS avant,
+       REPLACE(telephone, '.', '')      AS apres
+FROM CLIENT
+WHERE telephone LIKE '%.%';
+
+-- 3) APPLIQUER avec le meme WHERE
+UPDATE CLIENT
+SET telephone = REPLACE(telephone, '.', '')
+WHERE telephone LIKE '%.%';        -- limite l'ecriture aux lignes reellement concernees
+
+-- 4) VERIFIER qu'il ne reste rien
+SELECT COUNT(*) FROM CLIENT WHERE telephone LIKE '%.%';   -- attendu : 0</pre>
+<div class="warn">Ne lance jamais <code>UPDATE ... SET col = REPLACE(col, ...)</code> deux fois sans réfléchir. Certains remplacements ne sont pas <em>idempotents</em> : remplacer 'a' par 'aa' double la chaîne à chaque exécution.</div>`,
+  exercises: [
+    { type: "input", q: "Complète : SELECT ______(telephone, '.', '') — la fonction de recherche-remplacement.", a: ["replace"], ph: "une fonction", exp: "REPLACE(texte, ancien, nouveau)." },
+    { type: "qcm", q: "Que renvoie REPLACE('aaa', 'a', 'b') ?", opts: ["'baa'", "'bbb'", "'aab'", "'ab'"], a: 1, exp: "REPLACE traite TOUTES les occurrences, pas seulement la première." },
+    { type: "qcm", q: "Que renvoie REPLACE('Namur', 'x', 'y') ?", opts: ["NULL", "Une erreur", "'Namur'", "Une chaîne vide"], a: 2, exp: "Si le motif est absent, la chaîne revient inchangée, sans erreur." },
+    { type: "input", q: "Complète pour SUPPRIMER tous les espaces : REPLACE(nom, ' ', ______);", a: ["''", "\"\""], ph: "une valeur", exp: "Supprimer, c'est remplacer par une chaîne vide ''." },
+    { type: "vf", q: "REPLACE(nom, ' ', '') est équivalent à TRIM(nom).", a: false, exp: "TRIM ne touche que les bords ; REPLACE supprime aussi les espaces du milieu, ce qui colle les mots." },
+    { type: "qcm", q: "Que renvoie REPLACE('Jean Paul', ' ', '') ?", opts: ["'Jean Paul'", "'JeanPaul'", "'Jean'", "'Paul'"], a: 1, exp: "Tous les espaces disparaissent, y compris l'espace utile entre les prénoms." },
+    { type: "qcm", q: "Que renvoie REPLACE('Namur NAMUR', 'Namur', 'Liege') ?", opts: ["'Liege Liege'", "'Liege NAMUR'", "'Namur NAMUR'", "'LIEGE LIEGE'"], a: 1, exp: "REPLACE est sensible à la casse : seule l'occurrence exacte est remplacée." },
+    { type: "vf", q: "REPLACE(NULL, 'a', 'b') renvoie une chaîne vide.", a: false, exp: "Il renvoie NULL : toute fonction appliquée à NULL propage le NULL." },
+    { type: "input", q: "Complète l'imbrication : REPLACE(REPLACE(tel, ' ', ''), '______', '') pour retirer aussi les points.", a: [".", "'.'"], ph: "un caractère", exp: "On emboîte un REPLACE par caractère à supprimer." },
+    { type: "qcm", q: "Dans REPLACE(REPLACE(x, 'a', 'b'), 'b', 'c'), quel remplacement s'effectue en premier ?", opts: ["'b' vers 'c'", "'a' vers 'b'", "Les deux en même temps", "Aucun"], a: 1, exp: "L'évaluation part de l'intérieur : 'a' devient 'b', puis tous les 'b' deviennent 'c'." },
+    { type: "qcm", q: "Quelle fonction PostgreSQL remplace caractère par caractère (utile pour les accents) ?", opts: ["SWAP", "TRANSLATE", "CONVERT", "MAP"], a: 1, exp: "TRANSLATE(texte, 'àéè', 'aee') substitue chaque caractère par celui de même rang." },
+    { type: "input", q: "Complète le filtre : WHERE telephone ______ '%.%' — pour ne traiter que les lignes contenant un point.", a: ["like"], ph: "un opérateur", exp: "LIKE avec des jokers % signifie « contient quelque part »." },
+    { type: "qcm", q: "Quelle fonction SQL Server remplace par POSITION plutôt que par contenu ?", opts: ["STUFF", "PATCH", "SPLICE", "INSERTAT"], a: 0, exp: "STUFF(texte, debut, longueur, remplacement)." },
+    { type: "vf", q: "Relancer deux fois UPDATE t SET c = REPLACE(c, 'a', 'aa') donne le même résultat qu'une seule fois.", a: false, exp: "Ce remplacement n'est pas idempotent : la chaîne double à chaque passage." },
+    { type: "qcm", q: "Quand faut-il abandonner REPLACE au profit des expressions régulières ?", opts: ["Dès la première utilisation", "Quand il faut empiler plus de trois ou quatre REPLACE imbriqués", "Jamais", "Uniquement sur Oracle"], a: 1, exp: "Une regex remplace en une expression ce que dix REPLACE feraient laborieusement." }
+  ],
+  final: {
+    title: "Exercice final — Normaliser des numéros de téléphone",
+    intro: `<p>Table <code>CONTACT</code>. Les numéros ont été saisis sans aucune contrainte de format.</p>
+<pre class="pseudo">id | nom      | telephone         | reference
+---+----------+-------------------+--------------
+ 1 | 'Dupont' | '081/22.33.44'    | 'REF_2024_01'
+ 2 | 'Leroy'  | '(081) 22 33 44'  | 'REF_2024_02'
+ 3 | 'Simon'  | '081-22-33-44'    | 'REF-2024-03'
+ 4 | 'Martin' | '0812233 44'      | 'REF_2024_04'</pre>`,
+    questions: [
+      { type: "qcm", q: "Quelle expression retire les points de la ligne 1 ?", opts: ["TRIM(telephone)", "REPLACE(telephone, '.', '')", "SUBSTRING(telephone, 1, 3)", "LENGTH(telephone)"], a: 1, exp: "Remplacer le point par une chaîne vide revient à le supprimer." },
+      { type: "qcm", q: "Combien de REPLACE imbriqués faut-il au minimum pour la ligne 2 « (081) 22 33 44 » ?", opts: ["Un", "Deux", "Trois : parenthèse ouvrante, parenthèse fermante et espace", "Quatre"], a: 2, exp: "Chaque caractère parasite distinct demande son propre REPLACE." },
+      { type: "vf", q: "REPLACE(reference, '_', '-') uniformise les références des quatre lignes.", a: true, exp: "Les lignes 1, 2 et 4 passent en tirets ; la ligne 3 en a déjà et reste inchangée." },
+      { type: "qcm", q: "Quelle requête compte les numéros contenant un espace ?", opts: ["WHERE telephone = ' '", "WHERE telephone LIKE '% %'", "WHERE LENGTH(telephone) > 10", "WHERE telephone IS NULL"], a: 1, exp: "LIKE '% %' détecte la présence d'un espace n'importe où dans la chaîne." },
+      { type: "qcm", q: "Après normalisation complète, quelle longueur doit avoir chaque numéro ?", opts: ["Neuf chiffres", "Dix chiffres", "Douze chiffres", "Cela varie"], a: 0, exp: "'081223344' fait 9 caractères. LENGTH permet de vérifier qu'aucun chiffre n'a été perdu." }
+    ],
+    solution: `<pre class="pseudo">-- 1) TESTER la normalisation complete, avant / apres
+SELECT id,
+       telephone AS avant,
+       REPLACE(                                  -- 5) enfin les tirets
+         REPLACE(                                -- 4) puis les parentheses fermantes
+           REPLACE(                              -- 3) puis les parentheses ouvrantes
+             REPLACE(                            -- 2) puis les points
+               REPLACE(telephone, ' ', ''),      -- 1) d'abord tous les espaces
+             '.', ''),
+           '(', ''),
+         ')', ''),
+       '-', '') AS apres
+FROM CONTACT;
+-- ligne 1 : '081/22.33.44'   -&gt; '081/223344'   (le slash subsiste : on ne l'a pas traite)
+-- ligne 2 : '(081) 22 33 44' -&gt; '081223344'
+-- ligne 3 : '081-22-33-44'   -&gt; '081223344'
+-- ligne 4 : '0812233 44'     -&gt; '081223344'
+
+-- 2) CONTROLER la longueur obtenue : tout ce qui ne fait pas 9 caracteres est suspect
+SELECT id, telephone, LENGTH(REPLACE(REPLACE(telephone, ' ', ''), '-', '')) AS taille
+FROM CONTACT;
+
+-- 3) UNIFORMISER les references : underscore vers tiret
+SELECT id,
+       reference                       AS avant,
+       REPLACE(reference, '_', '-')    AS apres     -- 'REF_2024_01' devient 'REF-2024-01'
+FROM CONTACT
+WHERE reference LIKE '%\\_%';                        -- ne cible que les lignes avec underscore
+
+-- 4) APPLIQUER, avec le meme WHERE
+UPDATE CONTACT
+SET reference = REPLACE(reference, '_', '-')
+WHERE reference LIKE '%\\_%';
+
+-- 5) VERIFIER : plus aucun underscore ne doit subsister
+SELECT COUNT(*) FROM CONTACT WHERE reference LIKE '%\\_%';   -- attendu : 0</pre>
+<p>Cinq REPLACE imbriqués pour un numéro de téléphone : c'est trop. Demain, une seule expression régulière fera le même travail.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j06", title: "Nettoyer des codes IBAN", level: 2,
+    statement: "Table <code>COMPTE(id, titulaire, iban)</code> :<pre class='pseudo'>id | titulaire | iban\n---+-----------+--------------------------\n 1 | 'Dupont'  | 'BE68 5390 0754 7034'\n 2 | 'Leroy'   | 'BE68-5390-0754-7034'\n 3 | 'Simon'   | 'BE68539007547034'\n 4 | 'Martin'  | 'be68 5390.0754 7034'</pre>Écris une requête qui affiche l'identifiant, l'IBAN brut, l'IBAN normalisé (sans espaces, sans tirets, sans points, tout en majuscules) et sa longueur. Ne garde que les lignes dont l'IBAN brut diffère de sa version normalisée.",
+    hints: [
+      "Trois caractères parasites à retirer : espace, tiret, point — donc trois REPLACE imbriqués.",
+      "La mise en majuscules s'applique à l'extérieur, une fois les caractères retirés.",
+      "Le WHERE compare la colonne brute à l'expression normalisée complète, avec l'opérateur <>."
+    ],
+    solution: "SELECT id,\n       iban AS iban_brut,                              -- la valeur telle qu'elle est stockee\n       UPPER(                                          -- 4) enfin, tout en majuscules\n         REPLACE(                                      -- 3) puis les points\n           REPLACE(                                    -- 2) puis les tirets\n             REPLACE(iban, ' ', ''),                   -- 1) d'abord les espaces\n           '-', ''),\n         '.', '')                     AS iban_normalise,\n       LENGTH(REPLACE(REPLACE(REPLACE(iban, ' ', ''), '-', ''), '.', '')) AS taille\nFROM COMPTE\nWHERE iban <> UPPER(REPLACE(REPLACE(REPLACE(iban, ' ', ''), '-', ''), '.', ''));   -- exclut les IBAN deja propres\n\n-- Resultat attendu :\n-- id | iban_brut               | iban_normalise     | taille\n-- ---+-------------------------+--------------------+-------\n--  1 | 'BE68 5390 0754 7034'   | 'BE68539007547034' |   16\n--  2 | 'BE68-5390-0754-7034'   | 'BE68539007547034' |   16\n--  4 | 'be68 5390.0754 7034'   | 'BE68539007547034' |   16\n\n-- La ligne 3 est deja normalisee : le WHERE l'exclut, l'UPDATE ne la touchera pas.\n\n-- Variante SQL Server : identique (REPLACE, UPPER existent) ; LEN au lieu de LENGTH.\n-- Variante PostgreSQL plus courte : UPPER(TRANSLATE(iban, ' -.', '')) supprime les trois d'un coup.",
+    note: "Piège : la ligne 3 ('BE68539007547034') est déjà propre. Sans le WHERE, l'UPDATE la réécrirait inutilement — bruit dans les journaux et dans les déclencheurs de la base. Bonne pratique : dès que la pile de REPLACE dépasse trois niveaux, TRANSLATE (PostgreSQL, Oracle) ou une expression régulière rendent le code nettement plus lisible." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 05</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Assembler et mesurer : CONCAT, LENGTH, POSITION",
+  subtitle: "Recoller les morceaux, compter les caractères, retrouver un séparateur.",
+  theory: `
+<h3>1. Concaténer : coller des textes bout à bout</h3>
+<p><strong>Concaténer</strong> (du latin <em>catena</em>, la chaîne) signifie mettre des textes bout à bout pour n'en former qu'un seul. C'est l'opération inverse du découpage d'hier. On l'utilise pour composer un nom complet, une adresse d'affichage, une clé de rapprochement.</p>
+<p>C'est <strong>le</strong> point où les SGBD divergent le plus. Trois écritures coexistent pour la même idée.</p>
+<pre class="pseudo">-- LA FONCTION CONCAT : disponible sur MySQL, PostgreSQL et SQL Server (2012+)
+SELECT CONCAT(prenom, ' ', nom) AS nom_complet FROM CLIENT;   -- 'Jean' + ' ' + 'Dupont' = 'Jean Dupont'
+
+-- L'OPERATEUR || : standard SQL officiel, PostgreSQL, Oracle, SQLite (PAS MySQL par defaut)
+SELECT prenom || ' ' || nom AS nom_complet FROM CLIENT;
+
+-- L'OPERATEUR + : SQL Server uniquement
+SELECT prenom + ' ' + nom AS nom_complet FROM CLIENT;</pre>
+<div class="tip">Recommandation : utilise <code>CONCAT()</code>. C'est la seule forme qui fonctionne sur les trois SGBD les plus répandus. L'opérateur <code>||</code> est plus élégant, mais MySQL le comprend comme un OU logique (sauf mode <code>PIPES_AS_CONCAT</code>).</div>
+
+<h3>2. Le piège majeur : CONCAT et les NULL</h3>
+<p>Une valeur <code>NULL</code> signifie « inconnu ». Le comportement en concaténation diffère radicalement selon la méthode employée, et c'est une source de bugs redoutable.</p>
+<pre class="pseudo">-- Supposons prenom = 'Jean' et nom = NULL :
+
+CONCAT('Jean', ' ', NULL)     -- MySQL     : 'Jean '   -- CONCAT ignore le NULL et continue
+CONCAT('Jean', ' ', NULL)     -- PostgreSQL: 'Jean '   -- idem, CONCAT ignore le NULL
+'Jean' || ' ' || NULL         -- PostgreSQL: NULL      -- l'operateur || CONTAMINE : tout devient NULL
+'Jean' + ' ' + NULL           -- SQL Server: NULL      -- l'operateur + contamine aussi</pre>
+<div class="warn">Retiens la règle : <strong>la fonction CONCAT ignore les NULL, les opérateurs les propagent</strong>. Avec <code>||</code> ou <code>+</code>, un seul NULL suffit à anéantir toute l'expression, et ta colonne « nom complet » devient vide pour toutes les personnes sans deuxième prénom. La parade est <code>COALESCE</code>, que nous verrons au jour 8.</p></div>
+<pre class="pseudo">-- Parade portable : neutraliser le NULL avant de concatener
+SELECT COALESCE(prenom, '') || ' ' || COALESCE(nom, '') AS nom_complet FROM CLIENT;
+-- COALESCE(x, '') remplace un NULL par une chaine vide, qui ne contamine rien</pre>
+
+<h3>3. CONCAT_WS : concaténer avec un séparateur</h3>
+<p><code>CONCAT_WS</code> (<em>With Separator</em>) place automatiquement un séparateur entre chaque élément — et, mieux encore, il <strong>saute</strong> les valeurs NULL sans laisser de séparateur en double.</p>
+<pre class="pseudo">SELECT CONCAT_WS(', ', ville, code_postal, pays) AS adresse FROM CLIENT;
+-- 'Namur, 5000, BE'
+
+-- Avec code_postal = NULL :
+CONCAT_WS(', ', 'Namur', NULL, 'BE')   -- 'Namur, BE'      -- pas de double virgule, le NULL est saute
+CONCAT(  'Namur', ', ', NULL, ', ', 'BE')  -- 'Namur, , BE' -- la virgule orpheline reste</pre>
+<div class="tip"><code>CONCAT_WS</code> existe en MySQL, PostgreSQL et SQL Server (2017+). C'est le bon outil pour composer une adresse dont certains champs peuvent manquer.</div>
+
+<h3>4. LENGTH : mesurer une chaîne</h3>
+<p><code>LENGTH(texte)</code> renvoie le nombre de caractères. On s'en sert pour valider un format (un code postal belge doit faire 4 caractères), détecter des espaces parasites, ou repérer des valeurs aberrantes.</p>
+<pre class="pseudo">SELECT LENGTH('Namur');      -- 5
+SELECT LENGTH('  Namur ');   -- 8   -- les espaces comptent comme des caracteres
+SELECT LENGTH('');           -- 0   -- une chaine vide a une longueur de zero
+SELECT LENGTH(NULL);         -- NULL -- pas 0 : la longueur d'un inconnu est inconnue
+
+-- Detecter des codes postaux mal formes :
+SELECT id, code_postal, LENGTH(code_postal) AS taille
+FROM CLIENT
+WHERE LENGTH(code_postal) &lt;&gt; 4;   -- tout ce qui ne fait pas exactement 4 caracteres est suspect</pre>
+<div class="tip"><strong>MySQL</strong> : <code>LENGTH()</code> compte les <strong>octets</strong>, <code>CHAR_LENGTH()</code> compte les <strong>caractères</strong>. Sur du texte accentué en UTF-8, <code>LENGTH('é')</code> vaut 2 mais <code>CHAR_LENGTH('é')</code> vaut 1. Utilise <code>CHAR_LENGTH</code> pour compter des caractères.<br>
+<strong>PostgreSQL</strong> : <code>LENGTH()</code> compte les caractères ; <code>OCTET_LENGTH()</code> compte les octets.<br>
+<strong>SQL Server</strong> : la fonction s'appelle <code>LEN()</code>, et elle <strong>ignore les espaces de fin</strong> — <code>LEN('abc  ')</code> vaut 3. Pour un comptage exact, <code>DATALENGTH()</code>.</div>
+
+<h3>5. POSITION : où se trouve un caractère ?</h3>
+<p><code>POSITION(aiguille IN botte_de_foin)</code> renvoie la position de la première occurrence du texte cherché, ou <strong>0</strong> s'il est absent. C'est ce qui permet de découper dynamiquement.</p>
+<pre class="pseudo">SELECT POSITION('@' IN 'jean@mail.be');   -- 5  : l'arobase est le 5e caractere
+SELECT POSITION('@' IN 'jean.mail.be');   -- 0  : absent -&gt; ZERO, et non NULL
+
+-- Les trois ecritures selon le SGBD :
+POSITION('@' IN email)        -- STANDARD : MySQL, PostgreSQL
+LOCATE('@', email)            -- MySQL (attention : arguments dans l'ordre INVERSE)
+INSTR(email, '@')             -- MySQL, Oracle, SQLite
+CHARINDEX('@', email)         -- SQL Server (arguments dans l'ordre inverse aussi)</pre>
+<div class="warn">Attention à l'ordre des arguments : <code>POSITION(aiguille IN botte)</code> et <code>CHARINDEX(aiguille, botte)</code> mettent l'aiguille en premier, mais <code>INSTR(botte, aiguille)</code> fait l'inverse. Une inversion donne systématiquement 0, donc un résultat faux sans erreur.</div>
+
+<h3>6. Tout combiner : valider un email</h3>
+<pre class="pseudo">SELECT id,
+       email,
+       LENGTH(email)                         AS taille,        -- longueur totale
+       POSITION('@' IN email)                AS pos_arobase,   -- 0 si absent
+       SUBSTRING(email, POSITION('@' IN email) + 1) AS domaine -- ce qui suit l'arobase
+FROM CLIENT
+WHERE POSITION('@' IN email) = 0            -- aucun arobase : email invalide
+   OR LENGTH(email) &lt; 6                     -- trop court pour etre un vrai email
+   OR email &lt;&gt; TRIM(email);                 -- espaces parasites
+-- cette requete liste toutes les adresses suspectes en une seule passe</pre>`,
+  exercises: [
+    { type: "input", q: "Complète : SELECT ______(prenom, ' ', nom) AS nom_complet; — la fonction portable de concaténation.", a: ["concat"], ph: "une fonction", exp: "CONCAT fonctionne sur MySQL, PostgreSQL et SQL Server." },
+    { type: "qcm", q: "Quel opérateur concatène en SQL Server ?", opts: ["||", "&", "+", "."], a: 2, exp: "SQL Server utilise +. PostgreSQL utilise ||." },
+    { type: "qcm", q: "Que renvoie 'Jean' || ' ' || NULL en PostgreSQL ?", opts: ["'Jean '", "'Jean'", "NULL", "Une erreur"], a: 2, exp: "L'opérateur || propage le NULL : toute l'expression devient NULL." },
+    { type: "qcm", q: "Que renvoie CONCAT('Jean', ' ', NULL) en MySQL ?", opts: ["NULL", "'Jean '", "Une erreur", "'JeanNULL'"], a: 1, exp: "La fonction CONCAT ignore les NULL, contrairement aux opérateurs." },
+    { type: "vf", q: "L'opérateur || fonctionne en MySQL par défaut pour concaténer.", a: false, exp: "MySQL interprète || comme un OU logique, sauf si le mode PIPES_AS_CONCAT est activé." },
+    { type: "input", q: "Complète : SELECT ______(', ', ville, pays); — la fonction qui insère un séparateur et saute les NULL.", a: ["concat_ws"], ph: "une fonction", exp: "CONCAT_WS = CONCAT With Separator." },
+    { type: "qcm", q: "Que renvoie CONCAT_WS(', ', 'Namur', NULL, 'BE') ?", opts: ["'Namur, , BE'", "'Namur, BE'", "NULL", "'NamurBE'"], a: 1, exp: "CONCAT_WS saute la valeur NULL sans laisser de séparateur orphelin." },
+    { type: "input", q: "Complète : SELECT ______(nom) FROM CLIENT; — la fonction qui compte les caractères (hors SQL Server).", a: ["length"], ph: "une fonction", exp: "LENGTH en MySQL, PostgreSQL et SQLite ; LEN en SQL Server." },
+    { type: "qcm", q: "Que renvoie LENGTH(NULL) ?", opts: ["0", "NULL", "-1", "Une erreur"], a: 1, exp: "Toute fonction appliquée à NULL renvoie NULL : la longueur d'un inconnu est inconnue." },
+    { type: "qcm", q: "Quelle fonction MySQL compte les CARACTÈRES et non les octets ?", opts: ["LENGTH", "CHAR_LENGTH", "OCTET_LENGTH", "SIZE"], a: 1, exp: "En MySQL, LENGTH compte les octets ; CHAR_LENGTH compte les caractères réels." },
+    { type: "vf", q: "En SQL Server, LEN('abc  ') renvoie 5.", a: false, exp: "LEN ignore les espaces de fin et renvoie 3. Il faut DATALENGTH pour un comptage exact." },
+    { type: "input", q: "Complète : SELECT ______('@' IN email); — la fonction standard qui donne la position d'un caractère.", a: ["position"], ph: "une fonction", exp: "POSITION(aiguille IN botte) est la forme standard SQL." },
+    { type: "qcm", q: "Que renvoie POSITION('@' IN 'jean.mail.be') ?", opts: ["NULL", "0", "-1", "Une erreur"], a: 1, exp: "Absent, la fonction renvoie 0. C'est un piège : 0 est une valeur utilisable qui fausse les calculs." },
+    { type: "qcm", q: "Quelle est l'équivalent SQL Server de POSITION ?", opts: ["INSTR", "LOCATE", "CHARINDEX", "FINDPOS"], a: 2, exp: "CHARINDEX(aiguille, botte) en SQL Server." },
+    { type: "vf", q: "INSTR et CHARINDEX prennent leurs arguments dans le même ordre.", a: false, exp: "INSTR(botte, aiguille) alors que CHARINDEX(aiguille, botte) : l'ordre est inversé." }
+  ],
+  final: {
+    title: "Exercice final — Composer et valider",
+    intro: `<p>Table <code>EMPLOYE</code>. Certaines colonnes sont NULL.</p>
+<pre class="pseudo">id | prenom  | nom       | service     | email\n---+---------+-----------+-------------+-------------------\n 1 | 'Jean'  | 'Dupont'  | 'Ventes'    | 'j.dupont@ent.be'\n 2 | 'Marie' | 'Leroy'   | NULL        | 'm.leroy@ent.be'\n 3 | 'Paul'  | NULL      | 'Technique' | 'paul-ent-be'\n 4 | 'Anne'  | 'Simon'   | 'Ventes'    | ''</pre>`,
+    questions: [
+      { type: "qcm", q: "Que donne prenom || ' ' || nom pour la ligne 3 en PostgreSQL ?", opts: ["'Paul '", "'Paul'", "NULL", "'Paul NULL'"], a: 2, exp: "nom vaut NULL, et l'opérateur || propage le NULL à toute l'expression." },
+      { type: "qcm", q: "Quelle écriture donne 'Paul' plutôt que NULL pour la ligne 3 ?", opts: ["prenom + nom", "CONCAT(prenom, ' ', nom)", "prenom || nom", "LENGTH(prenom)"], a: 1, exp: "La fonction CONCAT ignore le NULL et renvoie 'Paul ' (avec l'espace)." },
+      { type: "qcm", q: "Quelle requête liste les emails sans arobase ?", opts: ["WHERE email IS NULL", "WHERE POSITION('@' IN email) = 0", "WHERE LENGTH(email) > 0", "WHERE email = '@'"], a: 1, exp: "Position 0 signifie que le caractère est absent : ligne 3 et ligne 4." },
+      { type: "vf", q: "La ligne 4 a un email NULL.", a: false, exp: "Elle a une chaîne vide '', ce qui est différent de NULL. LENGTH vaut 0, pas NULL." },
+      { type: "qcm", q: "Quelle expression compose 'Jean Dupont - Ventes' en sautant proprement les champs manquants ?", opts: ["CONCAT(prenom, nom, service)", "CONCAT_WS(' - ', CONCAT_WS(' ', prenom, nom), service)", "prenom + nom + service", "LENGTH(prenom)"], a: 1, exp: "CONCAT_WS gère le séparateur et saute les NULL sans laisser de tiret orphelin." }
+    ],
+    solution: `<pre class="pseudo">-- 1) COMPOSER un libelle d'affichage robuste aux NULL
+SELECT id,
+       CONCAT_WS(' ', prenom, nom)                 AS nom_complet,   -- 'Jean Dupont' ; ligne 3 -&gt; 'Paul' sans espace orphelin
+       CONCAT_WS(' - ', CONCAT_WS(' ', prenom, nom), service) AS libelle
+FROM EMPLOYE;
+-- ligne 2 : 'Marie Leroy'          (service NULL saute, pas de tiret en trop)
+-- ligne 3 : 'Paul - Technique'     (nom NULL saute)
+
+-- 2) MESURER et VALIDER les emails en une passe
+SELECT id,
+       email,
+       LENGTH(email)                  AS taille,        -- 0 pour la chaine vide, NULL si NULL
+       POSITION('@' IN email)         AS pos_arobase    -- 0 quand l'arobase est absent
+FROM EMPLOYE;
+
+-- 3) LISTER les emails invalides
+SELECT id, email
+FROM EMPLOYE
+WHERE POSITION('@' IN email) = 0      -- pas d'arobase du tout (lignes 3 et 4)
+   OR LENGTH(email) = 0               -- chaine vide (ligne 4)
+   OR email IS NULL;                  -- valeur inconnue (aucune ici, mais le test doit y etre)
+
+-- 4) EXTRAIRE le domaine, seulement sur les emails valides
+SELECT id,
+       SUBSTRING(email, POSITION('@' IN email) + 1) AS domaine   -- tout ce qui suit l'arobase
+FROM EMPLOYE
+WHERE POSITION('@' IN email) &gt; 0;     -- garde-fou indispensable
+
+-- Variante SQL Server :
+-- CONCAT_WS existe depuis 2017 ; LEN remplace LENGTH ; CHARINDEX('@', email) remplace POSITION.</pre>
+<p>Assembler, mesurer, localiser : la boîte à outils du texte est presque complète. Demain : chercher et remplacer.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j05", title: "Fiche d'annuaire", level: 3,
+    statement: "Table <code>MEMBRE(id, prenom, nom, ville, email)</code> :<pre class='pseudo'>id | prenom  | nom      | ville   | email\n---+---------+----------+---------+------------------\n 1 | 'jean'  | 'DUPONT' | 'Namur' | 'j.dupont@abc.be'\n 2 | 'marie' | 'leroy'  | NULL    | 'm.leroy@abc.be'\n 3 | 'paul'  | NULL     | 'Liege' | 'paul-abc-be'</pre>Écris une requête qui affiche, pour chaque membre : l'identifiant, un libellé « Prénom NOM (ville) » robuste aux valeurs NULL, le domaine de l'email, et la longueur de l'email. Ne garde que les membres dont l'email contient une arobase.",
+    hints: [
+      "Le prénom en INITCAP ou UPPER(LEFT)+LOWER(SUBSTRING) ; le nom en UPPER.",
+      "CONCAT_WS saute les NULL — c'est ce qui évite les parenthèses vides et les espaces orphelins.",
+      "Le domaine = SUBSTRING(email, POSITION('@' IN email) + 1), avec un WHERE POSITION(...) > 0 comme garde-fou."
+    ],
+    solution: "SELECT id,\n       CONCAT_WS(' ',                                    -- assemble avec un espace, en sautant les NULL\n                 CONCAT(UPPER(LEFT(prenom,1)), LOWER(SUBSTRING(prenom,2))),  -- 'Jean'\n                 UPPER(nom),                             -- 'DUPONT' ; NULL pour la ligne 3, donc saute\n                 CONCAT('(', ville, ')')) AS libelle,    -- '(Namur)'\n       SUBSTRING(email, POSITION('@' IN email) + 1) AS domaine,   -- tout ce qui suit l'arobase\n       LENGTH(email)                                AS taille_email\nFROM MEMBRE\nWHERE POSITION('@' IN email) > 0;                   -- garde-fou : exclut la ligne 3 (pas d'arobase)\n\n-- Resultat attendu :\n-- id | libelle              | domaine  | taille_email\n-- ---+----------------------+----------+-------------\n--  1 | 'Jean DUPONT (Namur)'| 'abc.be' |     15\n--  2 | 'Marie LEROY'        | 'abc.be' |     14\n\n-- Ligne 2 : ville NULL, donc CONCAT('(', NULL, ')') vaut NULL et CONCAT_WS le saute.\n-- Ligne 3 : exclue par le WHERE, ce qui evite un domaine faux.\n\n-- Variante SQL Server : CHARINDEX('@', email) au lieu de POSITION, LEN au lieu de LENGTH,\n-- et SUBSTRING(email, CHARINDEX('@',email)+1, LEN(email)) car la longueur y est obligatoire.",
+    note: "Piège : CONCAT('(', ville, ')') avec ville NULL donne NULL en PostgreSQL mais '()' en MySQL, car MySQL fait sauter le NULL à l'intérieur de CONCAT. Bonne pratique : ne jamais concaténer une colonne possiblement NULL sans décider explicitement du comportement voulu — soit COALESCE pour une valeur de repli, soit CONCAT_WS pour la faire disparaître." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

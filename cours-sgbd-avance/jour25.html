@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 25</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 25,
+  title: "Pivoter les données : PIVOT et UNPIVOT",
+  subtitle: "Transformer des lignes en colonnes — nativement en SQL Server, et partout ailleurs avec CASE WHEN.",
+  theory: `
+<h3>1. Deux façons de ranger les mêmes données</h3>
+<p>Un même jeu de données peut se présenter sous deux formes. Les connaître, c est comprendre 80 % du travail de préparation de données.</p>
+<pre class="pseudo">-- FORME LONGUE (format « base de donnees », une mesure par ligne)
+-- vendeur | mois    | montant
+-- --------+---------+--------
+-- Alice   | janvier |     100
+-- Alice   | fevrier |     200
+-- Bob     | janvier |     150
+-- Bob     | fevrier |     300
+
+-- FORME LARGE (format « tableau croise », une colonne par valeur)
+-- vendeur | janvier | fevrier
+-- --------+---------+--------
+-- Alice   |     100 |     200
+-- Bob     |     150 |     300</pre>
+<p><strong>Pivoter</strong> (PIVOT), c est passer du long au large : les <em>valeurs</em> d une colonne deviennent des <em>en-têtes</em> de colonnes. <strong>Dépivoter</strong> (UNPIVOT), c est l inverse : les en-têtes redeviennent des valeurs.</p>
+<div class="tip"><strong>L analogie :</strong> c est le tableau croisé dynamique d Excel. Tu prends une liste à plat, tu dis « les mois en colonnes, les vendeurs en lignes, la somme des montants dans les cases », et tu obtiens une grille. PIVOT fait exactement ça, en SQL.</div>
+<div class="warn">La forme longue est celle des bases de données : ajouter un mois n y coûte rien (une ligne de plus). La forme large est celle des rapports : elle se lit d un coup d oeil mais ajouter un mois exige de <strong>modifier la requête</strong>. Retiens cette asymétrie, elle explique toutes les limites de PIVOT.</div>
+
+<h3>2. La méthode universelle : SUM(CASE WHEN ...)</h3>
+<p>C est la technique à connaître en priorité, parce qu elle fonctionne sur <strong>tous</strong> les SGBD sans exception : MySQL, MariaDB, PostgreSQL, SQL Server, SQLite, Oracle.</p>
+<p>Le principe : une colonne de sortie = une expression <code>CASE WHEN</code> enveloppée dans un agrégat.</p>
+<pre class="pseudo">SELECT vendeur,                                             -- ce qui reste en LIGNES
+       SUM(CASE WHEN mois = 'janvier' THEN montant END) AS janvier,
+       SUM(CASE WHEN mois = 'fevrier' THEN montant END) AS fevrier,
+       SUM(CASE WHEN mois = 'mars'    THEN montant END) AS mars,
+       SUM(montant)                                     AS total
+FROM VENTE
+GROUP BY vendeur;                                           -- une ligne par vendeur</pre>
+<p><strong>Comment ça marche, ligne par ligne :</strong> pour la colonne <code>janvier</code>, le CASE renvoie le montant si le mois est janvier, et <code>NULL</code> sinon (pas de ELSE = NULL implicite). Le <code>SUM</code> ignore les NULL. Résultat : dans la case janvier d Alice, seuls les montants de janvier d Alice sont additionnés. Chaque colonne est un filtre déguisé.</p>
+<pre class="pseudo">-- Detail du calcul pour Alice :
+-- ligne 1 : mois='janvier' --&gt; CASE janvier = 100, CASE fevrier = NULL
+-- ligne 2 : mois='fevrier' --&gt; CASE janvier = NULL, CASE fevrier = 200
+-- SUM ignore les NULL   --&gt; janvier = 100, fevrier = 200</pre>
+<div class="warn">Écrire <code>ELSE 0</code> au lieu de laisser le NULL change le résultat des cases vides : tu obtiendras 0 au lieu de NULL. Ce n est pas la même information — 0 signifie « a vendu zéro », NULL signifie « pas de donnée ». Choisis en connaissance de cause, ou force le 0 explicitement avec <code>COALESCE(SUM(...), 0)</code>.</div>
+
+<h3>3. Les variantes de l agrégat</h3>
+<pre class="pseudo">-- Compter au lieu de sommer
+COUNT(CASE WHEN statut = 'livree' THEN 1 END)   AS nb_livrees
+-- ou, plus lisible :
+SUM(CASE WHEN statut = 'livree' THEN 1 ELSE 0 END) AS nb_livrees
+
+-- Moyenne, maximum...
+AVG(CASE WHEN mois = 'janvier' THEN montant END) AS moy_janvier
+MAX(CASE WHEN mois = 'janvier' THEN montant END) AS max_janvier
+
+-- MySQL admet un raccourci (non portable, a eviter en code partage) :
+SUM(mois = 'janvier')            -- un booleen vaut 1 ou 0 en MySQL
+SUM(IF(mois = 'janvier', montant, 0))</pre>
+
+<h3>4. PIVOT natif : SQL Server</h3>
+<p>SQL Server (et Oracle 11g+) propose un opérateur <code>PIVOT</code> dédié. Il est plus court à écrire, mais sa syntaxe est déroutante.</p>
+<pre class="pseudo">SELECT vendeur, janvier, fevrier, mars       -- les colonnes du resultat
+FROM (
+  SELECT vendeur, mois, montant              -- la source : UNIQUEMENT les 3 colonnes utiles
+  FROM VENTE
+) AS src
+PIVOT (
+  SUM(montant)                               -- l agregat a placer dans les cases
+  FOR mois IN ([janvier], [fevrier], [mars]) -- la colonne a pivoter et ses valeurs
+) AS p;</pre>
+<div class="warn">Piège majeur de PIVOT en SQL Server : il agrège implicitement sur <strong>toutes les colonnes de la sous-requête qui ne sont ni pivotées ni agrégées</strong>. Si tu écris <code>SELECT *</code> dans la source et que la table contient une colonne <code>id</code>, tu obtiendras une ligne par id au lieu d une ligne par vendeur. Liste TOUJOURS explicitement les colonnes de la source.</div>
+<p>Oracle a le même opérateur, avec une syntaxe légèrement différente pour les alias :</p>
+<pre class="pseudo">-- Oracle 11g+
+SELECT * FROM VENTE
+PIVOT (SUM(montant) FOR mois IN ('janvier' AS janvier, 'fevrier' AS fevrier));</pre>
+
+<h3>5. Le tableau des dialectes</h3>
+<pre class="pseudo">-- OPERATEUR PIVOT NATIF :
+--   SQL Server  : OUI (depuis 2005)      PIVOT ( ... FOR col IN (...) )
+--   Oracle      : OUI (depuis 11g)       syntaxe proche
+--   PostgreSQL  : NON --&gt; extension tablefunc, fonction crosstab()
+--   MySQL       : NON --&gt; aucune alternative native
+--   MariaDB     : NON
+--   SQLite      : NON
+
+-- METHODE SUM(CASE WHEN) : OUI PARTOUT, sans exception.</pre>
+<pre class="pseudo">-- PostgreSQL, via l extension tablefunc (rarement installee en pratique) :
+CREATE EXTENSION IF NOT EXISTS tablefunc;
+SELECT * FROM crosstab(
+  'SELECT vendeur, mois, SUM(montant) FROM VENTE GROUP BY 1,2 ORDER BY 1,2'
+) AS ct(vendeur text, janvier numeric, fevrier numeric);</pre>
+<div class="tip">Conseil de terrain : même si tu travailles sur SQL Server, apprends d abord <code>SUM(CASE WHEN)</code>. C est plus verbeux, mais c est portable, plus souple (plusieurs agrégats différents dans la même requête, conditions complexes), et tout le monde le comprend. PIVOT natif est un raccourci de confort, pas une compétence indispensable.</div>
+
+<h3>6. UNPIVOT : du large vers le long</h3>
+<p>Le besoin est fréquent : on reçoit un fichier Excel avec les mois en colonnes, et il faut le remettre à plat pour l insérer proprement en base.</p>
+<pre class="pseudo">-- METHODE UNIVERSELLE : UNION ALL, une requete par colonne a deplier
+SELECT vendeur, 'janvier' AS mois, janvier AS montant FROM VENTES_LARGE
+UNION ALL
+SELECT vendeur, 'fevrier',         fevrier         FROM VENTES_LARGE
+UNION ALL
+SELECT vendeur, 'mars',            mars            FROM VENTES_LARGE
+ORDER BY vendeur, mois;</pre>
+<pre class="pseudo">-- Entree (large) :              Sortie (longue) :
+-- vendeur | janvier | fevrier    vendeur | mois    | montant
+-- --------+---------+--------    --------+---------+--------
+-- Alice   |     100 |     200    Alice   | fevrier |     200
+-- Bob     |     150 |     300    Alice   | janvier |     100
+--                                Bob     | fevrier |     300
+--                                Bob     | janvier |     150</pre>
+<pre class="pseudo">-- SQL Server / Oracle : operateur UNPIVOT dedie
+SELECT vendeur, mois, montant
+FROM VENTES_LARGE
+UNPIVOT (
+  montant FOR mois IN (janvier, fevrier, mars)   -- les colonnes a replier
+) AS u;
+-- Note : UNPIVOT ELIMINE les lignes dont la valeur est NULL.
+-- La version UNION ALL les conserve. Ajoute WHERE ... IS NOT NULL si besoin.</pre>
+
+<h3>7. La grande limite : le pivot dynamique</h3>
+<p>Dans les deux approches, <strong>les colonnes de sortie doivent être écrites en dur</strong>. Si un nouveau mois apparaît, la requête ne le verra pas. C est une limite fondamentale du SQL : le nombre et le nom des colonnes d un résultat sont fixés à la compilation, avant même de lire les données.</p>
+<pre class="pseudo">-- Les trois sorties possibles :
+-- 1) Accepter de figer les colonnes (le cas le plus frequent : 12 mois, 4 trimestres).
+-- 2) Generer la requete par du SQL dynamique :
+--    SQL Server : construire une chaine, puis EXEC sp_executesql @requete
+--    MySQL      : PREPARE stmt FROM @requete; EXECUTE stmt;
+--    PostgreSQL : une fonction PL/pgSQL avec EXECUTE
+-- 3) La MEILLEURE solution dans la vraie vie : renvoyer les donnees en forme
+--    LONGUE et laisser l outil de restitution (Excel, Power BI, Metabase,
+--    la couche applicative) faire le tableau croise. C est son metier.</pre>
+<div class="warn">Le SQL dynamique construit une requête par concaténation de chaînes. Si une de ces chaînes vient d une saisie utilisateur, tu ouvres une faille d injection SQL. À réserver aux valeurs issues de la base elle-même, et toujours avec une validation stricte.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle expression conditionnelle permet de pivoter sur tous les SGBD ?", ph: "SUM(CASE ...", a: ["CASE WHEN", "SUM(CASE WHEN)", "CASE"], exp: "SUM(CASE WHEN mois = 'janvier' THEN montant END) : une colonne = un filtre déguisé." },
+    { type: "qcm", q: "Quel SGBD propose un opérateur PIVOT natif ?", opts: ["MySQL", "PostgreSQL", "SQL Server", "SQLite"], a: 2, exp: "SQL Server depuis 2005, et Oracle depuis 11g. Les autres émulent avec CASE WHEN." },
+    { type: "vf", q: "PostgreSQL possède un opérateur PIVOT natif.", a: false, exp: "Il faut l extension tablefunc et sa fonction crosstab(), ou SUM(CASE WHEN)." },
+    { type: "qcm", q: "Sans ELSE, que renvoie CASE WHEN mois = 'janvier' THEN montant END pour une ligne de février ?", opts: ["0", "NULL", "Une erreur", "Le montant"], a: 1, exp: "Pas de ELSE = NULL implicite, et SUM ignore les NULL : c est ce qui fait fonctionner le pivot." },
+    { type: "qcm", q: "Passer de la forme longue à la forme large s appelle…", opts: ["Dépivoter", "Pivoter", "Normaliser", "Agréger"], a: 1, exp: "PIVOT : les valeurs d une colonne deviennent des en-têtes." },
+    { type: "input", q: "Quel opérateur fait l inverse de PIVOT en SQL Server ?", ph: "UNP...", a: ["UNPIVOT"], exp: "UNPIVOT replie des colonnes en lignes." },
+    { type: "qcm", q: "La méthode universelle pour dépivoter est…", opts: ["UNION ALL, une requête par colonne", "GROUP BY", "DISTINCT", "INTERSECT"], a: 0, exp: "Chaque colonne devient un SELECT avec une constante pour le libellé." },
+    { type: "input", q: "Quelle clause faut-il obligatoirement ajouter à un pivot par CASE WHEN pour qu il produise une ligne par vendeur ?", ph: "GROUP ...", a: ["GROUP BY", "GROUP BY vendeur"], exp: "Sans GROUP BY, l agrégat écraserait tout en une seule ligne." },
+    { type: "vf", q: "En SQL Server, écrire SELECT * dans la sous-requête source d un PIVOT est risqué.", a: true, exp: "PIVOT agrège implicitement sur toutes les colonnes restantes : une colonne id ferait exploser le résultat." },
+    { type: "qcm", q: "Quelle est la limite fondamentale de tout pivot en SQL ?", opts: ["Il est lent", "Les colonnes de sortie doivent être écrites en dur", "Il ne marche qu avec SUM", "Il perd les lignes"], a: 1, exp: "Le nombre de colonnes d un résultat est fixé avant la lecture des données." },
+    { type: "qcm", q: "Quelle est la meilleure solution en pratique face à un pivot dynamique ?", opts: ["Toujours utiliser du SQL dynamique", "Renvoyer la forme longue et laisser l outil de restitution croiser", "Créer une table par mois", "Renoncer au rapport"], a: 1, exp: "Excel, Power BI ou Metabase font le tableau croisé bien mieux, et sans figer la requête." },
+    { type: "input", q: "Quelle fonction force un 0 à la place d un NULL dans une case vide du pivot ?", ph: "COAL...", a: ["COALESCE", "COALESCE()", "IFNULL"], exp: "COALESCE(SUM(CASE WHEN ...), 0) : portable partout." },
+    { type: "vf", q: "L opérateur UNPIVOT de SQL Server conserve les lignes dont la valeur est NULL.", a: false, exp: "UNPIVOT les élimine ; la version UNION ALL, elle, les conserve." },
+    { type: "qcm", q: "Le principal risque du SQL dynamique pour un pivot est…", opts: ["La lenteur", "L injection SQL si une chaîne vient d une saisie utilisateur", "La perte de données", "L incompatibilité avec les index"], a: 1, exp: "On construit la requête par concaténation : toute valeur non maîtrisée est dangereuse." },
+    { type: "input", q: "En MySQL, quel raccourci non portable remplace parfois SUM(CASE WHEN cond THEN 1 ELSE 0 END) ?", ph: "SUM(cond) ou I...", a: ["SUM(cond)", "IF", "IF()", "SUM(condition)"], exp: "MySQL évalue un booléen à 1 ou 0 ; il propose aussi IF(cond, a, b). À éviter en code partagé." }
+  ],
+  final: {
+    title: "Exercice final — Le tableau croisé des ventes",
+    intro: `<p>Il faut produire un rapport trimestriel par vendeur.</p>
+<pre class="pseudo">-- VENTE(id, vendeur, trimestre, montant)
+-- vendeur | trimestre | montant
+-- --------+-----------+--------
+-- Alice   | T1        |     100
+-- Alice   | T1        |      50
+-- Alice   | T2        |     200
+-- Bob     | T1        |     150
+-- Bob     | T3        |     300
+-- Attendu : une ligne par vendeur, une colonne par trimestre.</pre>`,
+    questions: [
+      { type: "input", q: "Quelle valeur apparaîtra dans la case Alice / T1 ?", ph: "un nombre", a: ["150"], exp: "Les deux ventes de T1 d Alice sont additionnées : 100 + 50." },
+      { type: "qcm", q: "Que vaudra la case Bob / T2 sans ELSE ni COALESCE ?", opts: ["0", "NULL", "150", "Une erreur"], a: 1, exp: "Aucune ligne ne correspond : le CASE renvoie NULL partout et SUM de rien vaut NULL." },
+      { type: "input", q: "Quelle clause produit une ligne par vendeur ?", ph: "GROUP ...", a: ["GROUP BY", "GROUP BY vendeur"], exp: "Le pivot par CASE WHEN est un GROUP BY avec des agrégats conditionnels." },
+      { type: "vf", q: "Cette requête écrite avec SUM(CASE WHEN) fonctionnera aussi bien en MySQL qu en PostgreSQL et SQL Server.", a: true, exp: "C est tout l intérêt de la méthode universelle." },
+      { type: "qcm", q: "Si un trimestre T5 apparaissait dans les données, la requête…", opts: ["L ajouterait automatiquement", "L ignorerait : les colonnes sont écrites en dur", "Provoquerait une erreur", "Supprimerait T1"], a: 1, exp: "C est la limite du pivot statique : il faut modifier la requête." }
+    ],
+    solution: `<pre class="pseudo">-- ===== VERSION UNIVERSELLE (MySQL, PostgreSQL, SQL Server, SQLite, Oracle) =====
+SELECT vendeur,                                                   -- reste en lignes
+       COALESCE(SUM(CASE WHEN trimestre = 'T1' THEN montant END), 0) AS T1,
+       COALESCE(SUM(CASE WHEN trimestre = 'T2' THEN montant END), 0) AS T2,
+       COALESCE(SUM(CASE WHEN trimestre = 'T3' THEN montant END), 0) AS T3,
+       COALESCE(SUM(CASE WHEN trimestre = 'T4' THEN montant END), 0) AS T4,
+       SUM(montant)                                                  AS total_annee,
+       COUNT(*)                                                      AS nb_ventes
+FROM VENTE
+GROUP BY vendeur                                                  -- une ligne par vendeur
+ORDER BY total_annee DESC;
+
+-- vendeur |  T1 |  T2 |  T3 | T4 | total_annee | nb_ventes
+-- --------+-----+-----+-----+----+-------------+----------
+-- Alice   | 150 | 200 |   0 |  0 |         350 |         3
+-- Bob     | 150 |   0 | 300 |  0 |         450 |         2
+
+-- Sans COALESCE, les cases vides afficheraient NULL au lieu de 0.
+-- A toi de choisir : 0 = « a vendu zero », NULL = « aucune donnee ».
+
+-- ===== VERSION SQL SERVER, avec l operateur natif =====
+SELECT vendeur, T1, T2, T3, T4
+FROM (
+  SELECT vendeur, trimestre, montant       -- SOURCE : les 3 colonnes utiles UNIQUEMENT
+  FROM VENTE                                -- (surtout pas SELECT *, id casserait tout)
+) AS src
+PIVOT (
+  SUM(montant)                              -- l agregat des cases
+  FOR trimestre IN ([T1], [T2], [T3], [T4]) -- la colonne pivotee et ses valeurs
+) AS p;
+
+-- ===== L OPERATION INVERSE : depivoter le resultat =====
+-- Version universelle, avec UNION ALL
+SELECT vendeur, 'T1' AS trimestre, T1 AS montant FROM RAPPORT_LARGE
+UNION ALL
+SELECT vendeur, 'T2', T2 FROM RAPPORT_LARGE
+UNION ALL
+SELECT vendeur, 'T3', T3 FROM RAPPORT_LARGE
+UNION ALL
+SELECT vendeur, 'T4', T4 FROM RAPPORT_LARGE
+ORDER BY vendeur, trimestre;
+
+-- Version SQL Server, avec l operateur natif
+SELECT vendeur, trimestre, montant
+FROM RAPPORT_LARGE
+UNPIVOT (montant FOR trimestre IN (T1, T2, T3, T4)) AS u;</pre>
+<p>Tu sais remodeler un jeu de données. Demain, on change de registre : le contrôle qualité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j25", title: "Un tableau croisé statuts par mois", level: 3,
+    statement: "La table COMMANDE(id, client, mois, statut, montant) contient les commandes de l année ; statut vaut 'livree', 'annulee' ou 'en_cours'. Écris une requête portable qui produit un tableau croisé avec une ligne par mois et, en colonnes : le nombre de commandes livrées, annulées, en cours, le montant total livré, le nombre total de commandes, et le taux d annulation en pourcentage. Trie par mois. Ajoute en commentaire la version SQL Server avec l opérateur PIVOT natif, et explique pourquoi elle est moins souple ici.",
+    hints: [
+      "Compter par statut : COUNT(CASE WHEN statut = 'livree' THEN 1 END) ou SUM(CASE WHEN statut = 'livree' THEN 1 ELSE 0 END).",
+      "Mélanger les agrégats est le point fort de la méthode CASE WHEN : un COUNT sur une colonne, un SUM sur une autre, dans la même requête.",
+      "Pour le taux, protège la division : 100.0 * nb_annulees / NULLIF(COUNT(*), 0), et multiplie par 100.0 (pas 100) pour éviter la division entière."
+    ],
+    solution: "-- ===== VERSION PORTABLE (MySQL, MariaDB, PostgreSQL, SQL Server, SQLite, Oracle) =====\nSELECT mois,\n\n       -- Comptages par statut : chaque colonne est un filtre deguise\n       SUM(CASE WHEN statut = 'livree'   THEN 1 ELSE 0 END) AS nb_livrees,\n       SUM(CASE WHEN statut = 'annulee'  THEN 1 ELSE 0 END) AS nb_annulees,\n       SUM(CASE WHEN statut = 'en_cours' THEN 1 ELSE 0 END) AS nb_en_cours,\n\n       -- Montant : un agregat DIFFERENT dans la meme requete\n       COALESCE(SUM(CASE WHEN statut = 'livree' THEN montant END), 0) AS ca_livre,\n\n       COUNT(*) AS nb_total,\n\n       -- Taux d annulation, protege contre la division par zero\n       ROUND(\n         100.0 * SUM(CASE WHEN statut = 'annulee' THEN 1 ELSE 0 END)\n               / NULLIF(COUNT(*), 0)\n       , 1) AS taux_annulation_pct\n\nFROM COMMANDE\nGROUP BY mois                        -- une ligne par mois\nORDER BY mois;\n\n-- mois    | nb_livrees | nb_annulees | nb_en_cours | ca_livre | nb_total | taux_annulation_pct\n-- --------+------------+-------------+-------------+----------+----------+--------------------\n-- 2024-01 |         12 |           2 |           1 |  3450.00 |       15 |                13.3\n-- 2024-02 |          9 |           0 |           4 |  2780.50 |       13 |                 0.0\n-- 2024-03 |         14 |           3 |           0 |  4110.00 |       17 |                17.6\n\n-- ===== VERSION SQL SERVER AVEC PIVOT NATIF =====\n-- SELECT mois, livree AS nb_livrees, annulee AS nb_annulees, en_cours AS nb_en_cours\n-- FROM (\n--   SELECT mois, statut FROM COMMANDE      -- source : 2 colonnes SEULEMENT\n-- ) AS src\n-- PIVOT (COUNT(statut) FOR statut IN ([livree], [annulee], [en_cours])) AS p\n-- ORDER BY mois;\n--\n-- POURQUOI ELLE EST MOINS SOUPLE ICI :\n-- PIVOT n accepte qu UN SEUL agregat. On ne peut donc PAS obtenir dans la meme\n-- requete les comptages (COUNT sur statut) ET le ca_livre (SUM sur montant)\n-- ET le taux d annulation. Il faudrait deux PIVOT puis une jointure.\n-- La methode CASE WHEN, elle, melange librement COUNT, SUM, AVG et calculs derives.",
+    note: "Cet exercice montre le vrai critère de choix entre les deux méthodes : PIVOT natif est plus court quand on n a qu un seul agrégat sur une seule colonne, mais il devient inutilisable dès que le rapport mélange des mesures. Or un rapport réel mélange presque toujours des mesures. Retiens aussi le NULLIF(COUNT(*), 0) : un mois sans aucune commande ne remonterait pas dans le GROUP BY, mais le réflexe de protéger toute division doit devenir automatique." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

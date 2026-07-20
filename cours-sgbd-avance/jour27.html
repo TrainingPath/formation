@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 27</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 27,
+  title: "Les contraintes au service de la qualité",
+  subtitle: "Nettoyer une fois, c est bien. Empêcher la saleté de revenir, c est mieux.",
+  theory: `
+<h3>1. Nettoyer ne suffit jamais</h3>
+<p>Tu as passé une journée à dédoublonner, normaliser, convertir. Trois semaines plus tard, la table est de nouveau sale. Pourquoi ? Parce que rien n a empêché les mauvaises données de rentrer.</p>
+<p>Une <strong>contrainte</strong> est une règle déclarée sur la table, que le SGBD fait respecter à chaque INSERT et chaque UPDATE. Une ligne qui la viole est <strong>refusée</strong>, avec une erreur. La qualité n est plus une intention : elle devient une propriété du schéma.</p>
+<div class="tip"><strong>L analogie :</strong> nettoyer une table sans poser de contraintes, c est passer la serpillière dans une pièce dont la fenêtre reste ouverte sur un chantier. La contrainte, c est fermer la fenêtre. Autre image : le videur à l entrée d une boîte. Il ne nettoie rien à l intérieur — il empêche simplement les indésirables d entrer.</div>
+<div class="warn">Une contrainte protège de <strong>toutes</strong> les sources d écriture : ton application, un script de reprise, un collègue en ligne de commande, un import batch. Un contrôle codé dans l application, lui, ne protège que ce que l application écrit. C est la différence entre une règle et un espoir.</div>
+
+<h3>2. Les six contraintes du standard</h3>
+<pre class="pseudo">-- NOT NULL      : la colonne doit avoir une valeur
+-- UNIQUE        : pas deux fois la meme valeur
+-- PRIMARY KEY   : NOT NULL + UNIQUE, l identifiant de la ligne
+-- FOREIGN KEY   : la valeur doit exister dans une autre table
+-- CHECK         : une condition libre doit etre vraie
+-- DEFAULT       : une valeur par defaut si rien n est fourni
+--                 (techniquement un defaut, pas une contrainte, mais meme role)</pre>
+
+<h3>3. NOT NULL et DEFAULT</h3>
+<pre class="pseudo">CREATE TABLE CLIENT (
+  id         INT PRIMARY KEY,
+  nom        VARCHAR(100) NOT NULL,              -- obligatoire
+  email      VARCHAR(255) NOT NULL,
+  pays       CHAR(2)      NOT NULL DEFAULT 'BE', -- obligatoire, avec valeur par defaut
+  cree_le    DATE         NOT NULL DEFAULT CURRENT_DATE,
+  actif      BOOLEAN      NOT NULL DEFAULT TRUE
+);</pre>
+<div class="warn">NOT NULL n empêche pas la <strong>chaîne vide</strong>. Une colonne <code>nom VARCHAR(100) NOT NULL</code> accepte parfaitement <code>''</code>. Pour interdire les deux, il faut ajouter un CHECK : <code>CHECK (TRIM(nom) &lt;&gt; '')</code>. C est le complément indispensable de NOT NULL sur toute colonne texte.</div>
+<pre class="pseudo">-- DEFAULT : les dialectes de la date du jour
+-- PostgreSQL / MySQL 8 / MariaDB : DEFAULT CURRENT_DATE
+-- MySQL (datetime)               : DEFAULT CURRENT_TIMESTAMP
+-- SQL Server                     : DEFAULT GETDATE()  ou  SYSDATETIME()
+-- Oracle                         : DEFAULT SYSDATE
+-- BOOLEAN : n existe PAS en SQL Server ni en Oracle
+--           --&gt; utiliser BIT (SQL Server) ou NUMBER(1) (Oracle)</pre>
+
+<h3>4. UNIQUE : la contrainte anti-doublon</h3>
+<pre class="pseudo">-- A la creation
+CREATE TABLE CLIENT (
+  id    INT PRIMARY KEY,
+  email VARCHAR(255) NOT NULL UNIQUE            -- pas deux fois le meme email
+);
+
+-- Apres coup, sur une table existante (le cas le plus frequent)
+ALTER TABLE CLIENT ADD CONSTRAINT uq_client_email UNIQUE (email);
+
+-- UNIQUE sur PLUSIEURS colonnes : c est la COMBINAISON qui doit etre unique
+ALTER TABLE INSCRIPTION
+  ADD CONSTRAINT uq_inscription UNIQUE (id_etudiant, id_cours);
+-- --&gt; un etudiant ne peut s inscrire qu une fois a un cours donne,
+--     mais il peut suivre plusieurs cours, et un cours a plusieurs etudiants.</pre>
+<div class="warn">Le comportement de UNIQUE face aux NULL diffère selon le SGBD, et c est un piège transversal majeur :<br>
+• <strong>MySQL, PostgreSQL, SQLite, Oracle</strong> : plusieurs NULL sont autorisés (deux NULL ne sont pas considérés comme égaux — c est le comportement du standard).<br>
+• <strong>SQL Server</strong> : un seul NULL autorisé ! Une deuxième ligne à NULL est rejetée.<br>
+La parade en SQL Server est l index unique filtré : <code>CREATE UNIQUE INDEX ix ON CLIENT(email) WHERE email IS NOT NULL;</code></div>
+<p><strong>Point important :</strong> tu ne peux poser une contrainte UNIQUE que si les données sont <strong>déjà propres</strong>. Le SGBD vérifie l existant et refuse la contrainte s il trouve un doublon. C est pour ça que l ordre est toujours : profiler (jour 26), nettoyer (jour 17), <em>puis</em> contraindre.</p>
+
+<h3>5. CHECK : la contrainte métier sur mesure</h3>
+<pre class="pseudo">ALTER TABLE COMMANDE
+  ADD CONSTRAINT ck_montant_positif CHECK (montant &gt; 0);
+
+ALTER TABLE COMMANDE
+  ADD CONSTRAINT ck_statut CHECK (statut IN ('en_cours','livree','annulee'));
+
+ALTER TABLE CONTRAT
+  ADD CONSTRAINT ck_dates CHECK (date_fin &gt;= date_debut);   -- coherence entre colonnes
+
+ALTER TABLE CLIENT
+  ADD CONSTRAINT ck_email_format CHECK (email LIKE '%_@_%._%');
+
+ALTER TABLE CLIENT
+  ADD CONSTRAINT ck_nom_non_vide CHECK (TRIM(nom) &lt;&gt; '');</pre>
+<div class="warn">Attention au NULL dans un CHECK : une condition qui vaut <em>inconnu</em> est <strong>acceptée</strong>, pas rejetée. <code>CHECK (montant &gt; 0)</code> laisse donc passer une ligne où montant est NULL. Si tu veux vraiment interdire, combine avec NOT NULL, ou écris <code>CHECK (montant IS NOT NULL AND montant &gt; 0)</code>.</div>
+<pre class="pseudo">-- SUPPORT DE CHECK :
+--   PostgreSQL, SQL Server, Oracle, SQLite : OUI depuis toujours
+--   MySQL   : ignore SILENCIEUSEMENT avant 8.0.16 !
+--             La contrainte etait acceptee a la creation... et jamais appliquee.
+--   MariaDB : applique reellement depuis 10.2.1
+-- Verifie ta version. Un CHECK qu on croit actif et qui ne l est pas
+-- est pire que pas de contrainte du tout : il donne une fausse securite.</pre>
+
+<h3>6. FOREIGN KEY : l intégrité référentielle</h3>
+<p>Une <strong>clé étrangère</strong> garantit qu une valeur existe bien dans la table référencée. Elle empêche les lignes <strong>orphelines</strong> (une commande qui pointe vers un client inexistant).</p>
+<pre class="pseudo">ALTER TABLE COMMANDE
+  ADD CONSTRAINT fk_commande_client
+  FOREIGN KEY (id_client) REFERENCES CLIENT(id)
+  ON DELETE RESTRICT      -- que faire si on supprime le client ?
+  ON UPDATE CASCADE;      -- que faire si son id change ?</pre>
+<pre class="pseudo">-- Les actions referentielles :
+--   RESTRICT / NO ACTION : refuse la suppression du parent (le plus sur)
+--   CASCADE              : supprime aussi les enfants (PUISSANT ET DANGEREUX)
+--   SET NULL             : met la cle etrangere a NULL (la colonne doit l accepter)
+--   SET DEFAULT          : remet la valeur par defaut (peu supporte)</pre>
+<div class="warn">ON DELETE CASCADE est à manier avec une extrême prudence. Supprimer un client efface silencieusement ses commandes, qui effacent leurs lignes de commande, qui effacent... Un DELETE d une ligne peut en détruire des milliers en cascade, sans avertissement. En production, on préfère très largement RESTRICT et une suppression logique (une colonne <code>archive</code>).</div>
+<pre class="pseudo">-- PIEGE MySQL : le moteur MyISAM ACCEPTE la syntaxe FOREIGN KEY
+-- et l IGNORE completement. Seul InnoDB applique reellement les cles etrangeres.
+-- Verifier :  SHOW TABLE STATUS WHERE Name = 'commande';
+-- Corriger :  ALTER TABLE commande ENGINE = InnoDB;</pre>
+
+<h3>7. Poser une contrainte sur une table déjà sale</h3>
+<p>C est la situation réelle : la contrainte est refusée parce que des lignes existantes la violent. Le rituel :</p>
+<pre class="pseudo">-- 1) Compter les violations AVANT de tenter quoi que ce soit
+SELECT COUNT(*) FROM COMMANDE WHERE montant &lt;= 0 OR montant IS NULL;
+
+-- 2) Les examiner
+SELECT * FROM COMMANDE WHERE montant &lt;= 0 OR montant IS NULL LIMIT 20;
+
+-- 3) Les corriger ou les isoler dans une table de quarantaine
+-- 4) Reverifier que le compte est a zero
+-- 5) SEULEMENT ALORS, poser la contrainte
+ALTER TABLE COMMANDE ADD CONSTRAINT ck_montant CHECK (montant &gt; 0);</pre>
+<pre class="pseudo">-- Poser une contrainte SANS valider l existant (on protege l avenir seulement) :
+-- SQL Server : ALTER TABLE t WITH NOCHECK ADD CONSTRAINT ck ... CHECK (...);
+-- PostgreSQL : ALTER TABLE t ADD CONSTRAINT ck CHECK (...) NOT VALID;
+--              puis plus tard : ALTER TABLE t VALIDATE CONSTRAINT ck;
+-- MySQL      : pas d equivalent propre.
+-- Utile sur une grosse table en production : la validation complete
+-- verrouillerait la table trop longtemps.</pre>
+
+<h3>8. Inspecter et supprimer les contraintes</h3>
+<pre class="pseudo">-- Lister les contraintes (standard, marche a peu pres partout)
+SELECT * FROM information_schema.TABLE_CONSTRAINTS
+WHERE TABLE_NAME = 'commande';
+
+-- PostgreSQL, en console psql :  \\d commande
+-- MySQL      :  SHOW CREATE TABLE commande;
+-- SQL Server :  sp_helpconstraint 'commande';
+
+-- Supprimer une contrainte
+ALTER TABLE COMMANDE DROP CONSTRAINT ck_montant;   -- standard, PostgreSQL, SQL Server
+ALTER TABLE COMMANDE DROP CHECK ck_montant;        -- MySQL 8 (CHECK)
+ALTER TABLE COMMANDE DROP INDEX uq_email;          -- MySQL (UNIQUE)
+ALTER TABLE COMMANDE DROP FOREIGN KEY fk_client;   -- MySQL (FK)</pre>
+<div class="tip">Nomme <strong>toujours</strong> tes contraintes explicitement (<code>uq_</code>, <code>ck_</code>, <code>fk_</code>). Sans nom, le SGBD en génère un illisible du type <code>SYS_C0011432</code>, impossible à retrouver le jour où il faut la supprimer. Et le message d erreur renvoyé à l application citera ce nom : autant qu il soit parlant.</div>
+
+<h3>9. Contrainte ou nettoyage applicatif ?</h3>
+<pre class="pseudo">-- CONTRAINTE en base   : protege TOUTES les sources d ecriture, message technique
+-- VALIDATION applicative : message utilisateur soigne, mais contournable
+-- --&gt; La bonne pratique est LES DEUX : validation dans l application pour
+--     l ergonomie, contrainte en base comme filet de securite ultime.
+--     La base est la derniere ligne de defense, elle ne doit jamais ceder.</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle contrainte interdit deux fois la même valeur dans une colonne ?", ph: "U...", a: ["UNIQUE"], exp: "UNIQUE empêche les doublons dès l INSERT, définitivement." },
+    { type: "vf", q: "NOT NULL empêche aussi la chaîne vide.", a: false, exp: "'' est une valeur : il faut y ajouter CHECK (TRIM(col) <> '')." },
+    { type: "input", q: "Quelle contrainte permet d exprimer une règle métier libre, comme montant > 0 ?", ph: "CH...", a: ["CHECK"], exp: "CHECK accepte toute condition booléenne portant sur la ligne." },
+    { type: "qcm", q: "Un CHECK (montant > 0) sur une ligne où montant est NULL…", opts: ["Rejette la ligne", "Accepte la ligne, car la condition vaut inconnu", "Provoque une erreur", "Met montant à 0"], a: 1, exp: "Un CHECK ne rejette que si la condition est FAUSSE ; inconnu passe." },
+    { type: "qcm", q: "Avant MySQL 8.0.16, les contraintes CHECK étaient…", opts: ["Interdites", "Acceptées à la création mais silencieusement ignorées", "Plus rapides", "Obligatoires"], a: 1, exp: "Fausse sécurité : la contrainte existait sur le papier mais n était jamais appliquée." },
+    { type: "qcm", q: "Combien de NULL une contrainte UNIQUE accepte-t-elle en SQL Server ?", opts: ["Autant qu on veut", "Un seul", "Aucun", "Deux"], a: 1, exp: "SQL Server est le seul à limiter à un NULL ; ailleurs, plusieurs NULL passent." },
+    { type: "input", q: "Quelle contrainte garantit qu une valeur existe bien dans une autre table ?", ph: "FOREIGN ...", a: ["FOREIGN KEY", "CLE ETRANGERE", "FK"], exp: "La clé étrangère assure l intégrité référentielle et empêche les orphelins." },
+    { type: "qcm", q: "ON DELETE CASCADE fait que…", opts: ["La suppression du parent est refusée", "La suppression du parent supprime aussi les enfants", "La clé étrangère passe à NULL", "Rien ne se passe"], a: 1, exp: "Puissant et dangereux : un DELETE peut détruire des milliers de lignes en chaîne." },
+    { type: "input", q: "Quelle action référentielle refuse la suppression du parent ?", ph: "RES...", a: ["RESTRICT", "NO ACTION"], exp: "RESTRICT (ou NO ACTION) est le choix le plus sûr en production." },
+    { type: "qcm", q: "En MySQL, quel moteur ignore silencieusement les clés étrangères ?", opts: ["InnoDB", "MyISAM", "Memory", "Aucun"], a: 1, exp: "MyISAM accepte la syntaxe et ne l applique jamais : vérifie avec SHOW TABLE STATUS." },
+    { type: "vf", q: "On peut poser une contrainte UNIQUE sur une table contenant déjà des doublons.", a: false, exp: "Le SGBD valide l existant et refuse la contrainte : il faut nettoyer d abord." },
+    { type: "input", q: "Quel mot-clé PostgreSQL permet d ajouter un CHECK sans valider les lignes existantes ?", ph: "NOT V...", a: ["NOT VALID"], exp: "ADD CONSTRAINT ... CHECK (...) NOT VALID, puis VALIDATE CONSTRAINT plus tard." },
+    { type: "qcm", q: "L équivalent SQL Server de NOT VALID est…", opts: ["WITH NOCHECK", "SKIP CHECK", "DISABLE", "IGNORE"], a: 0, exp: "ALTER TABLE t WITH NOCHECK ADD CONSTRAINT ... : la contrainte protège l avenir seulement." },
+    { type: "vf", q: "Une contrainte en base protège aussi contre les écritures faites hors application.", a: true, exp: "C est tout son intérêt face à une validation applicative : elle est incontournable." },
+    { type: "qcm", q: "Pourquoi nommer explicitement ses contraintes ?", opts: ["C est obligatoire", "Sinon le SGBD génère un nom illisible, impossible à retrouver pour la supprimer", "Pour accélérer les requêtes", "Pour économiser de l espace"], a: 1, exp: "Un nom comme SYS_C0011432 est ingérable ; uq_client_email est explicite." }
+  ],
+  final: {
+    title: "Exercice final — Verrouiller une table après nettoyage",
+    intro: `<p>Tu viens de nettoyer cette table. Il faut maintenant l empêcher de se resalir.</p>
+<pre class="pseudo">-- ADHERENT(id, email, nom, pays, cotisation, date_inscription, id_club, statut)
+-- Regles metier a faire respecter :
+--   1) email obligatoire, unique, contenant une arobase
+--   2) nom obligatoire et non vide (pas juste des espaces)
+--   3) pays sur 2 lettres, valeur par defaut 'BE'
+--   4) cotisation strictement positive
+--   5) statut limite a 'actif', 'suspendu' ou 'resilie'
+--   6) date_inscription jamais dans le futur
+--   7) id_club doit exister dans la table CLUB</pre>`,
+    questions: [
+      { type: "input", q: "Quelle contrainte pour la règle 1 (email jamais en double) ?", ph: "U...", a: ["UNIQUE"], exp: "ALTER TABLE ADHERENT ADD CONSTRAINT uq_adherent_email UNIQUE (email)." },
+      { type: "input", q: "Quelle contrainte pour la règle 5 (liste fermée de statuts) ?", ph: "CH...", a: ["CHECK"], exp: "CHECK (statut IN ('actif','suspendu','resilie'))." },
+      { type: "input", q: "Quelle contrainte pour la règle 7 (le club doit exister) ?", ph: "FOREIGN ...", a: ["FOREIGN KEY", "CLE ETRANGERE", "FK"], exp: "FOREIGN KEY (id_club) REFERENCES CLUB(id)." },
+      { type: "vf", q: "Pour la règle 2, NOT NULL suffit à interdire un nom composé uniquement d espaces.", a: false, exp: "Il faut ajouter CHECK (TRIM(nom) <> '') : NOT NULL laisse passer la chaîne vide." },
+      { type: "qcm", q: "Que se passe-t-il si une ligne existante a une cotisation à 0 lors de l ALTER TABLE ?", opts: ["Elle est corrigée automatiquement", "L ALTER TABLE échoue : il faut d abord corriger les données", "Elle est supprimée", "Rien"], a: 1, exp: "Le SGBD valide l existant. D où l ordre : profiler, nettoyer, puis contraindre." }
+    ],
+    solution: `<pre class="pseudo">-- ===== ETAPE 0 : VERIFIER que les donnees respectent deja les regles =====
+SELECT
+  SUM(CASE WHEN email IS NULL OR email NOT LIKE '%@%' THEN 1 ELSE 0 END) AS v_email,
+  SUM(CASE WHEN TRIM(COALESCE(nom,'')) = ''           THEN 1 ELSE 0 END) AS v_nom,
+  SUM(CASE WHEN cotisation IS NULL OR cotisation &lt;= 0 THEN 1 ELSE 0 END) AS v_coti,
+  SUM(CASE WHEN statut NOT IN ('actif','suspendu','resilie') THEN 1 ELSE 0 END) AS v_statut,
+  SUM(CASE WHEN date_inscription &gt; CURRENT_DATE       THEN 1 ELSE 0 END) AS v_date
+FROM ADHERENT;
+-- TOUTES ces colonnes doivent valoir 0. Sinon, on corrige AVANT.
+
+-- Les doublons d email, a traiter separement
+SELECT email, COUNT(*) FROM ADHERENT GROUP BY email HAVING COUNT(*) &gt; 1;
+
+-- Les orphelins de club
+SELECT COUNT(*) FROM ADHERENT a
+WHERE a.id_club IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM CLUB c WHERE c.id = a.id_club);
+
+-- ===== ETAPE 1 : les contraintes de presence =====
+ALTER TABLE ADHERENT MODIFY email VARCHAR(255) NOT NULL;   -- MySQL / MariaDB
+-- PostgreSQL : ALTER TABLE ADHERENT ALTER COLUMN email SET NOT NULL;
+-- SQL Server : ALTER TABLE ADHERENT ALTER COLUMN email VARCHAR(255) NOT NULL;
+
+-- ===== ETAPE 2 : l unicite =====
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT uq_adherent_email UNIQUE (email);
+
+-- ===== ETAPE 3 : les regles metier (CHECK) =====
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_email_format CHECK (email LIKE '%_@_%._%');
+
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_nom_non_vide CHECK (TRIM(nom) &lt;&gt; '');
+
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_cotisation CHECK (cotisation &gt; 0);
+
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_statut
+  CHECK (statut IN ('actif','suspendu','resilie'));
+
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_pays CHECK (LENGTH(pays) = 2);
+-- SQL Server : LEN(pays) = 2
+
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT ck_adherent_date CHECK (date_inscription &lt;= CURRENT_DATE);
+-- ATTENTION : certains SGBD refusent une fonction non deterministe dans un CHECK
+-- (SQL Server accepte GETDATE(), Oracle refuse SYSDATE). Repli : un TRIGGER.
+
+-- ===== ETAPE 4 : la valeur par defaut =====
+ALTER TABLE ADHERENT ALTER COLUMN pays SET DEFAULT 'BE';   -- PostgreSQL
+-- MySQL      : ALTER TABLE ADHERENT ALTER pays SET DEFAULT 'BE';
+-- SQL Server : ALTER TABLE ADHERENT ADD CONSTRAINT df_pays
+--              DEFAULT 'BE' FOR pays;
+
+-- ===== ETAPE 5 : l integrite referentielle =====
+ALTER TABLE ADHERENT
+  ADD CONSTRAINT fk_adherent_club
+  FOREIGN KEY (id_club) REFERENCES CLUB(id)
+  ON DELETE RESTRICT      -- on refuse de supprimer un club qui a des adherents
+  ON UPDATE CASCADE;      -- si l id du club change, on suit
+
+-- ===== ETAPE 6 : verifier que tout est bien en place =====
+SELECT CONSTRAINT_NAME, CONSTRAINT_TYPE
+FROM information_schema.TABLE_CONSTRAINTS
+WHERE TABLE_NAME = 'adherent';
+
+-- ===== ETAPE 7 : tester ! Chaque contrainte doit REFUSER =====
+INSERT INTO ADHERENT (id, email, nom, cotisation, statut)
+VALUES (999, 'sans-arobase', 'Test', 10, 'actif');   -- doit echouer : format email
+INSERT INTO ADHERENT (id, email, nom, cotisation, statut)
+VALUES (999, 'a@b.com', '   ', 10, 'actif');         -- doit echouer : nom vide
+INSERT INTO ADHERENT (id, email, nom, cotisation, statut)
+VALUES (999, 'a@b.com', 'Test', -5, 'actif');        -- doit echouer : cotisation
+INSERT INTO ADHERENT (id, email, nom, cotisation, statut)
+VALUES (999, 'a@b.com', 'Test', 10, 'inconnu');      -- doit echouer : statut
+
+-- Une contrainte non testee est une contrainte dont tu ne sais rien.</pre>
+<p>La table se défend seule. Demain : transformer des données en masse avec UPDATE et jointure.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j27", title: "Sécuriser une table de commandes", level: 2,
+    statement: "La table COMMANDE(id, ref, id_client, montant, devise, statut, date_cmd, date_livraison) vient d être nettoyée. Écris le script complet qui : (1) vérifie d abord que les données respectent bien les règles, (2) pose les contraintes correspondantes, (3) les teste. Règles : ref unique et non vide ; id_client doit exister dans CLIENT ; montant strictement positif ; devise sur 3 lettres avec 'EUR' par défaut ; statut parmi 'en_cours', 'livree', 'annulee' ; date_livraison jamais antérieure à date_cmd. Commente et signale les différences de dialecte.",
+    hints: [
+      "Commence toujours par une requête de comptage des violations : si elle ne renvoie pas que des zéros, l ALTER TABLE échouera.",
+      "La règle sur les deux dates est un CHECK portant sur deux colonnes de la même ligne : CHECK (date_livraison IS NULL OR date_livraison >= date_cmd). Le IS NULL est nécessaire pour autoriser les commandes non encore livrées.",
+      "Nomme chaque contrainte avec un préfixe clair (uq_, ck_, fk_) : sans nom explicite, tu ne pourras plus la retrouver pour la supprimer."
+    ],
+    solution: "-- ============ ETAPE 1 : AUDIT PREALABLE ============\n-- Toutes ces colonnes doivent renvoyer 0, sinon l ALTER TABLE echouera.\nSELECT\n  SUM(CASE WHEN TRIM(COALESCE(ref,'')) = ''        THEN 1 ELSE 0 END) AS ref_vide,\n  SUM(CASE WHEN montant IS NULL OR montant <= 0    THEN 1 ELSE 0 END) AS montant_ko,\n  SUM(CASE WHEN LENGTH(COALESCE(devise,'')) <> 3   THEN 1 ELSE 0 END) AS devise_ko,\n  SUM(CASE WHEN statut NOT IN ('en_cours','livree','annulee')\n                                                   THEN 1 ELSE 0 END) AS statut_ko,\n  SUM(CASE WHEN date_livraison IS NOT NULL\n            AND date_livraison < date_cmd          THEN 1 ELSE 0 END) AS dates_ko\nFROM COMMANDE;\n\n-- Les doublons de reference\nSELECT ref, COUNT(*) AS nb\nFROM COMMANDE\nGROUP BY ref\nHAVING COUNT(*) > 1;\n\n-- Les commandes orphelines (client inexistant)\nSELECT COUNT(*) AS orphelines\nFROM COMMANDE c\nWHERE NOT EXISTS (SELECT 1 FROM CLIENT cl WHERE cl.id = c.id_client);\n\n-- ============ ETAPE 2 : POSE DES CONTRAINTES ============\n\n-- 2a) Presence obligatoire\nALTER TABLE COMMANDE MODIFY ref VARCHAR(50) NOT NULL;        -- MySQL / MariaDB\n-- PostgreSQL : ALTER TABLE COMMANDE ALTER COLUMN ref SET NOT NULL;\n-- SQL Server : ALTER TABLE COMMANDE ALTER COLUMN ref VARCHAR(50) NOT NULL;\n\n-- 2b) Unicite de la reference\nALTER TABLE COMMANDE\n  ADD CONSTRAINT uq_commande_ref UNIQUE (ref);\n\n-- 2c) Reference non vide (NOT NULL ne suffit pas : '' passerait)\nALTER TABLE COMMANDE\n  ADD CONSTRAINT ck_commande_ref_non_vide CHECK (TRIM(ref) <> '');\n\n-- 2d) Montant strictement positif\nALTER TABLE COMMANDE\n  ADD CONSTRAINT ck_commande_montant CHECK (montant > 0);\n-- Rappel : si montant etait NULL, ce CHECK laisserait passer la ligne.\n-- Le NOT NULL sur la colonne est donc indispensable en complement.\n\n-- 2e) Devise sur 3 lettres, avec valeur par defaut\nALTER TABLE COMMANDE\n  ADD CONSTRAINT ck_commande_devise CHECK (LENGTH(devise) = 3);\n-- SQL Server : LEN(devise) = 3\nALTER TABLE COMMANDE ALTER devise SET DEFAULT 'EUR';         -- MySQL\n-- PostgreSQL : ALTER TABLE COMMANDE ALTER COLUMN devise SET DEFAULT 'EUR';\n-- SQL Server : ALTER TABLE COMMANDE ADD CONSTRAINT df_devise\n--              DEFAULT 'EUR' FOR devise;\n\n-- 2f) Liste fermee de statuts\nALTER TABLE COMMANDE\n  ADD CONSTRAINT ck_commande_statut\n  CHECK (statut IN ('en_cours','livree','annulee'));\n\n-- 2g) Coherence des deux dates (le IS NULL autorise les non-livrees)\nALTER TABLE COMMANDE\n  ADD CONSTRAINT ck_commande_dates\n  CHECK (date_livraison IS NULL OR date_livraison >= date_cmd);\n\n-- 2h) Integrite referentielle\nALTER TABLE COMMANDE\n  ADD CONSTRAINT fk_commande_client\n  FOREIGN KEY (id_client) REFERENCES CLIENT(id)\n  ON DELETE RESTRICT     -- on refuse d effacer un client ayant des commandes\n  ON UPDATE CASCADE;\n\n-- ============ ETAPE 3 : VERIFICATION ET TESTS ============\nSELECT CONSTRAINT_NAME, CONSTRAINT_TYPE\nFROM information_schema.TABLE_CONSTRAINTS\nWHERE TABLE_NAME = 'commande';\n\n-- Chacun de ces INSERT doit ECHOUER :\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd)\nVALUES (9001, '', 1, 10, 'EUR', 'livree', '2024-01-01');       -- ref vide\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd)\nVALUES (9002, 'X-1', 1, -10, 'EUR', 'livree', '2024-01-01');   -- montant negatif\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd)\nVALUES (9003, 'X-2', 1, 10, 'EURO', 'livree', '2024-01-01');   -- devise 4 lettres\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd)\nVALUES (9004, 'X-3', 1, 10, 'EUR', 'expedie', '2024-01-01');   -- statut hors liste\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd,\n                      date_livraison)\nVALUES (9005, 'X-4', 1, 10, 'EUR', 'livree', '2024-05-01', '2024-04-01'); -- dates\nINSERT INTO COMMANDE (id, ref, id_client, montant, devise, statut, date_cmd)\nVALUES (9006, 'X-5', 99999, 10, 'EUR', 'livree', '2024-01-01'); -- client inexistant\n\n-- ATTENTION MySQL : verifie ta version avec SELECT VERSION().\n-- Avant 8.0.16, TOUS les CHECK ci-dessus seraient acceptes... et ignores.\n-- Verifie aussi le moteur : SHOW TABLE STATUS WHERE Name = 'commande';\n-- MyISAM ignore silencieusement la cle etrangere. Il faut InnoDB.",
+    note: "L étape 3 est celle que tout le monde saute, et c est celle qui compte. Une contrainte qu on n a pas vue refuser un INSERT est une contrainte dont on ignore si elle fonctionne — et sur MySQL avant 8.0.16, elle ne fonctionnait effectivement pas. Note aussi la subtilité du CHECK sur les dates : sans le IS NULL, aucune commande non livrée ne pourrait plus être enregistrée, ce qui bloquerait toute l application. Un CHECK trop strict est aussi problématique qu un CHECK absent." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

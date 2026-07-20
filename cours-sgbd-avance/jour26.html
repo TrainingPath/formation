@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 26</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 26,
+  title: "Profiler un jeu de données (contrôle qualité)",
+  subtitle: "Avant de nettoyer, diagnostiquer — les requêtes standard qui révèlent l état réel d une table.",
+  theory: `
+<h3>1. Ne jamais nettoyer à l aveugle</h3>
+<p>Le réflexe du débutant devant une table sale, c est de foncer sur les TRIM et les UPDATE. Le réflexe du professionnel, c est de <strong>mesurer d abord</strong>. Combien de lignes ? Combien de NULL par colonne ? Combien de valeurs distinctes ? Quelles valeurs aberrantes ?</p>
+<p>Cette étape s appelle le <strong>profilage de données</strong> (data profiling) : produire une <em>fiche d identité</em> de la table avant de la toucher. Elle prend dix minutes et elle évite des heures de correction de correction.</p>
+<div class="tip"><strong>L analogie :</strong> c est le bilan sanguin avant l ordonnance. Le médecin ne prescrit pas parce que le patient a l air fatigué : il mesure d abord, puis il traite ce que les mesures révèlent. Le profilage, ce sont tes analyses de sang.</div>
+
+<h3>2. Les six questions du profilage</h3>
+<pre class="pseudo">-- 1) VOLUME       : combien de lignes ?
+-- 2) COMPLETUDE   : quel taux de NULL par colonne ?
+-- 3) UNICITE      : combien de valeurs distinctes ? y a-t-il des doublons ?
+-- 4) DISTRIBUTION : min, max, moyenne — les valeurs sont-elles plausibles ?
+-- 5) FORMAT       : longueurs, casse, espaces parasites, motifs respectes ?
+-- 6) COHERENCE    : les regles metier sont-elles respectees ?</pre>
+
+<h3>3. Volume et complétude en une requête</h3>
+<p>L astuce : <code>COUNT(*)</code> compte toutes les lignes, mais <code>COUNT(colonne)</code> <strong>ignore les NULL</strong>. La différence entre les deux donne directement le nombre de NULL.</p>
+<pre class="pseudo">SELECT COUNT(*)                            AS nb_lignes,
+       COUNT(*) - COUNT(email)             AS email_null,
+       COUNT(*) - COUNT(telephone)         AS telephone_null,
+       COUNT(*) - COUNT(date_naissance)    AS date_naiss_null,
+       ROUND(100.0 * (COUNT(*) - COUNT(email)) / COUNT(*), 1) AS pct_email_null
+FROM CLIENT;
+
+-- nb_lignes | email_null | telephone_null | date_naiss_null | pct_email_null
+-- ----------+------------+----------------+-----------------+---------------
+--      5000 |         43 |           1820 |             120 |            0.9</pre>
+<div class="warn">Attention : une chaîne vide <code>''</code> n est <strong>pas</strong> NULL. Une colonne peut afficher 0 % de NULL et être remplie de vide. Compte les deux : <code>SUM(CASE WHEN email IS NULL OR TRIM(email) = '' THEN 1 ELSE 0 END)</code>. C est un des pièges les plus fréquents des imports CSV, où l absence de valeur devient une chaîne vide.</div>
+
+<h3>4. Unicité et cardinalité</h3>
+<pre class="pseudo">SELECT COUNT(*)                  AS nb_lignes,
+       COUNT(DISTINCT email)     AS emails_distincts,
+       COUNT(*) - COUNT(DISTINCT email) AS ecart,   -- doublons + NULL
+       COUNT(DISTINCT ville)     AS nb_villes,
+       COUNT(DISTINCT pays)      AS nb_pays
+FROM CLIENT;</pre>
+<p>La <strong>cardinalité</strong> d une colonne, c est son nombre de valeurs distinctes. Elle renseigne beaucoup :</p>
+<pre class="pseudo">-- cardinalite = nb_lignes        --&gt; identifiant unique, candidat cle primaire
+-- cardinalite tres faible (2-10) --&gt; colonne categorielle (statut, pays, genre)
+-- cardinalite = 1                --&gt; colonne INUTILE : toutes les lignes identiques
+-- cardinalite = 0                --&gt; colonne entierement NULL</pre>
+<div class="tip">La cardinalité guide aussi l indexation (jour 30) : un index est très efficace sur une colonne à forte cardinalité (un email), et souvent inutile sur une colonne à deux valeurs (actif / inactif).</div>
+
+<h3>5. La distribution des valeurs</h3>
+<pre class="pseudo">-- Les valeurs les plus frequentes d une colonne categorielle
+SELECT statut,
+       COUNT(*)                                    AS nb,
+       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct  -- fenetre sur agregat
+FROM COMMANDE
+GROUP BY statut
+ORDER BY nb DESC;
+
+-- statut   |   nb |  pct
+-- ---------+------+------
+-- livree   | 4200 | 84.0
+-- annulee  |  600 | 12.0
+-- en_cours |  180 |  3.6
+-- LIVREE   |   15 |  0.3   &lt;-- casse incoherente, a corriger !
+-- livrée   |    5 |  0.1   &lt;-- accent parasite
+--                              (voila pourquoi on profile AVANT de nettoyer)</pre>
+<pre class="pseudo">-- Les bornes d une colonne numerique ou date
+SELECT MIN(montant) AS mini,
+       MAX(montant) AS maxi,
+       AVG(montant) AS moyenne,
+       MIN(date_cmd) AS plus_ancienne,
+       MAX(date_cmd) AS plus_recente,
+       SUM(CASE WHEN montant &lt; 0 THEN 1 ELSE 0 END) AS nb_negatifs,
+       SUM(CASE WHEN montant = 0 THEN 1 ELSE 0 END) AS nb_zeros
+FROM COMMANDE;</pre>
+<div class="warn">Les valeurs sentinelles trahissent un import bâclé : une date au 1900-01-01 ou au 9999-12-31, un montant à -1, un âge à 999, un code postal à 00000. Ce ne sont pas de vraies données : ce sont des NULL déguisés. Cherche-les systématiquement dans les MIN et MAX.</div>
+
+<h3>6. Le profilage des formats texte</h3>
+<pre class="pseudo">SELECT MIN(LENGTH(code_postal)) AS lg_min,          -- LENGTH : MySQL, PostgreSQL, SQLite
+       MAX(LENGTH(code_postal)) AS lg_max,          -- SQL Server : LEN()
+       COUNT(DISTINCT LENGTH(code_postal)) AS nb_longueurs,
+       SUM(CASE WHEN nom &lt;&gt; TRIM(nom)        THEN 1 ELSE 0 END) AS avec_espaces,
+       SUM(CASE WHEN email NOT LIKE '%@%'    THEN 1 ELSE 0 END) AS emails_invalides,
+       SUM(CASE WHEN nom = UPPER(nom)        THEN 1 ELSE 0 END) AS tout_majuscule
+FROM CLIENT;</pre>
+<pre class="pseudo">-- LONGUEUR D UNE CHAINE — les dialectes :
+--   MySQL / MariaDB : LENGTH() compte les OCTETS, CHAR_LENGTH() les CARACTERES
+--                     (attention aux accents en UTF-8 : LENGTH('é') vaut 2 !)
+--   PostgreSQL      : LENGTH() ou CHAR_LENGTH() comptent les caracteres
+--   SQL Server      : LEN() compte les caracteres MAIS ignore les espaces de fin ;
+--                     DATALENGTH() compte les octets
+--   Oracle          : LENGTH()</pre>
+<div class="warn">Le piège SQL Server : <code>LEN('abc   ')</code> renvoie 3, pas 6. Impossible donc de détecter des espaces en fin de chaîne avec LEN. Utilise <code>DATALENGTH</code>, ou compare directement <code>colonne &lt;&gt; RTRIM(colonne)</code>.</div>
+
+<h3>7. Détecter les incohérences métier</h3>
+<pre class="pseudo">SELECT
+  SUM(CASE WHEN date_fin &lt; date_debut          THEN 1 ELSE 0 END) AS dates_inversees,
+  SUM(CASE WHEN quantite &lt;= 0                  THEN 1 ELSE 0 END) AS quantites_absurdes,
+  SUM(CASE WHEN prix_total &lt;&gt; prix_unit * quantite THEN 1 ELSE 0 END) AS totaux_faux,
+  SUM(CASE WHEN date_cmd &gt; CURRENT_DATE        THEN 1 ELSE 0 END) AS dates_futures
+FROM LIGNE_COMMANDE;
+
+-- CURRENT_DATE : PostgreSQL, MySQL, SQLite (standard SQL)
+-- SQL Server   : CAST(GETDATE() AS DATE), ou SYSDATETIME()
+-- Oracle       : SYSDATE ou CURRENT_DATE</pre>
+<pre class="pseudo">-- Les orphelins : des cles etrangeres qui ne pointent vers rien
+SELECT COUNT(*) AS commandes_orphelines
+FROM COMMANDE c
+WHERE NOT EXISTS (SELECT 1 FROM CLIENT cl WHERE cl.id = c.id_client);
+-- Un resultat non nul signale une integrite referentielle non appliquee (jour 27).</pre>
+
+<h3>8. Le rapport de profilage complet</h3>
+<p>Pour livrer un diagnostic lisible, on empile les indicateurs avec <code>UNION ALL</code> : une ligne par contrôle, avec son verdict.</p>
+<pre class="pseudo">SELECT 'Nombre de lignes'      AS controle, CAST(COUNT(*) AS CHAR) AS valeur FROM CLIENT
+UNION ALL
+SELECT 'Emails NULL ou vides',  CAST(SUM(CASE WHEN email IS NULL OR TRIM(email) = ''
+                                              THEN 1 ELSE 0 END) AS CHAR) FROM CLIENT
+UNION ALL
+SELECT 'Emails distincts',      CAST(COUNT(DISTINCT email) AS CHAR) FROM CLIENT
+UNION ALL
+SELECT 'Emails en doublon',     CAST(COUNT(*) AS CHAR) FROM (
+    SELECT email FROM CLIENT GROUP BY email HAVING COUNT(*) &gt; 1
+  ) AS d;
+
+-- controle             | valeur
+-- ---------------------+-------
+-- Nombre de lignes     | 5000
+-- Emails NULL ou vides | 43
+-- Emails distincts     | 4872
+-- Emails en doublon    | 85</pre>
+<div class="tip">Garde ce rapport dans un fichier, et <strong>rejoue-le après le nettoyage</strong>. La comparaison avant/après est ta preuve que le nettoyage a fonctionné — et ta protection si quelqu un conteste tes résultats. C est exactement ce qu on fera au projet final du jour 31.</div>
+
+<h3>9. Les outils intégrés du SGBD</h3>
+<pre class="pseudo">-- Les statistiques deja collectees par le moteur, sans scanner la table :
+-- PostgreSQL : SELECT * FROM pg_stats WHERE tablename = 'client';
+--              (n_distinct, null_frac, most_common_vals... tres riche)
+-- MySQL      : SELECT * FROM information_schema.COLUMNS
+--              WHERE TABLE_NAME = 'client';
+--              ANALYZE TABLE client;   -- rafraichit les statistiques
+-- SQL Server : DBCC SHOW_STATISTICS('client', 'idx_email');
+--              sp_help 'client';
+-- Partout    : information_schema.COLUMNS donne types, nullabilite, longueurs.</pre>
+<p>Ces vues sont approximatives (elles reposent sur un échantillon), mais elles sont instantanées même sur une table de cent millions de lignes. Utile pour un premier coup d oeil avant de lancer un vrai comptage.</p>`,
+  exercises: [
+    { type: "input", q: "Comment appelle-t-on l étape de diagnostic d une table avant nettoyage ?", ph: "le p...", a: ["PROFILAGE", "LE PROFILAGE", "DATA PROFILING", "profilage de données"], exp: "Le profilage : la fiche d identité de la table, avant toute correction." },
+    { type: "qcm", q: "Quelle différence entre COUNT(*) et COUNT(email) ?", opts: ["Aucune", "COUNT(email) ignore les NULL, donc la différence donne le nombre de NULL", "COUNT(*) est plus lent", "COUNT(email) compte les distincts"], a: 1, exp: "C est l astuce de base pour mesurer la complétude d une colonne." },
+    { type: "vf", q: "Une chaîne vide '' est comptée comme un NULL par COUNT(colonne).", a: false, exp: "Une chaîne vide est une valeur : elle est comptée. C est le piège classique des imports CSV." },
+    { type: "input", q: "Comment appelle-t-on le nombre de valeurs distinctes d une colonne ?", ph: "la c...", a: ["CARDINALITE", "LA CARDINALITE", "cardinalité"], exp: "COUNT(DISTINCT colonne) : elle guide l indexation et révèle les colonnes inutiles." },
+    { type: "qcm", q: "Une colonne dont la cardinalité vaut 1 est…", opts: ["Une clé primaire", "Inutile : toutes les lignes ont la même valeur", "Entièrement NULL", "Bien indexée"], a: 1, exp: "Une seule valeur distincte n apporte aucune information." },
+    { type: "qcm", q: "Une date au 1900-01-01 dans un MIN signale probablement…", opts: ["Un client très âgé", "Une valeur sentinelle : un NULL déguisé", "Une erreur du SGBD", "Un fuseau horaire"], a: 1, exp: "Les valeurs sentinelles (1900, 9999, -1, 999) trahissent un import bâclé." },
+    { type: "input", q: "Quelle fonction donne la longueur d une chaîne en SQL Server ?", ph: "L...", a: ["LEN", "LEN()"], exp: "LEN() en SQL Server, LENGTH() ailleurs — et LEN ignore les espaces de fin." },
+    { type: "qcm", q: "En MySQL, LENGTH('é') renvoie…", opts: ["1", "2, car LENGTH compte les octets", "0", "Une erreur"], a: 1, exp: "En UTF-8, un caractère accentué occupe 2 octets : il faut CHAR_LENGTH pour compter les caractères." },
+    { type: "qcm", q: "Pourquoi LEN ne détecte-t-il pas les espaces de fin en SQL Server ?", opts: ["C est un bug", "LEN ignore volontairement les espaces de fin ; il faut DATALENGTH", "Il faut un index", "LEN n existe pas"], a: 1, exp: "LEN('abc   ') renvoie 3. Utilise DATALENGTH, ou compare avec RTRIM." },
+    { type: "input", q: "Quel prédicat détecte les lignes orphelines sans se faire piéger par les NULL ?", ph: "NOT E...", a: ["NOT EXISTS"], exp: "NOT EXISTS : plus sûr que NOT IN dès qu un NULL traîne dans la sous-requête." },
+    { type: "qcm", q: "Comment détecter les valeurs contenant des espaces parasites ?", opts: ["WHERE nom IS NULL", "WHERE nom <> TRIM(nom)", "WHERE nom = ''", "WHERE LENGTH(nom) = 0"], a: 1, exp: "Si la valeur diffère de sa version nettoyée, c est qu il y a des espaces au bord." },
+    { type: "vf", q: "Il faut rejouer le rapport de profilage après le nettoyage.", a: true, exp: "La comparaison avant/après est la preuve que le nettoyage a produit l effet attendu." },
+    { type: "input", q: "Quelle vue système standard donne les types et la nullabilité des colonnes ?", ph: "information_...", a: ["information_schema.COLUMNS", "INFORMATION_SCHEMA", "information_schema"], exp: "Disponible en MySQL, PostgreSQL et SQL Server : le catalogue standard." },
+    { type: "qcm", q: "Quelle commande PostgreSQL donne les statistiques déjà collectées sur une table ?", opts: ["SHOW STATS", "SELECT * FROM pg_stats WHERE tablename = 'client'", "DBCC SHOW_STATISTICS", "ANALYZE ONLY"], a: 1, exp: "pg_stats expose n_distinct, null_frac et les valeurs les plus fréquentes." },
+    { type: "qcm", q: "La date du jour s écrit CURRENT_DATE en standard. En SQL Server, on écrit…", opts: ["CURRENT_DATE", "CAST(GETDATE() AS DATE)", "SYSDATE", "NOW()"], a: 1, exp: "SQL Server utilise GETDATE() ou SYSDATETIME() ; Oracle utilise SYSDATE." }
+  ],
+  final: {
+    title: "Exercice final — Le bilan de santé d une table",
+    intro: `<p>Tu reçois une table à auditer avant reprise.</p>
+<pre class="pseudo">-- ADHERENT(id, nom, email, ville, date_inscription, cotisation, actif)
+-- Premiers constats visuels :
+-- id | nom       | email        | ville   | date_inscription | cotisation | actif
+-- ---+-----------+--------------+---------+------------------+------------+------
+--  1 | Dupont    | jd@x.com     | Namur   | 2020-03-01       |      50.00 | 1
+--  2 |  martin   | (vide)       | NAMUR   | 1900-01-01       |       0.00 | 1
+--  3 | LEROY     | jd@x.com     | Liege   | 2021-06-15       |      -5.00 | 1
+--  4 | Dubois    | NULL         | NULL    | 2025-12-31       |      50.00 | 1</pre>`,
+    questions: [
+      { type: "qcm", q: "COUNT(email) sur cette table renvoie…", opts: ["4", "3, car le NULL de la ligne 4 est ignoré (la chaîne vide, elle, est comptée)", "2", "1"], a: 1, exp: "COUNT(colonne) ignore les NULL mais compte les chaînes vides." },
+      { type: "input", q: "Quelle anomalie la valeur 1900-01-01 en date_inscription révèle-t-elle ?", ph: "une valeur s...", a: ["SENTINELLE", "UNE SENTINELLE", "valeur sentinelle", "sentinelle"], exp: "Une valeur sentinelle : un NULL déguisé par l outil d import." },
+      { type: "qcm", q: "Quelle est la cardinalité de la colonne actif ici ?", opts: ["4", "2", "1 : toutes les lignes valent 1, la colonne n apporte rien", "0"], a: 2, exp: "Une seule valeur distincte : la colonne est inutile en l état." },
+      { type: "input", q: "Combien de lignes ont un email en doublon (hors NULL et vide) ?", ph: "un nombre", a: ["2", "deux"], exp: "jd@x.com apparaît sur les lignes 1 et 3." },
+      { type: "vf", q: "La date 2025-12-31 en ligne 4 doit être signalée comme une incohérence si nous sommes en 2024.", a: true, exp: "Une date d inscription dans le futur est un contrôle de cohérence classique." }
+    ],
+    solution: `<pre class="pseudo">-- ===== BLOC 1 : volume et completude =====
+SELECT COUNT(*)                                            AS nb_lignes,
+       SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END)      AS email_null,
+       SUM(CASE WHEN TRIM(COALESCE(email,'')) = '' THEN 1 ELSE 0 END) AS email_vide_ou_null,
+       SUM(CASE WHEN ville IS NULL THEN 1 ELSE 0 END)      AS ville_null,
+       ROUND(100.0 * SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1)
+                                                            AS pct_email_null
+FROM ADHERENT;
+
+-- ===== BLOC 2 : unicite et cardinalite =====
+SELECT COUNT(*)                     AS nb_lignes,
+       COUNT(DISTINCT email)        AS emails_distincts,
+       COUNT(DISTINCT LOWER(TRIM(ville))) AS villes_reelles,   -- normalisee !
+       COUNT(DISTINCT ville)        AS villes_brutes,          -- avant nettoyage
+       COUNT(DISTINCT actif)        AS cardinalite_actif       -- vaut 1 --&gt; inutile
+FROM ADHERENT;
+-- L ecart entre villes_brutes et villes_reelles mesure le desordre de casse.
+
+-- ===== BLOC 3 : les doublons =====
+SELECT email, COUNT(*) AS nb
+FROM ADHERENT
+WHERE email IS NOT NULL AND TRIM(email) &lt;&gt; ''
+GROUP BY email
+HAVING COUNT(*) &gt; 1;
+-- --&gt; jd@x.com : 2
+
+-- ===== BLOC 4 : distribution et valeurs aberrantes =====
+SELECT MIN(cotisation)       AS coti_min,
+       MAX(cotisation)       AS coti_max,
+       AVG(cotisation)       AS coti_moy,
+       MIN(date_inscription) AS date_min,     -- revele la sentinelle 1900-01-01
+       MAX(date_inscription) AS date_max,     -- revele la date future
+       SUM(CASE WHEN cotisation &lt; 0 THEN 1 ELSE 0 END) AS coti_negatives,
+       SUM(CASE WHEN cotisation = 0 THEN 1 ELSE 0 END) AS coti_nulles
+FROM ADHERENT;
+
+-- ===== BLOC 5 : formats et coherence metier =====
+SELECT SUM(CASE WHEN nom &lt;&gt; TRIM(nom)         THEN 1 ELSE 0 END) AS noms_espaces,
+       SUM(CASE WHEN nom = UPPER(nom)         THEN 1 ELSE 0 END) AS noms_majuscules,
+       SUM(CASE WHEN email NOT LIKE '%@%.%'   THEN 1 ELSE 0 END) AS emails_douteux,
+       SUM(CASE WHEN date_inscription &lt; '1990-01-01' THEN 1 ELSE 0 END) AS dates_sentinelles,
+       SUM(CASE WHEN date_inscription &gt; CURRENT_DATE THEN 1 ELSE 0 END) AS dates_futures
+FROM ADHERENT;
+-- SQL Server : remplacer CURRENT_DATE par CAST(GETDATE() AS DATE)
+
+-- ===== BLOC 6 : le rapport de synthese, une ligne par controle =====
+SELECT 'Lignes totales' AS controle, COUNT(*) AS valeur FROM ADHERENT
+UNION ALL SELECT 'Emails manquants',  SUM(CASE WHEN TRIM(COALESCE(email,''))=''
+                                               THEN 1 ELSE 0 END) FROM ADHERENT
+UNION ALL SELECT 'Cotisations negatives', SUM(CASE WHEN cotisation &lt; 0
+                                               THEN 1 ELSE 0 END) FROM ADHERENT
+UNION ALL SELECT 'Dates sentinelles',  SUM(CASE WHEN date_inscription &lt; '1990-01-01'
+                                               THEN 1 ELSE 0 END) FROM ADHERENT
+UNION ALL SELECT 'Dates futures',      SUM(CASE WHEN date_inscription &gt; CURRENT_DATE
+                                               THEN 1 ELSE 0 END) FROM ADHERENT;
+
+-- controle              | valeur
+-- ----------------------+-------
+-- Lignes totales        |      4
+-- Emails manquants      |      2
+-- Cotisations negatives |      1
+-- Dates sentinelles     |      1
+-- Dates futures         |      1</pre>
+<p>Le diagnostic est posé. Demain, on empêche ces anomalies de revenir : les contraintes.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j26", title: "Le rapport de profilage d une table d import", level: 3,
+    statement: "La table IMPORT_CLIENT(id, nom, prenom, email, tel, code_postal, pays, date_maj) vient d un fichier fournisseur. Écris un rapport de profilage complet : volume, complétude de chaque colonne (NULL ET chaînes vides), cardinalité, longueurs de code_postal, emails invalides, espaces parasites, doublons d email, et valeurs de pays incohérentes en casse. Produis le résultat sous forme d une ligne par contrôle grâce à UNION ALL. Précise en commentaire les adaptations SQL Server.",
+    hints: [
+      "Une chaîne vide n est pas un NULL : teste TRIM(COALESCE(col, '')) = '' pour attraper les deux cas d un coup.",
+      "Pour empiler les contrôles avec UNION ALL, chaque SELECT doit renvoyer le même nombre de colonnes et des types compatibles : un libellé texte et une valeur numérique.",
+      "Les doublons se comptent avec une sous-requête : SELECT COUNT(*) FROM (SELECT email FROM ... GROUP BY email HAVING COUNT(*) > 1) AS d — n oublie pas d exclure les NULL et les vides du GROUP BY."
+    ],
+    solution: "-- RAPPORT DE PROFILAGE — une ligne par controle\n\nSELECT 'Lignes totales' AS controle,\n       COUNT(*)         AS valeur\nFROM IMPORT_CLIENT\n\nUNION ALL\n-- COMPLETUDE : NULL et chaines vides comptes ensemble\nSELECT 'Emails manquants (NULL ou vide)',\n       SUM(CASE WHEN TRIM(COALESCE(email, '')) = '' THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\nSELECT 'Telephones manquants',\n       SUM(CASE WHEN TRIM(COALESCE(tel, '')) = '' THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\nSELECT 'Codes postaux manquants',\n       SUM(CASE WHEN TRIM(COALESCE(code_postal, '')) = '' THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\n-- CARDINALITE\nSELECT 'Emails distincts',   COUNT(DISTINCT email)            FROM IMPORT_CLIENT\nUNION ALL\nSELECT 'Pays distincts (bruts)',      COUNT(DISTINCT pays)    FROM IMPORT_CLIENT\nUNION ALL\nSELECT 'Pays distincts (normalises)', COUNT(DISTINCT UPPER(TRIM(pays))) FROM IMPORT_CLIENT\n-- L ECART entre ces deux lignes mesure le desordre de casse et d espaces.\n\nUNION ALL\n-- FORMAT : longueurs de code postal\nSELECT 'Longueurs de code postal differentes',\n       COUNT(DISTINCT LENGTH(TRIM(code_postal)))\nFROM IMPORT_CLIENT\n\nUNION ALL\nSELECT 'Codes postaux hors format 4-5 caracteres',\n       SUM(CASE WHEN LENGTH(TRIM(COALESCE(code_postal,''))) NOT BETWEEN 4 AND 5\n                THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\n-- FORMAT : emails suspects\nSELECT 'Emails sans arobase ni point',\n       SUM(CASE WHEN email NOT LIKE '%@%.%' THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\n-- FORMAT : espaces parasites\nSELECT 'Noms avec espaces au bord',\n       SUM(CASE WHEN nom <> TRIM(nom) THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT\n\nUNION ALL\n-- UNICITE : les doublons d email\nSELECT 'Emails en doublon',\n       (SELECT COUNT(*) FROM (\n          SELECT email\n          FROM IMPORT_CLIENT\n          WHERE TRIM(COALESCE(email, '')) <> ''    -- on ignore les manquants\n          GROUP BY email\n          HAVING COUNT(*) > 1\n        ) AS d)\nFROM IMPORT_CLIENT\nLIMIT 1                                            -- la sous-requete est constante\n\nUNION ALL\n-- COHERENCE : dates dans le futur\nSELECT 'Dates de mise a jour dans le futur',\n       SUM(CASE WHEN date_maj > CURRENT_DATE THEN 1 ELSE 0 END)\nFROM IMPORT_CLIENT;\n\n-- controle                                 | valeur\n-- -----------------------------------------+-------\n-- Lignes totales                           |   2340\n-- Emails manquants (NULL ou vide)          |    117\n-- Telephones manquants                     |    891\n-- Codes postaux manquants                  |     42\n-- Emails distincts                         |   2201\n-- Pays distincts (bruts)                   |     11\n-- Pays distincts (normalises)              |      4   <-- 7 variantes de casse !\n-- Longueurs de code postal differentes     |      3\n-- Codes postaux hors format 4-5 caracteres |     18\n-- Emails sans arobase ni point             |     23\n-- Noms avec espaces au bord                |    204\n-- Emails en doublon                        |     22\n-- Dates de mise a jour dans le futur       |      3\n\n-- ADAPTATIONS SQL SERVER :\n--   LENGTH(x)      -> LEN(x)   (mais LEN ignore les espaces de FIN :\n--                               pour les detecter, comparer x <> RTRIM(x))\n--   CURRENT_DATE   -> CAST(GETDATE() AS DATE)\n--   LIMIT 1        -> SELECT TOP 1 ... (ou mieux : sortir la sous-requete\n--                     dans une CTE dediee)\n--   Le reste (COALESCE, TRIM, CASE WHEN, UNION ALL) est identique.\n-- MySQL : attention, LENGTH compte les OCTETS. Utiliser CHAR_LENGTH\n--         si les codes postaux peuvent contenir des accents.",
+    note: "Deux enseignements. Le premier : l écart entre « pays distincts bruts » et « pays distincts normalisés » est l indicateur le plus parlant d un fichier sale — il chiffre en une ligne le chaos de casse et d espaces, avant même de regarder les valeurs. Le second : garde ce rapport tel quel et rejoue-le après le nettoyage. Toutes les lignes d anomalies doivent tomber à zéro, et le nombre de lignes totales doit avoir baissé exactement du nombre de doublons supprimés. Si les chiffres ne collent pas, ton nettoyage a fait autre chose que ce que tu crois." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

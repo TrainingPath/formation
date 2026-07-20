@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Atelier : nettoyer une colonne de bout en bout",
+  subtitle: "Une vraie colonne sale, huit étapes, et une méthode reproductible.",
+  theory: `
+<h3>1. La colonne de départ</h3>
+<p>Aujourd'hui, pas de fonction nouvelle : on assemble tout ce qui précède sur un cas réel. Voici la table <code>PARTICIPANT</code>, alimentée par trois sources — un formulaire web, un fichier Excel et une reprise d'un ancien logiciel.</p>
+<pre class="pseudo">id | nom_complet            | ville
+---+------------------------+-------------
+ 1 | '  Jean DUPONT '       | 'Namur'
+ 2 | 'jean dupont'          | 'namur '
+ 3 | 'JEAN  DUPONT'         | ' NAMUR'
+ 4 | 'Marie Lefèvre'        | 'Liege'
+ 5 | 'MARIE LEFEVRE'        | 'LIEGE'
+ 6 | 'anne-sophie de smet'  | 'Charleroi'
+ 7 | ''                     | 'Namur'
+ 8 | NULL                   | NULL
+ 9 | 'Paul   Martin  '      | 'namur'</pre>
+<p>À l'œil nu, il y a cinq personnes distinctes et trois villes. Pour le SGBD, il y a <strong>huit noms différents et sept villes différentes</strong>. Voici les défauts, un par un :</p>
+<pre class="pseudo">-- espaces aux bords       : '  Jean DUPONT ', 'Paul   Martin  ', 'namur '
+-- espaces multiples       : 'JEAN  DUPONT' (deux espaces), 'Paul   Martin' (trois)
+-- casse incoherente       : 'Jean DUPONT', 'jean dupont', 'JEAN  DUPONT'
+-- accents variables       : 'Lefèvre' contre 'LEFEVRE'
+-- chaine vide             : ligne 7
+-- valeur NULL             : ligne 8
+-- doublons caches         : 1, 2 et 3 sont la meme personne ; 4 et 5 aussi</pre>
+
+<h3>2. La méthode en huit étapes</h3>
+<p>Cet ordre n'est pas arbitraire. Chaque étape prépare la suivante, et l'écriture ne vient qu'à la fin.</p>
+<pre class="pseudo">1. OBSERVER     -- voir ce qu'il y a vraiment, sans a priori
+2. MESURER      -- chiffrer chaque type de defaut
+3. NORMALISER   -- construire l'expression de nettoyage, par couches
+4. VERIFIER     -- controler que la normalisation ne detruit rien
+5. DEDUPLIQUER  -- compter les vraies entites, une fois normalise
+6. TESTER       -- le SELECT de controle, avant / apres
+7. APPLIQUER    -- l'UPDATE, dans une transaction
+8. CONTROLER    -- verifier le resultat, et documenter les rejets</pre>
+
+<h3>3. Étape 1 — OBSERVER</h3>
+<pre class="pseudo">-- Voir toutes les valeurs distinctes, avec leur frequence
+SELECT nom_complet,
+       COUNT(*)          AS occurrences,
+       LENGTH(nom_complet) AS taille        -- la taille revele les espaces invisibles
+FROM PARTICIPANT
+GROUP BY nom_complet, LENGTH(nom_complet)
+ORDER BY nom_complet;
+
+-- Encadrer la valeur pour VOIR les espaces (astuce indispensable)
+SELECT id, CONCAT('[', nom_complet, ']') AS valeur_encadree FROM PARTICIPANT;
+-- '[  Jean DUPONT ]' : les crochets rendent les espaces visibles a l'ecran</pre>
+<div class="tip">L'astuce des crochets est le premier réflexe de tout nettoyage. Un espace ne se voit pas ; entre crochets, il saute aux yeux.</div>
+
+<h3>4. Étape 2 — MESURER</h3>
+<pre class="pseudo">SELECT COUNT(*)                                                           AS total,
+       SUM(CASE WHEN nom_complet IS NULL              THEN 1 ELSE 0 END)  AS nuls,
+       SUM(CASE WHEN TRIM(COALESCE(nom_complet,'')) = '' THEN 1 ELSE 0 END) AS vides,
+       SUM(CASE WHEN nom_complet &lt;&gt; TRIM(nom_complet) THEN 1 ELSE 0 END)  AS avec_espaces_bords,
+       SUM(CASE WHEN nom_complet LIKE '%  %'          THEN 1 ELSE 0 END)  AS avec_espaces_doubles,
+       COUNT(DISTINCT nom_complet)                                        AS valeurs_distinctes,
+       COUNT(DISTINCT UPPER(TRIM(nom_complet)))                           AS distinctes_normalisees
+FROM PARTICIPANT;
+-- total 9, nuls 1, vides 2, avec_espaces_bords 2, avec_espaces_doubles 2
+-- valeurs_distinctes 8, distinctes_normalisees 6 : l'ecart mesure les faux doublons</pre>
+<div class="warn">Le rapprochement entre <code>COUNT(DISTINCT col)</code> et <code>COUNT(DISTINCT normalisation(col))</code> est l'indicateur clé : l'écart chiffre le nombre de faux doublons dus au seul formatage.</div>
+
+<h3>5. Étape 3 — NORMALISER, couche par couche</h3>
+<p>On construit l'expression progressivement, en vérifiant chaque couche avant d'ajouter la suivante.</p>
+<pre class="pseudo">-- COUCHE 1 : les espaces aux bords
+TRIM(nom_complet)                                    -- '  Jean DUPONT ' devient 'Jean DUPONT'
+
+-- COUCHE 2 : les espaces multiples a l'interieur
+REGEXP_REPLACE(TRIM(nom_complet), ' +', ' ', 'g')    -- 'JEAN  DUPONT' devient 'JEAN DUPONT'
+-- ' +' capture une suite d'un ou plusieurs espaces, remplacee par un espace unique
+-- sans regex (MySQL ancien, SQL Server) :
+--   REPLACE(REPLACE(REPLACE(x, '  ', ' '), '  ', ' '), '  ', ' ')  -- trois passes couvrent jusqu'a 8 espaces
+
+-- COUCHE 3 : la casse
+UPPER(REGEXP_REPLACE(TRIM(nom_complet), ' +', ' ', 'g'))   -- 'jean dupont' devient 'JEAN DUPONT'
+
+-- COUCHE 4 : les accents (PostgreSQL, extension unaccent)
+UPPER(unaccent(REGEXP_REPLACE(TRIM(nom_complet), ' +', ' ', 'g')))   -- 'Lefèvre' devient 'LEFEVRE'
+-- sans unaccent, la solution portable : TRANSLATE
+TRANSLATE(nom_complet, 'àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ',
+                       'aaaeeeeiioouuucAAAEEEEIIOOUUUC')
+
+-- COUCHE 5 : le vide et le NULL ramenes a une seule forme
+NULLIF(TRIM(COALESCE(nom_complet, '')), '')          -- NULL et '' donnent tous deux NULL</pre>
+<pre class="pseudo">-- L'EXPRESSION COMPLETE, lue de l'interieur vers l'exterieur :
+NULLIF(                                    -- 5) ramene le vide a NULL
+  UPPER(                                   -- 4) uniformise la casse
+    TRANSLATE(                             -- 3) supprime les accents
+      REGEXP_REPLACE(                      -- 2) ecrase les espaces multiples
+        TRIM(COALESCE(nom_complet, ''))    -- 1) rogne les bords, neutralise le NULL
+      , ' +', ' ', 'g')
+    , 'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc')
+  )
+, '') AS nom_norme</pre>
+
+<h3>6. Étape 4 — VÉRIFIER que rien n'est détruit</h3>
+<pre class="pseudo">SELECT id,
+       CONCAT('[', nom_complet, ']')                  AS avant,
+       CONCAT('[', nom_norme, ']')                    AS apres,
+       LENGTH(nom_complet)                            AS taille_avant,
+       LENGTH(nom_norme)                              AS taille_apres
+FROM (SELECT id, nom_complet,
+             NULLIF(UPPER(TRIM(REGEXP_REPLACE(COALESCE(nom_complet,''), ' +', ' ', 'g'))), '') AS nom_norme
+      FROM PARTICIPANT) t
+ORDER BY id;
+-- On relit chaque ligne : aucune lettre ne doit avoir disparu, aucun mot ne doit s'etre colle.
+-- Cas a surveiller : 'anne-sophie de smet' -- le tiret et les particules doivent SURVIVRE.</pre>
+<div class="warn">Ne saute jamais cette étape. Un <code>REPLACE(nom, ' ', '')</code> mal placé aurait transformé 'Jean Dupont' en 'JeanDupont' : le nettoyage aurait détruit l'information au lieu de la corriger.</div>
+
+<h3>7. Étape 5 — DÉDUPLIQUER</h3>
+<pre class="pseudo">SELECT nom_norme,
+       COUNT(*)                             AS nb_lignes,
+       MIN(id)                              AS id_a_garder,      -- convention : on garde le plus ancien
+       STRING_AGG(CAST(id AS VARCHAR), ', ') AS tous_les_ids     -- PostgreSQL ; GROUP_CONCAT en MySQL
+FROM (SELECT id, NULLIF(UPPER(TRIM(REGEXP_REPLACE(COALESCE(nom_complet,''), ' +', ' ', 'g'))), '') AS nom_norme
+      FROM PARTICIPANT) t
+WHERE nom_norme IS NOT NULL                 -- on ecarte les lignes sans nom exploitable
+GROUP BY nom_norme
+HAVING COUNT(*) &gt; 1                          -- ne garde que les groupes en doublon
+ORDER BY nb_lignes DESC;
+-- 'JEAN DUPONT'   : 3 lignes (1, 2, 3), a garder : 1
+-- 'MARIE LEFEVRE' : 2 lignes (4, 5), a garder : 4</pre>
+
+<h3>8. Étapes 6 à 8 — TESTER, APPLIQUER, CONTRÔLER</h3>
+<pre class="pseudo">-- ETAPE 6 : le SELECT de controle, avec le WHERE exact du futur UPDATE
+SELECT id, nom_complet AS avant,
+       UPPER(TRIM(REGEXP_REPLACE(nom_complet, ' +', ' ', 'g'))) AS apres
+FROM PARTICIPANT
+WHERE nom_complet IS NOT NULL
+  AND nom_complet &lt;&gt; UPPER(TRIM(REGEXP_REPLACE(nom_complet, ' +', ' ', 'g')));   -- seulement les lignes a changer
+
+-- ETAPE 7 : l'application, dans une TRANSACTION
+BEGIN;                                       -- ouvre un espace de travail annulable
+
+  -- on prefere AJOUTER une colonne plutot qu'ECRASER l'originale
+  ALTER TABLE PARTICIPANT ADD COLUMN nom_norme VARCHAR(200);
+
+  UPDATE PARTICIPANT
+  SET nom_norme = NULLIF(UPPER(TRIM(REGEXP_REPLACE(COALESCE(nom_complet,''), ' +', ' ', 'g'))), '');
+
+  -- on VERIFIE avant de valider
+  SELECT COUNT(DISTINCT nom_complet) AS avant,
+         COUNT(DISTINCT nom_norme)   AS apres
+  FROM PARTICIPANT;                          -- attendu : 8 avant, 4 apres (hors NULL)
+
+COMMIT;                                      -- valide. En cas de doute : ROLLBACK; annule tout.
+
+-- ETAPE 8 : le controle final et la liste des rejets
+SELECT id, nom_complet FROM PARTICIPANT WHERE nom_norme IS NULL;   -- lignes 7 et 8 : a traiter a la main
+SELECT COUNT(*) FROM PARTICIPANT WHERE nom_norme &lt;&gt; TRIM(nom_norme);   -- attendu : 0
+SELECT COUNT(*) FROM PARTICIPANT WHERE nom_norme LIKE '%  %';           -- attendu : 0</pre>
+<div class="tip">Le choix décisif de l'atelier : <strong>ajouter une colonne normalisée plutôt qu'écraser l'originale</strong>. On garde 'Jean DUPONT' pour l'affichage et le courrier, et 'JEAN DUPONT' pour les rapprochements. Aucune information n'est perdue, et le nettoyage reste rejouable si les règles changent.</div>
+<div class="warn">Ce qu'il ne faut jamais faire : lancer directement <code>UPDATE PARTICIPANT SET nom_complet = UPPER(TRIM(nom_complet));</code>. L'information de casse d'origine serait détruite pour toujours, et un courrier adressé à « JEAN DUPONT » n'est pas très élégant.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la toute première étape d'un nettoyage ?", opts: ["Lancer l'UPDATE", "Observer les données réelles avec DISTINCT et les longueurs", "Créer un index", "Supprimer les doublons"], a: 1, exp: "On ne corrige que ce qu'on a d'abord vu et compris." },
+    { type: "input", q: "Complète l'astuce qui rend les espaces visibles : SELECT ______('[', nom, ']') FROM PARTICIPANT;", a: ["concat"], ph: "une fonction", exp: "Les crochets encadrent la valeur et révèlent les espaces invisibles." },
+    { type: "qcm", q: "Que mesure l'écart entre COUNT(DISTINCT nom) et COUNT(DISTINCT UPPER(TRIM(nom))) ?", opts: ["Le nombre de NULL", "Le nombre de faux doublons dus au seul formatage", "La taille de la table", "Le nombre de lignes vides"], a: 1, exp: "C'est l'indicateur clé du diagnostic : il chiffre les doublons purement cosmétiques." },
+    { type: "input", q: "Complète pour écraser les espaces multiples : REGEXP_REPLACE(nom, '______', ' ', 'g');", a: [" +"], ph: "un motif", exp: "' +' capture une suite d'un ou plusieurs espaces, remplacée par un espace unique." },
+    { type: "vf", q: "REPLACE(nom, ' ', '') est un bon moyen de nettoyer les espaces d'un nom.", a: false, exp: "Cela collerait les mots : 'Jean Dupont' deviendrait 'JeanDupont'. Il faut TRIM plus la réduction des espaces multiples." },
+    { type: "qcm", q: "Dans quel ordre appliquer les couches de normalisation ?", opts: ["Casse, puis espaces, puis accents", "Espaces des bords, espaces multiples, accents, casse, puis vide vers NULL", "Peu importe", "Accents en premier"], a: 1, exp: "On va du plus mécanique au plus sémantique, chaque couche préparant la suivante." },
+    { type: "input", q: "Complète pour ramener chaîne vide et NULL à une seule forme : ______(TRIM(COALESCE(nom, '')), '')", a: ["nullif"], ph: "une fonction", exp: "NULLIF transforme la chaîne vide résultante en NULL." },
+    { type: "qcm", q: "Quelle fonction supprime les accents de façon portable, sans extension ?", opts: ["UPPER", "TRANSLATE", "REPLACE", "TRIM"], a: 1, exp: "TRANSLATE substitue caractère par caractère : chaque lettre accentuée devient sa version simple." },
+    { type: "vf", q: "Il faut écraser la colonne d'origine par sa version normalisée.", a: false, exp: "On ajoute une colonne normalisée à côté : l'original reste disponible pour l'affichage et le courrier." },
+    { type: "qcm", q: "Pourquoi vérifier chaque ligne après normalisation ?", opts: ["Pour gagner du temps", "Pour s'assurer qu'aucune information n'a été détruite (mots collés, particules perdues)", "Pour trier le résultat", "C'est facultatif"], a: 1, exp: "Un nettoyage trop agressif détruit la donnée au lieu de la corriger, et c'est irréversible." },
+    { type: "input", q: "Complète l'ouverture de transaction : ______; ... COMMIT;", a: ["begin", "start transaction"], ph: "un mot-clé", exp: "BEGIN ouvre un espace de travail annulable par ROLLBACK." },
+    { type: "qcm", q: "Quelle convention retient-on pour choisir la ligne à garder parmi des doublons ?", opts: ["La dernière insérée", "MIN(id), c'est-à-dire la plus ancienne — mais la règle doit être décidée explicitement", "Au hasard", "La plus longue"], a: 1, exp: "MIN(id) est une convention fréquente, mais le choix doit être un choix métier assumé." },
+    { type: "qcm", q: "Que doit renvoyer SELECT COUNT(*) FROM PARTICIPANT WHERE nom_norme LIKE '%  %' après nettoyage ?", opts: ["Le nombre de lignes", "0", "NULL", "Cela dépend"], a: 1, exp: "Plus aucun espace double ne doit subsister : c'est le contrôle final." },
+    { type: "vf", q: "'anne-sophie de smet' doit conserver son tiret et sa particule après normalisation.", a: true, exp: "Normaliser n'est pas mutiler. Le tiret et les particules font partie du nom." },
+    { type: "qcm", q: "Quel est l'avantage d'une colonne normalisée séparée ?", opts: ["Elle prend moins de place", "On garde l'affichage d'origine ET une clé de rapprochement, et le nettoyage reste rejouable", "Elle est plus rapide", "Elle évite les NULL"], a: 1, exp: "Aucune information n'est perdue, et les règles de normalisation peuvent évoluer sans dégât." }
+  ],
+  final: {
+    title: "Exercice final — L'atelier complet",
+    intro: `<p>Reprends la table <code>PARTICIPANT</code> de la théorie et réponds sur la base des huit étapes.</p>
+<pre class="pseudo">id | nom_complet            | ville
+---+------------------------+-------------
+ 1 | '  Jean DUPONT '       | 'Namur'
+ 4 | 'Marie Lefèvre'        | 'Liege'
+ 5 | 'MARIE LEFEVRE'        | 'LIEGE'
+ 6 | 'anne-sophie de smet'  | 'Charleroi'
+ 7 | ''                     | 'Namur'
+ 8 | NULL                   | NULL
+ 9 | 'Paul   Martin  '      | 'namur'</pre>`,
+    questions: [
+      { type: "qcm", q: "Que donne UPPER(TRIM(REGEXP_REPLACE(nom_complet, ' +', ' ', 'g'))) pour la ligne 9 ?", opts: ["'PAULMARTIN'", "'PAUL MARTIN'", "'Paul   Martin'", "'PAUL   MARTIN'"], a: 1, exp: "Le regex écrase les trois espaces en un seul, TRIM retire ceux des bords, UPPER uniformise." },
+      { type: "qcm", q: "Les lignes 4 et 5 seront-elles reconnues comme doublons après UPPER(TRIM(...)) seul ?", opts: ["Oui", "Non : l'accent de 'Lefèvre' subsiste, il faut aussi TRANSLATE ou unaccent", "Seulement en MySQL", "Cela dépend de l'ordre"], a: 1, exp: "UPPER ne touche pas aux accents : 'LEFÈVRE' et 'LEFEVRE' restent différents." },
+      { type: "vf", q: "Les lignes 7 et 8 doivent recevoir la même valeur normalisée.", a: true, exp: "NULLIF(TRIM(COALESCE(x, '')), '') ramène chaîne vide et NULL à un seul et même NULL." },
+      { type: "qcm", q: "Quel traitement la ligne 6 doit-elle recevoir ?", opts: ["Supprimer le tiret", "Supprimer 'de'", "Uniquement casse et espaces : le tiret et la particule sont légitimes", "La supprimer"], a: 2, exp: "'ANNE-SOPHIE DE SMET' est le résultat attendu : rien ne doit être retiré du nom lui-même." },
+      { type: "qcm", q: "Quelle est la bonne stratégie d'application ?", opts: ["UPDATE direct sur nom_complet", "Ajouter une colonne nom_norme dans une transaction, vérifier, puis COMMIT", "Supprimer les doublons d'abord", "Exporter en CSV"], a: 1, exp: "On ajoute sans détruire, on vérifie avant de valider, et l'annulation reste possible jusqu'au COMMIT." }
+    ],
+    solution: `<pre class="pseudo">-- ETAPE 1 : OBSERVER, en rendant les espaces visibles
+SELECT id,
+       CONCAT('[', COALESCE(nom_complet, 'NULL'), ']') AS valeur_encadree,
+       LENGTH(nom_complet)                             AS taille
+FROM PARTICIPANT
+ORDER BY id;
+
+-- ETAPE 2 : MESURER chaque type de defaut
+SELECT COUNT(*)                                                              AS total,
+       SUM(CASE WHEN nom_complet IS NULL                  THEN 1 ELSE 0 END) AS nuls,
+       SUM(CASE WHEN TRIM(COALESCE(nom_complet,'')) = ''  THEN 1 ELSE 0 END) AS vides,
+       SUM(CASE WHEN nom_complet &lt;&gt; TRIM(nom_complet)     THEN 1 ELSE 0 END) AS espaces_bords,
+       SUM(CASE WHEN nom_complet LIKE '%  %'              THEN 1 ELSE 0 END) AS espaces_doubles,
+       COUNT(DISTINCT nom_complet)                                           AS distinctes_brutes,
+       COUNT(DISTINCT UPPER(TRIM(nom_complet)))                              AS distinctes_normees
+FROM PARTICIPANT;
+
+-- ETAPE 3 + 4 : NORMALISER et VERIFIER, avant / apres cote a cote
+SELECT id,
+       CONCAT('[', COALESCE(nom_complet, 'NULL'), ']') AS avant,
+       CONCAT('[', COALESCE(
+         NULLIF(                                            -- 5) vide et NULL -&gt; NULL unique
+           UPPER(                                           -- 4) casse uniformisee
+             TRANSLATE(                                     -- 3) accents supprimes
+               REGEXP_REPLACE(                              -- 2) espaces multiples ecrases
+                 TRIM(COALESCE(nom_complet, ''))            -- 1) bords rognes, NULL neutralise
+               , ' +', ' ', 'g')
+             , 'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc')
+           )
+         , '')
+       , 'NULL'), ']') AS apres
+FROM PARTICIPANT
+ORDER BY id;
+-- 1 : '[  Jean DUPONT ]'      -&gt; '[JEAN DUPONT]'
+-- 4 : '[Marie Lefèvre]'       -&gt; '[MARIE LEFEVRE]'
+-- 5 : '[MARIE LEFEVRE]'       -&gt; '[MARIE LEFEVRE]'   -- 4 et 5 se rejoignent enfin
+-- 6 : '[anne-sophie de smet]' -&gt; '[ANNE-SOPHIE DE SMET]'  -- tiret et particule preserves
+-- 7 : '[]'                    -&gt; '[NULL]'
+-- 8 : '[NULL]'                -&gt; '[NULL]'            -- 7 et 8 traitees a l'identique
+-- 9 : '[Paul   Martin  ]'     -&gt; '[PAUL MARTIN]'
+
+-- ETAPE 5 : DEDUPLIQUER
+SELECT nom_norme, COUNT(*) AS nb, MIN(id) AS id_a_garder
+FROM (SELECT id, NULLIF(UPPER(TRANSLATE(REGEXP_REPLACE(TRIM(COALESCE(nom_complet,'')), ' +', ' ', 'g'),
+                       'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc')), '') AS nom_norme
+      FROM PARTICIPANT) t
+WHERE nom_norme IS NOT NULL
+GROUP BY nom_norme
+HAVING COUNT(*) &gt; 1;
+-- 'MARIE LEFEVRE' : 2 lignes (4 et 5), on garde la 4
+
+-- ETAPES 6, 7 et 8 : TESTER, APPLIQUER, CONTROLER
+BEGIN;
+
+  ALTER TABLE PARTICIPANT ADD COLUMN nom_norme VARCHAR(200);   -- on AJOUTE, on n'ecrase pas
+
+  UPDATE PARTICIPANT
+  SET nom_norme = NULLIF(UPPER(TRANSLATE(
+                    REGEXP_REPLACE(TRIM(COALESCE(nom_complet,'')), ' +', ' ', 'g'),
+                    'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc')), '');
+
+  UPDATE PARTICIPANT
+  SET ville = NULLIF(UPPER(TRIM(COALESCE(ville, ''))), '')     -- meme traitement pour la ville
+  WHERE ville IS NOT NULL;
+
+  -- CONTROLES avant validation
+  SELECT COUNT(*) FROM PARTICIPANT WHERE nom_norme LIKE '%  %';        -- attendu : 0
+  SELECT COUNT(*) FROM PARTICIPANT WHERE nom_norme &lt;&gt; TRIM(nom_norme); -- attendu : 0
+  SELECT COUNT(DISTINCT ville) FROM PARTICIPANT;                       -- attendu : 3
+
+COMMIT;   -- si un controle avait echoue : ROLLBACK; et tout revient a l'etat initial
+
+-- REJETS a traiter manuellement
+SELECT id, nom_complet FROM PARTICIPANT WHERE nom_norme IS NULL;   -- lignes 7 et 8</pre>
+<p>Une colonne sale, entièrement remise d'aplomb. Demain : traquer les doublons de façon systématique.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j15", title: "Nettoyer une colonne de villes", level: 3,
+    statement: "Table <code>ADRESSE(id, ville)</code> :<pre class='pseudo'>id | ville\n---+------------------\n 1 | '  Namur '\n 2 | 'NAMUR'\n 3 | 'namur'\n 4 | 'Liège'\n 5 | 'LIEGE '\n 6 | 'La   Louvière'\n 7 | ''\n 8 | NULL</pre>Écris le <strong>SELECT de contrôle complet</strong> (avant tout UPDATE) qui affiche, pour chaque ligne : la valeur brute encadrée de crochets, la valeur normalisée encadrée (espaces des bords rognés, espaces multiples écrasés, accents supprimés, majuscules, vide et NULL ramenés à NULL), et un diagnostic indiquant le type de défaut. Ajoute ensuite la requête qui compte les villes réelles.",
+    hints: [
+      "Construis l'expression par couches, de l'intérieur vers l'extérieur : COALESCE, TRIM, REGEXP_REPLACE, TRANSLATE, UPPER, NULLIF.",
+      "Les crochets via CONCAT('[', valeur, ']') rendent les espaces visibles — indispensable pour vérifier.",
+      "Le diagnostic se fait avec un CASE WHEN dont les tests sont ordonnés du plus grave au plus bénin."
+    ],
+    solution: "-- SELECT DE CONTROLE : rien n'est modifie, on VERIFIE d'abord\nSELECT id,\n       CONCAT('[', COALESCE(ville, 'NULL'), ']')          AS avant,\n       CONCAT('[', COALESCE(\n         NULLIF(                                          -- 6) chaine vide -> NULL\n           UPPER(                                         -- 5) majuscules\n             TRANSLATE(                                   -- 4) accents supprimes\n               REGEXP_REPLACE(                            -- 3) espaces multiples -> un seul\n                 TRIM(                                    -- 2) espaces des bords rognes\n                   COALESCE(ville, '')                    -- 1) NULL neutralise en chaine vide\n                 )\n               , ' +', ' ', 'g')\n             , 'àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ', 'aaaeeeeiioouuucAAAEEEEIIOOUUUC')\n           )\n         , '')\n       , 'NULL'), ']')                                    AS apres,\n       CASE\n         WHEN ville IS NULL                    THEN 'valeur NULL'\n         WHEN TRIM(ville) = ''                 THEN 'chaine vide'\n         WHEN ville <> TRIM(ville)             THEN 'espaces aux bords'\n         WHEN ville LIKE '%  %'                THEN 'espaces multiples'\n         WHEN ville <> UPPER(ville)            THEN 'casse a uniformiser'\n         ELSE 'ok'\n       END                                                AS diagnostic\nFROM ADRESSE\nORDER BY id;\n\n-- Resultat attendu :\n-- id | avant             | apres          | diagnostic\n-- ---+-------------------+----------------+---------------------\n--  1 | '[  Namur ]'      | '[NAMUR]'      | 'espaces aux bords'\n--  2 | '[NAMUR]'         | '[NAMUR]'      | 'ok'\n--  3 | '[namur]'         | '[NAMUR]'      | 'casse a uniformiser'\n--  4 | '[Liège]'         | '[LIEGE]'      | 'casse a uniformiser'\n--  5 | '[LIEGE ]'        | '[LIEGE]'      | 'espaces aux bords'\n--  6 | '[La   Louvière]' | '[LA LOUVIERE]'| 'espaces multiples'\n--  7 | '[]'              | '[NULL]'       | 'chaine vide'\n--  8 | '[NULL]'          | '[NULL]'       | 'valeur NULL'\n\n-- COMPTAGE des villes reelles, une fois normalise :\nSELECT COUNT(DISTINCT ville)                  AS villes_brutes,        -- 7\n       COUNT(DISTINCT NULLIF(UPPER(TRANSLATE(\n         REGEXP_REPLACE(TRIM(COALESCE(ville,'')), ' +', ' ', 'g'),\n         'àâäéèêëïîôöùûüç', 'aaaeeeeiioouuuc')), ''))  AS villes_reelles  -- 3\nFROM ADRESSE;\n-- 7 valeurs brutes distinctes pour seulement 3 villes reelles :\n-- NAMUR, LIEGE et LA LOUVIERE. L'ecart de 4 mesure les faux doublons.\n\n-- Variante MySQL (pas de TRANSLATE) : empiler des REPLACE pour les accents,\n--   REPLACE(REPLACE(ville, 'è', 'e'), 'é', 'e') ...\n--   ou s'appuyer sur une collation accent-insensitive (_ai) pour la comparaison.\n-- Variante SQL Server : pas de REGEXP_REPLACE avant 2025,\n--   REPLACE(REPLACE(REPLACE(x,'  ',' '),'  ',' '),'  ',' ') couvre jusqu'a 8 espaces consecutifs,\n--   et COLLATE SQL_Latin1_General_CP1_CI_AI gere les accents.",
+    note: "Piège : l'ordre des tests du CASE définit une priorité, et une ligne cumulant plusieurs défauts n'affiche que le premier. La ligne 6 ('La   Louvière') a des espaces multiples ET un accent ET une casse à corriger, mais un seul diagnostic remonte. Pour un audit exhaustif, il faut une colonne booléenne par contrôle. Bonne pratique : ce SELECT de contrôle est le livrable le plus important de tout nettoyage. Conserve-le : c'est lui qu'on relance après l'UPDATE pour prouver que tout est propre, et c'est lui qu'on montre au métier pour faire valider les règles avant d'écrire quoi que ce soit." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

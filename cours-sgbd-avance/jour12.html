@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Calculer avec les dates : DATEADD et DATEDIFF",
+  subtitle: "Ajouter un délai, mesurer une durée, calculer un âge — et les pièges de chaque SGBD.",
+  theory: `
+<h3>1. Deux opérations, trois dialectes</h3>
+<p>Calculer avec des dates se ramène à deux besoins : <strong>ajouter ou retirer une durée</strong> à une date (échéance à 30 jours, date de rappel), et <strong>mesurer l'écart</strong> entre deux dates (ancienneté, délai de livraison, âge).</p>
+<p>C'est le domaine où les SGBD divergent le plus violemment. Il n'existe pas de syntaxe réellement standard et universelle : il faut connaître les trois familles.</p>
+
+<h3>2. Ajouter une durée</h3>
+<pre class="pseudo">-- SQL SERVER : DATEADD(unite, nombre, date)
+DATEADD(DAY,   30, date_cmd)      -- 30 jours plus tard
+DATEADD(MONTH,  3, date_cmd)      -- 3 mois plus tard
+DATEADD(YEAR,  -1, date_cmd)      -- 1 an plus TOT (un nombre negatif retire)
+
+-- MYSQL : DATE_ADD(date, INTERVAL n unite)  -- l'ordre est INVERSE
+DATE_ADD(date_cmd, INTERVAL 30 DAY)
+DATE_SUB(date_cmd, INTERVAL  1 YEAR)         -- fonction dediee pour retirer
+date_cmd + INTERVAL 30 DAY                   -- forme raccourcie, tres repandue
+
+-- POSTGRESQL : l'arithmetique directe avec le type INTERVAL
+date_cmd + INTERVAL '30 days'                -- l'unite est DANS la chaine
+date_cmd - INTERVAL '1 year'
+date_cmd + 30                                -- sur un type DATE pur, ajouter un entier ajoute des JOURS
+
+-- ORACLE :
+date_cmd + 30                                -- des jours
+ADD_MONTHS(date_cmd, 3)                      -- des mois</pre>
+<div class="tip">Retiens la logique plutôt que la syntaxe : SQL Server met l'unité en premier (<code>DATEADD(DAY, 30, d)</code>), MySQL met la date en premier (<code>DATE_ADD(d, INTERVAL 30 DAY)</code>), PostgreSQL utilise l'addition directe (<code>d + INTERVAL '30 days'</code>).</div>
+
+<h3>3. Le piège des mois de longueurs inégales</h3>
+<p>Ajouter « un mois » n'a rien d'évident : que vaut le 31 janvier plus un mois ? Février n'a pas de 31.</p>
+<pre class="pseudo">-- '2024-01-31' plus 1 mois :
+DATEADD(MONTH, 1, '2024-01-31')             -- SQL Server  : '2024-02-29' (dernier jour de fevrier)
+DATE_ADD('2024-01-31', INTERVAL 1 MONTH)    -- MySQL       : '2024-02-29'
+DATE '2024-01-31' + INTERVAL '1 month'      -- PostgreSQL  : '2024-02-29'
+-- les trois s'accordent ici : on prend le dernier jour valide du mois cible
+
+-- MAIS l'operation n'est pas reversible :
+DATEADD(MONTH, -1, DATEADD(MONTH, 1, '2024-01-31'))   -- '2024-01-29', et non '2024-01-31' !
+-- ajouter un mois puis en retirer un NE REDONNE PAS la date de depart</pre>
+<div class="warn">Ne construis jamais une logique métier sur des allers-retours de mois. Pour une échéance contractuelle, stocke la date calculée une fois pour toutes plutôt que de la recalculer à chaque requête.</div>
+
+<h3>4. Mesurer un écart entre deux dates</h3>
+<pre class="pseudo">-- SQL SERVER : DATEDIFF(unite, date_debut, date_fin)
+DATEDIFF(DAY,   date_cmd, date_liv)     -- nombre de jours entre les deux
+DATEDIFF(MONTH, date_deb, date_fin)     -- nombre de FRONTIERES de mois franchies (voir piege ci-dessous)
+
+-- MYSQL : DATEDIFF(date_fin, date_debut)  -- SEULEMENT en jours, et l'ordre est INVERSE
+DATEDIFF(date_liv, date_cmd)            -- nombre de jours
+TIMESTAMPDIFF(MONTH, date_deb, date_fin)  -- pour les autres unites
+
+-- POSTGRESQL : la soustraction directe
+date_liv - date_cmd                     -- sur des DATE : un ENTIER, le nombre de jours
+date_fin - date_deb                     -- sur des TIMESTAMP : un INTERVAL, pas un nombre !
+EXTRACT(DAY FROM (date_fin - date_deb)) -- pour recuperer un nombre de jours depuis un INTERVAL
+AGE(date_fin, date_deb)                 -- un INTERVAL lisible : '2 years 3 mons 5 days'</pre>
+<div class="warn">Piège majeur de <code>DATEDIFF</code> en SQL Server : la fonction compte les <strong>frontières franchies</strong>, pas les durées réelles. <code>DATEDIFF(YEAR, '2024-12-31', '2025-01-01')</code> renvoie <strong>1</strong> alors qu'il ne s'est écoulé qu'un seul jour. C'est la cause numéro un des calculs d'âge faux.</div>
+
+<h3>5. Calculer un âge correctement</h3>
+<p>Un âge n'est pas un nombre d'années civiles franchies : il dépend du fait que l'anniversaire soit déjà passé ou non dans l'année en cours.</p>
+<pre class="pseudo">-- MAUVAIS (SQL Server) : compte les frontieres d'annee
+SELECT DATEDIFF(YEAR, date_naissance, GETDATE()) AS age;
+-- ne le 31/12/2000, evalue le 01/01/2024 -&gt; renvoie 24, alors que la personne a 23 ans
+
+-- CORRECT (SQL Server) : on corrige si l'anniversaire n'est pas encore passe
+SELECT DATEDIFF(YEAR, date_naissance, GETDATE())
+       - CASE WHEN DATEADD(YEAR, DATEDIFF(YEAR, date_naissance, GETDATE()), date_naissance) &gt; GETDATE()
+              THEN 1 ELSE 0 END AS age;
+
+-- CORRECT (PostgreSQL), nettement plus lisible :
+SELECT EXTRACT(YEAR FROM AGE(date_naissance)) AS age;   -- AGE gere tout seul les anniversaires
+
+-- CORRECT (MySQL), fonction dediee :
+SELECT TIMESTAMPDIFF(YEAR, date_naissance, CURDATE()) AS age;   -- compte les annees REVOLUES</pre>
+<div class="tip">MySQL a raison sur ce point : <code>TIMESTAMPDIFF</code> compte les périodes <strong>complètes</strong>, ce qui correspond à l'intuition. <code>DATEDIFF</code> de SQL Server compte les frontières — deux logiques différentes sous des noms voisins.</div>
+
+<h3>6. La date du jour</h3>
+<pre class="pseudo">CURRENT_DATE          -- standard : MySQL, PostgreSQL (jour seul)
+CURDATE()             -- MySQL, synonyme
+CURRENT_TIMESTAMP     -- standard : partout, y compris SQL Server (jour + heure)
+NOW()                 -- MySQL, PostgreSQL (jour + heure)
+GETDATE()             -- SQL Server (jour + heure)
+CAST(GETDATE() AS DATE)  -- SQL Server, pour n'obtenir que le jour
+SYSDATE               -- Oracle
+
+-- Application typique : les commandes des 30 derniers jours
+WHERE date_cmd &gt;= CURRENT_DATE - INTERVAL '30 days'    -- PostgreSQL
+WHERE date_cmd &gt;= DATE_SUB(CURDATE(), INTERVAL 30 DAY) -- MySQL
+WHERE date_cmd &gt;= DATEADD(DAY, -30, CAST(GETDATE() AS DATE))  -- SQL Server</pre>
+<div class="warn">Écris toujours <code>colonne &gt;= une_date_calculee</code> et non <code>DATEDIFF(DAY, colonne, aujourd_hui) &lt;= 30</code>. La seconde forme applique une fonction à la colonne, ce qui rend l'index inutilisable et transforme une requête instantanée en parcours complet de la table.</div>
+
+<h3>7. Applications au contrôle qualité</h3>
+<pre class="pseudo">-- DELAI DE LIVRAISON moyen, en jours (PostgreSQL)
+SELECT ROUND(AVG(date_livraison - date_commande), 1) AS delai_moyen_jours
+FROM COMMANDE
+WHERE date_livraison IS NOT NULL;      -- on exclut les commandes non encore livrees
+
+-- COMMANDES EN RETARD : promises il y a plus de 5 jours et toujours pas livrees
+SELECT id, date_commande, date_promesse
+FROM COMMANDE
+WHERE date_livraison IS NULL
+  AND date_promesse &lt; CURRENT_DATE - INTERVAL '5 days';
+
+-- CALCULER une echeance a 30 jours fin de mois
+SELECT id,
+       date_facture,
+       date_facture + INTERVAL '30 days'          AS echeance_30j,
+       DATE_TRUNC('month', date_facture + INTERVAL '1 month')
+         + INTERVAL '1 month' - INTERVAL '1 day'  AS fin_mois_suivant   -- dernier jour du mois suivant
+FROM FACTURE;
+
+-- DETECTER les durees aberrantes
+SELECT id, date_commande, date_livraison,
+       date_livraison - date_commande AS delai
+FROM COMMANDE
+WHERE date_livraison - date_commande &lt; 0        -- livraison AVANT la commande : impossible
+   OR date_livraison - date_commande &gt; 365;     -- plus d'un an : erreur probable</pre>`,
+  exercises: [
+    { type: "input", q: "Complète la version SQL Server : SELECT ______(DAY, 30, date_cmd);", a: ["dateadd"], ph: "une fonction", exp: "DATEADD(unite, nombre, date) : l'unité vient en premier." },
+    { type: "qcm", q: "Quelle est la syntaxe MySQL pour ajouter 30 jours ?", opts: ["DATEADD(DAY, 30, d)", "DATE_ADD(d, INTERVAL 30 DAY)", "d + 30 DAYS", "ADD_DAYS(d, 30)"], a: 1, exp: "MySQL place la date en premier et utilise le mot-clé INTERVAL." },
+    { type: "input", q: "Complète la version PostgreSQL : SELECT date_cmd + ______ '30 days';", a: ["interval"], ph: "un mot-clé", exp: "PostgreSQL additionne directement un INTERVAL à la date." },
+    { type: "qcm", q: "Que renvoie DATEDIFF(YEAR, '2024-12-31', '2025-01-01') en SQL Server ?", opts: ["0", "1", "365", "NULL"], a: 1, exp: "DATEDIFF compte les FRONTIÈRES franchies : une frontière d'année a été passée, d'où 1 — malgré un seul jour écoulé." },
+    { type: "vf", q: "DATEDIFF de SQL Server mesure la durée réelle écoulée.", a: false, exp: "Elle compte les frontières de période franchies, ce qui donne des résultats contre-intuitifs sur les âges." },
+    { type: "qcm", q: "Quelle fonction MySQL compte les périodes complètes, correctement pour un âge ?", opts: ["DATEDIFF", "TIMESTAMPDIFF", "DATE_SUB", "PERIOD_DIFF"], a: 1, exp: "TIMESTAMPDIFF(YEAR, naissance, aujourd_hui) donne les années révolues." },
+    { type: "input", q: "Complète la fonction PostgreSQL qui calcule un âge lisible : SELECT ______(date_naissance);", a: ["age"], ph: "une fonction", exp: "AGE renvoie un INTERVAL du type '23 years 4 mons 12 days'." },
+    { type: "qcm", q: "Que donne date_fin - date_deb en PostgreSQL sur deux colonnes DATE ?", opts: ["Un INTERVAL", "Un entier, le nombre de jours", "Une erreur", "Une date"], a: 1, exp: "Sur des DATE, la soustraction donne un entier. Sur des TIMESTAMP, elle donne un INTERVAL." },
+    { type: "vf", q: "Ajouter un mois puis en retirer un redonne toujours la date de départ.", a: false, exp: "Le 31 janvier plus un mois donne le 29 février ; moins un mois donne le 29 janvier. L'opération n'est pas réversible." },
+    { type: "input", q: "Complète : WHERE date_cmd >= CURRENT_DATE - INTERVAL '______ days'; — pour les 30 derniers jours.", a: ["30"], ph: "un nombre", exp: "On compare la colonne à une borne calculée, sans lui appliquer de fonction." },
+    { type: "qcm", q: "Pourquoi éviter WHERE DATEDIFF(DAY, date_cmd, GETDATE()) <= 30 ?", opts: ["Le résultat est faux", "La fonction appliquée à la colonne empêche l'usage de l'index", "DATEDIFF n'existe pas", "Il faut un GROUP BY"], a: 1, exp: "Le résultat est juste mais le SGBD doit parcourir toute la table." },
+    { type: "qcm", q: "Quelle fonction donne la date et l'heure courantes en SQL Server ?", opts: ["NOW()", "CURDATE()", "GETDATE()", "SYSDATE"], a: 2, exp: "GETDATE() en SQL Server ; NOW() en MySQL et PostgreSQL ; SYSDATE en Oracle." },
+    { type: "input", q: "Complète MySQL pour retirer un an : SELECT ______(date_cmd, INTERVAL 1 YEAR);", a: ["date_sub"], ph: "une fonction", exp: "DATE_SUB retire une durée ; DATE_ADD avec un nombre négatif ferait aussi l'affaire." },
+    { type: "vf", q: "CURRENT_TIMESTAMP fonctionne aussi bien en SQL Server qu'en PostgreSQL.", a: true, exp: "C'est la seule fonction de date courante réellement portable entre les trois grands SGBD." },
+    { type: "qcm", q: "Comment détecter une livraison antérieure à sa commande en PostgreSQL ?", opts: ["WHERE date_livraison IS NULL", "WHERE date_livraison - date_commande < 0", "WHERE date_livraison = date_commande", "WHERE AGE(date_livraison) > 0"], a: 1, exp: "Un écart négatif signale une incohérence chronologique." }
+  ],
+  final: {
+    title: "Exercice final — Délais de livraison",
+    intro: `<p>Table <code>COMMANDE</code>, colonnes de type <code>DATE</code>. Nous sommes le 2024-04-10.</p>
+<pre class="pseudo">id | date_commande | date_promesse | date_livraison
+---+---------------+---------------+----------------
+ 1 | '2024-03-01'  | '2024-03-08'  | '2024-03-06'
+ 2 | '2024-03-15'  | '2024-03-22'  | '2024-03-29'
+ 3 | '2024-03-20'  | '2024-03-27'  | NULL
+ 4 | '2024-04-05'  | '2024-04-12'  | NULL</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel est le délai réel de la ligne 1 en PostgreSQL (date_livraison - date_commande) ?", opts: ["Cinq jours", "Six jours", "Sept jours", "Huit jours"], a: 0, exp: "Du 1er au 6 mars : 5 jours d'écart." },
+      { type: "qcm", q: "Quelle ligne a été livrée en retard par rapport à la promesse ?", opts: ["La ligne 1", "La ligne 2 : promise le 22, livrée le 29", "La ligne 3", "Aucune"], a: 1, exp: "Sept jours de retard sur la date promise." },
+      { type: "vf", q: "La ligne 3 est en retard au 10 avril.", a: true, exp: "Promise le 27 mars, toujours pas livrée deux semaines plus tard." },
+      { type: "qcm", q: "La ligne 4 est-elle en retard ?", opts: ["Oui", "Non : la promesse est au 12 avril, encore dans le futur", "Impossible à dire", "Oui, car date_livraison est NULL"], a: 1, exp: "Un NULL en livraison ne signifie pas un retard : il faut comparer la promesse à la date du jour." },
+      { type: "qcm", q: "Quelle condition isole les commandes réellement en retard ?", opts: ["date_livraison IS NULL", "date_livraison IS NULL AND date_promesse < CURRENT_DATE", "date_promesse < date_commande", "date_livraison > date_promesse"], a: 1, exp: "Il faut cumuler les deux critères : non livrée ET promesse dépassée." }
+    ],
+    solution: `<pre class="pseudo">-- 1) DELAI REEL de chaque commande livree (PostgreSQL)
+SELECT id,
+       date_commande,
+       date_livraison,
+       date_livraison - date_commande         AS delai_reel,      -- entier : nombre de jours
+       date_promesse  - date_commande         AS delai_promis,
+       date_livraison - date_promesse         AS retard           -- negatif = en avance
+FROM COMMANDE
+WHERE date_livraison IS NOT NULL              -- on ne calcule que sur les commandes livrees
+ORDER BY retard DESC;                          -- les pires retards en tete
+-- ligne 2 : delai_reel 14, delai_promis 7, retard  7
+-- ligne 1 : delai_reel  5, delai_promis 7, retard -2 (livree en avance)
+
+-- 2) DELAI MOYEN de livraison
+SELECT COUNT(*)                                       AS nb_livrees,
+       ROUND(AVG(date_livraison - date_commande), 1)  AS delai_moyen_jours
+FROM COMMANDE
+WHERE date_livraison IS NOT NULL;   -- indispensable : sinon AVG ignore les NULL sans le dire clairement
+
+-- 3) COMMANDES EN RETARD a ce jour : non livrees ET promesse depassee
+SELECT id,
+       date_commande,
+       date_promesse,
+       CURRENT_DATE - date_promesse AS jours_de_retard
+FROM COMMANDE
+WHERE date_livraison IS NULL                  -- pas encore livree
+  AND date_promesse &lt; CURRENT_DATE            -- et la date promise est passee
+ORDER BY jours_de_retard DESC;
+-- attendu : la ligne 3 seulement (la ligne 4 est promise pour le 12 avril, encore a venir)
+
+-- 4) ECHEANCES calculees
+SELECT id,
+       date_commande,
+       date_commande + INTERVAL '30 days'  AS echeance_paiement,   -- 30 jours apres la commande
+       date_commande + INTERVAL '1 year'   AS fin_garantie
+FROM COMMANDE;
+
+-- 5) CONTROLE des durees aberrantes
+SELECT id, date_commande, date_livraison, date_livraison - date_commande AS delai
+FROM COMMANDE
+WHERE date_livraison &lt; date_commande                   -- livree avant d'etre commandee
+   OR date_livraison - date_commande &gt; 365;            -- plus d'un an de delai : suspect
+
+-- Variantes du calcul de delai :
+--   MySQL      : DATEDIFF(date_livraison, date_commande)          -- date de FIN en premier
+--   SQL Server : DATEDIFF(DAY, date_commande, date_livraison)     -- unite en premier, DEBUT ensuite
+--   L'ordre des arguments est INVERSE entre MySQL et SQL Server : verifie toujours sur un cas connu.</pre>
+<p>Tu calcules avec les dates. Demain : les convertir et les formater, le dernier grand piège temporel.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j12", title: "Relances d'abonnement", level: 3,
+    statement: "Table <code>ABONNEMENT(id, client, date_debut, duree_mois, date_resiliation)</code>. Nous sommes le <strong>2024-06-15</strong> :<pre class='pseudo'>id | client   | date_debut   | duree_mois | date_resiliation\n---+----------+--------------+------------+------------------\n 1 | 'Dupont' | '2023-07-01' |         12 | NULL\n 2 | 'Leroy'  | '2024-01-15' |         12 | NULL\n 3 | 'Simon'  | '2023-05-01' |         24 | '2024-03-01'\n 4 | 'Martin' | '2024-06-01' |          6 | NULL</pre>Écris une requête (version PostgreSQL) qui liste les abonnements <strong>actifs</strong> (non résiliés) arrivant à échéance dans les 30 prochains jours : client, date de début, date d'échéance calculée, et nombre de jours restants. Trie par urgence. Donne en commentaire les variantes MySQL et SQL Server.",
+    hints: [
+      "L'échéance se calcule date_debut + un INTERVAL de duree_mois mois : en PostgreSQL, INTERVAL '1 month' * duree_mois.",
+      "Actif signifie date_resiliation IS NULL.",
+      "« Dans les 30 prochains jours » s'encadre : échéance >= CURRENT_DATE ET échéance < CURRENT_DATE + 30 jours."
+    ],
+    solution: "SELECT client,\n       date_debut,\n       duree_mois,\n       date_debut + (INTERVAL '1 month' * duree_mois)              AS date_echeance,   -- multiplie l'intervalle\n       (date_debut + (INTERVAL '1 month' * duree_mois))::date - CURRENT_DATE AS jours_restants\nFROM ABONNEMENT\nWHERE date_resiliation IS NULL                                     -- abonnements ACTIFS uniquement\n  AND date_debut + (INTERVAL '1 month' * duree_mois) >= CURRENT_DATE          -- echeance pas encore passee\n  AND date_debut + (INTERVAL '1 month' * duree_mois) <  CURRENT_DATE + INTERVAL '30 days'   -- dans les 30 jours\nORDER BY jours_restants ASC;                                       -- le plus urgent en premier\n\n-- Resultat attendu (au 2024-06-15) :\n-- client   | date_debut   | duree_mois | date_echeance | jours_restants\n-- ---------+--------------+------------+---------------+---------------\n-- 'Dupont' | '2023-07-01' |         12 | '2024-07-01'  |      16\n\n-- Ligne 2 ('Leroy') : echeance au 2025-01-15, bien au-dela des 30 jours -> exclue.\n-- Ligne 3 ('Simon') : resiliee le 2024-03-01 -> exclue par le IS NULL.\n-- Ligne 4 ('Martin'): echeance au 2024-12-01 -> exclue, trop lointaine.\n\n-- Variante MySQL :\n--   DATE_ADD(date_debut, INTERVAL duree_mois MONTH)                AS date_echeance\n--   WHERE date_resiliation IS NULL\n--     AND DATE_ADD(date_debut, INTERVAL duree_mois MONTH) >= CURDATE()\n--     AND DATE_ADD(date_debut, INTERVAL duree_mois MONTH) <  DATE_ADD(CURDATE(), INTERVAL 30 DAY)\n--   jours restants : DATEDIFF(DATE_ADD(date_debut, INTERVAL duree_mois MONTH), CURDATE())\n\n-- Variante SQL Server :\n--   DATEADD(MONTH, duree_mois, date_debut)                         AS date_echeance\n--   WHERE date_resiliation IS NULL\n--     AND DATEADD(MONTH, duree_mois, date_debut) >= CAST(GETDATE() AS DATE)\n--     AND DATEADD(MONTH, duree_mois, date_debut) <  DATEADD(DAY, 30, CAST(GETDATE() AS DATE))\n--   jours restants : DATEDIFF(DAY, CAST(GETDATE() AS DATE), DATEADD(MONTH, duree_mois, date_debut))",
+    note: "Piège : on est tenté d'écrire WHERE DATEDIFF(...) <= 30, ce qui applique une fonction à une expression dérivée de la colonne et interdit tout usage d'index — sur une table de plusieurs millions d'abonnements, la requête passe de quelques millisecondes à plusieurs minutes. Bonne pratique : en production, une échéance calculée à chaque requête est doublement coûteuse. Stocke-la dans une colonne dédiée (mise à jour à la souscription) ou dans une colonne calculée indexée : le filtrage redevient une simple comparaison de dates." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

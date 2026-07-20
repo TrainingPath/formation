@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 20</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Les fonctions de fenêtre : la clause OVER()",
+  subtitle: "Calculer un agrégat SANS perdre le détail — le déclic qui sépare le SQL intermédiaire du SQL avancé.",
+  theory: `
+<h3>1. Le problème que GROUP BY ne sait pas résoudre</h3>
+<p>Voici une demande banale : « affiche chaque vente, avec à côté le total de l entreprise, et le pourcentage que cette vente représente ».</p>
+<p>Essaie avec ce que tu connais. <code>SUM(montant)</code> te donne le total, mais il écrase les lignes : tu obtiens UNE ligne. <code>GROUP BY</code> ne t aide pas : tu veux justement garder chaque vente. Tu es coincé — sauf à écrire une sous-requête par colonne, ce qui devient vite monstrueux.</p>
+
+<h3>2. La différence fondamentale : GROUP BY réduit, OVER conserve</h3>
+<p>Grave cette phrase, c est le cœur du chapitre :</p>
+<div class="tip"><strong>GROUP BY REGROUPE les lignes en une seule (il en détruit). OVER() CALCULE sur un groupe de lignes mais RENVOIE le résultat sur CHAQUE ligne (il n en détruit aucune).</strong></div>
+<pre class="pseudo">-- Table VENTE :
+-- vendeur | montant
+-- --------+--------
+-- Alice   |    100
+-- Bob     |    200
+-- Alice   |    300
+
+-- AVEC GROUP BY : 3 lignes en entree --&gt; 1 ligne en sortie
+SELECT SUM(montant) AS total FROM VENTE;
+-- total
+-- -----
+--   600      &lt;-- le detail a disparu
+
+-- AVEC OVER() : 3 lignes en entree --&gt; 3 lignes en sortie
+SELECT vendeur,
+       montant,
+       SUM(montant) OVER () AS total_general   -- calcule sur TOUT, affiche PARTOUT
+FROM VENTE;
+-- vendeur | montant | total_general
+-- --------+---------+--------------
+-- Alice   |     100 |           600
+-- Bob     |     200 |           600
+-- Alice   |     300 |           600      &lt;-- le detail est intact !</pre>
+<p><strong>L analogie :</strong> imagine une classe et ses notes. GROUP BY, c est le bulletin de synthèse : une ligne « moyenne de la classe : 12 », et les copies sont rangées. OVER(), c est le prof qui écrit la moyenne de la classe <em>en haut de chaque copie</em> : chaque élève voit sa note ET la moyenne, côte à côte. Aucune copie n est rangée.</p>
+
+<h3>3. Définition : qu est-ce qu une fonction de fenêtre ?</h3>
+<p>Une <strong>fonction de fenêtre</strong> (window function, ou fonction analytique) est une fonction qui calcule une valeur pour chaque ligne, en regardant un <strong>ensemble de lignes voisines</strong> appelé la <strong>fenêtre</strong>.</p>
+<p>La <strong>fenêtre</strong>, c est littéralement ça : un cadre à travers lequel la ligne courante regarde ses voisines. Selon ce que tu écris dans <code>OVER()</code>, ce cadre est plus ou moins large : toute la table, ou seulement les lignes du même vendeur, ou seulement les lignes précédentes.</p>
+<pre class="pseudo">FONCTION(argument) OVER ( [PARTITION BY ...] [ORDER BY ...] [cadre] )
+--   ^                ^          ^                 ^            ^
+--   |                |          |                 |            |
+--   |                |          |                 |            +-- le cadre precis (jour 23)
+--   |                |          |                 +-- l ordre dans la fenetre (jour 21-22)
+--   |                |          +-- decoupe la table en groupes (jour 23)
+--   |                +-- LE mot-cle qui declenche le mode fenetre
+--   +-- SUM, AVG, COUNT, ROW_NUMBER, LAG...</pre>
+<div class="warn">Le mot <code>OVER</code> est le déclencheur. <code>SUM(montant)</code> est un agrégat classique qui réduit ; <code>SUM(montant) OVER ()</code> est une fonction de fenêtre qui conserve. Un seul mot change tout.</div>
+
+<h3>4. OVER() vide : la fenêtre = toute la table</h3>
+<p>C est le cas le plus simple. Parenthèses vides = « regarde toutes les lignes du résultat ».</p>
+<pre class="pseudo">SELECT vendeur,
+       montant,
+       SUM(montant)   OVER () AS total,        -- somme de TOUTES les lignes
+       AVG(montant)   OVER () AS moyenne,      -- moyenne de TOUTES les lignes
+       COUNT(*)       OVER () AS nb_lignes,    -- nombre total de lignes
+       MAX(montant)   OVER () AS plus_grosse,  -- la plus grosse vente
+       ROUND(100.0 * montant / SUM(montant) OVER (), 1) AS pct   -- part de chaque vente
+FROM VENTE;
+
+-- vendeur | montant | total | moyenne | nb_lignes | plus_grosse | pct
+-- --------+---------+-------+---------+-----------+-------------+------
+-- Alice   |     100 |   600 |     200 |         3 |         300 | 16.7
+-- Bob     |     200 |   600 |     200 |         3 |         300 | 33.3
+-- Alice   |     300 |   600 |     200 |         3 |         300 | 50.0</pre>
+<p>Regarde la dernière colonne : calculer un <strong>pourcentage du total</strong> devient trivial. C est l usage le plus fréquent des fonctions de fenêtre en analyse de données.</p>
+
+<h3>5. Où peut-on écrire une fonction de fenêtre ?</h3>
+<p>Uniquement dans le <code>SELECT</code> et dans le <code>ORDER BY</code>. <strong>Jamais</strong> dans WHERE, GROUP BY ou HAVING.</p>
+<pre class="pseudo">-- L ordre d execution explique tout :
+FROM        -- 1
+WHERE       -- 2   &lt;-- les fenetres n existent pas encore
+GROUP BY    -- 3
+HAVING      -- 4   &lt;-- toujours pas
+SELECT      -- 5   &lt;-- LES FENETRES SONT CALCULEES ICI
+ORDER BY    -- 6   &lt;-- on peut donc y trier dessus
+LIMIT       -- 7</pre>
+<pre class="pseudo">-- INTERDIT : la fenetre n existe pas au moment du WHERE
+SELECT vendeur, montant FROM VENTE
+WHERE montant &gt; AVG(montant) OVER ();     -- ERREUR
+
+-- CORRECT : on calcule d abord dans une CTE, on filtre ensuite
+WITH v AS (
+  SELECT vendeur, montant, AVG(montant) OVER () AS moy
+  FROM VENTE
+)
+SELECT vendeur, montant FROM v WHERE montant &gt; moy;   -- OK</pre>
+<div class="tip">Retiens le réflexe : <strong>fenêtre + filtre = CTE</strong>. Tu calculeras la fenêtre dans une CTE, puis tu filtreras dans la requête principale. C est la raison pour laquelle on a vu les CTE (jours 18-19) juste avant les fenêtres.</div>
+
+<h3>6. Mélanger GROUP BY et OVER()</h3>
+<p>Les deux peuvent cohabiter. Dans ce cas, la fenêtre s applique <em>sur le résultat déjà agrégé</em>.</p>
+<pre class="pseudo">SELECT vendeur,
+       SUM(montant) AS total_vendeur,              -- agregat classique : 1 ligne/vendeur
+       SUM(SUM(montant)) OVER () AS total_general  -- fenetre SUR les totaux agreges
+FROM VENTE
+GROUP BY vendeur;
+
+-- vendeur | total_vendeur | total_general
+-- --------+---------------+--------------
+-- Alice   |           400 |           600
+-- Bob     |           200 |           600</pre>
+<p>Le double <code>SUM(SUM(...))</code> surprend, mais il est logique : le SUM intérieur agrège par vendeur, le SUM extérieur (fenêtré) additionne ces totaux.</p>
+
+<h3>7. Support selon les SGBD</h3>
+<pre class="pseudo">-- PostgreSQL   : depuis 8.4 (2009)   -- support complet, le plus riche
+-- SQL Server   : depuis 2005 pour ROW_NUMBER/RANK, 2012 pour SUM OVER avec cadre
+-- MySQL        : depuis 8.0 (2018)   -- ABSENT en 5.7 !
+-- MariaDB      : depuis 10.2 (2017)
+-- SQLite       : depuis 3.25 (2018)
+-- Oracle       : depuis 8i (1999), le pionnier</pre>
+<div class="warn">Sur MySQL 5.7, les fonctions de fenêtre n existent pas. Les vieux tutoriels contournaient avec des variables utilisateur (<code>SET @rang := @rang + 1</code>) : c est fragile, non portable, et à éviter dès que possible. Vérifie ta version avec <code>SELECT VERSION();</code>.</div>
+
+<h3>8. Le catalogue des fonctions de fenêtre</h3>
+<pre class="pseudo">-- Agregats fenetres (jour 23)    : SUM, AVG, COUNT, MIN, MAX
+-- Fonctions de rang (jour 21)    : ROW_NUMBER, RANK, DENSE_RANK, NTILE, PERCENT_RANK
+-- Fonctions de decalage (jour 22): LAG, LEAD
+-- Valeurs de bord                : FIRST_VALUE, LAST_VALUE, NTH_VALUE</pre>
+<p>Toutes s écrivent avec la même clause <code>OVER()</code>. Apprends la mécanique une fois, elle vaut pour les seize fonctions.</p>`,
+  exercises: [
+    { type: "input", q: "Quel mot-clé transforme un agrégat classique en fonction de fenêtre ?", ph: "O...", a: ["OVER", "OVER()"], exp: "SUM(x) réduit ; SUM(x) OVER () conserve toutes les lignes." },
+    { type: "qcm", q: "La différence essentielle entre GROUP BY et OVER() est que…", opts: ["OVER est plus rapide", "GROUP BY réduit le nombre de lignes, OVER le conserve", "GROUP BY ne marche qu avec SUM", "OVER ne fonctionne qu en PostgreSQL"], a: 1, exp: "C est LE déclic : OVER calcule sur un groupe mais affiche sur chaque ligne." },
+    { type: "vf", q: "SELECT montant, SUM(montant) OVER () FROM VENTE renvoie autant de lignes que la table.", a: true, exp: "Aucune ligne n est détruite : le total est simplement recopié à côté de chacune." },
+    { type: "qcm", q: "OVER() avec des parenthèses vides signifie…", opts: ["Une erreur de syntaxe", "La fenêtre couvre toutes les lignes du résultat", "La fenêtre est vide", "Une seule ligne"], a: 1, exp: "Parenthèses vides = pas de découpage, pas d ordre : toute la table." },
+    { type: "input", q: "Comment s appelle l ensemble de lignes qu une fonction analytique regarde ?", ph: "la f...", a: ["FENETRE", "LA FENETRE", "fenêtre", "la fenêtre"], exp: "La fenêtre : le cadre à travers lequel la ligne courante voit ses voisines." },
+    { type: "qcm", q: "Dans quelles clauses peut-on écrire une fonction de fenêtre ?", opts: ["WHERE et HAVING", "SELECT et ORDER BY", "GROUP BY uniquement", "Partout"], a: 1, exp: "Les fenêtres sont calculées à l étape SELECT, donc après WHERE et HAVING." },
+    { type: "vf", q: "WHERE montant > AVG(montant) OVER () est une requête valide.", a: false, exp: "WHERE s exécute avant le calcul des fenêtres : il faut passer par une CTE." },
+    { type: "input", q: "Quel outil vu aux jours 18-19 permet de filtrer sur le résultat d une fonction de fenêtre ?", ph: "une C...", a: ["CTE", "UNE CTE", "WITH"], exp: "Réflexe à retenir : fenêtre + filtre = CTE." },
+    { type: "qcm", q: "Pour afficher le pourcentage de chaque vente dans le total, on écrit…", opts: ["montant / SUM(montant)", "100.0 * montant / SUM(montant) OVER ()", "AVG(montant) GROUP BY", "COUNT(*) OVER (montant)"], a: 1, exp: "Le total fenêtré sert de dénominateur, ligne par ligne." },
+    { type: "qcm", q: "Depuis quelle version MySQL propose-t-il les fonctions de fenêtre ?", opts: ["5.5", "5.7", "8.0", "Depuis toujours"], a: 2, exp: "MySQL 8.0 (2018). MariaDB les propose depuis 10.2 (2017)." },
+    { type: "input", q: "Quelle fonction de fenêtre numérote les lignes 1, 2, 3… ?", ph: "ROW_...", a: ["ROW_NUMBER", "ROW_NUMBER()"], exp: "Déjà croisée au jour 17 : c est le sujet détaillé de demain." },
+    { type: "vf", q: "On peut utiliser GROUP BY et une fonction de fenêtre dans la même requête.", a: true, exp: "La fenêtre s applique alors sur le résultat déjà agrégé — d où des écritures comme SUM(SUM(x)) OVER ()." },
+    { type: "qcm", q: "COUNT(*) OVER () renvoie…", opts: ["1", "Le nombre total de lignes du résultat, répété sur chaque ligne", "Le nombre de colonnes", "NULL"], a: 1, exp: "Le comptage porte sur toute la fenêtre, affiché partout." },
+    { type: "input", q: "Quelle clause de OVER() servira à découper la table en groupes (vu au jour 23) ?", ph: "PART...", a: ["PARTITION BY", "PARTITION"], exp: "PARTITION BY est l équivalent fenêtré du GROUP BY, sans perte de lignes." },
+    { type: "qcm", q: "Sur MySQL 5.7, l ancienne parade aux fonctions de fenêtre était…", opts: ["Les index", "Les variables utilisateur (SET @rang := @rang + 1)", "Les triggers", "Les vues matérialisées"], a: 1, exp: "Technique fragile et non portable : à abandonner dès qu on passe en 8.0." }
+  ],
+  final: {
+    title: "Exercice final — Chaque vente et sa part du total",
+    intro: `<p>Un rapport doit montrer chaque vente, sa part dans le chiffre d affaires, et l écart à la moyenne.</p>
+<pre class="pseudo">-- VENTE(id, vendeur, region, montant)
+-- id | vendeur | region | montant
+-- ---+---------+--------+--------
+--  1 | Alice   | Nord   |    100
+--  2 | Bob     | Sud    |    200
+--  3 | Alice   | Nord   |    300
+--  4 | Chloe   | Sud    |    400
+-- Total = 1000, moyenne = 250, nombre de lignes = 4</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de lignes renverra SELECT id, montant, SUM(montant) OVER () FROM VENTE ?", opts: ["1", "4", "2", "0"], a: 1, exp: "OVER() conserve toutes les lignes : 4 en entrée, 4 en sortie." },
+      { type: "input", q: "Quelle valeur affichera la colonne SUM(montant) OVER () sur la ligne id = 1 ?", ph: "un nombre", a: ["1000"], exp: "Le total général est recopié sur chaque ligne, quelle qu elle soit." },
+      { type: "qcm", q: "L écart à la moyenne s écrit…", opts: ["montant - AVG(montant)", "montant - AVG(montant) OVER ()", "AVG(montant) GROUP BY montant", "montant / COUNT(*)"], a: 1, exp: "La moyenne fenêtrée est disponible sur chaque ligne, donc la soustraction est directe." },
+      { type: "vf", q: "Pour n afficher que les ventes supérieures à la moyenne, il faut passer par une CTE.", a: true, exp: "Impossible de filtrer sur une fenêtre dans le WHERE : on la calcule dans une CTE puis on filtre." },
+      { type: "input", q: "Quelle sera la part (en pourcentage, sans décimale) de la vente id = 4 ?", ph: "un nombre", a: ["40", "40%"], exp: "400 sur 1000 = 40 %." }
+    ],
+    solution: `<pre class="pseudo">-- PARTIE 1 : le rapport complet, une ligne par vente
+SELECT id,
+       vendeur,
+       montant,
+       SUM(montant) OVER ()                       AS ca_total,     -- total general
+       AVG(montant) OVER ()                       AS moyenne,      -- moyenne generale
+       COUNT(*)     OVER ()                       AS nb_ventes,    -- nombre de ventes
+       montant - AVG(montant) OVER ()             AS ecart_moyenne,-- ecart a la moyenne
+       ROUND(100.0 * montant / SUM(montant) OVER (), 1) AS part_pct
+FROM VENTE
+ORDER BY montant DESC;                                             -- tri final
+
+-- id | vendeur | montant | ca_total | moyenne | nb | ecart | part_pct
+-- ---+---------+---------+----------+---------+----+-------+---------
+--  4 | Chloe   |     400 |     1000 |     250 |  4 |   150 |     40.0
+--  3 | Alice   |     300 |     1000 |     250 |  4 |    50 |     30.0
+--  2 | Bob     |     200 |     1000 |     250 |  4 |   -50 |     20.0
+--  1 | Alice   |     100 |     1000 |     250 |  4 |  -150 |     10.0
+
+-- PARTIE 2 : filtrer sur la fenetre --&gt; obligatoirement via une CTE
+WITH v AS (
+  SELECT id, vendeur, montant,
+         AVG(montant) OVER () AS moyenne          -- la fenetre est calculee ICI
+  FROM VENTE
+)
+SELECT id, vendeur, montant, moyenne
+FROM v
+WHERE montant &gt; moyenne;                          -- le filtre s applique APRES
+
+-- Resultat : les ventes 3 (300) et 4 (400)</pre>
+<p>Tu tiens le mécanisme. Demain on remplit les parenthèses de <code>OVER()</code> avec un <code>ORDER BY</code> pour classer et numéroter.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j20", title: "Un tableau de bord ligne par ligne", level: 2,
+    statement: "La table COMMANDE(id, client, pays, montant, date_cmd) contient les commandes de l année. Écris une requête qui affiche chaque commande avec : son montant, le chiffre d affaires total de l année, la commande moyenne, le nombre total de commandes, et la part de cette commande dans le total en pourcentage arrondi à une décimale. Aucune ligne ne doit disparaître. Puis, dans une seconde requête, n affiche que les commandes dont le montant dépasse la moyenne générale.",
+    hints: [
+      "Toutes les colonnes de synthèse s obtiennent avec la même mécanique : FONCTION(...) OVER () — parenthèses vides pour couvrir toute la table.",
+      "Pour le pourcentage, multiplie par 100.0 (et non 100) afin de forcer un calcul décimal, sinon certains SGBD font une division entière.",
+      "La seconde requête ne peut pas filtrer sur AVG(montant) OVER () dans un WHERE : calcule la moyenne fenêtrée dans une CTE, puis filtre dans la requête principale."
+    ],
+    solution: "-- REQUETE 1 : le tableau de bord, une ligne par commande\nSELECT id,\n       client,\n       montant,\n       SUM(montant) OVER ()   AS ca_annuel,        -- total sur toute la table\n       AVG(montant) OVER ()   AS commande_moyenne, -- moyenne sur toute la table\n       COUNT(*)     OVER ()   AS nb_commandes,     -- nombre de lignes du resultat\n       ROUND(100.0 * montant / SUM(montant) OVER (), 1) AS part_pct\nFROM COMMANDE\nORDER BY montant DESC;\n\n-- id | client | montant | ca_annuel | commande_moyenne | nb | part_pct\n-- ---+--------+---------+-----------+------------------+----+---------\n--  7 | Chloe  |  900.00 |   3000.00 |           375.00 |  8 |     30.0\n--  3 | Alice  |  600.00 |   3000.00 |           375.00 |  8 |     20.0\n--  ... (les 8 lignes sont conservees)\n\n-- REQUETE 2 : filtrer sur une fenetre --> CTE obligatoire\nWITH c AS (\n  SELECT id,\n         client,\n         montant,\n         AVG(montant) OVER () AS moyenne          -- fenetre calculee dans la CTE\n  FROM COMMANDE\n)\nSELECT id, client, montant, ROUND(moyenne, 2) AS moyenne\nFROM c\nWHERE montant > moyenne                            -- filtre applique APRES le calcul\nORDER BY montant DESC;\n\n-- Resultat : uniquement les commandes au-dessus de 375.00",
+    note: "Note la différence de nature entre les deux requêtes : la première ne pouvait pas s écrire avec GROUP BY (elle aurait perdu le détail des commandes), la seconde illustre la règle d or du fenêtrage — on ne filtre jamais sur une fenêtre dans le WHERE. Côté dialecte, ROUND(x, 1) fonctionne partout ; en PostgreSQL, si montant est un double precision, il faut parfois écrire ROUND(x::numeric, 1)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

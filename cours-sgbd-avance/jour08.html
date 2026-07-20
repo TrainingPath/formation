@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 08</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Les valeurs NULL : COALESCE, NULLIF, IFNULL",
+  subtitle: "L'inconnu qui contamine tout : le comprendre, le détecter, le neutraliser.",
+  theory: `
+<h3>1. NULL n'est pas une valeur</h3>
+<p><code>NULL</code> ne signifie ni zéro, ni chaîne vide, ni faux. <code>NULL</code> signifie <strong>« on ne sait pas »</strong> — l'information est absente. C'est un marqueur d'ignorance, pas une donnée.</p>
+<p>Cette distinction n'est pas philosophique : elle change le résultat de tes requêtes.</p>
+<pre class="pseudo">-- Quatre choses radicalement differentes :
+NULL     -- valeur INCONNUE (on ignore le numero de telephone)
+0        -- le nombre zero (le solde est de zero euro : information connue et precise)
+''       -- chaine VIDE de longueur 0 (le champ a ete laisse vide volontairement)
+' '      -- une chaine contenant un espace (longueur 1 !)
+
+SELECT LENGTH('');     -- 0     : une longueur connue
+SELECT LENGTH(NULL);   -- NULL  : la longueur d'un inconnu est inconnue</pre>
+
+<h3>2. La contamination : tout calcul avec NULL donne NULL</h3>
+<p>Règle fondamentale : dès qu'un <code>NULL</code> entre dans un calcul ou une concaténation, le résultat est <code>NULL</code>. On dit que le NULL se <strong>propage</strong>.</p>
+<pre class="pseudo">SELECT 100 + NULL;              -- NULL  (et non 100)
+SELECT 100 * NULL;              -- NULL
+SELECT 'Jean' || NULL;          -- NULL  (PostgreSQL)
+SELECT UPPER(NULL);             -- NULL
+
+-- Consequence concrete et couteuse :
+SELECT prix_ht + frais_port AS total FROM COMMANDE;
+-- si frais_port vaut NULL sur une ligne, le TOTAL de cette ligne devient NULL
+-- la commande disparait des statistiques, sans le moindre avertissement</pre>
+
+<h3>3. Comparer avec NULL : IS NULL, jamais = NULL</h3>
+<p>Un test d'égalité avec NULL ne renvoie ni vrai ni faux, mais <strong>inconnu</strong> — et un WHERE ne retient que ce qui est vrai. <code>WHERE col = NULL</code> ne renvoie donc jamais rien.</p>
+<pre class="pseudo">WHERE email = NULL       -- FAUX TOUJOURS : renvoie 0 ligne, meme s'il y a des NULL. Erreur classique.
+WHERE email IS NULL      -- CORRECT : trouve les lignes dont l'email est inconnu
+WHERE email IS NOT NULL  -- CORRECT : trouve les lignes dont l'email est renseigne
+
+-- Le piege du NOT IN :
+WHERE ville NOT IN ('Namur', 'Liege', NULL)   -- renvoie 0 ligne ! Le NULL dans la liste annule tout.
+
+-- Et celui des agregats :
+SELECT COUNT(*)     FROM CLIENT;   -- 100 : compte TOUTES les lignes
+SELECT COUNT(email) FROM CLIENT;   --  87 : COUNT(colonne) IGNORE les NULL
+SELECT AVG(note)    FROM EXAMEN;   -- la moyenne ignore les NULL : le diviseur n'est pas le nombre de lignes</pre>
+<div class="warn">Ce comportement de <code>AVG</code> est source d'erreurs graves en reporting. Si 30 étudiants sur 100 n'ont pas de note, <code>AVG(note)</code> divise par 70, pas par 100. Selon ce que tu veux dire, c'est juste ou faux — mais il faut le décider consciemment.</div>
+
+<h3>4. COALESCE : la fonction standard, à privilégier partout</h3>
+<p><code>COALESCE(a, b, c, ...)</code> renvoie le <strong>premier argument non NULL</strong>. Elle accepte autant d'arguments qu'on veut et existe sur TOUS les SGBD. C'est la fonction à retenir.</p>
+<pre class="pseudo">SELECT COALESCE(email, 'non renseigne') AS email_affiche FROM CLIENT;
+-- si email vaut NULL -&gt; 'non renseigne' ; sinon -&gt; l'email reel
+
+-- Avec plusieurs replis en cascade, du plus precis au plus general :
+SELECT COALESCE(tel_mobile, tel_fixe, tel_bureau, 'aucun') AS contact FROM CLIENT;
+-- essaie le mobile ; s'il est NULL, le fixe ; puis le bureau ; en dernier recours 'aucun'
+
+-- Neutraliser un NULL dans un calcul :
+SELECT prix_ht + COALESCE(frais_port, 0) AS total FROM COMMANDE;
+-- COALESCE(frais_port, 0) transforme l'inconnu en zero : le total reste calculable</pre>
+<div class="tip"><strong>Toutes les variantes propriétaires font la même chose que COALESCE, en moins bien</strong> :<br>
+<code>IFNULL(a, b)</code> — MySQL / MariaDB, deux arguments seulement.<br>
+<code>ISNULL(a, b)</code> — SQL Server, deux arguments seulement. Attention : en MySQL, <code>ISNULL(x)</code> a un tout autre sens — c'est un test qui renvoie 1 ou 0 !<br>
+<code>NVL(a, b)</code> — Oracle, deux arguments.<br>
+<code>COALESCE</code> est standard, accepte n arguments, fonctionne partout. Utilise-la systématiquement.</div>
+<pre class="pseudo">-- La MEME idee, ecrite sur quatre SGBD :
+COALESCE(email, 'inconnu')   -- STANDARD : MySQL, PostgreSQL, SQL Server, Oracle, SQLite
+IFNULL(email, 'inconnu')     -- MySQL uniquement
+ISNULL(email, 'inconnu')     -- SQL Server uniquement
+NVL(email, 'inconnu')        -- Oracle uniquement</pre>
+
+<h3>5. NULLIF : l'opération inverse</h3>
+<p><code>NULLIF(a, b)</code> renvoie <code>NULL</code> si <code>a = b</code>, sinon <code>a</code>. Elle sert à <strong>transformer une valeur en NULL</strong> — typiquement pour convertir des chaînes vides en vrais NULL, ou pour éviter une division par zéro.</p>
+<pre class="pseudo">SELECT NULLIF('', '');          -- NULL   : la chaine vide devient un vrai NULL
+SELECT NULLIF('Namur', '');     -- 'Namur' : les valeurs differentes sont renvoyees telles quelles
+
+-- USAGE 1 : uniformiser chaines vides et NULL, qui coexistent souvent dans les donnees importees
+SELECT id, COALESCE(NULLIF(TRIM(email), ''), 'non renseigne') AS email_affiche FROM CLIENT;
+-- 1) TRIM enleve les espaces  2) NULLIF transforme '' en NULL  3) COALESCE remplace le NULL par un libelle
+-- ainsi '', '   ' et NULL donnent tous les trois 'non renseigne'
+
+-- USAGE 2 : eviter la division par zero
+SELECT total_ventes / NULLIF(nb_clients, 0) AS panier_moyen FROM STATS;
+-- si nb_clients vaut 0, NULLIF le transforme en NULL, et la division renvoie NULL au lieu de planter</pre>
+<div class="tip">L'idiome <code>COALESCE(NULLIF(TRIM(col), ''), 'defaut')</code> est un classique du nettoyage. Retiens-le : il traite d'un coup les trois formes du vide — NULL, chaîne vide et chaîne d'espaces.</div>
+
+<h3>6. Auditer les NULL d'une table</h3>
+<pre class="pseudo">-- Compter les valeurs manquantes, colonne par colonne, en une seule requete :
+SELECT COUNT(*)                                        AS total_lignes,
+       COUNT(email)                                    AS emails_connus,   -- COUNT(col) ignore les NULL
+       COUNT(*) - COUNT(email)                         AS emails_nuls,     -- la difference = les NULL
+       SUM(CASE WHEN TRIM(COALESCE(email,'')) = '' THEN 1 ELSE 0 END) AS emails_vides_ou_nuls
+FROM CLIENT;
+-- la derniere colonne compte a la fois les NULL, les '' et les chaines d'espaces
+
+-- Taux de remplissage, indicateur standard du controle qualite :
+SELECT ROUND(100.0 * COUNT(email) / COUNT(*), 1) AS taux_remplissage_pct FROM CLIENT;
+-- 100.0 (et non 100) force un calcul decimal ; sinon certains SGBD font une division entiere</pre>
+<div class="warn">Faut-il remplacer les NULL en base ? <strong>Non, en général.</strong> Un NULL porte une information réelle : « on ne sait pas ». L'écraser par 0 ou par 'inconnu' détruit cette nuance. Utilise <code>COALESCE</code> à l'<strong>affichage</strong> ou dans les <strong>calculs</strong>, et laisse la colonne telle quelle.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie NULL en SQL ?", opts: ["Zéro", "Une chaîne vide", "Valeur inconnue ou absente", "Faux"], a: 2, exp: "NULL est un marqueur d'absence d'information, pas une valeur." },
+    { type: "qcm", q: "Que renvoie SELECT 100 + NULL ?", opts: ["100", "0", "NULL", "Une erreur"], a: 2, exp: "Le NULL se propage : tout calcul l'impliquant donne NULL." },
+    { type: "input", q: "Complète : WHERE email ______ NULL; — pour trouver les emails inconnus.", a: ["is"], ph: "un mot-clé", exp: "IS NULL. L'écriture = NULL ne renvoie jamais aucune ligne." },
+    { type: "vf", q: "WHERE email = NULL trouve les lignes dont l'email est NULL.", a: false, exp: "Elle renvoie systématiquement zéro ligne : la comparaison avec NULL vaut « inconnu », pas « vrai »." },
+    { type: "input", q: "Complète : SELECT ______(email, 'inconnu') — la fonction standard qui remplace un NULL, disponible partout.", a: ["coalesce"], ph: "une fonction", exp: "COALESCE renvoie le premier argument non NULL et fonctionne sur tous les SGBD." },
+    { type: "qcm", q: "Que renvoie COALESCE(NULL, NULL, 'Namur', 'Liege') ?", opts: ["NULL", "'Namur'", "'Liege'", "'NamurLiege'"], a: 1, exp: "Le premier argument non NULL rencontré, soit 'Namur'." },
+    { type: "qcm", q: "Quelle fonction est propre à MySQL et limitée à deux arguments ?", opts: ["COALESCE", "IFNULL", "NULLIF", "CASE"], a: 1, exp: "IFNULL(a, b) est l'équivalent MySQL de COALESCE à deux arguments." },
+    { type: "vf", q: "En MySQL, ISNULL(x) fait la même chose qu'en SQL Server.", a: false, exp: "En SQL Server, ISNULL(a, b) remplace un NULL. En MySQL, ISNULL(x) est un TEST qui renvoie 1 ou 0." },
+    { type: "input", q: "Complète : SELECT ______(email, '') — la fonction qui transforme une chaîne vide en NULL.", a: ["nullif"], ph: "une fonction", exp: "NULLIF(a, b) renvoie NULL quand a est égal à b." },
+    { type: "qcm", q: "Que renvoie NULLIF('Namur', '') ?", opts: ["NULL", "''", "'Namur'", "Une erreur"], a: 2, exp: "Les deux arguments diffèrent, donc le premier est renvoyé intact." },
+    { type: "qcm", q: "À quoi sert total / NULLIF(nb, 0) ?", opts: ["À arrondir", "À éviter la division par zéro en renvoyant NULL", "À compter les lignes", "À convertir en texte"], a: 1, exp: "NULLIF transforme le 0 en NULL, et la division par NULL donne NULL au lieu de provoquer une erreur." },
+    { type: "qcm", q: "Quelle différence entre COUNT(*) et COUNT(email) ?", opts: ["Aucune", "COUNT(email) ignore les lignes où email est NULL", "COUNT(*) est plus lent", "COUNT(email) compte les caractères"], a: 1, exp: "COUNT(colonne) ne compte que les valeurs renseignées : la différence donne le nombre de NULL." },
+    { type: "vf", q: "AVG(note) divise par le nombre total de lignes, y compris celles où note est NULL.", a: false, exp: "AVG ignore les NULL : le diviseur est le nombre de valeurs renseignées seulement." },
+    { type: "input", q: "Complète l'idiome de nettoyage : COALESCE(______(TRIM(email), ''), 'non renseigne')", a: ["nullif"], ph: "une fonction", exp: "NULLIF ramène la chaîne vide à NULL, que COALESCE remplace ensuite par le libellé de repli." },
+    { type: "qcm", q: "Faut-il remplacer les NULL par 0 directement en base ?", opts: ["Oui, toujours", "Non : le NULL porte l'information « inconnu ». On applique COALESCE à l'affichage ou au calcul", "Oui, pour gagner de la place", "Seulement en MySQL"], a: 1, exp: "Écraser un NULL détruit une information réelle et irrécupérable." }
+  ],
+  final: {
+    title: "Exercice final — Auditer les valeurs manquantes",
+    intro: `<p>Table <code>COMMANDE</code>. Le vide s'y exprime de trois façons différentes.</p>
+<pre class="pseudo">id | client   | prix_ht | frais_port | remarque
+---+----------+---------+------------+-----------
+ 1 | 'Dupont' |  100.00 |       5.00 | 'urgent'
+ 2 | 'Leroy'  |   80.00 |       NULL | ''
+ 3 | 'Simon'  |   60.00 |       0.00 | '   '
+ 4 | 'Martin' |    NULL |       3.00 | NULL</pre>`,
+    questions: [
+      { type: "qcm", q: "Que vaut prix_ht + frais_port pour la ligne 2 ?", opts: ["80.00", "85.00", "NULL", "0"], a: 2, exp: "frais_port vaut NULL, donc l'addition entière donne NULL." },
+      { type: "qcm", q: "Quelle expression donne 80.00 pour la ligne 2 ?", opts: ["prix_ht + frais_port", "prix_ht + COALESCE(frais_port, 0)", "COALESCE(prix_ht + frais_port, 0)", "NULLIF(frais_port, 0)"], a: 1, exp: "On neutralise le NULL au niveau du terme fautif, avant l'addition." },
+      { type: "vf", q: "Les lignes 2, 3 et 4 ont toutes une remarque « vide » au même sens pour le SGBD.", a: false, exp: "Ligne 2 : chaîne vide ''. Ligne 3 : trois espaces (longueur 3). Ligne 4 : NULL. Trois cas distincts." },
+      { type: "qcm", q: "Quelle expression ramène ces trois cas à un unique libellé ?", opts: ["COALESCE(remarque, 'aucune')", "COALESCE(NULLIF(TRIM(remarque), ''), 'aucune')", "TRIM(remarque)", "NULLIF(remarque, 'aucune')"], a: 1, exp: "TRIM réduit les espaces à '', NULLIF transforme '' en NULL, COALESCE applique le repli." },
+      { type: "qcm", q: "Que renvoie COUNT(prix_ht) sur cette table ?", opts: ["4", "3", "2", "NULL"], a: 1, exp: "COUNT(colonne) ignore le NULL de la ligne 4 : il reste trois valeurs." }
+    ],
+    solution: `<pre class="pseudo">-- 1) AUDITER les valeurs manquantes de chaque colonne
+SELECT COUNT(*)                        AS total_lignes,       -- 4
+       COUNT(prix_ht)                  AS prix_connus,        -- 3 (COUNT(col) ignore les NULL)
+       COUNT(*) - COUNT(prix_ht)       AS prix_manquants,     -- 1
+       COUNT(frais_port)               AS frais_connus,       -- 3
+       COUNT(*) - COUNT(frais_port)    AS frais_manquants,    -- 1
+       SUM(CASE WHEN TRIM(COALESCE(remarque, '')) = '' THEN 1 ELSE 0 END) AS remarques_vides
+FROM COMMANDE;
+-- remarques_vides vaut 3 : la chaine vide, les espaces et le NULL sont comptes ensemble
+
+-- 2) CALCULER un total fiable, meme avec des NULL
+SELECT id,
+       prix_ht,
+       frais_port,
+       prix_ht + frais_port                       AS total_naif,   -- NULL des qu'un terme manque
+       COALESCE(prix_ht, 0) + COALESCE(frais_port, 0) AS total_sur -- chaque terme neutralise separement
+FROM COMMANDE;
+-- ligne 2 : total_naif = NULL, total_sur = 80.00
+-- ligne 4 : total_naif = NULL, total_sur =  3.00
+
+-- 3) AFFICHER une remarque lisible dans tous les cas
+SELECT id,
+       remarque                                          AS brute,
+       COALESCE(NULLIF(TRIM(remarque), ''), 'aucune')    AS affichage
+FROM COMMANDE;
+-- 1) TRIM ramene '   ' a ''
+-- 2) NULLIF transforme '' en NULL
+-- 3) COALESCE remplace le NULL par 'aucune'
+-- lignes 2, 3 et 4 affichent toutes 'aucune'
+
+-- 4) TAUX DE REMPLISSAGE, indicateur de controle qualite
+SELECT ROUND(100.0 * COUNT(prix_ht) / COUNT(*), 1) AS taux_prix_pct   -- 75.0
+FROM COMMANDE;
+-- le 100.0 (decimal) evite une division entiere qui renverrait 0 sur certains SGBD
+
+-- Variantes : IFNULL(x, 0) en MySQL, ISNULL(x, 0) en SQL Server, NVL(x, 0) en Oracle.
+-- COALESCE fonctionne sur les quatre : c'est celle qu'il faut ecrire.</pre>
+<p>Les NULL sont maîtrisés. Demain : convertir les types, du texte vers le nombre et la date.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j08", title: "Fiche contact tolérante au vide", level: 3,
+    statement: "Table <code>PROSPECT(id, societe, tel_mobile, tel_fixe, email)</code> :<pre class='pseudo'>id | societe  | tel_mobile   | tel_fixe    | email\n---+----------+--------------+-------------+----------------\n 1 | 'Delta'  | '0475112233' | '081223344' | 'a@delta.be'\n 2 | 'Omega'  | NULL         | '081556677' | ''\n 3 | 'Beta'   | NULL         | NULL        | '   '\n 4 | 'Gamma'  | '0499887766' | NULL        | NULL</pre>Écris une requête qui affiche, pour chaque prospect : la société, le meilleur téléphone disponible (mobile en priorité, puis fixe, sinon le libellé 'aucun telephone'), un email d'affichage traitant à l'identique NULL, chaîne vide et espaces, et un indicateur 'joignable' / 'injoignable' (joignable = au moins un téléphone OU un email réel).",
+    hints: [
+      "COALESCE accepte plusieurs arguments : la cascade mobile → fixe → libellé de repli tient en un appel.",
+      "Pour l'email, l'idiome COALESCE(NULLIF(TRIM(email), ''), 'non renseigne') traite les trois formes du vide.",
+      "Pour l'indicateur, un CASE WHEN dont la condition teste que le téléphone n'est pas le libellé de repli, ou que l'email nettoyé n'est pas NULL."
+    ],
+    solution: "SELECT societe,\n       COALESCE(tel_mobile, tel_fixe, 'aucun telephone')  AS telephone,   -- 1er non NULL : mobile, sinon fixe, sinon libelle\n       COALESCE(NULLIF(TRIM(email), ''), 'non renseigne') AS email_affiche,\n       -- TRIM ramene '   ' a '' ; NULLIF transforme '' en NULL ; COALESCE applique le repli\n       CASE WHEN COALESCE(tel_mobile, tel_fixe) IS NOT NULL      -- au moins un telephone reel\n                 OR NULLIF(TRIM(email), '') IS NOT NULL          -- ou un email reel\n            THEN 'joignable'\n            ELSE 'injoignable'\n       END                                                AS statut\nFROM PROSPECT\nORDER BY id;\n\n-- Resultat attendu :\n-- societe | telephone         | email_affiche     | statut\n-- --------+-------------------+-------------------+-------------\n-- 'Delta' | '0475112233'      | 'a@delta.be'      | 'joignable'\n-- 'Omega' | '081556677'       | 'non renseigne'   | 'joignable'\n-- 'Beta'  | 'aucun telephone' | 'non renseigne'   | 'injoignable'\n-- 'Gamma' | '0499887766'      | 'non renseigne'   | 'joignable'\n\n-- Ligne 2 : mobile NULL, donc COALESCE bascule sur le fixe.\n-- Ligne 3 : les deux telephones NULL et un email fait d'espaces -> injoignable.\n-- Ligne 4 : email NULL, mais le mobile suffit a la rendre joignable.\n\n-- Variantes : IFNULL n'accepte que 2 arguments, il faudrait l'imbriquer :\n--   IFNULL(tel_mobile, IFNULL(tel_fixe, 'aucun telephone'))   -- MySQL, plus lourd\n--   ISNULL(tel_mobile, ISNULL(tel_fixe, 'aucun telephone'))   -- SQL Server\n-- COALESCE fait la meme chose en un seul appel, et fonctionne partout.",
+    note: "Piège : dans le CASE WHEN, tester COALESCE(tel_mobile, tel_fixe) <> 'aucun telephone' serait fragile — si un jour une donnée contenait littéralement ce texte, le test serait faux. On teste donc IS NOT NULL sur les colonnes réelles, avant tout repli. Bonne pratique : ne jamais faire porter une logique métier sur une valeur de repli d'affichage ; les deux niveaux doivent rester séparés." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

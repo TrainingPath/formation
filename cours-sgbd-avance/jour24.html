@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 24</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 24,
+  title: "Les opérateurs ensemblistes : INTERSECT et EXCEPT",
+  subtitle: "Comparer deux jeux de lignes comme deux ensembles — l outil de réconciliation par excellence.",
+  theory: `
+<h3>1. Trois opérateurs, une logique d ensembles</h3>
+<p>Jusqu ici tu combinais des tables <em>horizontalement</em>, avec des jointures : on colle les colonnes de A à celles de B. Les <strong>opérateurs ensemblistes</strong> combinent <em>verticalement</em> : on empile les lignes de deux résultats et on les compare comme deux ensembles.</p>
+<pre class="pseudo">-- A = {1, 2, 3}      B = {3, 4, 5}
+-- A UNION B      = {1, 2, 3, 4, 5}   -- tout, sans doublon
+-- A UNION ALL B  = {1, 2, 3, 3, 4, 5}-- tout, doublons conserves
+-- A INTERSECT B  = {3}               -- ce qui est dans LES DEUX
+-- A EXCEPT B     = {1, 2}            -- dans A mais PAS dans B</pre>
+<div class="tip"><strong>L analogie :</strong> deux listes d invités. UNION = la liste combinée. INTERSECT = ceux qui sont sur les deux listes. EXCEPT = ceux qui sont sur ma liste mais pas sur la tienne. Attention : EXCEPT n est <strong>pas</strong> symétrique — « ma liste moins la tienne » ne donne pas la même chose que « ta liste moins la mienne ».</div>
+
+<h3>2. Les trois règles obligatoires</h3>
+<p>Pour combiner deux SELECT avec un opérateur ensembliste :</p>
+<p>1. <strong>Même nombre de colonnes</strong> de part et d autre.<br>
+2. <strong>Types compatibles</strong>, colonne par colonne, dans l ordre.<br>
+3. Les <strong>noms de colonnes</strong> du résultat viennent du <strong>premier</strong> SELECT.</p>
+<pre class="pseudo">SELECT email FROM CLIENT_2023      -- 1 colonne, type texte
+INTERSECT                          -- l operateur
+SELECT email FROM CLIENT_2024;     -- 1 colonne, type texte --&gt; OK
+
+SELECT email FROM CLIENT_2023
+INTERSECT
+SELECT email, nom FROM CLIENT_2024;  -- ERREUR : 1 colonne contre 2</pre>
+<div class="warn">C est la <strong>combinaison complète des colonnes</strong> qui est comparée, pas seulement la première. <code>SELECT nom, ville</code> INTERSECT <code>SELECT nom, ville</code> ne renvoie que les couples identiques sur les DEUX colonnes.</div>
+
+<h3>3. INTERSECT : ce qui est commun</h3>
+<pre class="pseudo">-- Les clients presents en 2023 ET en 2024 (les fideles)
+SELECT email FROM CLIENT_2023      -- ensemble A
+INTERSECT                          -- garde uniquement ce qui est dans les deux
+SELECT email FROM CLIENT_2024;     -- ensemble B</pre>
+<pre class="pseudo">-- CLIENT_2023 : a@x.com, b@x.com, c@x.com
+-- CLIENT_2024 : b@x.com, c@x.com, d@x.com
+-- Resultat    : b@x.com, c@x.com</pre>
+<div class="warn">INTERSECT <strong>dédoublonne</strong> le résultat, comme UNION. Si un email apparaît trois fois de chaque côté, il ne sort qu une fois. Pour conserver les doublons, il existe <code>INTERSECT ALL</code> — supporté par PostgreSQL et Oracle, mais <strong>pas</strong> par SQL Server, ni MySQL.</div>
+
+<h3>4. EXCEPT : ce qui manque de l autre côté</h3>
+<pre class="pseudo">-- Les clients de 2023 qui ne sont PAS revenus en 2024 (les perdus)
+SELECT email FROM CLIENT_2023
+EXCEPT
+SELECT email FROM CLIENT_2024;
+-- Resultat : a@x.com
+
+-- L inverse : les NOUVEAUX clients de 2024
+SELECT email FROM CLIENT_2024
+EXCEPT
+SELECT email FROM CLIENT_2023;
+-- Resultat : d@x.com</pre>
+<p>Inverser les deux SELECT change complètement le sens. C est le piège numéro un : lis toujours EXCEPT comme « ce qui est dans le premier et absent du second ».</p>
+
+<h3>5. Les variantes de dialecte — le point central du jour</h3>
+<pre class="pseudo">-- UNION et UNION ALL : partout, identiques. Aucun probleme.
+
+-- INTERSECT :
+--   PostgreSQL   : OUI
+--   SQL Server   : OUI (depuis 2005)
+--   Oracle       : OUI
+--   SQLite       : OUI
+--   MariaDB      : OUI (depuis 10.3)
+--   MySQL        : OUI, mais seulement depuis MySQL 8.0.31 (fin 2022) !
+
+-- EXCEPT :
+--   PostgreSQL   : OUI
+--   SQL Server   : OUI (depuis 2005)
+--   SQLite       : OUI
+--   MariaDB      : OUI (depuis 10.3)
+--   MySQL        : OUI depuis 8.0.31 seulement
+--   ORACLE       : le mot-cle s appelle MINUS, pas EXCEPT !
+--                  (Oracle 21c accepte aussi EXCEPT en mode compatible)</pre>
+<div class="warn">Deux pièges à retenir. Un : Oracle écrit <code>MINUS</code> là où tout le monde écrit <code>EXCEPT</code>. Deux : sur les MySQL antérieurs à 8.0.31 — c est-à-dire l immense majorité du parc installé — INTERSECT et EXCEPT n existent pas du tout. Il faut alors les <strong>émuler</strong>.</div>
+
+<h3>6. Émuler INTERSECT et EXCEPT (méthode universelle)</h3>
+<p>Ces deux opérateurs se réécrivent avec des jointures ou des sous-requêtes. C est indispensable à connaître : ça marche sur <strong>tous</strong> les SGBD, y compris les vieux MySQL.</p>
+<pre class="pseudo">-- INTERSECT emule avec INNER JOIN
+SELECT DISTINCT a.email                    -- DISTINCT : INTERSECT dedoublonne
+FROM CLIENT_2023 a
+JOIN CLIENT_2024 b ON a.email = b.email;   -- ne garde que les correspondances
+
+-- INTERSECT emule avec EXISTS (plus sur en presence de doublons)
+SELECT DISTINCT a.email
+FROM CLIENT_2023 a
+WHERE EXISTS (SELECT 1 FROM CLIENT_2024 b WHERE b.email = a.email);</pre>
+<pre class="pseudo">-- EXCEPT emule avec LEFT JOIN ... IS NULL (la « jointure anti »)
+SELECT DISTINCT a.email
+FROM CLIENT_2023 a
+LEFT JOIN CLIENT_2024 b ON a.email = b.email
+WHERE b.email IS NULL;                     -- aucune correspondance trouvee
+
+-- EXCEPT emule avec NOT EXISTS (la version RECOMMANDEE)
+SELECT DISTINCT a.email
+FROM CLIENT_2023 a
+WHERE NOT EXISTS (SELECT 1 FROM CLIENT_2024 b WHERE b.email = a.email);</pre>
+<div class="warn">N émule <strong>jamais</strong> EXCEPT avec <code>NOT IN</code> si la colonne peut contenir des NULL : dès qu un seul NULL figure dans la liste, <code>NOT IN</code> renvoie « inconnu » pour toutes les lignes et la requête ne rapporte rien. <code>NOT EXISTS</code> gère les NULL correctement. C est le même piège qu au jour 17.</div>
+
+<h3>7. Priorité et ordre d évaluation</h3>
+<pre class="pseudo">-- INTERSECT est PRIORITAIRE sur UNION et EXCEPT (comme la multiplication sur l addition)
+SELECT x FROM A
+UNION
+SELECT x FROM B
+INTERSECT              -- evalue EN PREMIER, avec C
+SELECT x FROM C;
+-- se lit : A UNION (B INTERSECT C)
+
+-- Pour lever toute ambiguite, utilise des parentheses :
+(SELECT x FROM A UNION SELECT x FROM B)
+INTERSECT
+SELECT x FROM C;</pre>
+<div class="tip">MySQL 8.0.31+ exige souvent les parenthèses dès qu on mélange les opérateurs. Prends l habitude de parenthéser systématiquement : c est plus lisible et plus portable.</div>
+
+<h3>8. ORDER BY et LIMIT dans une requête ensembliste</h3>
+<pre class="pseudo">SELECT email, 'perdu' AS statut FROM CLIENT_2023
+EXCEPT
+SELECT email, 'perdu' FROM CLIENT_2024
+ORDER BY email;              -- UN SEUL ORDER BY, tout a la fin, pour l ensemble</pre>
+<div class="warn">Le <code>ORDER BY</code> se place à la toute fin et porte sur le résultat global. On ne peut pas trier chaque SELECT séparément (sauf à le parenthéser, et certains SGBD ignoreront quand même ce tri interne). Idem pour <code>LIMIT</code> / <code>TOP</code>.</div>
+
+<h3>9. Le cas d usage roi : la réconciliation</h3>
+<p>C est LE moment où ces opérateurs deviennent irremplaçables : comparer deux versions d un même jeu de données (avant/après un import, table de production contre table de test, fichier fournisseur contre base interne).</p>
+<pre class="pseudo">-- Ce qui a DISPARU entre l ancienne et la nouvelle version
+SELECT ref, libelle, prix FROM CATALOGUE_ANCIEN
+EXCEPT
+SELECT ref, libelle, prix FROM CATALOGUE_NOUVEAU;
+
+-- Ce qui est APPARU ou a CHANGE
+SELECT ref, libelle, prix FROM CATALOGUE_NOUVEAU
+EXCEPT
+SELECT ref, libelle, prix FROM CATALOGUE_ANCIEN;
+
+-- Ce qui est strictement IDENTIQUE
+SELECT ref, libelle, prix FROM CATALOGUE_ANCIEN
+INTERSECT
+SELECT ref, libelle, prix FROM CATALOGUE_NOUVEAU;</pre>
+<p>Si les deux EXCEPT renvoient zéro ligne, les deux tables sont rigoureusement identiques. C est le test de non-régression le plus simple et le plus fiable qui soit.</p>`,
+  exercises: [
+    { type: "input", q: "Quel opérateur ne garde que les lignes présentes dans les DEUX requêtes ?", ph: "INT...", a: ["INTERSECT"], exp: "INTERSECT = l intersection des deux ensembles." },
+    { type: "input", q: "Quel opérateur garde les lignes de la première requête absentes de la seconde ?", ph: "EX...", a: ["EXCEPT"], exp: "EXCEPT = la différence ensembliste (MINUS en Oracle)." },
+    { type: "qcm", q: "Avec A = {1,2,3} et B = {3,4,5}, A EXCEPT B donne…", opts: ["{3}", "{1,2}", "{4,5}", "{1,2,3,4,5}"], a: 1, exp: "Ce qui est dans A et pas dans B : 1 et 2." },
+    { type: "vf", q: "EXCEPT est symétrique : A EXCEPT B donne le même résultat que B EXCEPT A.", a: false, exp: "L ordre change tout : « les perdus » et « les nouveaux » sont deux populations différentes." },
+    { type: "input", q: "Comment Oracle appelle-t-il l opérateur EXCEPT ?", ph: "M...", a: ["MINUS"], exp: "Oracle utilise historiquement MINUS ; 21c accepte aussi EXCEPT." },
+    { type: "qcm", q: "Depuis quelle version MySQL propose-t-il INTERSECT et EXCEPT ?", opts: ["5.7", "8.0.0", "8.0.31", "Jamais"], a: 2, exp: "Ils n arrivent que fin 2022 dans MySQL 8.0.31 ; avant, il faut émuler." },
+    { type: "qcm", q: "Les deux SELECT combinés doivent avoir…", opts: ["Le même nom de table", "Le même nombre de colonnes, de types compatibles", "Une clé primaire", "Le même nombre de lignes"], a: 1, exp: "Nombre et types de colonnes doivent correspondre, dans l ordre." },
+    { type: "vf", q: "INTERSECT dédoublonne le résultat.", a: true, exp: "Comme UNION. Pour garder les doublons, il faudrait INTERSECT ALL (indisponible en SQL Server et MySQL)." },
+    { type: "qcm", q: "Les noms de colonnes du résultat viennent…", opts: ["Du second SELECT", "Du premier SELECT", "Ils sont anonymes", "De la table la plus grande"], a: 1, exp: "C est le premier SELECT qui donne les en-têtes." },
+    { type: "input", q: "Quel prédicat émule EXCEPT de façon portable et sûre face aux NULL ?", ph: "NOT E...", a: ["NOT EXISTS"], exp: "NOT EXISTS gère correctement les NULL, contrairement à NOT IN." },
+    { type: "qcm", q: "Pourquoi éviter NOT IN pour émuler EXCEPT ?", opts: ["C est plus lent", "Un seul NULL dans la liste et la requête ne renvoie plus rien", "NOT IN n existe pas", "Il faut un index"], a: 1, exp: "NOT IN avec un NULL renvoie inconnu pour toutes les lignes." },
+    { type: "qcm", q: "Émuler INTERSECT sans l opérateur se fait avec…", opts: ["LEFT JOIN ... IS NULL", "INNER JOIN (ou EXISTS) plus DISTINCT", "FULL OUTER JOIN", "CROSS JOIN"], a: 1, exp: "La jointure interne ne garde que les correspondances ; DISTINCT reproduit le dédoublonnage." },
+    { type: "qcm", q: "Émuler EXCEPT avec une jointure s écrit…", opts: ["INNER JOIN", "LEFT JOIN ... WHERE b.cle IS NULL", "CROSS JOIN", "UNION ALL"], a: 1, exp: "C est la jointure anti : on garde les lignes de gauche sans correspondance à droite." },
+    { type: "vf", q: "Le ORDER BY d une requête ensembliste se place à la toute fin et porte sur le résultat global.", a: true, exp: "Un seul tri, après le dernier SELECT." },
+    { type: "qcm", q: "Si les deux EXCEPT croisés entre deux tables renvoient zéro ligne, alors…", opts: ["Les tables sont vides", "Les deux tables contiennent exactement les mêmes lignes", "Il y a une erreur", "Une seule table est vide"], a: 1, exp: "C est le test de non-régression le plus simple : aucune différence dans un sens ni dans l autre." }
+  ],
+  final: {
+    title: "Exercice final — Analyser l évolution du fichier client",
+    intro: `<p>Deux photographies du fichier client, à un an d intervalle.</p>
+<pre class="pseudo">-- CLIENT_2023(email, ville)      CLIENT_2024(email, ville)
+-- a@x.com  | Namur               b@x.com  | Liege
+-- b@x.com  | Liege               c@x.com  | Mons      &lt;-- ville changee !
+-- c@x.com  | Namur               d@x.com  | Namur</pre>`,
+    questions: [
+      { type: "qcm", q: "SELECT email FROM CLIENT_2023 EXCEPT SELECT email FROM CLIENT_2024 renvoie…", opts: ["a@x.com", "d@x.com", "b@x.com et c@x.com", "Rien"], a: 0, exp: "Seul a@x.com était là en 2023 et a disparu en 2024 : c est un client perdu." },
+      { type: "qcm", q: "SELECT email FROM CLIENT_2024 EXCEPT SELECT email FROM CLIENT_2023 renvoie…", opts: ["a@x.com", "d@x.com", "c@x.com", "Rien"], a: 1, exp: "d@x.com est le seul nouveau venu." },
+      { type: "input", q: "Combien de lignes renvoie l INTERSECT sur la seule colonne email ?", ph: "un nombre", a: ["2", "deux"], exp: "b@x.com et c@x.com sont présents les deux années." },
+      { type: "input", q: "Combien de lignes renvoie l INTERSECT sur le couple (email, ville) ?", ph: "un nombre", a: ["1", "une"], exp: "Seul (b@x.com, Liege) est identique ; c@x.com a changé de ville." },
+      { type: "vf", q: "Sur une base MySQL 8.0.20, il faudra émuler ces requêtes avec NOT EXISTS et EXISTS.", a: true, exp: "INTERSECT et EXCEPT n arrivent qu en 8.0.31." }
+    ],
+    solution: `<pre class="pseudo">-- ===== VERSION STANDARD (PostgreSQL, SQL Server, MySQL 8.0.31+, SQLite) =====
+
+-- 1) Les clients PERDUS : presents en 2023, absents en 2024
+SELECT email, 'perdu' AS statut FROM CLIENT_2023
+EXCEPT
+SELECT email, 'perdu'           FROM CLIENT_2024;
+-- --&gt; a@x.com
+
+-- 2) Les NOUVEAUX clients
+SELECT email, 'nouveau' AS statut FROM CLIENT_2024
+EXCEPT
+SELECT email, 'nouveau'           FROM CLIENT_2023;
+-- --&gt; d@x.com
+
+-- 3) Les clients FIDELES (email present les deux annees)
+SELECT email FROM CLIENT_2023
+INTERSECT
+SELECT email FROM CLIENT_2024;
+-- --&gt; b@x.com, c@x.com
+
+-- 4) Les fiches strictement INCHANGEES (email ET ville identiques)
+SELECT email, ville FROM CLIENT_2023
+INTERSECT
+SELECT email, ville FROM CLIENT_2024;
+-- --&gt; (b@x.com, Liege) seulement : c@x.com a demenage
+
+-- 5) Le rapport complet en une requete, avec UNION ALL
+(SELECT email, 'perdu'   AS statut FROM CLIENT_2023
+ EXCEPT
+ SELECT email, 'perdu'             FROM CLIENT_2024)
+UNION ALL
+(SELECT email, 'nouveau' AS statut FROM CLIENT_2024
+ EXCEPT
+ SELECT email, 'nouveau'           FROM CLIENT_2023)
+ORDER BY statut, email;            -- UN SEUL tri, tout a la fin
+
+-- email   | statut
+-- --------+---------
+-- d@x.com | nouveau
+-- a@x.com | perdu
+
+-- ===== VERSION UNIVERSELLE (fonctionne aussi sur MySQL 5.7 et 8.0.20) =====
+
+-- Les perdus, avec NOT EXISTS (jamais NOT IN : les NULL le casseraient)
+SELECT DISTINCT a.email, 'perdu' AS statut
+FROM CLIENT_2023 a
+WHERE NOT EXISTS (
+  SELECT 1 FROM CLIENT_2024 b WHERE b.email = a.email
+);
+
+-- Les fideles, avec EXISTS
+SELECT DISTINCT a.email
+FROM CLIENT_2023 a
+WHERE EXISTS (
+  SELECT 1 FROM CLIENT_2024 b WHERE b.email = a.email
+);
+
+-- Rappel Oracle : remplacer EXCEPT par MINUS.</pre>
+<p>Tu sais réconcilier deux jeux de données. Demain : faire pivoter un tableau.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j24", title: "Contrôler un import de catalogue", level: 2,
+    statement: "Un fournisseur envoie chaque mois son catalogue. Tu disposes de CATALOGUE_REF(ref, libelle, prix) — l état validé du mois dernier — et de CATALOGUE_IMPORT(ref, libelle, prix) — le fichier reçu ce mois. Écris les requêtes de réconciliation qui produisent : les références supprimées, les références ajoutées, les références dont le libellé ou le prix a changé, et un test global de non-régression. Donne la version standard puis la version universelle (compatible MySQL 5.7).",
+    hints: [
+      "Supprimées et ajoutées se comparent sur la seule colonne ref ; modifiées se comparent sur les trois colonnes.",
+      "Une référence modifiée est présente dans les deux tables (INTERSECT sur ref) mais absente de l INTERSECT sur (ref, libelle, prix). Une jointure sur ref avec un test d inégalité est souvent plus lisible.",
+      "Attention aux NULL dans le test d inégalité : prix <> prix renvoie inconnu si l un des deux est NULL. Protège avec COALESCE ou un test IS NULL explicite."
+    ],
+    solution: "-- ============ VERSION STANDARD ============\n\n-- 1) References SUPPRIMEES (dans la ref, absentes de l import)\nSELECT ref FROM CATALOGUE_REF\nEXCEPT\nSELECT ref FROM CATALOGUE_IMPORT;\n\n-- 2) References AJOUTEES (dans l import, absentes de la ref)\nSELECT ref FROM CATALOGUE_IMPORT\nEXCEPT\nSELECT ref FROM CATALOGUE_REF;\n\n-- 3) References MODIFIEES : presentes des deux cotes, mais contenu different\n--    (jointure : plus lisible que la combinaison d INTERSECT, et on voit l avant/apres)\nSELECT r.ref,\n       r.libelle AS ancien_libelle,\n       i.libelle AS nouveau_libelle,\n       r.prix    AS ancien_prix,\n       i.prix    AS nouveau_prix\nFROM CATALOGUE_REF r\nJOIN CATALOGUE_IMPORT i ON i.ref = r.ref        -- present des deux cotes\nWHERE COALESCE(r.libelle, '') <> COALESCE(i.libelle, '')   -- COALESCE : gere les NULL\n   OR COALESCE(r.prix, -1)    <> COALESCE(i.prix, -1);\n\n-- 4) TEST DE NON-REGRESSION : doit renvoyer 0 ligne si les tables sont identiques\n(SELECT ref, libelle, prix FROM CATALOGUE_REF\n EXCEPT\n SELECT ref, libelle, prix FROM CATALOGUE_IMPORT)\nUNION ALL\n(SELECT ref, libelle, prix FROM CATALOGUE_IMPORT\n EXCEPT\n SELECT ref, libelle, prix FROM CATALOGUE_REF);\n\n-- ref     | ancien_libelle | nouveau_libelle | ancien_prix | nouveau_prix\n-- --------+----------------+-----------------+-------------+-------------\n-- REF-012 | Clavier AZERTY | Clavier AZERTY  |       29.90 |        34.90\n-- REF-045 | Souris         | Souris sans fil |       12.00 |        12.00\n\n-- ============ VERSION UNIVERSELLE (MySQL 5.7, MySQL 8.0.20...) ============\n\n-- 1) Supprimees\nSELECT r.ref\nFROM CATALOGUE_REF r\nWHERE NOT EXISTS (SELECT 1 FROM CATALOGUE_IMPORT i WHERE i.ref = r.ref);\n\n-- 2) Ajoutees\nSELECT i.ref\nFROM CATALOGUE_IMPORT i\nWHERE NOT EXISTS (SELECT 1 FROM CATALOGUE_REF r WHERE r.ref = i.ref);\n\n-- 3) Modifiees : la requete du point 3 ci-dessus fonctionne deja partout\n--    (elle n utilise qu une jointure classique).\n\n-- Rappel Oracle : EXCEPT s ecrit MINUS.",
+    note: "Deux points de méthode. D abord, pour les lignes modifiées, la jointure bat l opérateur ensembliste : EXCEPT te dirait qu il y a une différence, la jointure te montre l ancienne ET la nouvelle valeur côte à côte — bien plus utile pour un rapport. Ensuite, le COALESCE dans le test d inégalité n est pas de la coquetterie : sans lui, une ligne dont le libellé passe de NULL à une valeur ne serait jamais détectée, car NULL <> 'texte' vaut inconnu, pas vrai." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

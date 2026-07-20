@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : nettoyer et analyser un jeu de données",
+  subtitle: "Un fichier de commandes réellement sale, du diagnostic jusqu au rapport — tout le cours en une chaîne.",
+  theory: `
+<h3>1. Le contexte</h3>
+<p>Une boutique en ligne a changé d outil. L ancien système a exporté un CSV, qu on a chargé tel quel dans une table de travail. Tout est en texte, rien n a été vérifié. Ton travail : en faire un jeu de données exploitable, puis produire le rapport commercial de la direction.</p>
+<p>C est exactement une mission réelle. Et tu vas la mener avec les outils des trente jours précédents : profilage, fonctions de chaîne, conversions, CTE, déduplication, fenêtrage, contraintes, transactions.</p>
+
+<h3>2. Le jeu de données</h3>
+<pre class="pseudo">-- Table IMPORT_COMMANDE — TOUTES les colonnes sont en VARCHAR
+-- ref_cmd | client_nom  | client_email      | ville     | date_txt   | montant_txt | statut
+-- --------+-------------+-------------------+-----------+------------+-------------+----------
+-- CMD-001 |  Dupont     | JD@Mail.COM       | namur     | 12/03/2024 | 45,50       | livree
+-- CMD-002 | MARTIN      | m.martin@mail.com | LIEGE     | 15/03/2024 | 120,00      | Livree
+-- CMD-001 |  Dupont     | jd@mail.com       | Namur     | 12/03/2024 | 45,50       | LIVREE
+-- CMD-003 | leroy       | (chaine vide)     | Mons      | 03/04/2024 | 12,50       | annulee
+-- CMD-004 | Dubois      | dubois@mail.com   | NULL      | 31/13/2024 | 89,90       | en cours
+-- CMD-005 | Dupont      | JD@Mail.COM       |  Namur    | 08/04/2024 |             | livree
+-- CMD-006 | Nguyen      | nguyen@mail.com   | Liege     | 22/04/2024 | -15,00      | livree
+-- CMD-007 | Martin      | m.martin@mail.com | Liège     | 05/05/2024 | 200,00      | livrée</pre>
+
+<h3>3. L inventaire des saletés</h3>
+<pre class="pseudo">-- 1. ESPACES parasites    : ' Dupont', ' Namur'
+-- 2. CASSE incoherente    : 'namur' / 'NAMUR' / 'Namur' — 'JD@Mail.COM' / 'jd@mail.com'
+-- 3. ACCENTS incoherents  : 'Liege' / 'Liège' — 'livree' / 'livrée'
+-- 4. DATES en texte       : '12/03/2024' au format JJ/MM/AAAA, non converti
+-- 5. DATE INVALIDE        : '31/13/2024' — un mois 13 n existe pas
+-- 6. MONTANTS en texte    : virgule decimale francaise, a convertir
+-- 7. MONTANT VIDE         : chaine vide, ni NULL ni nombre
+-- 8. MONTANT NEGATIF      : -15,00 — impossible pour une commande
+-- 9. DOUBLON              : CMD-001 apparait deux fois
+-- 10. STATUTS libres      : 'livree' / 'Livree' / 'LIVREE' / 'livrée' / 'en cours'
+-- 11. NULL et vides melanges pour l email et la ville</pre>
+
+<h3>4. La méthode en sept phases</h3>
+<pre class="pseudo">-- PHASE 1 : PROFILER      — mesurer l ampleur des degats (jour 26)
+-- PHASE 2 : SAUVEGARDER   — une copie de securite, hors transaction (jour 29)
+-- PHASE 3 : NETTOYER      — pipeline de CTE : espaces, casse, types (jours 2-14, 19)
+-- PHASE 4 : QUARANTAINE   — isoler les lignes irrecuperables plutot que les jeter
+-- PHASE 5 : DEDUPLIQUER   — ROW_NUMBER, garder une ligne par reference (jour 17)
+-- PHASE 6 : CONTRAINDRE   — verrouiller la table propre (jour 27)
+-- PHASE 7 : ANALYSER      — fenetrage, cumuls, classements, pivot (jours 20-25)</pre>
+<div class="warn">Ne saute jamais la phase 4. Une ligne inexploitable ne se supprime pas en silence : on l isole dans une table de quarantaine, avec le motif du rejet. Quelqu un devra décider quoi en faire — et ce quelqu un n est pas toi, c est le métier. Un nettoyage qui fait disparaître des données sans trace est un nettoyage qu on ne peut pas auditer.</div>
+
+<h3>5. Phase 1 — le profilage</h3>
+<pre class="pseudo">SELECT COUNT(*)                                                    AS nb_lignes,
+       COUNT(DISTINCT ref_cmd)                                     AS refs_distinctes,
+       COUNT(*) - COUNT(DISTINCT ref_cmd)                          AS doublons,
+       SUM(CASE WHEN TRIM(COALESCE(client_email,'')) = ''
+                THEN 1 ELSE 0 END)                                 AS emails_manquants,
+       SUM(CASE WHEN TRIM(COALESCE(montant_txt,'')) = ''
+                THEN 1 ELSE 0 END)                                 AS montants_vides,
+       SUM(CASE WHEN client_nom &lt;&gt; TRIM(client_nom) THEN 1 ELSE 0 END) AS avec_espaces,
+       COUNT(DISTINCT statut)                                      AS statuts_bruts,
+       COUNT(DISTINCT LOWER(TRIM(statut)))                         AS statuts_normalises
+FROM IMPORT_COMMANDE;
+
+-- nb_lignes | refs_distinctes | doublons | emails_manquants | montants_vides
+--         8 |               7 |        1 |                1 |              1
+-- avec_espaces | statuts_bruts | statuts_normalises
+--            3 |             6 |                  5</pre>
+<p>L écart entre <code>statuts_bruts</code> (6) et <code>statuts_normalises</code> (5) chiffre en une ligne le désordre de casse. Après suppression des accents, on tombera à 3 statuts réels.</p>
+
+<h3>6. Phase 3 — le pipeline de nettoyage</h3>
+<pre class="pseudo">WITH espaces AS (                                    -- 1) enlever les espaces
+  SELECT TRIM(ref_cmd)                    AS ref_cmd,
+         TRIM(client_nom)                 AS client_nom,
+         TRIM(client_email)               AS client_email,
+         TRIM(ville)                      AS ville,
+         TRIM(date_txt)                   AS date_txt,
+         TRIM(montant_txt)                AS montant_txt,
+         TRIM(statut)                     AS statut
+  FROM IMPORT_COMMANDE
+),
+casse AS (                                           -- 2) uniformiser la casse
+  SELECT ref_cmd,
+         UPPER(client_nom)                AS client_nom,
+         LOWER(NULLIF(client_email, ''))  AS email,   -- '' devient NULL
+         UPPER(NULLIF(ville, ''))         AS ville,
+         date_txt,
+         NULLIF(montant_txt, '')          AS montant_txt,
+         LOWER(statut)                    AS statut
+  FROM espaces
+),
+types AS (                                           -- 3) convertir les types
+  SELECT ref_cmd, client_nom, email, ville,
+         CAST(REPLACE(montant_txt, ',', '.') AS DECIMAL(10,2)) AS montant,
+         STR_TO_DATE(date_txt, '%d/%m/%Y')                     AS date_cmd,
+         CASE                                        -- 4) normaliser les statuts
+           WHEN statut IN ('livree','livrée','livre') THEN 'livree'
+           WHEN statut IN ('annulee','annulée')       THEN 'annulee'
+           WHEN statut IN ('en cours','en_cours')     THEN 'en_cours'
+           ELSE 'inconnu'
+         END AS statut
+  FROM casse
+)
+SELECT * FROM types;</pre>
+<div class="warn">La conversion de date est le point le plus <strong>dépendant du SGBD</strong> de tout ce projet, et le plus dangereux : une date invalide comme <code>31/13/2024</code> ne provoque pas la même chose partout.</div>
+<pre class="pseudo">-- CONVERTIR '12/03/2024' (format JJ/MM/AAAA) EN DATE :
+-- MySQL / MariaDB : STR_TO_DATE(date_txt, '%d/%m/%Y')
+--                   --&gt; renvoie NULL si la date est invalide (comportement souple)
+-- PostgreSQL      : TO_DATE(date_txt, 'DD/MM/YYYY')
+--                   --&gt; TO_DATE accepte '31/13/2024' et le DECALE en janvier 2025 !
+--                       Plus sur : CAST(date_txt AS DATE) leve une erreur,
+--                       ou TO_DATE(...) avec un controle prealable par regex.
+-- SQL Server      : TRY_CONVERT(DATE, date_txt, 103)   -- 103 = jj/mm/aaaa
+--                   --&gt; TRY_ renvoie NULL au lieu d echouer : c est la bonne forme.
+--                       CONVERT(DATE, ...) sans TRY ferait ECHOUER toute la requete.
+-- Oracle          : TO_DATE(date_txt, 'DD/MM/YYYY')</pre>
+<div class="tip">Règle générale : privilégie toujours les fonctions de conversion <strong>tolérantes</strong> (<code>TRY_CONVERT</code>, <code>TRY_CAST</code>, <code>STR_TO_DATE</code>) dans un traitement de masse. Une conversion stricte qui échoue fait échouer les 200 000 lignes à cause d une seule. Une conversion tolérante renvoie NULL, et tu envoies cette ligne en quarantaine.</div>
+
+<h3>7. Phase 5 — la déduplication</h3>
+<pre class="pseudo">WITH ... ,                                    -- le pipeline precedent
+numerote AS (
+  SELECT *,
+         ROW_NUMBER() OVER (
+           PARTITION BY ref_cmd               -- une pile par reference
+           ORDER BY CASE WHEN email IS NULL THEN 1 ELSE 0 END,  -- email renseigne
+                    date_cmd                                     -- puis la plus ancienne
+         ) AS rang
+  FROM valide
+)
+SELECT * FROM numerote WHERE rang = 1;        -- un exemplaire par reference</pre>
+<div class="tip">Note la règle de survie affinée : on ne garde pas simplement la première venue, on privilégie la ligne <strong>la plus complète</strong>. Le <code>CASE WHEN email IS NULL THEN 1 ELSE 0 END</code> en tête du ORDER BY fait remonter les lignes renseignées. C est une astuce qui vaut de l or sur des imports réels.</div>
+
+<h3>8. Phase 7 — l analyse</h3>
+<p>Sur les données propres, tout ce que tu as appris devient disponible : totaux par client sans perdre le détail, cumuls chronologiques, classements par ville, évolution mensuelle avec LAG, tableau croisé statut par mois. C est l objet de l exercice final et des deux exercices d écriture ci-dessous.</p>
+
+<h3>9. Le rituel complet, à retenir</h3>
+<pre class="pseudo">-- 1. PROFILER      : je ne touche a rien avant d avoir mesure
+-- 2. SAUVEGARDER   : une copie, hors transaction
+-- 3. BEGIN         : je travaille sous filet
+-- 4. NETTOYER      : un pipeline de CTE, une etape nommee par transformation
+-- 5. QUARANTAINE   : j isole, je ne jette jamais
+-- 6. VERIFIER      : je compare les compteurs a l attendu
+-- 7. ROLLBACK      : je verifie sans risque, puis je rejoue avec COMMIT
+-- 8. CONTRAINDRE   : la table se defend desormais toute seule
+-- 9. ANALYSER      : et seulement maintenant, je produis le rapport
+-- 10. DOCUMENTER   : le rapport de profilage avant/apres est ma preuve</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle est la toute première phase d un projet de nettoyage ?", ph: "le p...", a: ["PROFILAGE", "LE PROFILAGE", "PROFILER", "profilage"], exp: "On mesure avant de toucher : sinon on corrige à l aveugle." },
+    { type: "qcm", q: "Que faire d une ligne inexploitable (date invalide, montant absent) ?", opts: ["La supprimer sans trace", "L isoler en quarantaine avec le motif du rejet", "La laisser telle quelle", "Mettre 0 partout"], a: 1, exp: "Un nettoyage qui fait disparaître des données sans trace est inauditable." },
+    { type: "input", q: "Quelle fonction MySQL convertit '12/03/2024' en date ?", ph: "STR_...", a: ["STR_TO_DATE", "STR_TO_DATE()"], exp: "STR_TO_DATE(date_txt, '%d/%m/%Y') — renvoie NULL si la date est invalide." },
+    { type: "input", q: "Quelle fonction SQL Server convertit une date sans faire échouer la requête ?", ph: "TRY_...", a: ["TRY_CONVERT", "TRY_CAST", "TRY_CONVERT()"], exp: "TRY_CONVERT(DATE, date_txt, 103) renvoie NULL au lieu de lever une erreur." },
+    { type: "qcm", q: "Pourquoi préférer TRY_CONVERT à CONVERT dans un traitement de masse ?", opts: ["C est plus rapide", "Une seule valeur invalide ferait échouer toute la requête avec CONVERT", "TRY_CONVERT crée un index", "CONVERT n existe pas"], a: 1, exp: "La conversion tolérante isole le problème au lieu de tout bloquer." },
+    { type: "input", q: "Quelle fonction transforme une chaîne vide en NULL ?", ph: "NULL...", a: ["NULLIF", "NULLIF()"], exp: "NULLIF(montant_txt, '') : indispensable avant toute conversion numérique." },
+    { type: "qcm", q: "Comment convertir '45,50' en nombre ?", opts: ["CAST('45,50' AS DECIMAL)", "CAST(REPLACE(montant_txt, ',', '.') AS DECIMAL(10,2))", "ROUND('45,50')", "TRIM('45,50')"], a: 1, exp: "Il faut d abord remplacer la virgule décimale française par un point." },
+    { type: "input", q: "Quelle fonction de fenêtre sert à ne garder qu une ligne par référence ?", ph: "ROW_...", a: ["ROW_NUMBER", "ROW_NUMBER()"], exp: "PARTITION BY ref_cmd, puis on garde rang = 1." },
+    { type: "vf", q: "Dans le ORDER BY d un ROW_NUMBER, on peut privilégier la ligne la plus complète avec un CASE WHEN.", a: true, exp: "CASE WHEN email IS NULL THEN 1 ELSE 0 END fait remonter les lignes renseignées." },
+    { type: "qcm", q: "Où doit se placer le CREATE TABLE de sauvegarde en MySQL ?", opts: ["Dans la transaction", "Avant le BEGIN : c est du DDL, il provoquerait un COMMIT implicite", "Après le COMMIT", "Peu importe"], a: 1, exp: "Tout DDL valide implicitement la transaction en cours sur MySQL." },
+    { type: "input", q: "Quelle instruction permet de vérifier un nettoyage sans rien modifier ?", ph: "R...", a: ["ROLLBACK"], exp: "Le ROLLBACK de test : on exécute, on vérifie les compteurs, on annule." },
+    { type: "qcm", q: "Après le nettoyage, quelle contrainte empêche le retour des doublons de référence ?", opts: ["NOT NULL", "UNIQUE sur ref_cmd", "CHECK", "FOREIGN KEY"], a: 1, exp: "La contrainte UNIQUE rejettera tout nouvel import en double." },
+    { type: "qcm", q: "L écart entre COUNT(DISTINCT statut) et COUNT(DISTINCT LOWER(TRIM(statut))) mesure…", opts: ["Le nombre de NULL", "Le désordre de casse et d espaces", "Le nombre de doublons", "La cardinalité réelle"], a: 1, exp: "Un indicateur de saleté redoutablement parlant, calculé en une ligne." },
+    { type: "vf", q: "En PostgreSQL, TO_DATE('31/13/2024', 'DD/MM/YYYY') lève une erreur.", a: false, exp: "Il accepte et décale la date en janvier 2025 — comportement silencieux et dangereux." },
+    { type: "input", q: "Quelle structure permet d enchaîner les étapes de nettoyage de façon lisible ?", ph: "les C...", a: ["CTE", "LES CTE", "WITH"], exp: "Un pipeline de CTE chaînées : une étape nommée par transformation." }
+  ],
+  final: {
+    title: "Exercice final — Le rapport commercial",
+    intro: `<p>La table est nettoyée. Voici ce qu elle contient désormais.</p>
+<pre class="pseudo">-- COMMANDE_PROPRE(ref_cmd, client_nom, email, ville, date_cmd, montant, statut)
+-- ref_cmd | client_nom | ville | date_cmd   | montant | statut
+-- --------+------------+-------+------------+---------+---------
+-- CMD-001 | DUPONT     | NAMUR | 2024-03-12 |   45.50 | livree
+-- CMD-002 | MARTIN     | LIEGE | 2024-03-15 |  120.00 | livree
+-- CMD-003 | LEROY      | MONS  | 2024-04-03 |   12.50 | annulee
+-- CMD-007 | MARTIN     | LIEGE | 2024-05-05 |  200.00 | livree
+-- En quarantaine : CMD-004 (date invalide), CMD-005 (montant vide),
+--                  CMD-006 (montant negatif), CMD-001 (doublon supprime)</pre>`,
+    questions: [
+      { type: "input", q: "Combien de lignes ont été mises en quarantaine ou supprimées sur les 8 de départ ?", ph: "un nombre", a: ["4", "quatre"], exp: "Trois en quarantaine (CMD-004, 005, 006) plus un doublon supprimé : il reste 4 lignes." },
+      { type: "qcm", q: "Pour afficher chaque commande AVEC le total de son client, on utilise…", opts: ["GROUP BY client_nom", "SUM(montant) OVER (PARTITION BY client_nom)", "COUNT(DISTINCT client_nom)", "DISTINCT"], a: 1, exp: "PARTITION BY conserve le détail des lignes, contrairement à GROUP BY." },
+      { type: "input", q: "Quelle fonction donne le montant de la commande précédente d un même client ?", ph: "L...", a: ["LAG", "LAG()"], exp: "LAG(montant) OVER (PARTITION BY client_nom ORDER BY date_cmd)." },
+      { type: "qcm", q: "Le cumul chronologique du chiffre d affaires s écrit…", opts: ["SUM(montant) OVER ()", "SUM(montant) OVER (ORDER BY date_cmd ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)", "SUM(montant) GROUP BY date_cmd", "AVG(montant) OVER ()"], a: 1, exp: "Le ORDER BY dans OVER transforme le total en cumul ; le cadre explicite le sécurise." },
+      { type: "vf", q: "Pour un tableau croisé statut par mois portable, on utilise SUM(CASE WHEN ... THEN ... END).", a: true, exp: "PIVOT natif n existe qu en SQL Server et Oracle ; CASE WHEN fonctionne partout." }
+    ],
+    solution: `<pre class="pseudo">-- ========= RAPPORT 1 : le detail enrichi (fenetrage, jours 20-23) =========
+SELECT ref_cmd,
+       client_nom,
+       ville,
+       date_cmd,
+       montant,
+
+       -- Le total du client, SANS perdre le detail des lignes
+       SUM(montant) OVER (PARTITION BY client_nom)             AS total_client,
+       COUNT(*)     OVER (PARTITION BY client_nom)             AS nb_cmd_client,
+
+       -- Le cumul chronologique global du chiffre d affaires
+       SUM(montant) OVER (
+         ORDER BY date_cmd
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW      -- cadre EXPLICITE
+       )                                                        AS ca_cumule,
+
+       -- La commande precedente du meme client (jour 22)
+       LAG(montant) OVER (PARTITION BY client_nom ORDER BY date_cmd) AS montant_precedent,
+       LAG(date_cmd) OVER (PARTITION BY client_nom ORDER BY date_cmd) AS date_precedente,
+
+       -- Le classement de la commande dans le total (jour 21)
+       RANK() OVER (ORDER BY montant DESC)                      AS rang_montant,
+
+       -- Les parts relatives
+       ROUND(100.0 * montant / SUM(montant) OVER (), 1)         AS pct_ca_total,
+       ROUND(100.0 * montant / SUM(montant) OVER (PARTITION BY ville), 1) AS pct_ville
+
+FROM COMMANDE_PROPRE
+WHERE statut = 'livree'                    -- on n analyse que le realise
+ORDER BY date_cmd;
+
+-- ref_cmd | client | ville | montant | total_client | ca_cumule | rang | pct_ca_total
+-- --------+--------+-------+---------+--------------+-----------+------+-------------
+-- CMD-001 | DUPONT | NAMUR |   45.50 |        45.50 |     45.50 |    3 |         12.2
+-- CMD-002 | MARTIN | LIEGE |  120.00 |       320.00 |    165.50 |    2 |         32.2
+-- CMD-007 | MARTIN | LIEGE |  200.00 |       320.00 |    365.50 |    1 |         53.6
+
+-- ========= RAPPORT 2 : la synthese par client (jours 18-21) =========
+WITH par_client AS (
+  SELECT client_nom,
+         COUNT(*)                                        AS nb_commandes,
+         SUM(CASE WHEN statut = 'livree' THEN montant ELSE 0 END) AS ca_livre,
+         SUM(CASE WHEN statut = 'annulee' THEN 1 ELSE 0 END)      AS nb_annulees,
+         MIN(date_cmd)                                   AS premiere_cmd,
+         MAX(date_cmd)                                   AS derniere_cmd
+  FROM COMMANDE_PROPRE
+  GROUP BY client_nom
+)
+SELECT client_nom,
+       nb_commandes,
+       ca_livre,
+       ROUND(ca_livre / NULLIF(nb_commandes, 0), 2)      AS panier_moyen,
+       nb_annulees,
+       premiere_cmd,
+       derniere_cmd,
+       RANK()       OVER (ORDER BY ca_livre DESC)        AS rang_ca,
+       SUM(ca_livre) OVER ()                             AS ca_total_boutique,
+       ROUND(100.0 * ca_livre / SUM(ca_livre) OVER (), 1) AS part_pct,
+       CASE                                              -- segmentation (jour 14)
+         WHEN ca_livre &gt;= 300 THEN 'premium'
+         WHEN ca_livre &gt;= 100 THEN 'fidele'
+         WHEN ca_livre &gt;    0 THEN 'occasionnel'
+         ELSE 'sans achat'
+       END AS segment
+FROM par_client
+ORDER BY ca_livre DESC;
+
+-- client | nb | ca_livre | panier_moyen | rang_ca | part_pct | segment
+-- -------+----+----------+--------------+---------+----------+------------
+-- MARTIN |  2 |   320.00 |       160.00 |       1 |     87.5 | premium
+-- DUPONT |  1 |    45.50 |        45.50 |       2 |     12.5 | occasionnel
+-- LEROY  |  1 |     0.00 |         0.00 |       3 |      0.0 | sans achat
+
+-- ========= RAPPORT 3 : le tableau croise mois x statut (jour 25) =========
+SELECT SUBSTRING(CAST(date_cmd AS CHAR), 1, 7)  AS mois,   -- '2024-03'
+       -- MySQL : DATE_FORMAT(date_cmd, '%Y-%m')
+       -- PostgreSQL : TO_CHAR(date_cmd, 'YYYY-MM')
+       -- SQL Server : FORMAT(date_cmd, 'yyyy-MM')
+       SUM(CASE WHEN statut = 'livree'   THEN 1 ELSE 0 END) AS nb_livrees,
+       SUM(CASE WHEN statut = 'annulee'  THEN 1 ELSE 0 END) AS nb_annulees,
+       SUM(CASE WHEN statut = 'en_cours' THEN 1 ELSE 0 END) AS nb_en_cours,
+       COALESCE(SUM(CASE WHEN statut = 'livree' THEN montant END), 0) AS ca_mois,
+       COUNT(*)                                              AS nb_total,
+       ROUND(100.0 * SUM(CASE WHEN statut = 'annulee' THEN 1 ELSE 0 END)
+                   / NULLIF(COUNT(*), 0), 1)                 AS taux_annul_pct
+FROM COMMANDE_PROPRE
+GROUP BY SUBSTRING(CAST(date_cmd AS CHAR), 1, 7)
+ORDER BY mois;
+
+-- mois    | nb_livrees | nb_annulees | ca_mois | nb_total | taux_annul_pct
+-- --------+------------+-------------+---------+----------+---------------
+-- 2024-03 |          2 |           0 |  165.50 |        2 |            0.0
+-- 2024-04 |          0 |           1 |    0.00 |        1 |          100.0
+-- 2024-05 |          1 |           0 |  200.00 |        1 |            0.0
+
+-- ========= RAPPORT 4 : l evolution mensuelle avec LAG (jour 22) =========
+WITH ca_mensuel AS (
+  SELECT SUBSTRING(CAST(date_cmd AS CHAR), 1, 7) AS mois,
+         SUM(montant) AS ca
+  FROM COMMANDE_PROPRE
+  WHERE statut = 'livree'
+  GROUP BY SUBSTRING(CAST(date_cmd AS CHAR), 1, 7)
+)
+SELECT mois,
+       ca,
+       LAG(ca) OVER (ORDER BY mois)                       AS ca_precedent,
+       ca - LAG(ca) OVER (ORDER BY mois)                  AS variation,
+       ROUND(100.0 * (ca - LAG(ca) OVER (ORDER BY mois))
+                   / NULLIF(LAG(ca) OVER (ORDER BY mois), 0), 1) AS croissance_pct,
+       SUM(ca) OVER (ORDER BY mois
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumul
+FROM ca_mensuel
+ORDER BY mois;
+
+-- mois    |     ca | ca_precedent | variation | croissance_pct | cumul
+-- --------+--------+--------------+-----------+----------------+-------
+-- 2024-03 | 165.50 |         NULL |      NULL |           NULL | 165.50
+-- 2024-05 | 200.00 |       165.50 |     34.50 |           20.8 | 365.50
+
+-- ========= RAPPORT 5 : le controle qualite final (jour 26) =========
+SELECT 'Lignes importees'   AS controle, COUNT(*) AS valeur FROM IMPORT_COMMANDE
+UNION ALL SELECT 'Lignes propres',      COUNT(*) FROM COMMANDE_PROPRE
+UNION ALL SELECT 'Lignes en quarantaine', COUNT(*) FROM COMMANDE_QUARANTAINE
+UNION ALL SELECT 'Doublons restants',   COUNT(*) FROM (
+    SELECT ref_cmd FROM COMMANDE_PROPRE GROUP BY ref_cmd HAVING COUNT(*) &gt; 1
+  ) AS d
+UNION ALL SELECT 'Montants negatifs',   SUM(CASE WHEN montant &lt; 0 THEN 1 ELSE 0 END)
+                                        FROM COMMANDE_PROPRE
+UNION ALL SELECT 'Statuts distincts',   COUNT(DISTINCT statut) FROM COMMANDE_PROPRE;
+
+-- controle              | valeur
+-- ----------------------+-------
+-- Lignes importees      |      8
+-- Lignes propres        |      4
+-- Lignes en quarantaine |      3
+-- Doublons restants     |      0    &lt;-- objectif atteint
+-- Montants negatifs     |      0    &lt;-- objectif atteint
+-- Statuts distincts     |      2    &lt;-- 6 valeurs brutes ramenees a 2 reelles
+-- 8 = 4 + 3 + 1 doublon supprime : le compte est bon, rien ne s est perdu.</pre>
+<p><strong>Tu as terminé les 31 jours.</strong> Tu sais désormais prendre un fichier brut, le diagnostiquer, le nettoyer sous transaction, le verrouiller par des contraintes, et en tirer une analyse fenêtrée — sur MySQL, PostgreSQL ou SQL Server. C est très exactement le métier.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j31", title: "Projet final, partie 1 — Le pipeline de nettoyage", level: 3,
+    statement: "Écris le script COMPLET de nettoyage de IMPORT_COMMANDE(ref_cmd, client_nom, client_email, ville, date_txt, montant_txt, statut), toutes colonnes en VARCHAR, avec les défauts listés dans la théorie. Le script doit : (1) profiler la table, (2) sauvegarder, (3) construire un pipeline de CTE qui enlève les espaces, uniformise la casse, convertit les dates JJ/MM/AAAA et les montants à virgule, et normalise les statuts, (4) séparer les lignes valides des lignes à mettre en quarantaine avec le motif du rejet, (5) dédupliquer sur ref_cmd en gardant la ligne la plus complète, (6) créer la table propre, (7) poser les contraintes, (8) vérifier. Travaille sous transaction et signale les différences MySQL / PostgreSQL / SQL Server.",
+    hints: [
+      "NULLIF(colonne, '') après le TRIM transforme les chaînes vides en vrais NULL : fais-le AVANT toute conversion, sinon CAST('' AS DECIMAL) plante ou renvoie 0 selon le moteur.",
+      "Pour la quarantaine, construis une colonne motif avec un CASE WHEN qui teste les causes de rejet dans l ordre, puis filtre : les valides sont celles dont le motif est NULL, les rejetées celles dont le motif ne l est pas. Les deux tables sortent du MÊME pipeline.",
+      "Pour la déduplication, la règle de survie doit privilégier la complétude : ORDER BY CASE WHEN email IS NULL THEN 1 ELSE 0 END, puis la date. Une ligne avec email bat une ligne sans email, même plus ancienne."
+    ],
+    solution: "-- ================= PHASE 1 : PROFILAGE =================\nSELECT COUNT(*)                                      AS nb_lignes,\n       COUNT(DISTINCT TRIM(ref_cmd))                 AS refs_distinctes,\n       COUNT(*) - COUNT(DISTINCT TRIM(ref_cmd))      AS doublons,\n       SUM(CASE WHEN TRIM(COALESCE(client_email,'')) = ''\n                THEN 1 ELSE 0 END)                   AS emails_manquants,\n       SUM(CASE WHEN TRIM(COALESCE(montant_txt,'')) = ''\n                THEN 1 ELSE 0 END)                   AS montants_vides,\n       SUM(CASE WHEN client_nom <> TRIM(client_nom)\n                THEN 1 ELSE 0 END)                   AS avec_espaces,\n       COUNT(DISTINCT statut)                        AS statuts_bruts,\n       COUNT(DISTINCT LOWER(TRIM(statut)))           AS statuts_normalises\nFROM IMPORT_COMMANDE;\n-- L ecart statuts_bruts / statuts_normalises chiffre le desordre de casse.\n\n-- ================= PHASE 2 : SAUVEGARDE (DDL, HORS transaction) =================\nCREATE TABLE IMPORT_COMMANDE_AVANT AS SELECT * FROM IMPORT_COMMANDE;\n-- SQL Server : SELECT * INTO IMPORT_COMMANDE_AVANT FROM IMPORT_COMMANDE;\n\n-- ================= PHASE 3 : LE PIPELINE DE NETTOYAGE =================\n-- (version MySQL ; voir les notes de dialecte en fin de script)\n\nWITH espaces AS (                              -- ETAPE 1 : retirer les espaces\n  SELECT TRIM(ref_cmd)      AS ref_cmd,\n         TRIM(client_nom)   AS client_nom,\n         TRIM(client_email) AS client_email,\n         TRIM(ville)        AS ville,\n         TRIM(date_txt)     AS date_txt,\n         TRIM(montant_txt)  AS montant_txt,\n         TRIM(statut)       AS statut\n  FROM IMPORT_COMMANDE\n),\nvides AS (                                     -- ETAPE 2 : '' devient NULL\n  SELECT NULLIF(ref_cmd, '')      AS ref_cmd,  -- AVANT toute conversion !\n         NULLIF(client_nom, '')   AS client_nom,\n         NULLIF(client_email, '') AS client_email,\n         NULLIF(ville, '')        AS ville,\n         NULLIF(date_txt, '')     AS date_txt,\n         NULLIF(montant_txt, '')  AS montant_txt,\n         NULLIF(statut, '')       AS statut\n  FROM espaces\n),\ncasse AS (                                     -- ETAPE 3 : uniformiser la casse\n  SELECT UPPER(ref_cmd)      AS ref_cmd,\n         UPPER(client_nom)   AS client_nom,\n         LOWER(client_email) AS email,         -- un email est insensible a la casse\n         UPPER(ville)        AS ville,\n         date_txt,\n         montant_txt,\n         LOWER(statut)       AS statut\n  FROM vides\n),\ntypes AS (                                     -- ETAPE 4 : convertir les types\n  SELECT ref_cmd, client_nom, email, ville,\n         STR_TO_DATE(date_txt, '%d/%m/%Y')     AS date_cmd,   -- NULL si invalide\n         CAST(REPLACE(montant_txt, ',', '.') AS DECIMAL(10,2)) AS montant,\n         CASE                                  -- ETAPE 5 : normaliser les statuts\n           WHEN statut IN ('livree','livrée','livre','livrees') THEN 'livree'\n           WHEN statut IN ('annulee','annulée','annule')        THEN 'annulee'\n           WHEN statut IN ('en cours','en_cours','encours')     THEN 'en_cours'\n           ELSE 'inconnu'\n         END AS statut,\n         date_txt, montant_txt                 -- conserves pour tracer les rejets\n  FROM casse\n),\nqualifie AS (                                  -- ETAPE 6 : diagnostiquer chaque ligne\n  SELECT *,\n         CASE                                  -- motif de rejet, NULL si la ligne est OK\n           WHEN ref_cmd IS NULL      THEN 'reference absente'\n           WHEN date_cmd IS NULL     THEN 'date invalide ou absente'\n           WHEN montant IS NULL      THEN 'montant absent'\n           WHEN montant < 0          THEN 'montant negatif'\n           WHEN statut = 'inconnu'   THEN 'statut non reconnu'\n           ELSE NULL                           -- ligne exploitable\n         END AS motif_rejet\n  FROM types\n),\nvalide AS (                                    -- ETAPE 7a : les lignes exploitables\n  SELECT * FROM qualifie WHERE motif_rejet IS NULL\n),\nnumerote AS (                                  -- ETAPE 8 : dedupliquer\n  SELECT *,\n         ROW_NUMBER() OVER (\n           PARTITION BY ref_cmd                -- une pile par reference\n           ORDER BY CASE WHEN email IS NULL THEN 1 ELSE 0 END,  -- complet d abord\n                    CASE WHEN ville IS NULL THEN 1 ELSE 0 END,\n                    date_cmd ASC                                -- puis la plus ancienne\n         ) AS rang\n  FROM valide\n)\nSELECT ref_cmd, client_nom, email, ville, date_cmd, montant, statut\nFROM numerote\nWHERE rang = 1;                                -- un seul exemplaire par reference\n\n-- ================= PHASE 4 : CREER LES DEUX TABLES CIBLES =================\n-- (on rejoue le meme pipeline, une fois pour chaque destination)\n\nCREATE TABLE COMMANDE_PROPRE AS\nWITH espaces AS ( ... ), vides AS ( ... ), casse AS ( ... ),\n     types AS ( ... ), qualifie AS ( ... ), valide AS ( ... ),\n     numerote AS ( ... )\nSELECT ref_cmd, client_nom, email, ville, date_cmd, montant, statut\nFROM numerote WHERE rang = 1;\n\nCREATE TABLE COMMANDE_QUARANTAINE AS\nWITH espaces AS ( ... ), vides AS ( ... ), casse AS ( ... ),\n     types AS ( ... ), qualifie AS ( ... )\nSELECT ref_cmd, client_nom, email, ville,\n       date_txt, montant_txt,                  -- les valeurs BRUTES, pour tracer\n       statut, motif_rejet\nFROM qualifie\nWHERE motif_rejet IS NOT NULL;                 -- tout ce qui a ete ecarte\n-- On ne JETTE rien : le metier decidera quoi faire de ces lignes.\n\n-- ================= PHASE 5 : LES CONTRAINTES (jour 27) =================\nALTER TABLE COMMANDE_PROPRE MODIFY ref_cmd VARCHAR(20) NOT NULL;\nALTER TABLE COMMANDE_PROPRE ADD CONSTRAINT pk_cmd PRIMARY KEY (ref_cmd);\nALTER TABLE COMMANDE_PROPRE\n  ADD CONSTRAINT ck_cmd_montant CHECK (montant > 0);\nALTER TABLE COMMANDE_PROPRE\n  ADD CONSTRAINT ck_cmd_statut\n  CHECK (statut IN ('livree','annulee','en_cours'));\nALTER TABLE COMMANDE_PROPRE\n  ADD CONSTRAINT ck_cmd_date CHECK (date_cmd <= CURRENT_DATE);\nALTER TABLE COMMANDE_PROPRE\n  ADD CONSTRAINT ck_cmd_email CHECK (email IS NULL OR email LIKE '%_@_%._%');\n\n-- ================= PHASE 6 : VERIFICATION =================\nSELECT 'Lignes importees'      AS controle, COUNT(*) AS valeur FROM IMPORT_COMMANDE_AVANT\nUNION ALL SELECT 'Lignes propres',          COUNT(*) FROM COMMANDE_PROPRE\nUNION ALL SELECT 'Lignes en quarantaine',   COUNT(*) FROM COMMANDE_QUARANTAINE\nUNION ALL SELECT 'Doublons restants',       COUNT(*) FROM (\n    SELECT ref_cmd FROM COMMANDE_PROPRE GROUP BY ref_cmd HAVING COUNT(*) > 1\n  ) AS d\nUNION ALL SELECT 'Montants negatifs',\n       SUM(CASE WHEN montant < 0 THEN 1 ELSE 0 END) FROM COMMANDE_PROPRE\nUNION ALL SELECT 'Statuts inconnus',\n       SUM(CASE WHEN statut = 'inconnu' THEN 1 ELSE 0 END) FROM COMMANDE_PROPRE;\n\n-- controle              | valeur\n-- ----------------------+-------\n-- Lignes importees      |      8\n-- Lignes propres        |      4\n-- Lignes en quarantaine |      3\n-- Doublons restants     |      0\n-- Montants negatifs     |      0\n-- Statuts inconnus      |      0\n-- Le compte : 8 = 4 propres + 3 en quarantaine + 1 doublon supprime.\n-- Si l equation ne tombe pas juste, une ligne s est perdue quelque part.\n\n-- Le detail de la quarantaine, pour le metier :\nSELECT motif_rejet, COUNT(*) AS nb FROM COMMANDE_QUARANTAINE GROUP BY motif_rejet;\n-- date invalide ou absente | 1   (CMD-004 : '31/13/2024')\n-- montant absent           | 1   (CMD-005 : chaine vide)\n-- montant negatif          | 1   (CMD-006 : -15,00)\n\n-- ================= NOTES DE DIALECTE =================\n-- CONVERSION DE DATE (le point le plus sensible) :\n--   MySQL      : STR_TO_DATE(date_txt, '%d/%m/%Y')     -> NULL si invalide (ideal)\n--   PostgreSQL : TO_DATE(date_txt, 'DD/MM/YYYY')       -> ATTENTION, il ACCEPTE\n--                '31/13/2024' et le decale en janvier 2025 ! Filtrer en amont :\n--                CASE WHEN date_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'\n--                       AND SUBSTRING(date_txt,4,2)::int BETWEEN 1 AND 12\n--                     THEN TO_DATE(date_txt,'DD/MM/YYYY') END\n--   SQL Server : TRY_CONVERT(DATE, date_txt, 103)      -> NULL si invalide (ideal)\n--                NE PAS utiliser CONVERT sans TRY : une seule date invalide\n--                ferait echouer la requete entiere.\n--\n-- CONVERSION NUMERIQUE :\n--   MySQL/PostgreSQL/SQL Server : CAST(REPLACE(x, ',', '.') AS DECIMAL(10,2))\n--   SQL Server, version sure    : TRY_CAST(REPLACE(x, ',', '.') AS DECIMAL(10,2))\n--   PostgreSQL, notation courte : REPLACE(x, ',', '.')::numeric(10,2)\n--\n-- ACCENTS ('livrée' vs 'livree') :\n--   Selon le collation, LOWER('LIVRÉE') peut ne pas donner 'livrée'.\n--   PostgreSQL : unaccent(statut)  (extension unaccent)\n--   MySQL      : CONVERT(statut USING ascii) est approximatif ; le plus sur\n--                reste la liste exhaustive du CASE WHEN, comme ci-dessus.\n--   SQL Server : COLLATE Latin1_General_CI_AI (CI = casse ignoree,\n--                AI = accents ignores) --> WHERE statut COLLATE ... = 'livree'\n--\n-- CREATE TABLE ... AS SELECT :\n--   MySQL / PostgreSQL : CREATE TABLE t AS SELECT ...\n--   SQL Server         : SELECT ... INTO t FROM ...\n--\n-- TRANSACTION : sur MySQL, tous les CREATE TABLE et ALTER TABLE ci-dessus\n--   provoquent un COMMIT implicite. Le pipeline de SELECT peut etre teste\n--   sous BEGIN/ROLLBACK, mais la creation des tables doit rester HORS\n--   transaction. Sur PostgreSQL, le DDL est transactionnel : tout le script\n--   peut tenir dans un seul BEGIN ... COMMIT.",
+    note: "Trois choses à retenir de ce script. D abord l ordre des étapes : TRIM puis NULLIF puis conversion. Inversé, tu convertis des chaînes vides ou des valeurs avec espaces, et le résultat dépend du moteur — certains renvoient 0, d autres NULL, d autres échouent. Ensuite, la colonne motif_rejet : elle sort du MÊME pipeline que les données valides, ce qui garantit que chaque ligne d entrée finit soit dans la table propre, soit en quarantaine, jamais nulle part. L équation 8 = 4 + 3 + 1 est ta preuve. Enfin, la conversion de date PostgreSQL est le piège le plus vicieux du projet : contrairement à MySQL et SQL Server qui renvoient NULL sur une date invalide, TO_DATE accepte silencieusement le mois 13 et fabrique une date fausse. Une donnée fausse est bien pire qu une donnée manquante — on ne la détecte jamais." },
+
+  { id: "sgbd-j31b", title: "Projet final, partie 2 — Le tableau de bord", level: 3,
+    statement: "À partir de COMMANDE_PROPRE(ref_cmd, client_nom, email, ville, date_cmd, montant, statut), produis le tableau de bord complet de la direction en une série de requêtes commentées : (1) le détail enrichi de chaque commande livrée avec le total de son client, le cumul du chiffre d affaires, la commande précédente du client et le classement du montant ; (2) le top 3 des clients par ville ; (3) le tableau croisé mois par statut ; (4) l évolution mensuelle avec variation et croissance en pourcentage ; (5) les clients dormants, c est-à-dire ceux dont la dernière commande date de plus de 60 jours. Commente chaque bloc et signale les différences de dialecte.",
+    hints: [
+      "Le top N par groupe est un patron fixe : ROW_NUMBER() OVER (PARTITION BY groupe ORDER BY mesure DESC) dans une CTE, puis WHERE rang <= 3 dans la requête principale. On ne peut jamais filtrer sur une fonction de fenêtre dans un WHERE.",
+      "Pour extraire le mois d une date, chaque SGBD a sa fonction : DATE_FORMAT en MySQL, TO_CHAR en PostgreSQL, FORMAT en SQL Server. Isole cette expression dans une CTE pour n avoir qu un seul endroit à adapter.",
+      "Les clients dormants se calculent en deux temps : d abord MAX(date_cmd) par client dans une CTE, ensuite le filtre sur l écart de dates dans la requête principale — et l écart de dates est justement l endroit où DATEDIFF diffère le plus entre moteurs."
+    ],
+    solution: "-- ============ REQUETE 1 : LE DETAIL ENRICHI ============\n-- Une ligne par commande livree, augmentee de toutes les synthèses.\n-- Aucune ligne n est perdue : c est tout l interet de OVER() sur GROUP BY.\nSELECT ref_cmd,\n       client_nom,\n       ville,\n       date_cmd,\n       montant,\n\n       -- Synthese par CLIENT, sans ecraser le detail (jour 23)\n       SUM(montant) OVER (PARTITION BY client_nom)   AS total_client,\n       COUNT(*)     OVER (PARTITION BY client_nom)   AS nb_cmd_client,\n       ROUND(AVG(montant) OVER (PARTITION BY client_nom), 2) AS panier_moyen_client,\n\n       -- Synthese par VILLE\n       SUM(montant) OVER (PARTITION BY ville)        AS ca_ville,\n\n       -- Cumul chronologique global (cadre EXPLICITE, jour 23)\n       SUM(montant) OVER (\n         ORDER BY date_cmd, ref_cmd                  -- departageur : requete stable\n         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW\n       ) AS ca_cumule,\n\n       -- Comparaison a la commande precedente du MEME client (jour 22)\n       LAG(montant)  OVER (PARTITION BY client_nom ORDER BY date_cmd) AS montant_prec,\n       LAG(date_cmd) OVER (PARTITION BY client_nom ORDER BY date_cmd) AS date_prec,\n\n       -- Classements (jour 21)\n       RANK()       OVER (ORDER BY montant DESC)     AS rang_global,\n       DENSE_RANK() OVER (PARTITION BY ville ORDER BY montant DESC) AS rang_ville,\n\n       -- Parts relatives\n       ROUND(100.0 * montant / SUM(montant) OVER (), 2)                    AS pct_ca,\n       ROUND(100.0 * montant / SUM(montant) OVER (PARTITION BY ville), 2)  AS pct_ville\n\nFROM COMMANDE_PROPRE\nWHERE statut = 'livree'                              -- on n analyse que le realise\nORDER BY date_cmd, ref_cmd;\n\n-- ref_cmd | client | ville | montant | total_client | ca_cumule | rang_global | pct_ca\n-- --------+--------+-------+---------+--------------+-----------+-------------+-------\n-- CMD-001 | DUPONT | NAMUR |   45.50 |        45.50 |     45.50 |           3 |  12.45\n-- CMD-002 | MARTIN | LIEGE |  120.00 |       320.00 |    165.50 |           2 |  32.83\n-- CMD-007 | MARTIN | LIEGE |  200.00 |       320.00 |    365.50 |           1 |  54.72\n\n-- ============ REQUETE 2 : LE TOP 3 DES CLIENTS PAR VILLE ============\n-- Impossible avec GROUP BY seul, impossible avec LIMIT (qui limite le total,\n-- pas chaque groupe). C est le patron « Top N par categorie » du jour 21.\nWITH ca_client_ville AS (                            -- 1) agreger par client et ville\n  SELECT ville,\n         client_nom,\n         SUM(montant) AS ca_client,\n         COUNT(*)     AS nb_commandes\n  FROM COMMANDE_PROPRE\n  WHERE statut = 'livree'\n  GROUP BY ville, client_nom\n),\nclasse AS (                                          -- 2) classer DANS chaque ville\n  SELECT *,\n         ROW_NUMBER() OVER (\n           PARTITION BY ville                        -- un classement par ville\n           ORDER BY ca_client DESC, client_nom       -- departageur alphabetique\n         ) AS rang\n  FROM ca_client_ville\n)\nSELECT ville, rang, client_nom, ca_client, nb_commandes\nFROM classe\nWHERE rang <= 3                                      -- le filtre va ICI, pas dans un WHERE\nORDER BY ville, rang;                                -- sur la fonction de fenetre\n\n-- ville | rang | client_nom | ca_client | nb_commandes\n-- ------+------+------------+-----------+-------------\n-- LIEGE |    1 | MARTIN     |    320.00 |            2\n-- NAMUR |    1 | DUPONT     |     45.50 |            1\n\n-- Note : ROW_NUMBER donne EXACTEMENT 3 lignes par ville, meme en cas d egalite.\n-- Avec RANK, une egalite au 3e rang en renverrait 4. A choisir selon le besoin metier.\n\n-- ============ REQUETE 3 : LE TABLEAU CROISE MOIS x STATUT ============\n-- Methode universelle SUM(CASE WHEN) : PIVOT natif n existe qu en SQL Server.\nWITH avec_mois AS (\n  SELECT DATE_FORMAT(date_cmd, '%Y-%m') AS mois,     -- MySQL\n  -- PostgreSQL : TO_CHAR(date_cmd, 'YYYY-MM')\n  -- SQL Server : FORMAT(date_cmd, 'yyyy-MM')\n  --              ou CONVERT(CHAR(7), date_cmd, 120) — plus rapide\n         statut, montant\n  FROM COMMANDE_PROPRE\n)\nSELECT mois,\n       SUM(CASE WHEN statut = 'livree'   THEN 1 ELSE 0 END) AS nb_livrees,\n       SUM(CASE WHEN statut = 'annulee'  THEN 1 ELSE 0 END) AS nb_annulees,\n       SUM(CASE WHEN statut = 'en_cours' THEN 1 ELSE 0 END) AS nb_en_cours,\n       COUNT(*)                                             AS nb_total,\n       COALESCE(SUM(CASE WHEN statut = 'livree' THEN montant END), 0) AS ca_livre,\n       ROUND(100.0 * SUM(CASE WHEN statut = 'annulee' THEN 1 ELSE 0 END)\n                   / NULLIF(COUNT(*), 0), 1)                AS taux_annul_pct\nFROM avec_mois\nGROUP BY mois\nORDER BY mois;\n\n-- mois    | nb_livrees | nb_annulees | nb_total | ca_livre | taux_annul_pct\n-- --------+------------+-------------+----------+----------+---------------\n-- 2024-03 |          2 |           0 |        2 |   165.50 |            0.0\n-- 2024-04 |          0 |           1 |        1 |     0.00 |          100.0\n-- 2024-05 |          1 |           0 |        1 |   200.00 |            0.0\n\n-- ============ REQUETE 4 : L EVOLUTION MENSUELLE ============\nWITH ca_mensuel AS (\n  SELECT DATE_FORMAT(date_cmd, '%Y-%m') AS mois,\n         SUM(montant)                   AS ca,\n         COUNT(*)                       AS nb_cmd\n  FROM COMMANDE_PROPRE\n  WHERE statut = 'livree'\n  GROUP BY DATE_FORMAT(date_cmd, '%Y-%m')\n)\nSELECT mois,\n       nb_cmd,\n       ca,\n       LAG(ca) OVER (ORDER BY mois)                    AS ca_precedent,\n       ca - LAG(ca) OVER (ORDER BY mois)                AS variation,\n       ROUND(100.0 * (ca - LAG(ca) OVER (ORDER BY mois))\n                   / NULLIF(LAG(ca) OVER (ORDER BY mois), 0), 1) AS croissance_pct,\n       SUM(ca) OVER (ORDER BY mois\n                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cumul,\n       ROUND(AVG(ca) OVER (ORDER BY mois\n                     ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2)     AS moyenne_3m,\n       CASE                                             -- lecture immediate\n         WHEN LAG(ca) OVER (ORDER BY mois) IS NULL      THEN 'debut de periode'\n         WHEN ca > LAG(ca) OVER (ORDER BY mois)         THEN 'hausse'\n         WHEN ca < LAG(ca) OVER (ORDER BY mois)         THEN 'baisse'\n         ELSE 'stable'\n       END AS tendance\nFROM ca_mensuel\nORDER BY mois;\n\n-- mois    | nb_cmd |     ca | ca_precedent | variation | croissance_pct | tendance\n-- --------+--------+--------+--------------+-----------+----------------+------------------\n-- 2024-03 |      2 | 165.50 |         NULL |      NULL |           NULL | debut de periode\n-- 2024-05 |      1 | 200.00 |       165.50 |     34.50 |           20.8 | hausse\n\n-- ATTENTION : avril n apparait pas (aucune commande livree). Pour un rapport\n-- sans trou, il faudrait generer un calendrier par CTE recursive (jour 19)\n-- et faire un LEFT JOIN dessus.\n\n-- ============ REQUETE 5 : LES CLIENTS DORMANTS ============\nWITH derniere_activite AS (                          -- 1) la derniere trace de chacun\n  SELECT client_nom,\n         email,\n         MAX(date_cmd)    AS derniere_cmd,\n         COUNT(*)         AS nb_commandes,\n         SUM(CASE WHEN statut = 'livree' THEN montant ELSE 0 END) AS ca_total\n  FROM COMMANDE_PROPRE\n  GROUP BY client_nom, email\n)\nSELECT client_nom,\n       email,\n       derniere_cmd,\n       nb_commandes,\n       ca_total,\n       DATEDIFF(CURRENT_DATE, derniere_cmd) AS jours_inactif,   -- MySQL : (fin, debut)\n       CASE\n         WHEN DATEDIFF(CURRENT_DATE, derniere_cmd) > 180 THEN 'perdu'\n         WHEN DATEDIFF(CURRENT_DATE, derniere_cmd) >  60 THEN 'dormant'\n         ELSE 'actif'\n       END AS segment_activite,\n       RANK() OVER (ORDER BY ca_total DESC) AS rang_valeur   -- priorite de relance\nFROM derniere_activite\nWHERE DATEDIFF(CURRENT_DATE, derniere_cmd) > 60      -- dormants et perdus\nORDER BY ca_total DESC;                              -- relancer les plus gros d abord\n\n-- client_nom | derniere_cmd | ca_total | jours_inactif | segment | rang_valeur\n-- -----------+--------------+----------+---------------+---------+------------\n-- MARTIN     |   2024-05-05 |   320.00 |           118 | dormant |           1\n-- DUPONT     |   2024-03-12 |    45.50 |           172 | dormant |           2\n\n-- ============ NOTES DE DIALECTE ============\n-- ECART DE DATES — le piege le plus classique du cours :\n--   MySQL      : DATEDIFF(date_fin, date_debut)          (fin d abord !)\n--   SQL Server : DATEDIFF(day, date_debut, date_fin)     (unite, puis debut, puis fin)\n--   PostgreSQL : date_fin - date_debut                   (soustraction directe)\n--   Oracle     : date_fin - date_debut\n--   Se tromper d ordre inverse le SIGNE du resultat : le filtre > 60 ne\n--   renverrait alors plus aucune ligne, sans aucune erreur affichee.\n--\n-- DATE DU JOUR :\n--   Standard / MySQL / PostgreSQL : CURRENT_DATE\n--   SQL Server                    : CAST(GETDATE() AS DATE)\n--   Oracle                        : SYSDATE\n--\n-- EXTRACTION DU MOIS :\n--   MySQL      : DATE_FORMAT(d, '%Y-%m')\n--   PostgreSQL : TO_CHAR(d, 'YYYY-MM')\n--   SQL Server : FORMAT(d, 'yyyy-MM')  ou  CONVERT(CHAR(7), d, 120)\n--\n-- CLAUSE WINDOW (nommer une fenetre pour ne pas la repeter) :\n--   PostgreSQL, MySQL 8, SQLite : OUI --> ... WINDOW w AS (PARTITION BY client_nom\n--                                          ORDER BY date_cmd)\n--   SQL Server : NON --> repeter la fenetre, ou passer par une CTE.\n--\n-- Toutes ces requetes exigent MySQL 8+, MariaDB 10.2+, PostgreSQL,\n-- SQL Server 2012+ ou SQLite 3.25+. Sur MySQL 5.7, aucune ne fonctionne :\n-- ni CTE, ni fonction de fenetre.",
+    note: "Ce tableau de bord mobilise l intégralité du cours, et chaque requête illustre un principe qui ne s oublie pas. La requête 1 montre pourquoi OVER() a été inventé : quatre niveaux d agrégation coexistent avec le détail, ce que GROUP BY ne peut pas faire. La requête 2 est le patron « Top N par groupe », le plus réutilisable de tout le SQL analytique. La requête 3 rappelle que la méthode portable CASE WHEN bat PIVOT dès qu on mélange les agrégats. La requête 4 révèle un piège discret : avril manque, parce qu une agrégation ne peut pas inventer une ligne qui n existe pas — d où l intérêt des calendriers générés par CTE récursive. La requête 5, enfin, concentre le danger transversal du cours dans une seule fonction : DATEDIFF, dont l ordre des arguments diffère selon le moteur et dont l inversion ne produit aucune erreur, seulement un résultat silencieusement faux. Une requête qui échoue est un incident. Une requête qui ment est une catastrophe." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

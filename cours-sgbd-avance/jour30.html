@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 30</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 30,
+  title: "Lire un plan d'exécution : EXPLAIN et index",
+  subtitle: "Comprendre POURQUOI une requête est lente, au lieu de deviner.",
+  theory: `
+<h3>1. Le SGBD ne fait pas ce que tu écris</h3>
+<p>Le SQL est un langage <strong>déclaratif</strong> : tu décris <em>ce que tu veux</em>, pas <em>comment l obtenir</em>. C est l <strong>optimiseur</strong> du SGBD qui choisit la stratégie : quel index utiliser, dans quel ordre joindre les tables, quel algorithme de jointure appliquer.</p>
+<p>Le résultat de ce choix s appelle le <strong>plan d exécution</strong> : la liste ordonnée des opérations que le moteur va réellement effectuer. Deux requêtes qui renvoient le même résultat peuvent avoir des plans radicalement différents — et des temps d exécution dans un rapport de mille.</p>
+<div class="tip"><strong>L analogie :</strong> tu donnes une adresse à un GPS. Toi, tu dis « je veux aller à Namur ». Le GPS choisit l itinéraire : autoroute, nationale, ou petites routes. Le plan d exécution, c est l itinéraire affiché. EXPLAIN, c est le bouton « montre-moi l itinéraire avant de partir ».</div>
+
+<h3>2. EXPLAIN : afficher le plan</h3>
+<pre class="pseudo">-- MySQL / MariaDB
+EXPLAIN SELECT * FROM CLIENT WHERE email = 'a@x.com';
+EXPLAIN ANALYZE SELECT ...       -- MySQL 8.0.18+ : execute vraiment et mesure
+EXPLAIN FORMAT=JSON SELECT ...   -- plan detaille
+
+-- PostgreSQL
+EXPLAIN SELECT ...                       -- plan estime, sans executer
+EXPLAIN ANALYZE SELECT ...               -- EXECUTE la requete et mesure le reel
+EXPLAIN (ANALYZE, BUFFERS) SELECT ...    -- ajoute les lectures disque/cache
+
+-- SQL Server
+SET SHOWPLAN_ALL ON;    -- plan estime, en texte
+SET STATISTICS IO, TIME ON;    -- statistiques reelles d execution
+-- ou, dans SSMS : Ctrl+M pour le plan graphique reel
+
+-- Oracle
+EXPLAIN PLAN FOR SELECT ...;
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY);</pre>
+<div class="warn"><code>EXPLAIN</code> seul donne une <strong>estimation</strong>, fondée sur des statistiques parfois périmées. <code>EXPLAIN ANALYZE</code> exécute réellement la requête et donne les chiffres vrais. Attention : sur un UPDATE ou un DELETE, EXPLAIN ANALYZE <strong>modifie vraiment les données</strong> — enveloppe-le dans une transaction suivie d un ROLLBACK (jour 29 !).</div>
+
+<h3>3. Ce qu il faut regarder en priorité</h3>
+<pre class="pseudo">-- 1) LE TYPE D ACCES : index ou balayage complet ?
+--    MySQL colonne type   : ALL = balayage complet (mauvais sur grosse table)
+--                           index / range / ref / eq_ref / const (de moins bon
+--                           a meilleur)
+--    PostgreSQL           : Seq Scan (balayage) vs Index Scan / Index Only Scan
+--    SQL Server           : Table Scan / Clustered Index Scan vs Index Seek
+
+-- 2) LE NOMBRE DE LIGNES : estime (rows) contre reel.
+--    Un ecart de facteur 100 signale des statistiques a rafraichir.
+
+-- 3) LE TYPE DE JOINTURE :
+--    Nested Loop  : bon si peu de lignes a gauche + index a droite
+--    Hash Join    : bon sur gros volumes sans index
+--    Merge Join   : bon si les deux cotes sont deja tries
+
+-- 4) LE TRI : « Using filesort » (MySQL) ou « Sort » (PostgreSQL)
+--    Un tri sur des millions de lignes coute cher --&gt; un index peut l eviter.</pre>
+<div class="tip">La règle d or du débutant : cherche les <strong>Seq Scan / Table Scan / type ALL</strong> sur les grosses tables. Un balayage complet sur 10 lignes est parfaitement normal. Sur 10 millions, c est presque toujours le problème.</div>
+
+<h3>4. Définition : qu est-ce qu un index ?</h3>
+<p>Un <strong>index</strong> est une structure de données auxiliaire, maintenue par le SGBD, qui permet de retrouver rapidement les lignes correspondant à une valeur, sans lire toute la table.</p>
+<div class="tip"><strong>L analogie :</strong> l index alphabétique à la fin d un livre. Sans lui, pour trouver toutes les pages parlant de « jointure », tu lis les 400 pages une par une (c est le balayage complet). Avec lui, tu cherches « jointure » dans la liste alphabétique et tu obtiens directement : pages 42, 87, 213. L index occupe quelques pages en plus, et il faut le refaire à chaque nouvelle édition — exactement comme un index SQL coûte de l espace et ralentit les écritures.</div>
+<pre class="pseudo">-- Techniquement : un arbre B (B-tree) trie les valeurs et pointe vers les lignes.
+-- Chercher dans un arbre trie de 1 million de lignes = environ 20 comparaisons.
+-- Balayer la table = 1 million de lectures. Le rapport est de 50 000 pour 1.</pre>
+
+<h3>5. Créer et supprimer un index</h3>
+<pre class="pseudo">-- Syntaxe standard, valable partout
+CREATE INDEX ix_client_email ON CLIENT(email);
+CREATE UNIQUE INDEX ux_client_email ON CLIENT(email);   -- unicite en prime
+DROP INDEX ix_client_email;                             -- PostgreSQL, SQL Server
+DROP INDEX ix_client_email ON CLIENT;                   -- MySQL, SQL Server
+
+-- Index COMPOSITE : plusieurs colonnes, l ORDRE compte enormement
+CREATE INDEX ix_cmd ON COMMANDE(id_client, date_cmd);</pre>
+<div class="warn">La <strong>règle du préfixe gauche</strong> : un index sur (a, b, c) sert pour les recherches sur <em>a</em>, sur <em>(a, b)</em> et sur <em>(a, b, c)</em>. Il ne sert <strong>pas</strong> pour une recherche sur <em>b</em> seul, ni sur <em>c</em> seul. C est comme un annuaire trié par nom puis prénom : parfait pour chercher « Dupont », inutile pour chercher tous les « Jean ».</div>
+
+<h3>6. Quand un index est-il ignoré ?</h3>
+<p>C est la cause numéro un des requêtes lentes : l index existe, mais la requête est écrite de façon à l empêcher de servir.</p>
+<pre class="pseudo">-- 1) UNE FONCTION SUR LA COLONNE INDEXEE tue l index
+WHERE YEAR(date_cmd) = 2024                  -- index INUTILISABLE
+WHERE date_cmd &gt;= '2024-01-01'
+  AND date_cmd &lt;  '2025-01-01'               -- index UTILISE : reecris toujours ainsi
+
+WHERE UPPER(email) = 'A@X.COM'               -- index inutilisable
+WHERE email = 'a@x.com'                      -- index utilise (donnees deja normalisees)
+
+-- 2) LIKE COMMENCANT PAR UN JOKER
+WHERE nom LIKE '%dupont'                     -- index inutilisable (debut inconnu)
+WHERE nom LIKE 'dupont%'                     -- index UTILISE
+
+-- 3) COMPARAISON ENTRE TYPES DIFFERENTS (conversion implicite)
+WHERE code_client = 12345                    -- si code_client est du TEXTE : index perdu
+WHERE code_client = '12345'                  -- index utilise
+
+-- 4) LA NEGATION
+WHERE statut &lt;&gt; 'livree'                     -- souvent un balayage complet
+WHERE statut IN ('en_cours','annulee')       -- souvent bien meilleur
+
+-- 5) OR sur des colonnes differentes
+WHERE nom = 'X' OR ville = 'Y'               -- souvent un balayage
+-- --&gt; parfois plus rapide en deux SELECT relies par UNION</pre>
+<div class="tip">Certains SGBD offrent une parade à la règle 1 : l <strong>index sur expression</strong> (ou index fonctionnel). <code>CREATE INDEX ix ON CLIENT(LOWER(email));</code> fonctionne en PostgreSQL, Oracle et SQLite. SQL Server exige une colonne calculée persistée. MySQL 8+ le permet via un index sur colonne générée.</div>
+
+<h3>7. Que faut-il indexer ?</h3>
+<pre class="pseudo">-- A INDEXER :
+--   * les cles primaires (fait automatiquement)
+--   * les cles etrangeres (PAS automatique en PostgreSQL ni SQL Server !)
+--   * les colonnes des WHERE frequents
+--   * les colonnes des JOIN
+--   * les colonnes des ORDER BY sur gros volumes
+
+-- A NE PAS INDEXER :
+--   * les colonnes a tres faible cardinalite (actif = 0/1) : l index ne trie rien
+--   * les tables minuscules : le balayage est plus rapide que l index
+--   * les colonnes tres souvent mises a jour : chaque UPDATE remet l index a jour
+--   * tout, au hasard : chaque index ralentit INSERT, UPDATE et DELETE</pre>
+<div class="warn">Un index n est pas gratuit. Il occupe de l espace disque, et surtout il doit être mis à jour à <strong>chaque écriture</strong>. Une table avec quinze index est très rapide en lecture et lamentable en insertion. L indexation est un arbitrage lecture/écriture, pas une amélioration universelle.</div>
+
+<h3>8. L index couvrant</h3>
+<pre class="pseudo">-- Si l index contient TOUTES les colonnes dont la requete a besoin,
+-- le SGBD n a meme pas besoin d ouvrir la table : il lit l index et repart.
+-- PostgreSQL appelle ca un « Index Only Scan », MySQL « Using index ».
+
+CREATE INDEX ix_couvrant ON COMMANDE(id_client, date_cmd, montant);
+
+SELECT date_cmd, montant                     -- toutes ces colonnes...
+FROM COMMANDE
+WHERE id_client = 42;                        -- ...sont dans l index --&gt; table jamais lue
+
+-- SQL Server propose une syntaxe dediee, tres pratique :
+CREATE INDEX ix ON COMMANDE(id_client) INCLUDE (date_cmd, montant);
+-- les colonnes INCLUDE ne servent pas a la recherche, seulement a la restitution.</pre>
+
+<h3>9. Les statistiques</h3>
+<pre class="pseudo">-- L optimiseur decide a partir de STATISTIQUES sur la repartition des donnees.
+-- Si elles sont perimees (apres un gros import), il choisit mal.
+
+-- MySQL      : ANALYZE TABLE commande;
+-- PostgreSQL : ANALYZE commande;   ou  VACUUM ANALYZE commande;
+-- SQL Server : UPDATE STATISTICS commande;
+-- Oracle     : EXEC DBMS_STATS.GATHER_TABLE_STATS('SCHEMA','COMMANDE');
+
+-- Symptome typique : dans EXPLAIN ANALYZE, l estimation dit 100 lignes
+-- et le reel en donne 2 000 000. Le plan choisi est alors forcement mauvais.
+-- Reflexe : rafraichir les statistiques APRES tout import massif.</pre>
+
+<h3>10. La méthode de diagnostic</h3>
+<pre class="pseudo">-- 1. Mesurer : quelle requete est reellement lente ? (log des requetes lentes)
+-- 2. EXPLAIN ANALYZE sur cette requete
+-- 3. Chercher les Seq Scan / type ALL sur les GROSSES tables
+-- 4. Verifier l ecart estime / reel --&gt; rafraichir les statistiques si besoin
+-- 5. Verifier que le WHERE n empeche pas l usage d un index (fonctions, LIKE '%...')
+-- 6. Creer l index manquant, ou reecrire la requete
+-- 7. RE-MESURER : sans mesure avant/apres, on ne sait rien
+-- 8. Verifier l impact sur les ECRITURES, pas seulement sur la lecture</pre>
+<div class="tip">N optimise jamais à l aveugle. La règle est : mesurer, comprendre, corriger, re-mesurer. Un index ajouté « au cas où » est souvent un index qui ralentit les écritures sans jamais servir en lecture.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle instruction affiche le plan d exécution en MySQL et PostgreSQL ?", ph: "EXP...", a: ["EXPLAIN"], exp: "EXPLAIN pour l estimation, EXPLAIN ANALYZE pour les chiffres réels." },
+    { type: "qcm", q: "Quelle différence entre EXPLAIN et EXPLAIN ANALYZE ?", opts: ["Aucune", "EXPLAIN estime, EXPLAIN ANALYZE exécute vraiment et mesure", "ANALYZE est plus rapide", "ANALYZE crée un index"], a: 1, exp: "Attention : sur un UPDATE, EXPLAIN ANALYZE modifie réellement les données." },
+    { type: "input", q: "Comment appelle-t-on la structure auxiliaire qui accélère la recherche d une valeur ?", ph: "un i...", a: ["INDEX", "UN INDEX"], exp: "Comme l index alphabétique d un livre : on évite de tout lire." },
+    { type: "qcm", q: "Dans un plan PostgreSQL, Seq Scan sur une table de 10 millions de lignes signifie…", opts: ["Un accès optimal", "Un balayage complet : souvent le problème à corriger", "Une jointure", "Un tri"], a: 1, exp: "Sur une petite table c est normal ; sur une grosse, c est le premier suspect." },
+    { type: "input", q: "En MySQL, quelle valeur de la colonne type signale un balayage complet ?", ph: "A...", a: ["ALL"], exp: "type = ALL : le moteur lit toute la table." },
+    { type: "qcm", q: "WHERE YEAR(date_cmd) = 2024 pose problème car…", opts: ["La syntaxe est fausse", "La fonction appliquée à la colonne empêche l usage de l index", "YEAR n existe pas", "2024 doit être entre guillemets"], a: 1, exp: "Réécris en WHERE date_cmd >= '2024-01-01' AND date_cmd < '2025-01-01'." },
+    { type: "qcm", q: "Quel LIKE peut utiliser un index ?", opts: ["LIKE '%dupont'", "LIKE '%dupont%'", "LIKE 'dupont%'", "Aucun"], a: 2, exp: "Le début de la chaîne doit être connu pour parcourir l arbre trié." },
+    { type: "input", q: "Comment s appelle la règle disant qu un index sur (a,b,c) ne sert pas pour une recherche sur b seul ?", ph: "le prefixe g...", a: ["PREFIXE GAUCHE", "LE PREFIXE GAUCHE", "préfixe gauche"], exp: "Comme un annuaire trié par nom puis prénom : inutile pour chercher un prénom." },
+    { type: "vf", q: "Ajouter beaucoup d index améliore la base dans tous les cas.", a: false, exp: "Chaque index ralentit les INSERT, UPDATE et DELETE : c est un arbitrage." },
+    { type: "qcm", q: "Faut-il indexer une colonne actif ne contenant que 0 et 1 ?", opts: ["Oui, toujours", "Non : la cardinalité est trop faible, l index ne discrimine rien", "Seulement en MySQL", "Uniquement avec UNIQUE"], a: 1, exp: "L index ne réduit presque pas le nombre de lignes à lire." },
+    { type: "input", q: "Comment appelle-t-on un index contenant toutes les colonnes nécessaires à la requête ?", ph: "un index c...", a: ["COUVRANT", "INDEX COUVRANT", "couvrant"], exp: "Index Only Scan en PostgreSQL, Using index en MySQL : la table n est jamais lue." },
+    { type: "qcm", q: "Quelle syntaxe SQL Server ajoute des colonnes de restitution à un index ?", opts: ["WITH", "INCLUDE", "COVERING", "APPEND"], a: 1, exp: "CREATE INDEX ix ON t(a) INCLUDE (b, c)." },
+    { type: "input", q: "Quelle commande rafraîchit les statistiques en PostgreSQL ?", ph: "A...", a: ["ANALYZE", "VACUUM ANALYZE"], exp: "MySQL : ANALYZE TABLE. SQL Server : UPDATE STATISTICS." },
+    { type: "qcm", q: "Un gros écart entre lignes estimées et lignes réelles dans un plan indique…", opts: ["Un index manquant", "Des statistiques périmées, à rafraîchir", "Une erreur de syntaxe", "Un verrou"], a: 1, exp: "L optimiseur décide sur de fausses informations : le plan choisi est forcément mauvais." },
+    { type: "vf", q: "Les clés étrangères sont automatiquement indexées en PostgreSQL et SQL Server.", a: false, exp: "Seul MySQL/InnoDB le fait. Ailleurs, il faut créer l index à la main — oubli très fréquent." }
+  ],
+  final: {
+    title: "Exercice final — Diagnostiquer une requête lente",
+    intro: `<p>Cette requête met 45 secondes sur une table de 8 millions de lignes.</p>
+<pre class="pseudo">SELECT c.id, c.montant, c.date_cmd
+FROM COMMANDE c
+WHERE YEAR(c.date_cmd) = 2024
+  AND UPPER(c.statut) = 'LIVREE'
+ORDER BY c.date_cmd DESC;
+
+-- EXPLAIN indique : type = ALL, rows = 8 000 000, Extra = Using filesort
+-- Index existants : uniquement la cle primaire sur c.id</pre>`,
+    questions: [
+      { type: "qcm", q: "Que signifie type = ALL ?", opts: ["Toutes les colonnes sont lues", "Le moteur balaie les 8 millions de lignes", "Tous les index sont utilisés", "La requête est optimale"], a: 1, exp: "Balayage complet : aucun index n est exploité." },
+      { type: "input", q: "Quelle construction de la requête rend un index sur date_cmd inutilisable ?", ph: "la f...", a: ["FONCTION", "LA FONCTION", "YEAR", "fonction sur la colonne"], exp: "YEAR(c.date_cmd) empêche l usage de l index : il faut un intervalle de dates." },
+      { type: "qcm", q: "Comment réécrire le filtre sur l année ?", opts: ["WHERE YEAR(date_cmd) = 2024", "WHERE date_cmd >= '2024-01-01' AND date_cmd < '2025-01-01'", "WHERE date_cmd LIKE '2024%'", "WHERE CAST(date_cmd AS CHAR) = '2024'"], a: 1, exp: "Un intervalle permet au moteur de parcourir l index trié." },
+      { type: "input", q: "Que faut-il faire de la colonne statut pour se passer du UPPER ?", ph: "la n...", a: ["NORMALISER", "LA NORMALISER", "normaliser"], exp: "Normaliser la casse en base une fois pour toutes (jour 28), puis comparer directement." },
+      { type: "qcm", q: "Que signale Using filesort ?", opts: ["Une erreur disque", "Un tri coûteux, qu un index sur date_cmd pourrait éviter", "Un index manquant sur id", "Un verrou"], a: 1, exp: "Un index trié sur date_cmd fournirait directement l ordre demandé." }
+    ],
+    solution: `<pre class="pseudo">-- ===== DIAGNOSTIC =====
+-- 1) YEAR(date_cmd) : fonction sur colonne --&gt; tout index sur date_cmd est neutralise
+-- 2) UPPER(statut)  : meme probleme sur statut
+-- 3) Aucun index sur date_cmd ni statut : il n y a de toute facon rien a utiliser
+-- 4) Using filesort : le ORDER BY trie 8 millions de lignes en memoire/disque
+
+-- ===== CORRECTION 1 : normaliser les donnees une fois pour toutes (jour 28) =====
+BEGIN;
+  UPDATE COMMANDE
+  SET statut = LOWER(TRIM(statut))
+  WHERE statut &lt;&gt; LOWER(TRIM(statut));       -- ne toucher que le necessaire
+  SELECT statut, COUNT(*) FROM COMMANDE GROUP BY statut;   -- controle
+COMMIT;
+-- On pose ensuite une contrainte pour que ca reste propre (jour 27) :
+ALTER TABLE COMMANDE ADD CONSTRAINT ck_statut
+  CHECK (statut IN ('en_cours','livree','annulee'));
+
+-- ===== CORRECTION 2 : reecrire la requete pour laisser les index travailler =====
+SELECT c.id, c.montant, c.date_cmd
+FROM COMMANDE c
+WHERE c.date_cmd &gt;= '2024-01-01'             -- intervalle : index UTILISABLE
+  AND c.date_cmd &lt;  '2025-01-01'             -- borne haute EXCLUE (pas de BETWEEN
+                                              -- pour eviter le piege des heures)
+  AND c.statut = 'livree'                    -- plus de UPPER : index utilisable
+ORDER BY c.date_cmd DESC;
+
+-- ===== CORRECTION 3 : creer le bon index composite =====
+CREATE INDEX ix_cmd_statut_date ON COMMANDE(statut, date_cmd);
+-- POURQUOI CET ORDRE ?
+--   statut en premier   : c est une egalite, elle reduit d abord le champ
+--   date_cmd en second  : c est un intervalle, ET il fournit le tri du ORDER BY
+-- Regle generale : les colonnes d EGALITE avant les colonnes d INTERVALLE.
+
+-- Version encore meilleure : un index COUVRANT
+CREATE INDEX ix_cmd_couvrant ON COMMANDE(statut, date_cmd, montant, id);
+-- Toutes les colonnes du SELECT sont dans l index --&gt; la table n est jamais lue.
+-- SQL Server, syntaxe equivalente et plus propre :
+--   CREATE INDEX ix ON COMMANDE(statut, date_cmd) INCLUDE (montant, id);
+
+-- ===== CORRECTION 4 : rafraichir les statistiques =====
+ANALYZE TABLE COMMANDE;                       -- MySQL
+-- PostgreSQL : ANALYZE COMMANDE;
+-- SQL Server : UPDATE STATISTICS COMMANDE;
+
+-- ===== RE-MESURER (l etape que tout le monde oublie) =====
+EXPLAIN ANALYZE
+SELECT c.id, c.montant, c.date_cmd
+FROM COMMANDE c
+WHERE c.date_cmd &gt;= '2024-01-01' AND c.date_cmd &lt; '2025-01-01'
+  AND c.statut = 'livree'
+ORDER BY c.date_cmd DESC;
+
+-- AVANT : type = ALL,  rows = 8 000 000, Using filesort   --&gt; 45 s
+-- APRES : type = range, rows = 180 000,  Using index      --&gt; 0,3 s
+--         (le filesort a disparu : l index fournit deja l ordre)
+
+-- ===== ET LE COUT ? =====
+-- L index composite occupe environ 300 Mo et ralentit chaque INSERT
+-- d une fraction de milliseconde. Sur une table lue mille fois par jour
+-- et alimentee par lots nocturnes, l arbitrage est evident.
+-- Sur une table d ecriture intensive, il faudrait le remettre en question.</pre>
+<p>Tu sais diagnostiquer. Demain, le projet final : tout ce que tu as appris, sur un vrai jeu de données sale.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j30", title: "Optimiser un rapport mensuel", level: 3,
+    statement: "Ce rapport met 90 secondes sur COMMANDE (12 millions de lignes) et CLIENT (400 000 lignes) : SELECT UPPER(cl.pays) AS pays, COUNT(*) AS nb, SUM(c.montant) AS ca FROM COMMANDE c JOIN CLIENT cl ON cl.id = c.id_client WHERE MONTH(c.date_cmd) = 6 AND YEAR(c.date_cmd) = 2024 AND cl.email LIKE '%@gmail.com' GROUP BY UPPER(cl.pays) ORDER BY ca DESC. Le seul index existant est la clé primaire de chaque table. Rédige le diagnostic complet (chaque problème identifié et expliqué), la requête réécrite, les index à créer avec justification de l ordre des colonnes, et la procédure de mesure avant/après.",
+    hints: [
+      "Repère toutes les fonctions appliquées à des colonnes dans le WHERE et le GROUP BY : chacune neutralise un index potentiel.",
+      "Le LIKE '%@gmail.com' commence par un joker : aucun index B-tree ne peut servir. Réfléchis à une colonne dérivée (le domaine de l email, extrait et stocké) qui, elle, serait indexable.",
+      "Dans un index composite, place les colonnes d égalité avant les colonnes d intervalle, et pense à ce que l index peut aussi fournir le tri ou couvrir les colonnes du SELECT."
+    ],
+    solution: "-- ============ DIAGNOSTIC : 5 PROBLEMES ============\n--\n-- P1. MONTH(c.date_cmd) et YEAR(c.date_cmd)\n--     Deux fonctions sur la colonne date_cmd. Meme si un index existait sur\n--     date_cmd, il serait totalement inutilisable : le moteur doit calculer\n--     MONTH() sur les 12 millions de lignes avant de pouvoir filtrer.\n--\n-- P2. cl.email LIKE '%@gmail.com'\n--     Le joker en debut de motif rend tout index B-tree inoperant :\n--     l arbre est trie par le DEBUT de la chaine, qui est ici inconnu.\n--     --> balayage complet des 400 000 clients.\n--\n-- P3. Aucun index sur c.id_client\n--     La cle etrangere n est pas indexee. En PostgreSQL et SQL Server ce n est\n--     JAMAIS automatique. La jointure doit donc reconstruire une table de\n--     hachage sur 12 millions de lignes a chaque execution.\n--\n-- P4. GROUP BY UPPER(cl.pays)\n--     Fonction dans le GROUP BY : aucun index ne peut fournir le regroupement,\n--     et le UPPER est recalcule pour chaque ligne rapprochee.\n--\n-- P5. Statistiques probablement perimees\n--     A verifier dans EXPLAIN ANALYZE : si l estimation et le reel divergent\n--     d un facteur superieur a 10, l optimiseur decide sur de fausses donnees.\n\n-- ============ MESURE AVANT ============\nEXPLAIN ANALYZE\nSELECT UPPER(cl.pays) AS pays, COUNT(*) AS nb, SUM(c.montant) AS ca\nFROM COMMANDE c\nJOIN CLIENT cl ON cl.id = c.id_client\nWHERE MONTH(c.date_cmd) = 6 AND YEAR(c.date_cmd) = 2024\n  AND cl.email LIKE '%@gmail.com'\nGROUP BY UPPER(cl.pays)\nORDER BY ca DESC;\n-- Noter : temps total, type d acces de chaque table, lignes estimees/reelles.\n-- Constate : Seq Scan COMMANDE (12 000 000), Seq Scan CLIENT (400 000),\n--            Hash Join, Sort --> 90 s\n\n-- ============ CORRECTION 1 : NORMALISER LES DONNEES (jour 28) ============\n-- Le pays doit etre stocke deja en majuscules, une fois pour toutes.\nBEGIN;\n  UPDATE CLIENT\n  SET pays = UPPER(TRIM(pays))\n  WHERE pays <> UPPER(TRIM(pays));          -- ne toucher que les lignes sales\n  SELECT pays, COUNT(*) FROM CLIENT GROUP BY pays;   -- controle\nCOMMIT;\nALTER TABLE CLIENT ADD CONSTRAINT ck_pays CHECK (pays = UPPER(pays));\n\n-- ============ CORRECTION 2 : COLONNE DERIVEE POUR LE DOMAINE ============\n-- Le LIKE '%@gmail.com' est irremediable tel quel. La parade consiste a\n-- extraire le domaine UNE FOIS et a l indexer : le filtre devient une egalite.\nALTER TABLE CLIENT ADD COLUMN domaine_email VARCHAR(100);\n\nBEGIN;\n  UPDATE CLIENT\n  SET domaine_email = LOWER(SUBSTRING(email FROM POSITION('@' IN email) + 1))\n  WHERE email LIKE '%@%';\n  -- MySQL      : SUBSTRING_INDEX(email, '@', -1)\n  -- SQL Server : RIGHT(email, LEN(email) - CHARINDEX('@', email))\n  SELECT domaine_email, COUNT(*) FROM CLIENT\n  GROUP BY domaine_email ORDER BY COUNT(*) DESC;     -- controle\nCOMMIT;\n\nCREATE INDEX ix_client_domaine ON CLIENT(domaine_email);\n-- Variante sans nouvelle colonne, si le SGBD le permet :\n--   PostgreSQL / Oracle / SQLite : index sur expression\n--     CREATE INDEX ix ON CLIENT(LOWER(SUBSTRING(email FROM POSITION('@' IN email)+1)));\n--   MySQL 8+   : colonne generee (GENERATED ALWAYS AS ... STORED) puis index dessus\n--   SQL Server : colonne calculee PERSISTED puis index dessus\n\n-- ============ CORRECTION 3 : LES INDEX ============\n\n-- 3a) La cle etrangere, indispensable pour la jointure\nCREATE INDEX ix_cmd_client ON COMMANDE(id_client);\n\n-- 3b) L index sur la date, exploitable par un intervalle\nCREATE INDEX ix_cmd_date ON COMMANDE(date_cmd, id_client, montant);\n-- JUSTIFICATION DE L ORDRE :\n--   date_cmd EN PREMIER  : c est le filtre le plus selectif de la requete\n--                          (1 mois sur ~48 --> environ 2 % des lignes) et il\n--                          est utilise en INTERVALLE, ce qui n a de sens qu en\n--                          tete d index (une colonne d intervalle « ferme »\n--                          l index : les colonnes suivantes ne servent plus\n--                          a la recherche).\n--   id_client EN DEUXIEME: fourni pour la jointure sans retour a la table.\n--   montant EN TROISIEME : colonne de restitution --> index COUVRANT,\n--                          la table COMMANDE n est jamais lue.\n-- SQL Server, formulation plus propre du meme index :\n--   CREATE INDEX ix ON COMMANDE(date_cmd) INCLUDE (id_client, montant);\n\n-- 3c) Index couvrant cote CLIENT\nCREATE INDEX ix_client_dom_pays ON CLIENT(domaine_email, pays, id);\n-- domaine_email EN PREMIER : filtre d EGALITE (regle : egalites avant intervalles)\n-- pays et id                : restitution et jointure --> couvrant\n\n-- ============ CORRECTION 4 : LA REQUETE REECRITE ============\nSELECT cl.pays,                          -- plus de UPPER : deja normalise\n       COUNT(*)        AS nb,\n       SUM(c.montant)  AS ca\nFROM COMMANDE c\nJOIN CLIENT cl ON cl.id = c.id_client\nWHERE c.date_cmd >= '2024-06-01'         -- INTERVALLE : index utilisable\n  AND c.date_cmd <  '2024-07-01'         -- borne haute EXCLUE (gere les heures\n                                          -- du 30 juin, contrairement a BETWEEN)\n  AND cl.domaine_email = 'gmail.com'     -- EGALITE : index utilisable\nGROUP BY cl.pays                         -- plus de fonction dans le GROUP BY\nORDER BY ca DESC;\n\n-- ============ CORRECTION 5 : STATISTIQUES ============\nANALYZE TABLE COMMANDE; ANALYZE TABLE CLIENT;      -- MySQL\n-- PostgreSQL : ANALYZE COMMANDE; ANALYZE CLIENT;\n-- SQL Server : UPDATE STATISTICS COMMANDE; UPDATE STATISTICS CLIENT;\n\n-- ============ MESURE APRES ============\nEXPLAIN ANALYZE\nSELECT cl.pays, COUNT(*) AS nb, SUM(c.montant) AS ca\nFROM COMMANDE c\nJOIN CLIENT cl ON cl.id = c.id_client\nWHERE c.date_cmd >= '2024-06-01' AND c.date_cmd < '2024-07-01'\n  AND cl.domaine_email = 'gmail.com'\nGROUP BY cl.pays\nORDER BY ca DESC;\n\n-- AVANT : Seq Scan COMMANDE (12 000 000) + Seq Scan CLIENT (400 000)\n--         Hash Join, Sort, Using filesort              --> 90 s\n-- APRES : Index Range Scan COMMANDE (~240 000 lignes)\n--         Index Seek CLIENT (~90 000 lignes), Index Only Scan\n--                                                       --> 0,8 s\n\n-- ============ ET LE COUT ? ============\n-- Les trois index ajoutes occupent environ 900 Mo et ralentissent chaque\n-- INSERT dans COMMANDE. Sur une table alimentee par lots nocturnes et lue\n-- en continu, l arbitrage est largement favorable.\n-- Sur une table d ecriture intensive en journee, il faudrait mesurer\n-- l impact des INSERT avant de conclure : un gain en lecture peut se payer\n-- tres cher en ecriture.",
+    note: "Le point le plus instructif de cet exercice est la colonne domaine_email. Face à un LIKE '%...', beaucoup concluent « on ne peut rien faire ». La bonne réponse est de changer la question : au lieu de chercher une sous-chaîne, on stocke l information cherchée dans une colonne dédiée, et le filtre devient une égalité indexable. C est la même logique qu au jour 28 avec la normalisation — le travail fait une fois à l écriture évite un travail fait des millions de fois à la lecture. Retiens aussi la règle d ordre des colonnes composites : égalités d abord, intervalle ensuite, colonnes de restitution à la fin. Une colonne utilisée en intervalle « ferme » l index : ce qui vient après ne sert plus à chercher, seulement à couvrir." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

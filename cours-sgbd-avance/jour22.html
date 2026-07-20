@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 22</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 22,
+  title: "Comparer avec la ligne voisine : LAG et LEAD",
+  subtitle: "Regarder en arrière et en avant dans le classement, sans auto-jointure.",
+  theory: `
+<h3>1. Le besoin : « et par rapport au mois dernier ? »</h3>
+<p>Un tableau de chiffre d affaires mensuel n a d intérêt que si l on voit l <strong>évolution</strong> : combien de plus ou de moins que le mois précédent ? Quel pourcentage de croissance ? Combien de jours entre deux commandes d un même client ?</p>
+<p>Toutes ces questions ont un point commun : elles comparent une ligne à sa <strong>voisine</strong>. En SQL classique, il faut une auto-jointure pénible sur « le mois - 1 », qui se casse dès qu il manque un mois. Les fonctions <code>LAG</code> et <code>LEAD</code> règlent le problème en une ligne.</p>
+
+<h3>2. Définitions</h3>
+<p>• <code>LAG(colonne)</code> — « traîner derrière ». Renvoie la valeur de la colonne sur la ligne <strong>PRÉCÉDENTE</strong> de la fenêtre.<br>
+• <code>LEAD(colonne)</code> — « devancer ». Renvoie la valeur de la colonne sur la ligne <strong>SUIVANTE</strong> de la fenêtre.</p>
+<div class="tip"><strong>L analogie :</strong> tu es dans une file d attente. <code>LAG</code>, c est te retourner pour regarder la personne derrière toi dans l ordre d arrivée — celle qui est arrivée juste avant. <code>LEAD</code>, c est regarder devant. Toi, tu ne bouges pas : tu récupères simplement une info du voisin et tu la poses à côté de la tienne.</div>
+<div class="warn">Ces fonctions n ont AUCUN sens sans <code>ORDER BY</code> dans le <code>OVER()</code>. « La ligne précédente » n existe que s il y a un ordre. La plupart des SGBD lèvent d ailleurs une erreur si tu l oublies.</div>
+
+<h3>3. La syntaxe complète</h3>
+<pre class="pseudo">LAG(colonne, decalage, valeur_par_defaut) OVER (PARTITION BY ... ORDER BY ...)
+--    ^         ^            ^
+--    |         |            +-- ce qu on renvoie s il n y a pas de voisin (sinon NULL)
+--    |         +-- de combien de lignes on recule (1 par defaut)
+--    +-- la colonne dont on veut la valeur
+
+LEAD(colonne, decalage, valeur_par_defaut) OVER (...)   -- meme chose vers l avant</pre>
+
+<h3>4. Un exemple complet</h3>
+<pre class="pseudo">SELECT mois,
+       ca,
+       LAG(ca)  OVER (ORDER BY mois) AS ca_mois_precedent,  -- la ligne d avant
+       LEAD(ca) OVER (ORDER BY mois) AS ca_mois_suivant     -- la ligne d apres
+FROM CA_MENSUEL;</pre>
+<pre class="pseudo">-- mois    |   ca | ca_mois_precedent | ca_mois_suivant
+-- --------+------+-------------------+----------------
+-- 2024-01 | 1000 |              NULL | 1200            &lt;-- pas de precedent
+-- 2024-02 | 1200 |              1000 | 900
+-- 2024-03 |  900 |              1200 | 1500
+-- 2024-04 | 1500 |               900 | NULL            &lt;-- pas de suivant</pre>
+<p>Les <strong>bords</strong> valent <code>NULL</code> : la première ligne n a pas de précédente, la dernière n a pas de suivante. C est normal et c est à gérer.</p>
+
+<h3>5. Le calcul d évolution</h3>
+<pre class="pseudo">SELECT mois,
+       ca,
+       LAG(ca) OVER (ORDER BY mois)              AS ca_precedent,
+       ca - LAG(ca) OVER (ORDER BY mois)         AS variation,     -- ecart brut
+       ROUND(
+         100.0 * (ca - LAG(ca) OVER (ORDER BY mois))
+               / LAG(ca) OVER (ORDER BY mois)
+       , 1)                                       AS croissance_pct
+FROM CA_MENSUEL;
+
+-- mois    |   ca | ca_precedent | variation | croissance_pct
+-- --------+------+--------------+-----------+---------------
+-- 2024-01 | 1000 |         NULL |      NULL |           NULL
+-- 2024-02 | 1200 |         1000 |       200 |           20.0
+-- 2024-03 |  900 |         1200 |      -300 |          -25.0
+-- 2024-04 | 1500 |          900 |       600 |           66.7</pre>
+<div class="tip">Pour éviter les NULL sur la première ligne, utilise le troisième argument : <code>LAG(ca, 1, 0)</code> renvoie 0 au lieu de NULL. Attention toutefois : une division par 0 planterait le pourcentage. Mieux vaut souvent laisser le NULL, ou protéger avec <code>NULLIF(LAG(ca) OVER (...), 0)</code>.</div>
+
+<h3>6. LAG avec PARTITION BY : par client, par produit…</h3>
+<pre class="pseudo">-- Le delai entre deux commandes d un MEME client
+SELECT client,
+       date_cmd,
+       LAG(date_cmd) OVER (
+         PARTITION BY client          -- on ne compare qu au sein d un meme client
+         ORDER BY date_cmd            -- dans l ordre chronologique
+       ) AS commande_precedente,
+       DATEDIFF(date_cmd, LAG(date_cmd) OVER (PARTITION BY client ORDER BY date_cmd))
+         AS jours_ecoules             -- syntaxe MySQL, voir plus bas
+FROM COMMANDE;
+
+-- client | date_cmd   | commande_precedente | jours_ecoules
+-- -------+------------+---------------------+--------------
+-- Alice  | 2024-01-10 |                NULL |          NULL
+-- Alice  | 2024-02-05 |          2024-01-10 |            26
+-- Alice  | 2024-04-01 |          2024-02-05 |            56
+-- Bob    | 2024-03-12 |                NULL |          NULL   &lt;-- reset par client
+-- Bob    | 2024-03-20 |          2024-03-12 |             8</pre>
+<div class="warn">Sans le <code>PARTITION BY client</code>, la première commande de Bob serait comparée à la dernière d Alice : un calcul absurde. La partition isole chaque entité.</div>
+
+<h3>7. Les variantes de dialecte</h3>
+<p><code>LAG</code> et <code>LEAD</code> s écrivent identiquement en MySQL 8+, MariaDB 10.2+, PostgreSQL, SQL Server 2012+, SQLite 3.25+ et Oracle. En revanche, ce qu on en fait ensuite diffère beaucoup :</p>
+<pre class="pseudo">-- CALCULER UN ECART DE DATES en jours :
+-- MySQL / MariaDB : DATEDIFF(date_fin, date_debut)          --&gt; ordre fin, debut !
+-- SQL Server      : DATEDIFF(day, date_debut, date_fin)     --&gt; unite en 1er argument
+-- PostgreSQL      : date_fin - date_debut                    --&gt; soustraction directe
+-- Oracle          : date_fin - date_debut                    --&gt; idem
+-- Standard        : (date_fin - date_debut) DAY, rarement implemente tel quel</pre>
+<pre class="pseudo">-- CONCATENER pour un libelle « janvier --&gt; fevrier » :
+-- MySQL / SQL Server 2012+ / PostgreSQL : CONCAT(a, ' vers ', b)
+-- PostgreSQL / Oracle / SQLite          : a || ' vers ' || b
+-- SQL Server (ancien)                   : a + ' vers ' + b</pre>
+<div class="warn">Le piège de DATEDIFF est classique : MySQL prend (fin, debut) et renvoie des jours ; SQL Server prend (unite, debut, fin). Les arguments sont dans un ordre différent ET le nombre d arguments diffère. Une requête copiée d un blog MySQL vers SQL Server donnera soit une erreur, soit un résultat de signe inversé.</div>
+
+<h3>8. Deux cousines utiles : FIRST_VALUE et LAST_VALUE</h3>
+<p>Là où LAG et LEAD regardent le voisin immédiat, ces deux-là regardent les <strong>extrémités</strong> de la fenêtre.</p>
+<pre class="pseudo">SELECT client, date_cmd, montant,
+       FIRST_VALUE(montant) OVER (PARTITION BY client ORDER BY date_cmd)
+         AS montant_1re_commande      -- la toute premiere commande du client
+FROM COMMANDE;</pre>
+<div class="warn"><code>LAST_VALUE</code> est un piège célèbre : par défaut, la fenêtre s arrête à la ligne courante, donc LAST_VALUE renvoie… la ligne courante. Pour obtenir la vraie dernière valeur, il faut élargir le cadre : <code>LAST_VALUE(x) OVER (PARTITION BY c ORDER BY d ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)</code>. Le cadre, c est le sujet de demain.</div>
+
+<h3>9. Détecter les trous et les ruptures</h3>
+<pre class="pseudo">-- Reperer un saut dans une numerotation de factures
+WITH f AS (
+  SELECT num_facture,
+         LAG(num_facture) OVER (ORDER BY num_facture) AS precedent
+  FROM FACTURE
+)
+SELECT precedent, num_facture, num_facture - precedent - 1 AS nb_manquants
+FROM f
+WHERE num_facture - precedent &gt; 1;    -- il manque au moins un numero</pre>
+<p>C est un contrôle qualité redoutablement efficace : numéros de facture, séries de capteurs, identifiants d import. On y reviendra au jour 26.</p>`,
+  exercises: [
+    { type: "input", q: "Quelle fonction renvoie la valeur de la ligne PRÉCÉDENTE ?", ph: "L...", a: ["LAG", "LAG()"], exp: "LAG = traîner derrière, donc regarder en arrière." },
+    { type: "input", q: "Quelle fonction renvoie la valeur de la ligne SUIVANTE ?", ph: "L...", a: ["LEAD", "LEAD()"], exp: "LEAD = devancer, donc regarder en avant." },
+    { type: "vf", q: "LAG peut s utiliser sans ORDER BY dans le OVER().", a: false, exp: "Sans ordre, « la ligne précédente » n a aucun sens : la plupart des SGBD refusent la requête." },
+    { type: "qcm", q: "Que renvoie LAG(ca) sur la toute première ligne de la fenêtre ?", opts: ["0", "NULL", "La dernière ligne", "Une erreur"], a: 1, exp: "Il n y a pas de précédent : le résultat est NULL, sauf si on fournit une valeur par défaut." },
+    { type: "qcm", q: "À quoi sert le troisième argument de LAG(ca, 1, 0) ?", opts: ["Au nombre de décimales", "À la valeur renvoyée quand il n y a pas de voisin", "À l ordre de tri", "À la partition"], a: 1, exp: "LAG(ca, 1, 0) renvoie 0 au lieu de NULL sur la première ligne." },
+    { type: "qcm", q: "Que fait le deuxième argument de LAG(ca, 3) ?", opts: ["Il arrondit à 3 décimales", "Il remonte de 3 lignes en arrière au lieu d une", "Il limite à 3 lignes", "Il crée 3 partitions"], a: 1, exp: "Le décalage vaut 1 par défaut ; on peut remonter plus loin." },
+    { type: "input", q: "Quelle clause de OVER() empêche de comparer la première commande de Bob à la dernière d Alice ?", ph: "PART...", a: ["PARTITION BY", "PARTITION"], exp: "PARTITION BY client isole chaque client : LAG redevient NULL au début de chaque groupe." },
+    { type: "qcm", q: "La croissance en pourcentage par rapport au mois précédent s écrit…", opts: ["ca / LAG(ca)", "100.0 * (ca - LAG(ca) OVER (ORDER BY mois)) / LAG(ca) OVER (ORDER BY mois)", "SUM(ca) OVER ()", "RANK() OVER (ORDER BY ca)"], a: 1, exp: "Variation divisée par la valeur de référence, multipliée par 100." },
+    { type: "qcm", q: "En MySQL, l écart en jours entre deux dates s écrit…", opts: ["DATEDIFF(day, debut, fin)", "DATEDIFF(fin, debut)", "fin - debut", "DATE_DIFF(fin, debut)"], a: 1, exp: "MySQL prend deux arguments dans l ordre (fin, debut) et renvoie des jours." },
+    { type: "qcm", q: "En SQL Server, l écart en jours entre deux dates s écrit…", opts: ["DATEDIFF(fin, debut)", "DATEDIFF(day, debut, fin)", "fin - debut", "DAYS(fin, debut)"], a: 1, exp: "SQL Server exige l unité en premier argument, puis debut puis fin." },
+    { type: "vf", q: "En PostgreSQL, on peut simplement soustraire deux dates pour obtenir un nombre de jours.", a: true, exp: "date_fin - date_debut renvoie directement un entier de jours." },
+    { type: "input", q: "Quelle fonction renvoie la première valeur de la fenêtre ?", ph: "FIRST_...", a: ["FIRST_VALUE", "FIRST_VALUE()"], exp: "Utile pour ramener la valeur de référence (première commande, prix initial…)." },
+    { type: "qcm", q: "Pourquoi LAST_VALUE renvoie-t-il souvent la ligne courante ?", opts: ["C est un bug", "Le cadre par défaut s arrête à la ligne courante", "Il faut un index", "LAST_VALUE n existe pas"], a: 1, exp: "Il faut élargir le cadre avec ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING." },
+    { type: "vf", q: "LAG et LEAD s écrivent de la même façon en MySQL 8, PostgreSQL et SQL Server.", a: true, exp: "La syntaxe est portable ; ce sont les fonctions de date autour qui diffèrent." },
+    { type: "qcm", q: "Pour détecter un numéro de facture manquant, on écrit…", opts: ["COUNT(*) OVER ()", "WHERE num_facture - LAG(num_facture) OVER (ORDER BY num_facture) > 1 (via une CTE)", "GROUP BY num_facture", "DISTINCT num_facture"], a: 1, exp: "Un écart supérieur à 1 entre deux numéros consécutifs signale un trou." }
+  ],
+  final: {
+    title: "Exercice final — L évolution du chiffre d affaires",
+    intro: `<p>Le chiffre d affaires mensuel de deux boutiques.</p>
+<pre class="pseudo">-- CA_MOIS(boutique, mois, ca)
+-- boutique | mois    |   ca
+-- ---------+---------+------
+-- Nord     | 2024-01 | 1000
+-- Nord     | 2024-02 | 1200
+-- Nord     | 2024-03 |  900
+-- Sud      | 2024-01 |  500
+-- Sud      | 2024-02 |  750</pre>`,
+    questions: [
+      { type: "input", q: "Quelle fonction donne le CA du mois précédent ?", ph: "L...", a: ["LAG", "LAG()"], exp: "LAG(ca) OVER (PARTITION BY boutique ORDER BY mois)." },
+      { type: "qcm", q: "Que vaudra ca_precedent pour la ligne Sud / 2024-01 ?", opts: ["1000", "900", "NULL", "500"], a: 2, exp: "C est la première ligne de la partition Sud : pas de précédent." },
+      { type: "vf", q: "Sans PARTITION BY boutique, la ligne Sud/2024-01 serait comparée à Nord/2024-03.", a: true, exp: "Toutes les lignes formeraient une seule fenêtre triée : le résultat n aurait aucun sens métier." },
+      { type: "input", q: "Quelle sera la variation (en valeur) pour Nord / 2024-03 ?", ph: "un nombre", a: ["-300"], exp: "900 - 1200 = -300 : une baisse de 300." },
+      { type: "qcm", q: "Pour afficher aussi le CA du mois suivant, on ajoute…", opts: ["LAG(ca, -1)", "LEAD(ca) OVER (PARTITION BY boutique ORDER BY mois)", "MAX(ca) OVER ()", "NTILE(2)"], a: 1, exp: "LEAD regarde vers l avant dans la même fenêtre." }
+    ],
+    solution: `<pre class="pseudo">SELECT boutique,
+       mois,
+       ca,
+       LAG(ca)  OVER (PARTITION BY boutique ORDER BY mois) AS ca_precedent,
+       LEAD(ca) OVER (PARTITION BY boutique ORDER BY mois) AS ca_suivant,
+       ca - LAG(ca) OVER (PARTITION BY boutique ORDER BY mois) AS variation,
+       ROUND(
+         100.0 * (ca - LAG(ca) OVER (PARTITION BY boutique ORDER BY mois))
+               / NULLIF(LAG(ca) OVER (PARTITION BY boutique ORDER BY mois), 0)
+       , 1) AS croissance_pct,                    -- NULLIF protege de la division par 0
+       CASE
+         WHEN LAG(ca) OVER (PARTITION BY boutique ORDER BY mois) IS NULL THEN 'debut'
+         WHEN ca &gt; LAG(ca) OVER (PARTITION BY boutique ORDER BY mois) THEN 'hausse'
+         WHEN ca &lt; LAG(ca) OVER (PARTITION BY boutique ORDER BY mois) THEN 'baisse'
+         ELSE 'stable'
+       END AS tendance
+FROM CA_MOIS
+ORDER BY boutique, mois;
+
+-- boutique | mois    |   ca | ca_precedent | ca_suivant | variation | croissance_pct | tendance
+-- ---------+---------+------+--------------+------------+-----------+----------------+---------
+-- Nord     | 2024-01 | 1000 |         NULL |       1200 |      NULL |           NULL | debut
+-- Nord     | 2024-02 | 1200 |         1000 |        900 |       200 |           20.0 | hausse
+-- Nord     | 2024-03 |  900 |         1200 |       NULL |      -300 |          -25.0 | baisse
+-- Sud      | 2024-01 |  500 |         NULL |        750 |      NULL |           NULL | debut
+-- Sud      | 2024-02 |  750 |          500 |       NULL |       250 |           50.0 | hausse
+
+-- Astuce lisibilite : la meme fenetre est repetee 6 fois. On peut la nommer
+-- une seule fois avec la clause WINDOW (PostgreSQL, MySQL 8, SQLite ; PAS SQL Server) :
+--   ... FROM CA_MOIS WINDOW w AS (PARTITION BY boutique ORDER BY mois)
+--   et ecrire ensuite LAG(ca) OVER w, LEAD(ca) OVER w, etc.
+-- Autre solution portable : passer par une CTE qui calcule ca_precedent une fois.</pre>
+<p>Tu compares les lignes entre elles. Demain : les agrégats fenêtrés et les totaux cumulés.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j22", title: "Le délai entre deux commandes", level: 3,
+    statement: "La table COMMANDE(id, client, date_cmd, montant) contient l historique. Écris une requête qui affiche, pour chaque commande, la date de la commande précédente du MÊME client, le nombre de jours écoulés depuis, et un libellé indiquant si le client est revenu vite (moins de 30 jours), lentement (30 jours ou plus) ou s il s agit de sa première commande. Donne la version MySQL, et indique en commentaire les deux lignes à changer pour PostgreSQL et SQL Server.",
+    hints: [
+      "PARTITION BY client isole l historique de chaque client ; ORDER BY date_cmd le met en ordre chronologique.",
+      "La première commande d un client donne LAG = NULL : traite ce cas en premier dans le CASE WHEN, sinon les comparaisons renverront NULL.",
+      "MySQL : DATEDIFF(date_cmd, precedente). PostgreSQL : date_cmd - precedente. SQL Server : DATEDIFF(day, precedente, date_cmd)."
+    ],
+    solution: "-- VERSION MySQL / MariaDB\nWITH historique AS (\n  SELECT id,\n         client,\n         date_cmd,\n         montant,\n         LAG(date_cmd) OVER (\n           PARTITION BY client        -- l historique de CE client uniquement\n           ORDER BY date_cmd          -- ordre chronologique\n         ) AS date_precedente\n  FROM COMMANDE\n)\nSELECT client,\n       date_precedente,\n       date_cmd,\n       montant,\n       DATEDIFF(date_cmd, date_precedente) AS jours_ecoules,   -- MySQL : (fin, debut)\n       CASE\n         WHEN date_precedente IS NULL THEN 'premiere commande' -- a tester EN PREMIER\n         WHEN DATEDIFF(date_cmd, date_precedente) < 30 THEN 'retour rapide'\n         ELSE 'retour lent'\n       END AS fidelite\nFROM historique\nORDER BY client, date_cmd;\n\n-- client | date_precedente | date_cmd   | montant | jours_ecoules | fidelite\n-- -------+-----------------+------------+---------+---------------+------------------\n-- Alice  |            NULL | 2024-01-10 |   45.00 |          NULL | premiere commande\n-- Alice  |      2024-01-10 | 2024-02-05 |   80.00 |            26 | retour rapide\n-- Alice  |      2024-02-05 | 2024-04-01 |   30.00 |            56 | retour lent\n-- Bob    |            NULL | 2024-03-12 |  120.00 |          NULL | premiere commande\n-- Bob    |      2024-03-12 | 2024-03-20 |   60.00 |             8 | retour rapide\n\n-- POSTGRESQL : remplacer les 2 occurrences de\n--   DATEDIFF(date_cmd, date_precedente)\n-- par\n--   (date_cmd - date_precedente)\n--\n-- SQL SERVER : remplacer les 2 occurrences par\n--   DATEDIFF(day, date_precedente, date_cmd)\n-- (unite en premier, puis debut, puis fin — ordre inverse de MySQL)",
+    note: "Deux réflexes à retenir. Premièrement, l ordre des branches du CASE : tester le NULL en premier évite que les comparaisons suivantes renvoient silencieusement NULL et tombent dans le ELSE. Deuxièmement, DATEDIFF est le meilleur exemple du danger transversal : même nom de fonction, arguments dans un ordre différent selon le SGBD, et un résultat de signe inversé si on se trompe. Vérifie toujours la signature dans la documentation de TON moteur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

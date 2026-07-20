@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 07</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Les expressions régulières (REGEXP)",
+  subtitle: "Décrire un motif plutôt qu'une valeur : valider, extraire, remplacer en une seule expression.",
+  theory: `
+<h3>1. Qu'est-ce qu'une expression régulière ?</h3>
+<p>Une <strong>expression régulière</strong> (souvent abrégée <em>regex</em> ou <em>regexp</em>) est une petite formule qui décrit un <strong>motif</strong> de texte plutôt qu'un texte précis. Au lieu de dire « la valeur est 5000 », on dit « exactement quatre chiffres ». Au lieu d'écrire dix <code>REPLACE</code>, on dit « tout ce qui n'est pas un chiffre ».</p>
+<p>Tu connais déjà une version très pauvre de cette idée : <code>LIKE</code> avec ses jokers <code>%</code> (n'importe quelle suite de caractères) et <code>_</code> (exactement un caractère). Les regex sont infiniment plus expressives.</p>
+<pre class="pseudo">-- Ce que LIKE sait faire :
+WHERE code_postal LIKE '____'          -- 4 caracteres, mais N'IMPORTE lesquels : 'AB12' passe aussi
+
+-- Ce que seule une regex sait faire :
+WHERE code_postal ~ '^[0-9]{4}$'       -- exactement 4 CHIFFRES, ni plus, ni moins, rien d'autre</pre>
+
+<h3>2. Le vocabulaire de base</h3>
+<p>Une regex se lit caractère par caractère. Voici les briques indispensables :</p>
+<pre class="pseudo">-- ANCRES : ou le motif doit se trouver
+^        -- debut de la chaine
+$        -- fin de la chaine
+'^BE'    -- la chaine COMMENCE par BE
+'be$'    -- la chaine SE TERMINE par be
+'^BE$'   -- la chaine vaut EXACTEMENT BE
+
+-- CLASSES DE CARACTERES : quels caracteres sont acceptes a cette place
+[0-9]    -- un chiffre, de 0 a 9
+[a-z]    -- une lettre minuscule
+[A-Za-z] -- une lettre, minuscule ou majuscule
+[^0-9]   -- le circonflexe DANS les crochets signifie « TOUT SAUF » : tout sauf un chiffre
+.        -- n'importe quel caractere (un seul)
+
+-- QUANTIFICATEURS : combien de fois l'element precedent se repete
+*        -- zero fois ou plus
++        -- une fois ou plus
+?        -- zero ou une fois (l'element est facultatif)
+{4}      -- exactement 4 fois
+{2,5}    -- entre 2 et 5 fois
+{3,}     -- au moins 3 fois
+
+-- ALTERNATIVE et GROUPES
+|        -- OU : 'chat|chien' accepte l'un ou l'autre
+( )      -- groupe les elements : '^(BE|FR)[0-9]{4}$'</pre>
+<pre class="pseudo">-- Lecture pas a pas de '^[0-9]{4}$' :
+--   ^        la chaine commence ici
+--   [0-9]    un chiffre
+--   {4}      repete exactement 4 fois
+--   $        et la chaine se termine ici
+-- Traduction : « exactement quatre chiffres, rien avant, rien apres »</pre>
+
+<h3>3. Tester un motif : la syntaxe de chaque SGBD</h3>
+<div class="tip"><strong>MySQL / MariaDB</strong> : <code>colonne REGEXP 'motif'</code> ou <code>colonne RLIKE 'motif'</code>. Insensible à la casse par défaut (selon la collation). Depuis MySQL 8.0 : <code>REGEXP_LIKE(col, motif, 'c')</code>, où 'c' force la sensibilité à la casse.<br>
+<strong>PostgreSQL</strong> : l'opérateur <code>~</code> (sensible à la casse) et <code>~*</code> (insensible). Négation : <code>!~</code> et <code>!~*</code>.<br>
+<strong>SQL Server</strong> : <strong>pas de regex nativement</strong> avant la version 2025. On se rabat sur <code>LIKE</code> avec ses classes limitées : <code>LIKE '[0-9][0-9][0-9][0-9]'</code>.<br>
+<strong>Oracle</strong> : <code>REGEXP_LIKE(col, motif)</code>.</div>
+<pre class="pseudo">-- « Le code postal est-il fait de 4 chiffres exactement ? »
+
+SELECT * FROM CLIENT WHERE code_postal REGEXP '^[0-9]{4}$';               -- MySQL
+SELECT * FROM CLIENT WHERE code_postal ~ '^[0-9]{4}$';                    -- PostgreSQL
+SELECT * FROM CLIENT WHERE REGEXP_LIKE(code_postal, '^[0-9]{4}$');        -- Oracle, MySQL 8+
+SELECT * FROM CLIENT WHERE code_postal LIKE '[0-9][0-9][0-9][0-9]';       -- SQL Server (approximatif)</pre>
+
+<h3>4. Détecter les valeurs INVALIDES</h3>
+<p>Le vrai usage en contrôle qualité, c'est la <strong>négation</strong> : lister ce qui ne respecte PAS le format attendu.</p>
+<pre class="pseudo">-- MySQL : NOT REGEXP
+SELECT id, code_postal
+FROM CLIENT
+WHERE code_postal NOT REGEXP '^[0-9]{4}$';    -- tout ce qui n'est pas 4 chiffres : '500', 'AB12', '5000 '
+
+-- PostgreSQL : l'operateur !~
+SELECT id, code_postal
+FROM CLIENT
+WHERE code_postal !~ '^[0-9]{4}$';
+
+-- Valider un email, motif volontairement simple :
+WHERE email !~ '^[^@]+@[^@]+\\.[a-z]{2,}$'
+--   ^[^@]+   au moins un caractere qui n'est pas une arobase
+--   @        puis une arobase
+--   [^@]+    puis au moins un caractere qui n'est pas une arobase
+--   \\.       puis un point LITTERAL (echappe, car . seul signifie « n'importe quel caractere »)
+--   [a-z]{2,} puis au moins 2 lettres (l'extension), jusqu'a la fin</pre>
+<div class="warn">Aucune regex courte ne valide vraiment un email : la norme officielle est monstrueuse. Vise le raisonnable — détecter les saisies manifestement fausses — pas la perfection.</div>
+
+<h3>5. REGEXP_REPLACE : le nettoyage en une ligne</h3>
+<p>C'est ici que les regex écrasent <code>REPLACE</code>. Hier, cinq REPLACE imbriqués pour un numéro de téléphone. Aujourd'hui, une expression.</p>
+<pre class="pseudo">-- Supprimer TOUT ce qui n'est pas un chiffre :
+SELECT telephone                             AS avant,       -- '(081) 22.33-44'
+       REGEXP_REPLACE(telephone, '[^0-9]', '', 'g') AS apres -- '081223344'
+FROM CLIENT;
+--   [^0-9]  tout caractere qui n'est PAS un chiffre
+--   ''      remplace par rien (donc supprime)
+--   'g'     drapeau GLOBAL : toutes les occurrences (PostgreSQL ; MySQL est global par defaut)
+
+-- Ecraser les espaces multiples en un seul :
+SELECT REGEXP_REPLACE('Jean    Paul   Dupont', ' +', ' ', 'g');   -- 'Jean Paul Dupont'
+--   ' +'  un espace repete une fois ou plus
+
+-- Ne garder que les lettres :
+SELECT REGEXP_REPLACE('Jean-Paul 3e', '[^A-Za-z ]', '', 'g');     -- 'JeanPaul e'</pre>
+<div class="tip">Syntaxes : PostgreSQL <code>REGEXP_REPLACE(col, motif, remplacement, 'g')</code> — sans le 'g', seule la PREMIÈRE occurrence est remplacée. MySQL 8+ <code>REGEXP_REPLACE(col, motif, remplacement)</code>, global par défaut. Oracle idem. SQL Server : indisponible avant 2025.</div>
+
+<h3>6. Extraire avec une regex</h3>
+<pre class="pseudo">-- PostgreSQL : SUBSTRING avec un motif entre parentheses capture le groupe
+SELECT SUBSTRING('REF-2024-00457' FROM '[0-9]{4}');          -- '2024' : la 1re suite de 4 chiffres
+SELECT (REGEXP_MATCH('jean@mail.be', '@(.+)$'))[1];          -- 'mail.be' : ce qui suit l'arobase
+
+-- MySQL 8+ :
+SELECT REGEXP_SUBSTR('REF-2024-00457', '[0-9]{4}');          -- '2024'
+
+-- Application : verifier qu'un IBAN belge est bien forme
+SELECT id, iban
+FROM COMPTE
+WHERE iban !~ '^BE[0-9]{14}$';   -- BE suivi de 14 chiffres exactement ; tout le reste est signale</pre>
+<div class="warn">Les regex ne se servent d'aucun index : sur une grosse table, elles imposent un parcours complet. Utilise-les pour l'analyse et le nettoyage ponctuels, pas dans le <code>WHERE</code> d'une requête exécutée mille fois par seconde.</div>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie ^ au DÉBUT d'une expression régulière ?", opts: ["Une négation", "Le début de la chaîne", "Une puissance", "Un caractère facultatif"], a: 1, exp: "Hors crochets, ^ ancre le motif au début. À l'intérieur de crochets, il signifie « sauf »." },
+    { type: "input", q: "Complète le motif « exactement 4 chiffres » : '^[0-9]______$'", a: ["{4}"], ph: "un quantificateur", exp: "{4} impose exactement quatre répétitions." },
+    { type: "qcm", q: "Que signifie [^0-9] ?", opts: ["Un chiffre", "Tout sauf un chiffre", "Le début d'un nombre", "Zéro ou neuf"], a: 1, exp: "À l'intérieur des crochets, ^ inverse la classe : tout caractère non numérique." },
+    { type: "qcm", q: "Quel quantificateur signifie « une fois ou plus » ?", opts: ["*", "+", "?", "{0,}"], a: 1, exp: "+ exige au moins une occurrence ; * en accepte zéro." },
+    { type: "input", q: "Complète l'opérateur de test regex en PostgreSQL : WHERE code ______ '^BE';", a: ["~"], ph: "un opérateur", exp: "~ teste la correspondance, ~* la version insensible à la casse." },
+    { type: "qcm", q: "Quel mot-clé teste une regex en MySQL ?", opts: ["MATCH", "REGEXP", "SIMILAR", "PATTERN"], a: 1, exp: "colonne REGEXP 'motif', ou son synonyme RLIKE." },
+    { type: "vf", q: "SQL Server dispose nativement des expressions régulières depuis toujours.", a: false, exp: "SQL Server n'a pas de regex native avant la version 2025 ; on y utilise LIKE avec ses classes limitées." },
+    { type: "input", q: "Complète pour ne garder que les chiffres : REGEXP_REPLACE(tel, '[______0-9]', '', 'g');", a: ["^"], ph: "un caractère", exp: "[^0-9] cible tout ce qui n'est pas un chiffre, et le remplacement par '' le supprime." },
+    { type: "qcm", q: "À quoi sert le drapeau 'g' dans REGEXP_REPLACE en PostgreSQL ?", opts: ["Rendre insensible à la casse", "Remplacer TOUTES les occurrences et pas seulement la première", "Activer les groupes", "Accélérer la requête"], a: 1, exp: "Sans 'g', PostgreSQL ne remplace que la première occurrence trouvée." },
+    { type: "qcm", q: "Que fait le motif ' +' dans REGEXP_REPLACE(txt, ' +', ' ', 'g') ?", opts: ["Supprime tous les espaces", "Écrase les suites d'espaces en un seul espace", "Ajoute un espace", "Trouve les signes plus"], a: 1, exp: "' +' capture un ou plusieurs espaces consécutifs, remplacés par un espace unique." },
+    { type: "vf", q: "Dans une regex, le point . doit être échappé pour désigner un vrai point.", a: true, exp: "Non échappé, le point signifie « n'importe quel caractère ». Il faut écrire \\. pour un point littéral." },
+    { type: "input", q: "Complète le motif « commence par BE suivi de 14 chiffres » : '^BE[0-9]______$'", a: ["{14}"], ph: "un quantificateur", exp: "{14} impose exactement quatorze chiffres." },
+    { type: "qcm", q: "Quel est l'avantage décisif de la regex sur LIKE '____' pour un code postal ?", opts: ["Elle est plus rapide", "Elle impose la NATURE des caractères, pas seulement leur nombre", "Elle utilise un index", "Elle est plus courte à écrire"], a: 1, exp: "LIKE '____' accepte 'AB12' ; '^[0-9]{4}$' l'écarte." },
+    { type: "vf", q: "Une regex dans le WHERE permet au SGBD d'utiliser l'index de la colonne.", a: false, exp: "Les regex imposent un parcours complet de la table. À réserver à l'analyse ponctuelle." },
+    { type: "qcm", q: "Que signifie le motif '^(BE|FR)[0-9]{4}$' ?", opts: ["BE ou FR suivi de 4 chiffres", "BEFR suivi de chiffres", "4 chiffres suivis de BE ou FR", "Uniquement BE0000"], a: 0, exp: "Le groupe ( ) avec | offre une alternative entre deux préfixes." }
+  ],
+  final: {
+    title: "Exercice final — Contrôle qualité par motif",
+    intro: `<p>Table <code>ADHERENT</code>. Aucune contrainte n'existait à la saisie.</p>
+<pre class="pseudo">id | code_postal | email                 | telephone
+---+-------------+-----------------------+------------------
+ 1 | '5000'      | 'jean@mail.be'        | '081223344'
+ 2 | '500'       | 'marie.mail.be'       | '081/22.33.44'
+ 3 | 'AB12'      | 'paul@mail'           | '(081) 223344'
+ 4 | '4000 '     | 'anne@sous.mail.be'   | '32-81-223344'</pre>`,
+    questions: [
+      { type: "qcm", q: "Quelles lignes échouent au test '^[0-9]{4}$' sur le code postal ?", opts: ["Aucune", "Les lignes 2, 3 et 4", "La ligne 1 seulement", "Toutes"], a: 1, exp: "'500' fait 3 chiffres, 'AB12' contient des lettres, '4000 ' a un espace de fin qui casse l'ancre $." },
+      { type: "qcm", q: "Quelle ligne échoue au test '^[^@]+@[^@]+\\.[a-z]{2,}$' sur l'email ?", opts: ["La ligne 1", "Les lignes 2 et 3", "La ligne 4", "Aucune"], a: 1, exp: "La ligne 2 n'a pas d'arobase ; la ligne 3 n'a pas de point ni d'extension après le domaine." },
+      { type: "vf", q: "REGEXP_REPLACE(telephone, '[^0-9]', '', 'g') donne '081223344' pour les lignes 1, 2 et 3.", a: true, exp: "Tous les caractères non numériques disparaissent, ne laissant que les neuf chiffres." },
+      { type: "qcm", q: "Pourquoi '4000 ' échoue-t-il alors qu'il contient bien quatre chiffres ?", opts: ["Parce que 4000 est trop grand", "Parce que l'ancre $ exige que la chaîne se termine juste après le 4e chiffre, or il y a un espace", "Parce que la regex est fausse", "Parce que le type est numérique"], a: 1, exp: "L'espace de fin viole l'ancre. C'est justement l'intérêt de $ : il ne laisse rien passer." },
+      { type: "qcm", q: "Quelle expression corrige la ligne 4 avant de la tester ?", opts: ["UPPER(code_postal)", "TRIM(code_postal)", "LEFT(code_postal, 4)", "REPLACE(code_postal, '0', '')"], a: 1, exp: "TRIM retire l'espace parasite ; la valeur satisfait alors le motif." }
+    ],
+    solution: `<pre class="pseudo">-- 1) LISTER les codes postaux invalides (PostgreSQL)
+SELECT id, code_postal
+FROM ADHERENT
+WHERE code_postal !~ '^[0-9]{4}$';   -- !~ = « ne correspond PAS au motif »
+-- attendu : lignes 2 ('500'), 3 ('AB12') et 4 ('4000 ')
+
+-- meme requete en MySQL :
+-- WHERE code_postal NOT REGEXP '^[0-9]{4}$'
+
+-- 2) DISTINGUER le vrai defaut du simple espace parasite
+SELECT id,
+       code_postal                       AS brut,
+       TRIM(code_postal)                 AS rogne,
+       CASE WHEN TRIM(code_postal) ~ '^[0-9]{4}$'   -- le TRIM suffit-il a rendre la valeur valide ?
+            THEN 'espace parasite seulement'
+            ELSE 'valeur reellement invalide'
+       END                               AS diagnostic
+FROM ADHERENT
+WHERE code_postal !~ '^[0-9]{4}$';
+-- ligne 4 : espace parasite seulement ; lignes 2 et 3 : valeur reellement invalide
+
+-- 3) LISTER les emails suspects
+SELECT id, email
+FROM ADHERENT
+WHERE email !~ '^[^@]+@[^@]+\\.[a-z]{2,}$';
+-- attendu : lignes 2 (pas d'arobase) et 3 (pas d'extension)
+
+-- 4) NORMALISER tous les telephones en UNE expression
+SELECT id,
+       telephone                                     AS avant,
+       REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')  AS apres   -- supprime tout sauf les chiffres
+FROM ADHERENT;
+-- '081/22.33.44' -&gt; '081223344' ; '(081) 223344' -&gt; '081223344' ; '32-81-223344' -&gt; '3281223344'
+
+-- 5) SIGNALER les numeros dont la longueur normalisee est anormale
+SELECT id, telephone
+FROM ADHERENT
+WHERE LENGTH(REGEXP_REPLACE(telephone, '[^0-9]', '', 'g')) &lt;&gt; 9;   -- ligne 4 : 10 chiffres (indicatif 32)</pre>
+<p>Une expression a remplacé cinq REPLACE. La semaine du texte est bouclée : demain, les valeurs NULL.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j07", title: "Auditer des références produit", level: 3,
+    statement: "Table <code>PRODUIT(id, reference)</code>. Le format attendu est <strong>deux lettres majuscules, un tiret, quatre chiffres</strong> (ex. 'BE-2024') :<pre class='pseudo'>id | reference\n---+------------\n 1 | 'BE-2024'\n 2 | 'be-2024'\n 3 | 'BE2024'\n 4 | 'BE-20'\n 5 | 'FR-2023 '</pre>Écris une requête qui liste les références NON conformes, avec pour chacune sa version nettoyée (espaces rognés puis mise en majuscules) et un indicateur disant si ce nettoyage suffit à la rendre conforme. Donne la version PostgreSQL, et signale en commentaire l'équivalent MySQL.",
+    hints: [
+      "Le motif : deux lettres majuscules, un tiret littéral, quatre chiffres, entre ancres — '^[A-Z]{2}-[0-9]{4}$'.",
+      "Non conforme s'écrit !~ en PostgreSQL, NOT REGEXP en MySQL.",
+      "Pour l'indicateur, teste le motif sur UPPER(TRIM(reference)) à l'intérieur d'un CASE WHEN."
+    ],
+    solution: "SELECT id,\n       reference                          AS ref_brute,        -- la valeur stockee\n       UPPER(TRIM(reference))             AS ref_nettoyee,     -- espaces rognes, puis majuscules\n       CASE WHEN UPPER(TRIM(reference)) ~ '^[A-Z]{2}-[0-9]{4}$'   -- le nettoyage suffit-il ?\n            THEN 'recuperable par nettoyage'\n            ELSE 'defaut de structure : correction manuelle'\n       END                                AS diagnostic\nFROM PRODUIT\nWHERE reference !~ '^[A-Z]{2}-[0-9]{4}$'   -- !~ : ne correspond PAS au motif attendu\nORDER BY id;\n\n-- Lecture du motif '^[A-Z]{2}-[0-9]{4}$' :\n--   ^        debut de chaine\n--   [A-Z]{2} exactement 2 lettres majuscules\n--   -        un tiret litteral\n--   [0-9]{4} exactement 4 chiffres\n--   $        fin de chaine (rien apres, pas meme un espace)\n\n-- Resultat attendu :\n-- id | ref_brute  | ref_nettoyee | diagnostic\n-- ---+------------+--------------+------------------------------------\n--  2 | 'be-2024'  | 'BE-2024'    | 'recuperable par nettoyage'\n--  3 | 'BE2024'   | 'BE2024'     | 'defaut de structure : correction manuelle'\n--  4 | 'BE-20'    | 'BE-20'      | 'defaut de structure : correction manuelle'\n--  5 | 'FR-2023 ' | 'FR-2023'    | 'recuperable par nettoyage'\n\n-- La ligne 1 est conforme : le WHERE l'exclut.\n\n-- Equivalent MySQL :\n--   WHERE reference NOT REGEXP '^[A-Z]{2}-[0-9]{4}$'\n--   CASE WHEN UPPER(TRIM(reference)) REGEXP '^[A-Z]{2}-[0-9]{4}$' THEN ... END\n--   Attention : en MySQL, REGEXP est insensible a la casse avec une collation _ci,\n--   donc 'be-2024' serait considere CONFORME. Forcer avec REGEXP BINARY ou une collation _bin.\n\n-- SQL Server (avant 2025, sans regex) : approximation par LIKE\n--   WHERE reference NOT LIKE '[A-Z][A-Z]-[0-9][0-9][0-9][0-9]'",
+    note: "Piège majeur : en MySQL, la sensibilité à la casse de REGEXP dépend de la collation — 'be-2024' peut passer pour conforme alors que PostgreSQL le rejette. Ne suppose jamais le comportement : teste-le sur ton SGBD. Bonne pratique : séparer les défauts « cosmétiques » (récupérables par TRIM/UPPER) des défauts « de structure » permet de corriger automatiquement les premiers et de n'escalader en manuel que les seconds." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

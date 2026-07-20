@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 23</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 23,
+  title: "Agrégats fenêtrés : SUM et AVG OVER, PARTITION BY",
+  subtitle: "Totaux par groupe sans perdre le détail, cumuls progressifs et moyennes glissantes.",
+  theory: `
+<h3>1. PARTITION BY : le GROUP BY qui ne détruit rien</h3>
+<p>On y arrive. <code>PARTITION BY</code> découpe le résultat en <strong>partitions</strong> — des paquets de lignes qui partagent une même valeur. La fonction de fenêtre est alors calculée <strong>séparément dans chaque paquet</strong>, mais le résultat est affiché sur <strong>chaque ligne</strong> du paquet.</p>
+<div class="tip"><strong>Définition :</strong> une <strong>partition</strong> est un sous-ensemble de lignes de même valeur sur les colonnes citées. C est exactement le même découpage que ferait un GROUP BY — mais au lieu d écraser chaque paquet en une ligne, on garde les lignes et on colle le résultat à côté.</div>
+<pre class="pseudo">-- Table VENTE :
+-- vendeur | region | montant
+-- --------+--------+--------
+-- Alice   | Nord   |    100
+-- Bob     | Nord   |    300
+-- Chloe   | Sud    |    200
+-- David   | Sud    |    400
+
+-- GROUP BY : 4 lignes --&gt; 2 lignes
+SELECT region, SUM(montant) FROM VENTE GROUP BY region;
+-- region | sum
+-- -------+----
+-- Nord   | 400
+-- Sud    | 600
+
+-- PARTITION BY : 4 lignes --&gt; 4 lignes
+SELECT vendeur, region, montant,
+       SUM(montant) OVER (PARTITION BY region) AS total_region
+FROM VENTE;
+-- vendeur | region | montant | total_region
+-- --------+--------+---------+-------------
+-- Alice   | Nord   |     100 |          400
+-- Bob     | Nord   |     300 |          400
+-- Chloe   | Sud    |     200 |          600
+-- David   | Sud    |     400 |          600</pre>
+<p>Même calcul, même découpage. La seule différence, c est ce qu il advient des lignes de détail. <strong>GROUP BY les écrase, PARTITION BY les préserve.</strong> Si tu n as retenu qu une chose de cette semaine, que ce soit celle-là.</p>
+
+<h3>2. Ce que ça permet immédiatement</h3>
+<pre class="pseudo">SELECT vendeur, region, montant,
+       SUM(montant)   OVER (PARTITION BY region) AS total_region,
+       AVG(montant)   OVER (PARTITION BY region) AS moyenne_region,
+       COUNT(*)       OVER (PARTITION BY region) AS nb_vendeurs_region,
+       MAX(montant)   OVER (PARTITION BY region) AS record_region,
+       montant - AVG(montant) OVER (PARTITION BY region) AS ecart_a_la_moyenne,
+       ROUND(100.0 * montant / SUM(montant) OVER (PARTITION BY region), 1) AS part_region,
+       ROUND(100.0 * montant / SUM(montant) OVER (), 1)                    AS part_totale
+FROM VENTE;</pre>
+<p>Regarde les deux dernières colonnes : la part dans <em>sa région</em> et la part dans le <em>total général</em>, sur la même ligne. Avec GROUP BY, il faudrait deux requêtes et une jointure. Ici, deux <code>OVER()</code> différents dans le même SELECT — et rien n interdit d en mélanger autant qu on veut.</p>
+
+<h3>3. PARTITION BY sur plusieurs colonnes</h3>
+<pre class="pseudo">SUM(montant) OVER (PARTITION BY region, annee)   -- un paquet par couple region+annee
+--   exactement comme GROUP BY region, annee, mais sans perte de lignes</pre>
+
+<h3>4. Ajouter ORDER BY : le total devient CUMULÉ</h3>
+<p>Voici le point qui déroute tout le monde. Ajoute un <code>ORDER BY</code> à l intérieur d un <code>SUM(...) OVER (...)</code> et le résultat change complètement de nature : ce n est plus un total, c est un <strong>cumul progressif</strong>.</p>
+<pre class="pseudo">SELECT mois, ca,
+       SUM(ca) OVER ()                  AS total_annuel,   -- pareil partout
+       SUM(ca) OVER (ORDER BY mois)     AS cumul           -- s accumule !
+FROM CA_MOIS;
+
+-- mois    |  ca | total_annuel | cumul
+-- --------+-----+--------------+------
+-- 2024-01 | 100 |         1000 |   100
+-- 2024-02 | 200 |         1000 |   300   &lt;-- 100+200
+-- 2024-03 | 150 |         1000 |   450   &lt;-- 100+200+150
+-- 2024-04 | 550 |         1000 |  1000   &lt;-- tout</pre>
+<div class="warn">Pourquoi ? Parce que dès qu il y a un <code>ORDER BY</code> dans <code>OVER()</code>, le SGBD applique un <strong>cadre par défaut</strong> qui va du début de la partition jusqu à la ligne courante. Sans ORDER BY, le cadre couvre toute la partition. Ce n est pas un bug : c est la règle du standard SQL.</div>
+
+<h3>5. Le cadre (frame) : définition et syntaxe</h3>
+<p>Le <strong>cadre</strong> (frame en anglais) est la portion de la partition réellement prise en compte pour la ligne courante. C est un curseur mobile qui se déplace ligne par ligne.</p>
+<div class="tip"><strong>L analogie :</strong> la partition est le rouleau de pellicule entier ; le cadre, c est la fenêtre du projecteur qui n en montre que quelques images à la fois, et qui avance avec toi.</div>
+<pre class="pseudo">ROWS BETWEEN &lt;debut&gt; AND &lt;fin&gt;
+
+-- Les bornes possibles :
+--   UNBOUNDED PRECEDING   -- depuis le tout debut de la partition
+--   n PRECEDING           -- n lignes avant la ligne courante
+--   CURRENT ROW           -- la ligne courante elle-meme
+--   n FOLLOWING           -- n lignes apres la ligne courante
+--   UNBOUNDED FOLLOWING   -- jusqu a la toute fin de la partition</pre>
+<pre class="pseudo">-- Les cadres PAR DEFAUT (a connaitre absolument) :
+-- OVER (PARTITION BY x)                  --&gt; toute la partition
+-- OVER (PARTITION BY x ORDER BY y)       --&gt; RANGE BETWEEN UNBOUNDED PRECEDING
+--                                            AND CURRENT ROW   (donc : cumul)</pre>
+
+<h3>6. La moyenne glissante</h3>
+<pre class="pseudo">SELECT jour, ventes,
+       AVG(ventes) OVER (
+         ORDER BY jour
+         ROWS BETWEEN 2 PRECEDING AND CURRENT ROW   -- les 3 derniers jours
+       ) AS moyenne_3j
+FROM VENTES_JOUR;
+
+-- jour       | ventes | moyenne_3j
+-- -----------+--------+-----------
+-- 2024-01-01 |     10 |      10.0   &lt;-- 1 seule ligne dispo
+-- 2024-01-02 |     20 |      15.0   &lt;-- (10+20)/2
+-- 2024-01-03 |     30 |      20.0   &lt;-- (10+20+30)/3
+-- 2024-01-04 |     60 |      36.7   &lt;-- (20+30+60)/3
+-- 2024-01-05 |     15 |      35.0   &lt;-- (30+60+15)/3</pre>
+<p>La moyenne glissante (ou moyenne mobile) lisse les variations et fait apparaître la tendance. C est l outil de base de l analyse de séries temporelles.</p>
+
+<h3>7. ROWS ou RANGE ?</h3>
+<pre class="pseudo">-- ROWS  : compte des LIGNES physiques. « les 2 lignes precedentes. »
+-- RANGE : compte des VALEURS. « toutes les lignes de meme valeur que la courante. »
+
+-- Table avec doublons de dates :
+-- jour       | montant
+-- 2024-01-01 |     10
+-- 2024-01-01 |     20      &lt;-- meme jour
+-- 2024-01-02 |     30
+
+SUM(montant) OVER (ORDER BY jour ROWS  BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+--&gt; 10, 30, 60      (ligne par ligne)
+SUM(montant) OVER (ORDER BY jour RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+--&gt; 30, 30, 60      (les deux lignes du 01-01 sont traitees ensemble)</pre>
+<div class="warn">Le cadre par défaut est <code>RANGE</code>, pas <code>ROWS</code>. Sur des données contenant des ex aequo, cela produit des cumuls qui semblent faux. Règle pratique : si tu veux un cumul ligne à ligne, écris <strong>explicitement</strong> <code>ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW</code>. Ne compte pas sur le défaut.</div>
+
+<h3>8. Les variantes de dialecte</h3>
+<pre class="pseudo">-- SUM/AVG/COUNT/MIN/MAX OVER : identiques partout (MySQL 8+, MariaDB 10.2+,
+-- PostgreSQL, SQL Server 2012+, SQLite 3.25+, Oracle).
+
+-- ATTENTION SQL Server : entre 2005 et 2008 R2, SUM() OVER (ORDER BY ...)
+-- n existait PAS. Les cadres ROWS/RANGE arrivent avec SQL Server 2012.
+
+-- La clause WINDOW (nommer une fenetre pour ne pas la repeter) :
+--   PostgreSQL, MySQL 8, MariaDB, SQLite, Oracle : OUI
+--   SQL Server : NON --&gt; il faut repeter la fenetre ou passer par une CTE
+SELECT vendeur, montant,
+       SUM(montant) OVER w AS total,
+       AVG(montant) OVER w AS moyenne
+FROM VENTE
+WINDOW w AS (PARTITION BY region);          -- refuse par SQL Server
+
+-- GROUPS BETWEEN (cadre par groupes de valeurs egales) :
+--   PostgreSQL 11+, MySQL 8 : OUI    /    SQL Server : NON</pre>
+
+<h3>9. Le tableau récapitulatif de la semaine</h3>
+<pre class="pseudo">-- OVER ()                                --&gt; toute la table, valeur constante
+-- OVER (PARTITION BY x)                  --&gt; total du groupe, sur chaque ligne
+-- OVER (ORDER BY y)                      --&gt; CUMUL depuis le debut
+-- OVER (PARTITION BY x ORDER BY y)       --&gt; cumul DANS chaque groupe
+-- OVER (ORDER BY y ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)
+--                                        --&gt; moyenne/somme glissante sur 3 lignes
+-- OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+--                                        --&gt; toute la partition, malgre le ORDER BY</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle clause de OVER() découpe le résultat en paquets sans supprimer de lignes ?", ph: "PART...", a: ["PARTITION BY", "PARTITION"], exp: "PARTITION BY fait le même découpage que GROUP BY, mais conserve les lignes." },
+    { type: "qcm", q: "SELECT vendeur, SUM(montant) OVER (PARTITION BY region) FROM VENTE (4 lignes) renvoie…", opts: ["1 ligne", "2 lignes", "4 lignes", "8 lignes"], a: 2, exp: "Une fonction de fenêtre ne détruit jamais de ligne : 4 en entrée, 4 en sortie." },
+    { type: "vf", q: "GROUP BY region et PARTITION BY region font le même découpage.", a: true, exp: "Le découpage est identique ; seule diffère la restitution — écrasée ou conservée." },
+    { type: "qcm", q: "SUM(ca) OVER (ORDER BY mois) produit…", opts: ["Le total général sur chaque ligne", "Un cumul progressif", "La moyenne", "Une erreur"], a: 1, exp: "Le ORDER BY active un cadre par défaut allant du début à la ligne courante." },
+    { type: "input", q: "Comment appelle-t-on la portion de la partition réellement prise en compte pour la ligne courante ?", ph: "le c...", a: ["CADRE", "LE CADRE", "FRAME", "le cadre"], exp: "Le cadre (frame) : un curseur mobile qui se déplace avec la ligne courante." },
+    { type: "input", q: "Quelle borne signifie « depuis le tout début de la partition » ?", ph: "UNBOUNDED ...", a: ["UNBOUNDED PRECEDING"], exp: "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW = cumul depuis le début." },
+    { type: "qcm", q: "Une moyenne glissante sur 3 jours s écrit…", opts: ["AVG(v) OVER ()", "AVG(v) OVER (ORDER BY jour ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)", "AVG(v) GROUP BY jour", "AVG(v) OVER (PARTITION BY jour)"], a: 1, exp: "2 lignes avant + la ligne courante = 3 jours au total." },
+    { type: "qcm", q: "Quelle est la différence entre ROWS et RANGE ?", opts: ["Aucune", "ROWS compte des lignes physiques, RANGE regroupe les lignes de même valeur", "RANGE est plus rapide", "ROWS n existe qu en MySQL"], a: 1, exp: "Avec des ex aequo, RANGE inclut d un coup toutes les lignes de même valeur." },
+    { type: "vf", q: "Le cadre par défaut quand il y a un ORDER BY est ROWS, pas RANGE.", a: false, exp: "C est l inverse : le défaut est RANGE, ce qui surprend en présence d ex aequo." },
+    { type: "input", q: "Quelle clause permet de nommer une fenêtre pour ne pas la répéter (absente de SQL Server) ?", ph: "WIN...", a: ["WINDOW"], exp: "FROM t WINDOW w AS (PARTITION BY region) puis SUM(x) OVER w." },
+    { type: "qcm", q: "SQL Server accepte-t-il la clause WINDOW ?", opts: ["Oui, depuis 2012", "Non : il faut répéter la fenêtre ou passer par une CTE", "Oui, depuis 2005", "Seulement en Azure"], a: 1, exp: "C est une différence de dialecte à connaître pour du code portable." },
+    { type: "qcm", q: "La part de chaque vente dans le total de SA région s écrit…", opts: ["montant / SUM(montant)", "100.0 * montant / SUM(montant) OVER (PARTITION BY region)", "AVG(montant) GROUP BY region", "montant / COUNT(*)"], a: 1, exp: "Le dénominateur est le total de la partition, disponible sur chaque ligne." },
+    { type: "vf", q: "On peut écrire plusieurs OVER() différents dans un même SELECT.", a: true, exp: "Rien ne l interdit : total général, total régional et cumul peuvent cohabiter." },
+    { type: "input", q: "Quelle borne signifie « jusqu à la toute fin de la partition » ?", ph: "UNBOUNDED ...", a: ["UNBOUNDED FOLLOWING"], exp: "Indispensable pour faire fonctionner LAST_VALUE correctement." },
+    { type: "qcm", q: "À partir de quelle version SQL Server propose-t-il SUM() OVER (ORDER BY ...) avec cadres ?", opts: ["2005", "2008", "2012", "2019"], a: 2, exp: "2005 apportait ROW_NUMBER et RANK ; les cadres n arrivent qu en 2012." }
+  ],
+  final: {
+    title: "Exercice final — Un tableau de bord commercial complet",
+    intro: `<p>Une seule requête doit produire le détail ET toutes les synthèses.</p>
+<pre class="pseudo">-- VENTE(id, vendeur, region, mois, montant)
+-- vendeur | region | mois    | montant
+-- --------+--------+---------+--------
+-- Alice   | Nord   | 2024-01 |     100
+-- Alice   | Nord   | 2024-02 |     300
+-- Bob     | Nord   | 2024-01 |     200
+-- Chloe   | Sud    | 2024-01 |     400
+-- Chloe   | Sud    | 2024-02 |     100
+-- Total general = 1100 ; Nord = 600 ; Sud = 500</pre>`,
+    questions: [
+      { type: "input", q: "Que vaudra SUM(montant) OVER (PARTITION BY region) sur la ligne de Bob ?", ph: "un nombre", a: ["600"], exp: "Bob est dans la région Nord : 100 + 300 + 200 = 600." },
+      { type: "input", q: "Que vaudra SUM(montant) OVER () sur la ligne de Bob ?", ph: "un nombre", a: ["1100"], exp: "OVER() vide couvre toute la table, quelle que soit la ligne." },
+      { type: "qcm", q: "SUM(montant) OVER (PARTITION BY vendeur ORDER BY mois) donne pour Alice…", opts: ["400 puis 400", "100 puis 400", "100 puis 300", "1100 puis 1100"], a: 1, exp: "Le ORDER BY produit un cumul DANS la partition : 100, puis 100+300 = 400." },
+      { type: "vf", q: "Pour un cumul fiable ligne à ligne, mieux vaut écrire explicitement ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.", a: true, exp: "Le cadre par défaut est RANGE, qui agrège d un coup les ex aequo." },
+      { type: "qcm", q: "Pour obtenir la même synthèse avec GROUP BY, il faudrait…", opts: ["La même requête", "Plusieurs requêtes agrégées jointes entre elles", "Un simple DISTINCT", "C est impossible en SQL"], a: 1, exp: "Une requête par niveau d agrégation, puis des jointures : long, lent et fragile." }
+    ],
+    solution: `<pre class="pseudo">SELECT vendeur,
+       region,
+       mois,
+       montant,
+
+       -- NIVEAU 1 : le total general (fenetre = toute la table)
+       SUM(montant) OVER ()                          AS ca_total,
+
+       -- NIVEAU 2 : le total de la region (fenetre = la partition region)
+       SUM(montant) OVER (PARTITION BY region)       AS ca_region,
+       AVG(montant) OVER (PARTITION BY region)       AS vente_moyenne_region,
+       COUNT(*)     OVER (PARTITION BY region)       AS nb_ventes_region,
+
+       -- NIVEAU 3 : le total du vendeur
+       SUM(montant) OVER (PARTITION BY vendeur)      AS ca_vendeur,
+
+       -- NIVEAU 4 : le cumul chronologique du vendeur
+       SUM(montant) OVER (
+         PARTITION BY vendeur
+         ORDER BY mois
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW  -- cadre EXPLICITE
+       )                                              AS cumul_vendeur,
+
+       -- Les parts relatives
+       ROUND(100.0 * montant / SUM(montant) OVER (PARTITION BY region), 1) AS pct_region,
+       ROUND(100.0 * montant / SUM(montant) OVER (),                   1) AS pct_total,
+
+       -- Le classement du vendeur dans sa region
+       DENSE_RANK() OVER (PARTITION BY region ORDER BY montant DESC)      AS rang_region
+
+FROM VENTE
+ORDER BY region, vendeur, mois;
+
+-- vendeur | region | mois    | montant | ca_total | ca_region | ca_vendeur | cumul_vendeur | pct_region
+-- --------+--------+---------+---------+----------+-----------+------------+---------------+-----------
+-- Alice   | Nord   | 2024-01 |     100 |     1100 |       600 |        400 |           100 |       16.7
+-- Alice   | Nord   | 2024-02 |     300 |     1100 |       600 |        400 |           400 |       50.0
+-- Bob     | Nord   | 2024-01 |     200 |     1100 |       600 |        200 |           200 |       33.3
+-- Chloe   | Sud    | 2024-01 |     400 |     1100 |       500 |        500 |           400 |       80.0
+-- Chloe   | Sud    | 2024-02 |     100 |     1100 |       500 |        500 |           500 |       20.0
+
+-- Quatre niveaux d agregation, un cumul et un classement, DANS LA MEME REQUETE,
+-- sans perdre une seule ligne de detail. Avec GROUP BY, il aurait fallu
+-- quatre requetes agregees et trois jointures.
+
+-- Variante lisible (PostgreSQL, MySQL 8, SQLite — PAS SQL Server) :
+--   ... FROM VENTE
+--   WINDOW wr AS (PARTITION BY region), wv AS (PARTITION BY vendeur)
+--   et ecrire SUM(montant) OVER wr, SUM(montant) OVER wv, etc.</pre>
+<p>La semaine du fenêtrage est bouclée. Demain : les opérateurs ensemblistes, INTERSECT et EXCEPT.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j23", title: "Cumul et moyenne glissante", level: 3,
+    statement: "La table VENTES_JOUR(boutique, jour, ventes) contient les ventes quotidiennes de plusieurs boutiques. Écris une requête qui affiche, pour chaque ligne : les ventes du jour, le total de la boutique sur toute la période, le cumul depuis le début pour cette boutique, la moyenne glissante sur 7 jours pour cette boutique, et la part du jour dans le total de sa boutique. Écris les cadres explicitement et commente chaque ligne. Indique en commentaire ce qui n est pas portable vers SQL Server.",
+    hints: [
+      "Trois fenêtres différentes : PARTITION BY boutique seul (total), PARTITION BY boutique ORDER BY jour avec cadre jusqu à CURRENT ROW (cumul), et le même avec ROWS BETWEEN 6 PRECEDING AND CURRENT ROW (7 jours).",
+      "Une moyenne sur 7 jours, c est 6 lignes avant plus la ligne courante — pas 7 PRECEDING.",
+      "Ne te fie pas au cadre par défaut : écris ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW pour le cumul, sinon RANGE agrégera d un coup les jours en double."
+    ],
+    solution: "SELECT boutique,\n       jour,\n       ventes,\n\n       -- Total de la boutique sur toute la periode (pas de ORDER BY : cadre = partition entiere)\n       SUM(ventes) OVER (PARTITION BY boutique) AS total_boutique,\n\n       -- Cumul depuis le premier jour de la boutique\n       SUM(ventes) OVER (\n         PARTITION BY boutique                    -- une serie par boutique\n         ORDER BY jour                            -- ordre chronologique\n         ROWS BETWEEN UNBOUNDED PRECEDING         -- depuis le tout debut...\n                  AND CURRENT ROW                 -- ...jusqu a aujourd hui\n       ) AS cumul,\n\n       -- Moyenne glissante sur 7 jours (6 jours avant + le jour courant)\n       ROUND(AVG(ventes) OVER (\n         PARTITION BY boutique\n         ORDER BY jour\n         ROWS BETWEEN 6 PRECEDING AND CURRENT ROW\n       ), 2) AS moyenne_7j,\n\n       -- Part du jour dans le total de sa boutique\n       ROUND(100.0 * ventes / SUM(ventes) OVER (PARTITION BY boutique), 2) AS pct_boutique\n\nFROM VENTES_JOUR\nORDER BY boutique, jour;\n\n-- boutique | jour       | ventes | total_boutique | cumul | moyenne_7j | pct_boutique\n-- ---------+------------+--------+----------------+-------+------------+-------------\n-- Nord     | 2024-01-01 |     10 |            135 |    10 |      10.00 |         7.41\n-- Nord     | 2024-01-02 |     20 |            135 |    30 |      15.00 |        14.81\n-- Nord     | 2024-01-03 |     30 |            135 |    60 |      20.00 |        22.22\n-- Nord     | 2024-01-04 |     60 |            135 |   120 |      30.00 |        44.44\n-- Nord     | 2024-01-05 |     15 |            135 |   135 |      27.00 |        11.11\n-- Sud      | 2024-01-01 |      5 |             25 |     5 |       5.00 |        20.00\n-- Sud      | 2024-01-02 |     20 |             25 |    25 |      12.50 |        80.00\n\n-- PORTABILITE :\n-- Cette requete fonctionne telle quelle en MySQL 8+, MariaDB 10.2+,\n-- PostgreSQL, SQLite 3.25+ ET SQL Server 2012+.\n-- Elle ECHOUE sur SQL Server 2008 R2 et anterieur (pas de cadre ROWS).\n-- Elle ECHOUE sur MySQL 5.7 (aucune fonction de fenetre).\n-- Si on avait factorise avec WINDOW w AS (...), SQL Server aurait refuse :\n-- cette clause n existe pas chez lui, il faut repeter la fenetre.",
+    note: "Les premières lignes de chaque boutique montrent un effet normal : la moyenne 7 jours ne porte que sur les lignes disponibles (1 jour, puis 2, puis 3…). Si tu veux masquer ces valeurs partielles, ajoute une colonne COUNT(*) OVER (même fenêtre) et n affiche la moyenne que lorsqu elle atteint 7. Retiens aussi que 7 jours s écrit 6 PRECEDING : le cadre inclut toujours la ligne courante." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

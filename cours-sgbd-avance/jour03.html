@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 03</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 3,
+  title: "Changer la casse : UPPER, LOWER, INITCAP",
+  subtitle: "Uniformiser majuscules et minuscules pour comparer, regrouper et afficher proprement.",
+  theory: `
+<h3>1. Qu'est-ce que la casse ?</h3>
+<p>La <strong>casse</strong> (en anglais <em>case</em>) désigne le fait qu'une lettre soit écrite en majuscule ou en minuscule. Le mot vient de l'imprimerie : les typographes rangeaient les majuscules dans la casse du haut (<em>upper case</em>) et les minuscules dans celle du bas (<em>lower case</em>).</p>
+<p>Dans une base de données, la casse pose problème dès que les saisies ne sont pas uniformes : <code>'DUPONT'</code>, <code>'Dupont'</code> et <code>'dupont'</code> désignent la même personne pour un humain, mais peuvent être trois valeurs distinctes pour le SGBD.</p>
+<pre class="pseudo">-- Trois lignes qui devraient n'en former qu'une :
+SELECT nom, COUNT(*) FROM CLIENT GROUP BY nom;
+
+-- resultat obtenu :          -- resultat souhaite :
+-- 'DUPONT' | 1               -- 'DUPONT' | 3
+-- 'Dupont' | 1
+-- 'dupont' | 1</pre>
+
+<h3>2. UPPER et LOWER : les deux fonctions universelles</h3>
+<p><code>UPPER(texte)</code> convertit tout en <strong>MAJUSCULES</strong>, <code>LOWER(texte)</code> tout en <strong>minuscules</strong>. Ce sont des fonctions du standard SQL, disponibles sur absolument tous les SGBD, sans variante de nom.</p>
+<pre class="pseudo">SELECT UPPER('Dupont');       -- 'DUPONT'
+SELECT LOWER('Dupont');       -- 'dupont'
+SELECT UPPER('rue du Pont');  -- 'RUE DU PONT'  -- tous les mots, pas seulement le premier
+
+-- Sur une table, avec avant / apres :
+SELECT nom          AS avant,   -- 'DUPONT', 'Dupont', 'dupont'
+       UPPER(nom)   AS apres    -- 'DUPONT', 'DUPONT', 'DUPONT'  -- desormais identiques
+FROM CLIENT;</pre>
+<p>Une fois la casse uniformisée, le regroupement fonctionne comme attendu :</p>
+<pre class="pseudo">SELECT UPPER(nom) AS nom_norme,   -- on regroupe sur la version normalisee
+       COUNT(*)   AS nb
+FROM CLIENT
+GROUP BY UPPER(nom);              -- un seul groupe 'DUPONT' au lieu de trois</pre>
+
+<h3>3. Comparer sans tenir compte de la casse</h3>
+<p>L'usage le plus fréquent : rendre une comparaison insensible à la casse. On applique la même fonction des deux côtés du signe égal.</p>
+<pre class="pseudo">-- Fragile : ne trouve que l'orthographe exacte
+SELECT * FROM CLIENT WHERE nom = 'dupont';
+
+-- Robuste : les deux cotes sont ramenes a la meme casse
+SELECT * FROM CLIENT WHERE UPPER(nom) = UPPER('dupont');   -- 'DUPONT' = 'DUPONT' -&gt; vrai dans tous les cas
+
+-- Et en combinant avec le TRIM d'hier, contre les espaces ET la casse :
+SELECT * FROM CLIENT WHERE UPPER(TRIM(nom)) = 'DUPONT';    -- TRIM d'abord, UPPER ensuite</pre>
+<div class="warn">Attention aux performances : appliquer une fonction à une colonne dans le <code>WHERE</code> empêche généralement le SGBD d'utiliser son index sur cette colonne. Sur une grosse table, il vaut mieux stocker une colonne déjà normalisée, ou créer un index fonctionnel. Nous y reviendrons au jour 30.</div>
+
+<h3>4. La casse par défaut varie selon le SGBD</h3>
+<div class="tip"><strong>MySQL / MariaDB</strong> : les comparaisons de texte sont <strong>insensibles à la casse par défaut</strong> (collation <code>..._ci</code>, pour <em>case insensitive</em>). <code>WHERE nom = 'dupont'</code> y trouve donc 'DUPONT' sans rien faire de spécial.<br>
+<strong>PostgreSQL</strong> : <strong>sensible à la casse</strong>, toujours. <code>'Dupont' = 'dupont'</code> est faux. Il faut <code>UPPER</code>/<code>LOWER</code>, ou le type <code>CITEXT</code>.<br>
+<strong>SQL Server</strong> : cela dépend de la <em>collation</em> choisie à l'installation. Par défaut souvent <code>SQL_Latin1_General_CP1_CI_AS</code> — <code>CI</code> = insensible à la casse, <code>AS</code> = sensible aux accents.<br>
+<strong>Oracle / SQLite</strong> : sensible à la casse par défaut.</div>
+<div class="warn">Ne compte jamais sur le comportement par défaut : ton code doit fonctionner si la base est migrée. Écris explicitement <code>UPPER(...)</code> des deux côtés, c'est portable et sans ambiguïté.</div>
+
+<h3>5. INITCAP : la première lettre en majuscule</h3>
+<p>Pour l'<strong>affichage</strong>, on veut souvent la forme « Première Lettre En Majuscule » (en anglais <em>title case</em>). PostgreSQL et Oracle proposent <code>INITCAP</code> ; les autres SGBD n'ont pas d'équivalent direct.</p>
+<pre class="pseudo">-- PostgreSQL et Oracle :
+SELECT INITCAP('jean dupont');        -- 'Jean Dupont'  -- majuscule apres chaque espace
+SELECT INITCAP('RUE DU PONT');        -- 'Rue Du Pont'  -- meme les petits mots y passent
+
+-- MySQL et SQL Server : pas d'INITCAP. On le reconstitue a la main :
+SELECT CONCAT(
+         UPPER(LEFT(nom, 1)),        -- LEFT(nom,1) = le 1er caractere, mis en majuscule
+         LOWER(SUBSTRING(nom, 2))    -- SUBSTRING(nom,2) = tout le reste, mis en minuscules
+       ) AS nom_affichage
+FROM CLIENT;
+-- 'dUPONT' devient 'Dupont'
+
+-- Version SQL Server (l'operateur + remplace CONCAT) :
+SELECT UPPER(LEFT(nom, 1)) + LOWER(SUBSTRING(nom, 2, LEN(nom))) AS nom_affichage FROM CLIENT;</pre>
+<div class="warn">INITCAP est bête : il met une majuscule après chaque espace. <code>INITCAP('jean-marc de la tour')</code> donne <code>'Jean-Marc De La Tour'</code> — grammaticalement discutable. Pour des noms propres réels (McDonald, d'Hondt, van der Berg), aucune fonction automatique ne suffit.</div>
+
+<h3>6. Casse et accents : deux problèmes distincts</h3>
+<p>Uniformiser la casse ne règle pas les accents. <code>'LEFEVRE'</code> et <code>'LEFÈVRE'</code> restent différents après <code>UPPER</code>. Les accents relèvent de la <strong>collation</strong> ou d'une fonction dédiée.</p>
+<pre class="pseudo">-- PostgreSQL : l'extension unaccent supprime les accents
+SELECT unaccent(UPPER('Lefevre'));            -- 'LEFEVRE'
+
+-- MySQL : une collation _ai (accent insensitive) rend la comparaison indifferente aux accents
+SELECT * FROM CLIENT WHERE nom = 'Lefevre' COLLATE utf8mb4_general_ci;
+
+-- SQL Server : la collation _AI ignore les accents
+SELECT * FROM CLIENT
+WHERE nom COLLATE SQL_Latin1_General_CP1_CI_AI = 'Lefevre';</pre>
+<div class="tip">Convention répandue en production : conserver la colonne d'origine pour l'affichage (avec sa casse et ses accents), et ajouter une colonne technique normalisée — <code>UPPER(TRIM(...))</code> sans accents — servant uniquement aux recherches et aux rapprochements.</div>`,
+  exercises: [
+    { type: "input", q: "Complète : SELECT ______(nom) FROM CLIENT; — la fonction qui met tout en MAJUSCULES.", a: ["upper"], ph: "une fonction", exp: "UPPER est standard et disponible sur tous les SGBD." },
+    { type: "qcm", q: "Que renvoie LOWER('Rue Du Pont') ?", opts: ["'RUE DU PONT'", "'rue du pont'", "'Rue du pont'", "'rue Du Pont'"], a: 1, exp: "LOWER convertit l'intégralité de la chaîne en minuscules." },
+    { type: "input", q: "Complète : SELECT ______(nom) — la fonction qui met tout en minuscules.", a: ["lower"], ph: "une fonction", exp: "LOWER est l'exact symétrique de UPPER." },
+    { type: "qcm", q: "Quelle écriture rend la comparaison insensible à la casse de façon portable ?", opts: ["WHERE nom = 'dupont'", "WHERE UPPER(nom) = UPPER('dupont')", "WHERE nom LIKE 'dupont'", "WHERE nom IS 'dupont'"], a: 1, exp: "Appliquer la même fonction des deux côtés garantit le résultat quel que soit le SGBD." },
+    { type: "vf", q: "PostgreSQL compare les chaînes sans tenir compte de la casse par défaut.", a: false, exp: "PostgreSQL est sensible à la casse. C'est MySQL qui est insensible par défaut." },
+    { type: "qcm", q: "Que renvoie INITCAP('jean dupont') en PostgreSQL ?", opts: ["'JEAN DUPONT'", "'jean dupont'", "'Jean Dupont'", "'Jean dupont'"], a: 2, exp: "INITCAP met en majuscule la première lettre de chaque mot." },
+    { type: "vf", q: "INITCAP existe en MySQL et en SQL Server.", a: false, exp: "INITCAP est propre à PostgreSQL et Oracle. Ailleurs, il faut le reconstruire avec UPPER, LEFT et SUBSTRING." },
+    { type: "input", q: "Complète le regroupement insensible à la casse : SELECT UPPER(nom), COUNT(*) FROM CLIENT ______ ______ UPPER(nom);", a: ["group by"], ph: "deux mots-clés", exp: "GROUP BY UPPER(nom) fusionne 'DUPONT', 'Dupont' et 'dupont' en un seul groupe." },
+    { type: "qcm", q: "Après UPPER, 'LEFEVRE' et 'LEFÈVRE' sont-ils égaux ?", opts: ["Oui, UPPER supprime les accents", "Non : la casse et les accents sont deux problèmes distincts", "Oui, mais seulement en MySQL", "Cela dépend de la longueur"], a: 1, exp: "UPPER ne touche pas aux accents. Il faut une collation _AI ou une fonction comme unaccent." },
+    { type: "input", q: "Complète le nettoyage complet : SELECT UPPER(______(nom)) FROM CLIENT; — d'abord les espaces, ensuite la casse.", a: ["trim"], ph: "une fonction", exp: "TRIM s'exécute en premier puisqu'il est à l'intérieur, puis UPPER traite son résultat." },
+    { type: "qcm", q: "Que signifie le suffixe _CI dans une collation SQL Server ?", opts: ["Caractères internationaux", "Case Insensitive : comparaison insensible à la casse", "Compression Index", "Collation Interne"], a: 1, exp: "CI = Case Insensitive, AS = Accent Sensitive, AI = Accent Insensitive." },
+    { type: "vf", q: "Appliquer UPPER() à une colonne dans le WHERE peut empêcher l'usage d'un index.", a: true, exp: "Le SGBD ne peut plus se servir de l'index sur la colonne brute ; il faut un index fonctionnel ou une colonne normalisée." },
+    { type: "qcm", q: "Comment obtenir 'Dupont' à partir de 'dUPONT' en MySQL ?", opts: ["INITCAP(nom)", "UPPER(nom)", "CONCAT(UPPER(LEFT(nom,1)), LOWER(SUBSTRING(nom,2)))", "TRIM(nom)"], a: 2, exp: "On assemble la première lettre en majuscule et le reste en minuscules, faute d'INITCAP." },
+    { type: "input", q: "Complète : SELECT UPPER(______(nom, 1)) — la fonction qui extrait le premier caractère à gauche.", a: ["left"], ph: "une fonction", exp: "LEFT(nom, 1) prend le premier caractère. Nous verrons cette fonction en détail au jour 4." },
+    { type: "qcm", q: "Quelle est la bonne pratique en production ?", opts: ["Écraser la colonne d'origine par sa version UPPER", "Garder l'original pour l'affichage et ajouter une colonne normalisée pour les recherches", "Ne jamais utiliser UPPER", "Stocker chaque nom en trois exemplaires"], a: 1, exp: "On préserve la donnée lisible et on ajoute une colonne technique dédiée aux rapprochements." }
+  ],
+  final: {
+    title: "Exercice final — Uniformiser un fichier clients",
+    intro: `<p>Table <code>CLIENT</code> alimentée par trois sources différentes.</p>
+<pre class="pseudo">id | nom       | prenom   | email
+---+-----------+----------+--------------------
+ 1 | 'DUPONT'  | 'jean'   | 'Jean.Dupont@Mail.BE'
+ 2 | 'Dupont'  | 'JEAN'   | 'jean.dupont@mail.be'
+ 3 | 'dupont'  | 'Jean'   | 'JEAN.DUPONT@MAIL.BE'
+ 4 | 'Lefevre' | 'marie'  | 'Marie@Mail.be'</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de groupes donne SELECT nom, COUNT(*) FROM CLIENT GROUP BY nom sur PostgreSQL ?", opts: ["Deux", "Quatre : 'DUPONT', 'Dupont', 'dupont' et 'Lefevre'", "Un", "Trois"], a: 1, exp: "PostgreSQL est sensible à la casse : les trois écritures de Dupont forment trois groupes distincts." },
+      { type: "qcm", q: "Quelle requête regroupe correctement les Dupont ?", opts: ["GROUP BY nom", "GROUP BY UPPER(nom)", "ORDER BY nom", "GROUP BY LENGTH(nom)"], a: 1, exp: "On regroupe sur la version normalisée de la valeur." },
+      { type: "vf", q: "Les emails doivent être normalisés en minuscules avant comparaison.", a: true, exp: "La partie domaine d'un email est insensible à la casse ; LOWER est la convention de stockage universelle." },
+      { type: "qcm", q: "Quelle expression produit 'Jean' à partir de 'JEAN' en PostgreSQL ?", opts: ["UPPER(prenom)", "LOWER(prenom)", "INITCAP(prenom)", "TRIM(prenom)"], a: 2, exp: "INITCAP met en majuscule la première lettre et en minuscules le reste." },
+      { type: "vf", q: "UPPER(nom) suffit à faire correspondre 'Lefevre' et 'Lefèvre'.", a: false, exp: "L'accent subsiste après UPPER. Il faut traiter les accents séparément, via la collation ou unaccent." }
+    ],
+    solution: `<pre class="pseudo">-- 1) OBSERVER les variantes de casse presentes
+SELECT DISTINCT nom FROM CLIENT ORDER BY nom;   -- revele 'DUPONT', 'Dupont', 'dupont'
+
+-- 2) COMPTER les vrais clients, casse ignoree
+SELECT UPPER(TRIM(nom)) AS nom_norme,   -- normalisation : espaces rognes puis majuscules
+       COUNT(*)         AS nb_lignes
+FROM CLIENT
+GROUP BY UPPER(TRIM(nom))               -- un groupe par nom reel
+ORDER BY nb_lignes DESC;                -- les doublons les plus nombreux en tete
+-- attendu : 'DUPONT' -&gt; 3, 'LEFEVRE' -&gt; 1
+
+-- 3) TESTER l'affichage propre (PostgreSQL)
+SELECT id,
+       nom                       AS nom_brut,
+       INITCAP(LOWER(TRIM(nom))) AS nom_affichage,   -- LOWER puis INITCAP : 'DUPONT' devient 'Dupont'
+       INITCAP(LOWER(TRIM(prenom))) AS prenom_affichage,
+       LOWER(TRIM(email))        AS email_norme      -- les emails toujours en minuscules
+FROM CLIENT;
+
+-- Equivalent MySQL / SQL Server, sans INITCAP :
+SELECT id,
+       CONCAT(UPPER(LEFT(TRIM(nom), 1)),            -- 1re lettre en majuscule
+              LOWER(SUBSTRING(TRIM(nom), 2))) AS nom_affichage,
+       LOWER(TRIM(email))                     AS email_norme
+FROM CLIENT;
+
+-- 4) APPLIQUER la normalisation des emails
+UPDATE CLIENT
+SET email = LOWER(TRIM(email))
+WHERE email &lt;&gt; LOWER(TRIM(email));   -- uniquement les lignes reellement concernees</pre>
+<p>La casse est domptée. Demain : découper une chaîne pour n'en garder qu'un morceau.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j03", title: "Compter les vrais doublons de nom", level: 2,
+    statement: "Table <code>ADHERENT(id, nom, ville)</code> :<pre class='pseudo'>id | nom         | ville\n---+-------------+----------\n 1 | '  MARTIN ' | 'namur'\n 2 | 'Martin'    | 'NAMUR'\n 3 | 'martin'    | 'Namur '\n 4 | 'LEROY'     | 'liege'\n 5 | 'Leroy '    | 'Liege'</pre>Écris une requête qui affiche chaque nom réel (espaces rognés, en majuscules) avec le nombre de lignes correspondantes, en ne gardant que les noms apparaissant <strong>au moins deux fois</strong>. Trie du plus fréquent au moins fréquent.",
+    hints: [
+      "Normalise la colonne dans le SELECT et dans le GROUP BY : UPPER(TRIM(nom)).",
+      "Le filtre porte sur un agrégat (COUNT), donc HAVING et non WHERE.",
+      "ORDER BY sur l'alias du COUNT, en DESC."
+    ],
+    solution: "SELECT UPPER(TRIM(nom)) AS nom_norme,     -- TRIM enleve les espaces, UPPER uniformise la casse\n       COUNT(*)         AS nb_lignes      -- nombre de lignes partageant ce nom reel\nFROM ADHERENT\nGROUP BY UPPER(TRIM(nom))                 -- un groupe par nom NORMALISE, pas par valeur brute\nHAVING COUNT(*) >= 2                      -- HAVING filtre les GROUPES (WHERE ne sait pas faire d'agregat)\nORDER BY nb_lignes DESC;                  -- les doublons les plus nombreux en premier\n\n-- Resultat attendu :\n-- nom_norme | nb_lignes\n-- ----------+----------\n-- 'MARTIN'  |    3\n-- 'LEROY'   |    2\n\n-- Sans la normalisation, GROUP BY nom aurait produit 5 groupes de 1 ligne\n-- et le HAVING n'aurait renvoye AUCUNE ligne.\n\n-- Variante SQL Server : identique (UPPER et TRIM existent depuis 2017).\n-- Sur SQL Server anterieur : UPPER(LTRIM(RTRIM(nom))).",
+    note: "Piège : on doit répéter l'expression complète UPPER(TRIM(nom)) dans le GROUP BY — la plupart des SGBD n'acceptent pas l'alias du SELECT à cet endroit (MySQL et PostgreSQL tolèrent l'alias, SQL Server le refuse). Bonne pratique : normaliser TOUJOURS avant de compter des doublons, sinon le comptage est faux sans que rien ne le signale." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

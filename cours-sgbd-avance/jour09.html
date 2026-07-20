@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 09</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 9,
+  title: "Convertir les types : CAST et CONVERT",
+  subtitle: "Faire d'un texte un nombre, d'un nombre une date : le passage obligé des données importées.",
+  theory: `
+<h3>1. Pourquoi convertir ?</h3>
+<p>Chaque colonne a un <strong>type</strong> : texte (<code>VARCHAR</code>, <code>TEXT</code>), nombre entier (<code>INT</code>), nombre décimal (<code>DECIMAL</code>, <code>NUMERIC</code>), date (<code>DATE</code>, <code>TIMESTAMP</code>), booléen. Le type détermine ce qu'on peut faire de la valeur.</p>
+<p>Le drame des données importées, c'est que <strong>tout arrive en texte</strong>. Un fichier CSV n'a pas de types : il n'y a que des caractères. Le montant '1250.50' et la date '2024-03-15' sont des chaînes, avec toutes les conséquences que cela implique.</p>
+<pre class="pseudo">-- Une colonne montant declaree en VARCHAR contient '100', '25', '9' :
+
+SELECT montant FROM VENTE ORDER BY montant;
+-- ordre obtenu :  '100', '25', '9'    -- tri ALPHABETIQUE : '1' vient avant '2' qui vient avant '9'
+-- ordre attendu :   '9', '25', '100'  -- tri NUMERIQUE
+
+SELECT SUM(montant) FROM VENTE;         -- erreur, ou resultat imprevisible selon le SGBD
+SELECT MAX(date_texte) FROM COMMANDE;   -- '31/01/2020' passe pour plus grand que '01/12/2024'</pre>
+<div class="warn">Le tri alphabétique de nombres stockés en texte est un bug fréquent et discret : le résultat s'affiche, personne ne le remet en cause, et le classement est faux.</div>
+
+<h3>2. CAST : la fonction standard</h3>
+<p><code>CAST(valeur AS type)</code> convertit une valeur d'un type vers un autre. C'est la syntaxe du standard SQL, comprise par <strong>tous</strong> les SGBD. C'est celle à écrire par défaut.</p>
+<pre class="pseudo">SELECT CAST('1250' AS INTEGER);          -- 1250, un vrai nombre entier
+SELECT CAST('1250.50' AS DECIMAL(10,2)); -- 1250.50 : 10 chiffres au total, dont 2 apres la virgule
+SELECT CAST(1250 AS VARCHAR(10));        -- '1250', devenu du texte
+SELECT CAST('2024-03-15' AS DATE);       -- une vraie date, triable et calculable
+
+-- Sur une table, le tri redevient correct :
+SELECT montant, CAST(montant AS DECIMAL(10,2)) AS montant_num
+FROM VENTE
+ORDER BY CAST(montant AS DECIMAL(10,2));   -- 9, 25, 100 : ordre NUMERIQUE cette fois</pre>
+<div class="tip">Les noms de types varient un peu : <code>INTEGER</code> ou <code>INT</code> (partout), <code>DECIMAL(p,s)</code> ou <code>NUMERIC(p,s)</code> (équivalents), <code>VARCHAR(n)</code> partout sauf PostgreSQL qui préfère <code>TEXT</code>, <code>SIGNED</code> et <code>CHAR</code> en MySQL — où <code>CAST(x AS INTEGER)</code> ne fonctionne pas, il faut <code>CAST(x AS SIGNED)</code>.</div>
+
+<h3>3. CONVERT : la variante propriétaire</h3>
+<p><code>CONVERT</code> existe partout, mais avec une signature <strong>différente selon le SGBD</strong>. C'est un piège classique : le même nom de fonction, deux ordres d'arguments opposés.</p>
+<pre class="pseudo">-- SQL Server : CONVERT(type, valeur)  -- le TYPE en premier
+SELECT CONVERT(INT, '1250');
+SELECT CONVERT(DATE, '2024-03-15');
+SELECT CONVERT(VARCHAR(10), 1250);
+SELECT CONVERT(VARCHAR, date_cmd, 103);   -- le 3e argument est un CODE DE FORMAT (103 = jj/mm/aaaa)
+
+-- MySQL : CONVERT(valeur, type)  -- la VALEUR en premier : ordre INVERSE de SQL Server
+SELECT CONVERT('1250', SIGNED);
+SELECT CONVERT('2024-03-15', DATE);
+
+-- PostgreSQL : pas de CONVERT pour les types. Deux formes disponibles :
+SELECT CAST('1250' AS INTEGER);   -- standard
+SELECT '1250'::INTEGER;           -- raccourci ::, tres repandu en PostgreSQL</pre>
+<div class="warn">Ne mémorise pas l'ordre des arguments de CONVERT : écris <code>CAST</code>. La seule raison d'utiliser CONVERT est le <strong>code de format</strong> de SQL Server pour les dates, dont CAST est incapable.</div>
+
+<h3>4. Quand la conversion échoue</h3>
+<p>Que se passe-t-il si la chaîne ne représente pas un nombre valide ? Le comportement varie radicalement — et c'est le point le plus important du jour.</p>
+<pre class="pseudo">CAST('abc' AS INTEGER)
+
+-- PostgreSQL : ERREUR, la requete s'arrete net (invalid input syntax for type integer)
+-- SQL Server : ERREUR (Conversion failed when converting the varchar value 'abc')
+-- MySQL      : renvoie 0 avec un simple AVERTISSEMENT -- le plus dangereux des trois
+
+-- MySQL est donc traitre :
+SELECT SUM(CAST(montant AS DECIMAL(10,2))) FROM VENTE;
+-- toutes les lignes invalides comptent pour 0, le total est faux, et rien ne le signale</pre>
+<div class="tip">Les fonctions de conversion <strong>sûres</strong>, qui renvoient NULL au lieu d'échouer :<br>
+<strong>SQL Server 2012+</strong> : <code>TRY_CAST(valeur AS type)</code> et <code>TRY_CONVERT(type, valeur)</code>.<br>
+<strong>PostgreSQL</strong> : pas d'équivalent direct — on filtre en amont avec une regex, ou on écrit une fonction.<br>
+<strong>MySQL</strong> : pas d'équivalent — on filtre en amont.</div>
+<pre class="pseudo">-- La parade PORTABLE : ne convertir que ce qui est convertible
+
+-- 1) IDENTIFIER les valeurs non convertibles avant toute chose
+SELECT id, montant
+FROM VENTE
+WHERE montant !~ '^[0-9]+(\\.[0-9]+)?$';   -- PostgreSQL : chiffres, avec partie decimale FACULTATIVE
+--   ^[0-9]+           au moins un chiffre
+--   (\\.[0-9]+)?       eventuellement un point suivi d'au moins un chiffre
+--   $                 et rien apres
+
+-- 2) NE CONVERTIR que les lignes valides
+SELECT SUM(CAST(montant AS DECIMAL(10,2))) AS total
+FROM VENTE
+WHERE montant ~ '^[0-9]+(\\.[0-9]+)?$';    -- le garde-fou evite l'erreur ET le faux total
+
+-- 3) VERSION SQL Server, plus elegante grace a TRY_CAST
+SELECT SUM(TRY_CAST(montant AS DECIMAL(10,2))) AS total   -- les valeurs invalides deviennent NULL
+FROM VENTE;                                               -- et SUM ignore les NULL</pre>
+
+<h3>5. Les conversions implicites</h3>
+<p>Le SGBD convertit parfois <strong>tout seul</strong>, sans qu'on le lui demande. Cela paraît pratique, c'est en réalité une source de bugs et de lenteurs.</p>
+<pre class="pseudo">WHERE code_client = 12345      -- si code_client est un VARCHAR, le SGBD convertit toute la colonne
+                               -- consequence : l'INDEX n'est plus utilisable, la requete rampe
+WHERE code_client = '12345'    -- CORRECT : on compare du texte avec du texte
+
+-- Comportements a connaitre :
+SELECT '10' + 5;    -- MySQL : 15 (conversion implicite) ; PostgreSQL : ERREUR ; SQL Server : 15
+SELECT 1 = '1';     -- vrai partout, mais par des chemins differents</pre>
+<div class="warn">Comparer une colonne texte avec un nombre littéral est l'une des causes les plus fréquentes de requêtes lentes en production. Le type de la valeur littérale doit toujours correspondre à celui de la colonne.</div>
+
+<h3>6. Deux conversions à connaître</h3>
+<pre class="pseudo">-- ARRONDIR EN CONVERTISSANT : CAST vers INTEGER tronque ou arrondit selon le SGBD
+SELECT CAST(9.7 AS INTEGER);   -- PostgreSQL : 10 (arrondi) ; MySQL : 10 ; SQL Server : 9 (tronque !)
+-- Pour un comportement previsible, utilise explicitement ROUND ou FLOOR (jour 10)
+
+-- DIVISION ENTIERE PIEGEUSE : deux entiers donnent un entier
+SELECT 7 / 2;                          -- 3   : la partie decimale est perdue
+SELECT CAST(7 AS DECIMAL) / 2;         -- 3.5 : un seul CAST suffit a passer en calcul decimal
+SELECT 100.0 * COUNT(a) / COUNT(*);    -- l'astuce du 100.0 vue au jour 8 repose sur ce principe</pre>`,
+  exercises: [
+    { type: "input", q: "Complète : SELECT ______('1250' AS INTEGER); — la fonction de conversion standard.", a: ["cast"], ph: "une fonction", exp: "CAST(valeur AS type) est la syntaxe standard, comprise partout." },
+    { type: "qcm", q: "Pourquoi ORDER BY sur une colonne texte contenant des nombres donne-t-il un ordre faux ?", opts: ["Parce que la colonne n'a pas d'index", "Parce que le tri est alphabétique : '100' vient avant '9'", "Parce que SQL ne sait pas trier", "Parce qu'il manque un GROUP BY"], a: 1, exp: "Caractère par caractère, '1' précède '9' : '100' est classé avant '9'." },
+    { type: "qcm", q: "Quelle syntaxe CONVERT correspond à SQL Server ?", opts: ["CONVERT(valeur, type)", "CONVERT(type, valeur)", "CONVERT(valeur TO type)", "CONVERT type FROM valeur"], a: 1, exp: "SQL Server met le type en premier ; MySQL fait exactement l'inverse." },
+    { type: "input", q: "Complète le raccourci PostgreSQL : SELECT '1250'______INTEGER;", a: ["::"], ph: "un opérateur", exp: "L'opérateur :: est le raccourci de CAST propre à PostgreSQL." },
+    { type: "vf", q: "CAST('abc' AS INTEGER) renvoie NULL sur tous les SGBD.", a: false, exp: "PostgreSQL et SQL Server lèvent une erreur ; MySQL renvoie 0 avec un simple avertissement." },
+    { type: "qcm", q: "Quel comportement de MySQL est le plus dangereux lors d'une conversion ratée ?", opts: ["Il lève une erreur", "Il renvoie 0 avec un simple avertissement, faussant silencieusement les totaux", "Il ignore la ligne", "Il convertit en texte"], a: 1, exp: "Le calcul aboutit sur un résultat faux sans que rien n'alerte l'utilisateur." },
+    { type: "input", q: "Complète la conversion sûre de SQL Server : SELECT ______(montant AS DECIMAL(10,2));", a: ["try_cast"], ph: "une fonction", exp: "TRY_CAST renvoie NULL au lieu de lever une erreur." },
+    { type: "qcm", q: "Quel type MySQL faut-il viser pour convertir en entier ?", opts: ["INTEGER", "SIGNED", "NUMBER", "LONG"], a: 1, exp: "MySQL n'accepte pas CAST(x AS INTEGER) : il faut CAST(x AS SIGNED)." },
+    { type: "vf", q: "Comparer une colonne VARCHAR à un nombre littéral peut empêcher l'usage de l'index.", a: true, exp: "La conversion implicite s'applique à toute la colonne, ce qui rend l'index inutilisable." },
+    { type: "qcm", q: "Que renvoie SELECT 7 / 2 en SQL avec deux entiers ?", opts: ["3.5", "3", "4", "Une erreur"], a: 1, exp: "Deux entiers donnent une division entière : la partie décimale est perdue." },
+    { type: "input", q: "Complète pour obtenir 3.5 : SELECT ______(7 AS DECIMAL) / 2;", a: ["cast"], ph: "une fonction", exp: "Un seul opérande converti en décimal suffit à basculer tout le calcul en décimal." },
+    { type: "qcm", q: "Quel type déclare un montant à deux décimales ?", opts: ["INTEGER", "VARCHAR(10)", "DECIMAL(10,2)", "FLOAT"], a: 2, exp: "DECIMAL(10,2) : dix chiffres au total, dont deux après la virgule. FLOAT est déconseillé pour l'argent." },
+    { type: "vf", q: "CAST(9.7 AS INTEGER) donne le même résultat sur tous les SGBD.", a: false, exp: "PostgreSQL et MySQL arrondissent à 10 ; SQL Server tronque à 9. Utilise ROUND ou FLOOR explicitement." },
+    { type: "qcm", q: "Quelle est la parade portable contre les conversions qui échouent ?", opts: ["Ignorer les erreurs", "Filtrer en amont avec une regex, pour ne convertir que les valeurs valides", "Convertir tout en texte", "Supprimer les lignes fautives"], a: 1, exp: "Un WHERE de validation en amont fonctionne sur tous les SGBD, contrairement à TRY_CAST." },
+    { type: "qcm", q: "Pourquoi CAST est-il préférable à CONVERT ?", opts: ["Il est plus rapide", "Il est standard et sa syntaxe est identique partout", "Il gère les dates", "Il ne lève jamais d'erreur"], a: 1, exp: "CONVERT a des signatures incompatibles entre SQL Server et MySQL : le code n'est pas portable." }
+  ],
+  final: {
+    title: "Exercice final — Une table entièrement en texte",
+    intro: `<p>Table <code>IMPORT_VENTE</code> issue d'un CSV : toutes les colonnes sont des <code>VARCHAR</code>.</p>
+<pre class="pseudo">id | montant   | quantite | date_vente   | code_client
+---+-----------+----------+--------------+-------------
+ 1 | '1250.50' | '3'      | '2024-03-15' | '00123'
+ 2 | '99.90'   | '12'     | '2024-03-16' | '00045'
+ 3 | 'N/A'     | '1'      | '2024-03-17' | '00123'
+ 4 | '450'     | 'deux'   | 'inconnue'   | '00987'</pre>`,
+    questions: [
+      { type: "qcm", q: "Que donne ORDER BY montant sur cette table ?", opts: ["Un tri numérique correct", "Un tri alphabétique : '1250.50' avant '450' avant '99.90'", "Une erreur", "Aucun tri"], a: 1, exp: "Le tri est alphabétique : '1' < '4' < '9' < 'N'." },
+      { type: "qcm", q: "Que provoque CAST(montant AS DECIMAL(10,2)) sur la ligne 3 en PostgreSQL ?", opts: ["Renvoie 0", "Renvoie NULL", "Lève une erreur qui interrompt la requête", "Renvoie 'N/A'"], a: 2, exp: "PostgreSQL refuse la conversion et arrête l'exécution." },
+      { type: "vf", q: "En MySQL, la même conversion renverrait 0 pour la ligne 3.", a: true, exp: "MySQL convertit 'N/A' en 0 avec un simple avertissement : le total sera faux sans alerte." },
+      { type: "qcm", q: "Quel WHERE permet de sommer uniquement les montants valides ?", opts: ["WHERE montant IS NOT NULL", "WHERE montant ~ '^[0-9]+(\\.[0-9]+)?$'", "WHERE LENGTH(montant) > 0", "WHERE montant <> 'N/A'"], a: 1, exp: "La regex valide la structure entière ; tester <> 'N/A' ne protégerait que de ce cas précis." },
+      { type: "qcm", q: "Pourquoi ne faut-il PAS convertir code_client en entier ?", opts: ["Parce que c'est trop lent", "Parce que les zéros de tête ('00123' deviendrait 123) seraient perdus", "Parce que CAST ne le permet pas", "Parce que c'est une clé primaire"], a: 1, exp: "Un identifiant à zéros significatifs est du texte, pas un nombre — même s'il n'est composé que de chiffres." }
+    ],
+    solution: `<pre class="pseudo">-- 1) IDENTIFIER les valeurs non convertibles, colonne par colonne (PostgreSQL)
+SELECT id, montant, quantite, date_vente
+FROM IMPORT_VENTE
+WHERE montant    !~ '^[0-9]+(\\.[0-9]+)?$'   -- montant : chiffres, decimales facultatives
+   OR quantite   !~ '^[0-9]+$'               -- quantite : que des chiffres
+   OR date_vente !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$';   -- date : format aaaa-mm-jj strict
+-- attendu : ligne 3 (montant 'N/A') et ligne 4 (quantite 'deux', date 'inconnue')
+
+-- 2) CALCULER le total sur les seules lignes valides
+SELECT COUNT(*)                                  AS nb_lignes_valides,
+       SUM(CAST(montant AS DECIMAL(10,2)))       AS total_montant,
+       SUM(CAST(quantite AS INTEGER))            AS total_quantite
+FROM IMPORT_VENTE
+WHERE montant  ~ '^[0-9]+(\\.[0-9]+)?$'          -- garde-fou : evite l'erreur de conversion
+  AND quantite ~ '^[0-9]+$';
+-- attendu : 3 lignes valides pour le montant (1, 2, 4), total 1800.40
+
+-- 3) VERSION SQL Server, nettement plus simple grace a TRY_CAST
+SELECT SUM(TRY_CAST(montant  AS DECIMAL(10,2))) AS total_montant,   -- 'N/A' devient NULL
+       SUM(TRY_CAST(quantite AS INT))           AS total_quantite,  -- 'deux' devient NULL
+       COUNT(*) - COUNT(TRY_CAST(montant AS DECIMAL(10,2))) AS nb_montants_invalides
+FROM IMPORT_VENTE;
+-- SUM ignore les NULL, donc le total reste juste, et on sait combien de lignes ont ete ecartees
+
+-- 4) TRIER correctement, en convertissant dans le ORDER BY
+SELECT id, montant
+FROM IMPORT_VENTE
+WHERE montant ~ '^[0-9]+(\\.[0-9]+)?$'
+ORDER BY CAST(montant AS DECIMAL(10,2)) DESC;   -- tri NUMERIQUE : 1250.50, 450, 99.90
+
+-- 5) NE PAS TOUCHER a code_client : '00123' doit rester du TEXTE.
+--    CAST('00123' AS INTEGER) donnerait 123, et le rapprochement avec les autres tables echouerait.
+
+-- Variantes MySQL : CAST(x AS SIGNED) pour l'entier, CAST(x AS DECIMAL(10,2)) pour le decimal,
+-- et NOT REGEXP au lieu de !~ pour la validation.</pre>
+<p>Les types sont sous contrôle. Demain : les fonctions numériques et les arrondis.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j09", title: "Sauver un import CSV", level: 3,
+    statement: "Table <code>IMPORT(id, article, prix_txt, stock_txt)</code>, entièrement en VARCHAR :<pre class='pseudo'>id | article    | prix_txt  | stock_txt\n---+------------+-----------+-----------\n 1 | 'Clavier'  | '29.90'   | '15'\n 2 | 'Souris'   | '12.50'   | '0'\n 3 | 'Ecran'    | 'sur devis'| '3'\n 4 | 'Cable'    | '5'       | 'rupture'</pre>Écris une requête qui affiche l'article, le prix et le stock convertis en vrais types numériques, ainsi que la valeur totale du stock (prix × quantité) — en ne retenant que les lignes dont les DEUX colonnes sont convertibles. Trie par valeur totale décroissante, et donne en commentaire la variante SQL Server avec TRY_CAST.",
+    hints: [
+      "Valide chaque colonne avec une regex avant de convertir : '^[0-9]+(\\.[0-9]+)?$' pour le prix, '^[0-9]+$' pour le stock.",
+      "DECIMAL(10,2) pour le prix, INTEGER pour le stock.",
+      "La valeur totale se calcule sur les valeurs déjà converties ; il faut répéter l'expression dans le ORDER BY ou trier sur l'alias."
+    ],
+    solution: "SELECT article,\n       CAST(prix_txt  AS DECIMAL(10,2))                       AS prix,        -- texte -> decimal\n       CAST(stock_txt AS INTEGER)                             AS stock,       -- texte -> entier\n       CAST(prix_txt AS DECIMAL(10,2)) * CAST(stock_txt AS INTEGER) AS valeur_stock\nFROM IMPORT\nWHERE prix_txt  ~ '^[0-9]+(\\\\.[0-9]+)?$'   -- garde-fou : que des chiffres, decimales facultatives\n  AND stock_txt ~ '^[0-9]+$'                -- garde-fou : que des chiffres entiers\nORDER BY valeur_stock DESC;                 -- de la plus grosse valeur immobilisee a la plus petite\n\n-- Resultat attendu :\n-- article   | prix  | stock | valeur_stock\n-- ----------+-------+-------+-------------\n-- 'Clavier' | 29.90 |    15 |       448.50\n-- 'Souris'  | 12.50 |     0 |         0.00\n\n-- Ligne 3 exclue : prix_txt = 'sur devis' n'est pas convertible.\n-- Ligne 4 exclue : stock_txt = 'rupture' n'est pas convertible.\n-- Sans les deux garde-fous, PostgreSQL leverait une erreur et la requete n'aurait AUCUN resultat.\n\n-- Variante SQL Server, sans regex et sans WHERE :\n--   SELECT article,\n--          TRY_CAST(prix_txt  AS DECIMAL(10,2)) AS prix,     -- 'sur devis' -> NULL\n--          TRY_CAST(stock_txt AS INT)           AS stock,    -- 'rupture'   -> NULL\n--          TRY_CAST(prix_txt AS DECIMAL(10,2)) * TRY_CAST(stock_txt AS INT) AS valeur_stock\n--   FROM IMPORT\n--   ORDER BY valeur_stock DESC;\n--   Les lignes invalides apparaissent avec des NULL au lieu d'etre exclues :\n--   a choisir selon qu'on veut les SIGNALER ou les ECARTER.\n\n-- Variante MySQL : CAST(stock_txt AS SIGNED), et stock_txt REGEXP '^[0-9]+$'.\n-- ATTENTION en MySQL : sans le WHERE, CAST('rupture' AS SIGNED) renverrait 0,\n-- et la valeur de stock serait fausse SANS aucune erreur.",
+    note: "Piège : la ligne 2 a un stock de 0, donc une valeur de stock de 0 — mais elle est parfaitement valide et doit apparaître. Ne confonds jamais « valeur nulle » (0, une information) et « valeur invalide » (non convertible). Bonne pratique : décider explicitement si les lignes non convertibles doivent être exclues (WHERE + regex) ou signalées (TRY_CAST donnant NULL) — les deux stratégies sont légitimes, mais le choix doit être conscient et documenté." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

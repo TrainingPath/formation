@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 11</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Extraire une partie de date : EXTRACT, YEAR, MONTH",
+  subtitle: "Isoler l'année, le mois, le jour ou le trimestre pour analyser et regrouper.",
+  theory: `
+<h3>1. Une date est un nombre, pas un texte</h3>
+<p>Une colonne de type <code>DATE</code> ne stocke pas la chaîne '2024-03-15' : elle stocke une valeur interne (souvent un nombre de jours depuis une date de référence) que le SGBD sait afficher, trier, comparer et sur laquelle il sait calculer. C'est toute la différence avec une date rangée en <code>VARCHAR</code>.</p>
+<pre class="pseudo">-- Avec une vraie colonne DATE :
+WHERE date_cmd &gt; '2024-01-01'      -- comparaison CHRONOLOGIQUE, correcte
+ORDER BY date_cmd                   -- tri chronologique, correct
+SELECT date_fin - date_debut        -- une duree en jours
+
+-- Avec une colonne VARCHAR contenant '15/03/2024' :
+ORDER BY date_texte                 -- tri ALPHABETIQUE : '01/12/2024' avant '15/03/2020'. Faux.
+SELECT date_fin - date_debut        -- erreur, ou resultat absurde</pre>
+<div class="tip">Les principaux types temporels : <code>DATE</code> (jour seul), <code>TIME</code> (heure seule), <code>TIMESTAMP</code> ou <code>DATETIME</code> (jour + heure), <code>TIMESTAMP WITH TIME ZONE</code> (avec fuseau horaire). Choisis le plus simple qui suffit : stocker une heure inutile complique tous les regroupements par jour.</div>
+
+<h3>2. EXTRACT : la fonction standard</h3>
+<p><code>EXTRACT(partie FROM date)</code> isole un composant de la date et le renvoie sous forme de <strong>nombre</strong>. C'est la syntaxe du standard SQL, disponible sur MySQL, PostgreSQL et Oracle.</p>
+<pre class="pseudo">-- Sur la date '2024-03-15' (un vendredi) :
+EXTRACT(YEAR    FROM date_cmd)   -- 2024
+EXTRACT(MONTH   FROM date_cmd)   --    3   (un NOMBRE, pas le libelle 'mars')
+EXTRACT(DAY     FROM date_cmd)   --   15
+EXTRACT(QUARTER FROM date_cmd)   --    1   (trimestre : janvier a mars)
+EXTRACT(WEEK    FROM date_cmd)   --   11   (numero de semaine ISO)
+EXTRACT(DOW     FROM date_cmd)   --    5   (Day Of Week : PostgreSQL, 0 = dimanche)
+EXTRACT(DOY     FROM date_cmd)   --   75   (Day Of Year : le 75e jour de l'annee)
+EXTRACT(HOUR    FROM date_heure) --   14   (sur un TIMESTAMP)</pre>
+
+<h3>3. Les raccourcis YEAR, MONTH, DAY</h3>
+<p>MySQL et SQL Server proposent des fonctions abrégées, plus courtes à écrire mais moins portables.</p>
+<pre class="pseudo">-- MySQL et SQL Server :
+YEAR(date_cmd)          -- 2024
+MONTH(date_cmd)         --    3
+DAY(date_cmd)           --   15   (DAYOFMONTH en MySQL est un synonyme)
+QUARTER(date_cmd)       --    1   (MySQL seulement)
+
+-- PostgreSQL : ces fonctions N'EXISTENT PAS. Deux ecritures possibles :
+EXTRACT(YEAR FROM date_cmd)       -- standard
+DATE_PART('year', date_cmd)       -- specifique PostgreSQL, le nom de la partie est une CHAINE
+
+-- SQL Server, la fonction generique :
+DATEPART(YEAR,    date_cmd)       -- 2024   (attention : DATEPART, un seul mot)
+DATEPART(QUARTER, date_cmd)       --    1
+DATEPART(WEEKDAY, date_cmd)       --    6   (1 = dimanche par defaut)</pre>
+<div class="tip">Tableau de correspondance à retenir :<br>
+<strong>Standard / MySQL / PostgreSQL</strong> : <code>EXTRACT(YEAR FROM d)</code><br>
+<strong>MySQL / SQL Server</strong> : <code>YEAR(d)</code><br>
+<strong>PostgreSQL</strong> : <code>DATE_PART('year', d)</code><br>
+<strong>SQL Server</strong> : <code>DATEPART(YEAR, d)</code><br>
+Écris <code>EXTRACT</code> quand tu peux : c'est la seule forme réellement standard.</div>
+
+<h3>4. Regrouper par période</h3>
+<p>L'usage numéro un de l'extraction : produire des statistiques par mois, par trimestre, par année.</p>
+<pre class="pseudo">-- Chiffre d'affaires par mois de 2024 :
+SELECT EXTRACT(YEAR  FROM date_cmd) AS annee,     -- 2024
+       EXTRACT(MONTH FROM date_cmd) AS mois,      -- 1 a 12
+       COUNT(*)                     AS nb_commandes,
+       ROUND(SUM(montant), 2)       AS ca
+FROM COMMANDE
+WHERE date_cmd &gt;= DATE '2024-01-01'               -- borne INCLUSIVE de debut
+  AND date_cmd &lt;  DATE '2025-01-01'               -- borne EXCLUSIVE de fin (voir l'avertissement plus bas)
+GROUP BY EXTRACT(YEAR FROM date_cmd),             -- on repete les expressions, pas les alias
+         EXTRACT(MONTH FROM date_cmd)
+ORDER BY annee, mois;</pre>
+<div class="warn">Piège capital : ne groupe <strong>jamais</strong> par mois seul si tes données couvrent plusieurs années. <code>GROUP BY EXTRACT(MONTH FROM d)</code> fusionnerait mars 2023 et mars 2024 dans le même paquet. Il faut toujours l'année ET le mois.</div>
+
+<h3>5. Le piège des heures dans un DATETIME</h3>
+<p>Une colonne <code>TIMESTAMP</code> contient une heure, même quand elle paraît vide. Cela casse silencieusement les filtres d'égalité et les bornes de fin.</p>
+<pre class="pseudo">-- La colonne date_cmd est un TIMESTAMP contenant '2024-03-15 14:32:07'
+
+WHERE date_cmd = '2024-03-15'                      -- 0 ligne ! Le SGBD compare a '2024-03-15 00:00:00'
+
+-- Les trois parades, de la moins bonne a la meilleure :
+WHERE CAST(date_cmd AS DATE) = DATE '2024-03-15'   -- correct, mais empeche l'usage de l'index
+WHERE date_cmd &gt;= DATE '2024-03-15'
+  AND date_cmd &lt;  DATE '2024-03-16'                -- MEILLEUR : borne haute EXCLUSIVE, l'index reste utilisable
+
+-- Et surtout, PAS ceci :
+WHERE date_cmd BETWEEN '2024-03-01' AND '2024-03-31'
+-- BETWEEN est inclusif des deux cotes : la borne haute vaut '2024-03-31 00:00:00'
+-- toutes les commandes du 31 mars passees APRES MINUIT sont SILENCIEUSEMENT perdues</pre>
+<div class="warn">L'idiome <code>&gt;= debut AND &lt; lendemain_de_la_fin</code> est la seule écriture correcte et performante sur des colonnes horodatées. Prends-en l'habitude, y compris sur des colonnes DATE : le jour où le type changera, ton code restera juste.</div>
+
+<h3>6. Tronquer une date à la période</h3>
+<p>Plutôt que d'extraire des nombres séparés, on peut ramener chaque date au premier jour de sa période. Le regroupement devient plus lisible et le résultat reste une date, donc triable.</p>
+<pre class="pseudo">-- PostgreSQL : DATE_TRUNC
+SELECT DATE_TRUNC('month', date_cmd) AS mois,     -- '2024-03-15' devient '2024-03-01 00:00:00'
+       SUM(montant)                  AS ca
+FROM COMMANDE
+GROUP BY DATE_TRUNC('month', date_cmd)
+ORDER BY mois;                                     -- tri chronologique naturel
+
+-- MySQL : pas de DATE_TRUNC. On formate en chaine 'aaaa-mm'
+SELECT DATE_FORMAT(date_cmd, '%Y-%m') AS mois, SUM(montant) AS ca
+FROM COMMANDE GROUP BY DATE_FORMAT(date_cmd, '%Y-%m') ORDER BY mois;
+
+-- SQL Server 2022+ : DATETRUNC ; avant, l'astuce classique
+SELECT DATEFROMPARTS(YEAR(date_cmd), MONTH(date_cmd), 1) AS mois, SUM(montant) AS ca
+FROM COMMANDE GROUP BY DATEFROMPARTS(YEAR(date_cmd), MONTH(date_cmd), 1) ORDER BY mois;</pre>
+
+<h3>7. Contrôle qualité sur les dates</h3>
+<pre class="pseudo">-- Reperer les dates aberrantes, tres frequentes dans les imports
+SELECT id, date_naissance
+FROM CLIENT
+WHERE date_naissance &gt; CURRENT_DATE                          -- une naissance dans le futur
+   OR EXTRACT(YEAR FROM date_naissance) &lt; 1900               -- avant 1900 : probable erreur de saisie
+   OR date_naissance IS NULL;                                -- information manquante
+
+-- Detecter les dates « par defaut » laissees par un logiciel
+SELECT COUNT(*) FROM COMMANDE WHERE date_cmd = DATE '1900-01-01';   -- valeur sentinelle classique
+SELECT COUNT(*) FROM COMMANDE WHERE date_cmd = DATE '1970-01-01';   -- l'epoque Unix, autre sentinelle
+
+-- Verifier la coherence chronologique entre deux colonnes
+SELECT id, date_commande, date_livraison
+FROM COMMANDE
+WHERE date_livraison &lt; date_commande;   -- livre avant d'avoir ete commande : impossible</pre>
+<div class="tip"><code>CURRENT_DATE</code> est standard (MySQL, PostgreSQL). SQL Server utilise <code>GETDATE()</code> ou <code>CAST(GETDATE() AS DATE)</code>. <code>CURRENT_TIMESTAMP</code> est en revanche compris partout, y compris par SQL Server.</div>`,
+  exercises: [
+    { type: "input", q: "Complète : SELECT ______(YEAR FROM date_cmd); — la fonction standard d'extraction.", a: ["extract"], ph: "une fonction", exp: "EXTRACT(partie FROM date) est la syntaxe du standard SQL." },
+    { type: "qcm", q: "Que renvoie EXTRACT(MONTH FROM DATE '2024-03-15') ?", opts: ["'mars'", "3", "'03'", "15"], a: 1, exp: "EXTRACT renvoie un NOMBRE, jamais un libellé textuel." },
+    { type: "qcm", q: "Quelle fonction n'existe PAS en PostgreSQL ?", opts: ["EXTRACT", "DATE_PART", "YEAR", "DATE_TRUNC"], a: 2, exp: "PostgreSQL n'a pas YEAR(). Il faut EXTRACT(YEAR FROM d) ou DATE_PART('year', d)." },
+    { type: "input", q: "Complète la version SQL Server : SELECT ______(YEAR, date_cmd);", a: ["datepart"], ph: "une fonction", exp: "DATEPART(partie, date) en SQL Server, en un seul mot." },
+    { type: "vf", q: "GROUP BY EXTRACT(MONTH FROM date_cmd) suffit à produire des statistiques mensuelles fiables.", a: false, exp: "Sur plusieurs années, mars 2023 et mars 2024 seraient fusionnés. Il faut grouper sur l'année ET le mois." },
+    { type: "qcm", q: "Pourquoi WHERE date_cmd = '2024-03-15' ne renvoie-t-il rien sur un TIMESTAMP ?", opts: ["Le format est faux", "La comparaison se fait avec '2024-03-15 00:00:00', or les lignes ont une heure non nulle", "La date n'existe pas", "Il manque un CAST"], a: 1, exp: "L'heure fait partie de la valeur : seules les lignes à minuit pile correspondraient." },
+    { type: "qcm", q: "Quelle écriture filtre correctement une journée entière sur un TIMESTAMP ?", opts: ["BETWEEN '2024-03-15' AND '2024-03-16'", ">= '2024-03-15' AND < '2024-03-16'", "= '2024-03-15'", "LIKE '2024-03-15%'"], a: 1, exp: "La borne haute exclusive capture toute la journée sans déborder, et laisse l'index utilisable." },
+    { type: "vf", q: "BETWEEN '2024-03-01' AND '2024-03-31' capture toutes les commandes de mars sur un TIMESTAMP.", a: false, exp: "La borne haute vaut minuit : toutes les commandes du 31 mars après 00:00:00 sont perdues." },
+    { type: "input", q: "Complète : SELECT ______('month', date_cmd); — la fonction PostgreSQL qui ramène au 1er du mois.", a: ["date_trunc"], ph: "une fonction", exp: "DATE_TRUNC('month', d) est très pratique pour les regroupements mensuels." },
+    { type: "qcm", q: "Que renvoie EXTRACT(QUARTER FROM DATE '2024-03-15') ?", opts: ["1", "2", "3", "4"], a: 0, exp: "Mars appartient au premier trimestre (janvier à mars)." },
+    { type: "qcm", q: "Quelle fonction MySQL formate une date en 'aaaa-mm' pour un regroupement mensuel ?", opts: ["DATE_TRUNC", "DATE_FORMAT(d, '%Y-%m')", "TO_CHAR", "FORMAT_DATE"], a: 1, exp: "MySQL n'a pas DATE_TRUNC : DATE_FORMAT avec le masque '%Y-%m' fait office d'équivalent." },
+    { type: "input", q: "Complète le contrôle de cohérence : WHERE date_livraison ______ date_commande;", a: ["<", "&lt;"], ph: "un opérateur", exp: "Une livraison antérieure à la commande est chronologiquement impossible." },
+    { type: "vf", q: "CURRENT_DATE fonctionne en SQL Server.", a: false, exp: "SQL Server utilise GETDATE(). En revanche CURRENT_TIMESTAMP y est reconnu." },
+    { type: "qcm", q: "Pourquoi '1900-01-01' revient-il souvent dans les données ?", opts: ["C'est une date historique", "C'est une valeur sentinelle par défaut laissée par certains logiciels", "C'est le minimum du type DATE", "C'est un bug SQL"], a: 1, exp: "1900-01-01 et 1970-01-01 sont des dates par défaut classiques : elles signalent une donnée jamais renseignée." },
+    { type: "qcm", q: "Pourquoi CAST(date_cmd AS DATE) = '2024-03-15' est-il moins bon que l'encadrement par bornes ?", opts: ["Le résultat est faux", "La fonction appliquée à la colonne empêche l'usage de l'index", "La syntaxe n'est pas standard", "Cela renvoie NULL"], a: 1, exp: "Le résultat est correct, mais le SGBD doit parcourir toute la table faute de pouvoir utiliser l'index." }
+  ],
+  final: {
+    title: "Exercice final — Statistiques mensuelles",
+    intro: `<p>Table <code>COMMANDE</code>, colonne <code>date_cmd</code> de type <code>TIMESTAMP</code>.</p>
+<pre class="pseudo">id | date_cmd              | montant | date_livraison
+---+-----------------------+---------+---------------------
+ 1 | '2024-03-15 14:32:07' |  120.00 | '2024-03-18 09:00:00'
+ 2 | '2024-03-31 23:45:00' |   80.00 | '2024-04-02 10:00:00'
+ 3 | '2023-03-10 08:00:00' |  200.00 | '2023-03-09 10:00:00'
+ 4 | '2024-04-02 10:15:00' |   50.00 | NULL</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de lignes renvoie WHERE date_cmd BETWEEN '2024-03-01' AND '2024-03-31' ?", opts: ["Deux", "Une seule : la ligne 2 est perdue car elle est à 23:45", "Trois", "Aucune"], a: 1, exp: "La borne haute vaut '2024-03-31 00:00:00' : la commande de 23h45 tombe après." },
+      { type: "qcm", q: "Quelle écriture capture correctement tout le mois de mars 2024 ?", opts: ["= '2024-03'", ">= '2024-03-01' AND < '2024-04-01'", "BETWEEN '2024-03-01' AND '2024-03-31'", "LIKE '2024-03%'"], a: 1, exp: "Borne basse inclusive, borne haute exclusive au premier jour du mois suivant." },
+      { type: "vf", q: "GROUP BY EXTRACT(MONTH FROM date_cmd) fusionnerait ici les lignes 1, 2 et 3.", a: true, exp: "Les trois sont en mars, mais la ligne 3 est de 2023 : sans l'année, le regroupement est faux." },
+      { type: "qcm", q: "Quelle ligne présente une incohérence chronologique ?", opts: ["La ligne 1", "La ligne 2", "La ligne 3 : livrée le 9 mars, commandée le 10", "La ligne 4"], a: 2, exp: "Une livraison antérieure à la commande révèle une erreur de saisie ou d'import." },
+      { type: "qcm", q: "Que vaut EXTRACT(QUARTER FROM '2024-04-02') ?", opts: ["1", "2", "3", "4"], a: 1, exp: "Avril ouvre le deuxième trimestre." }
+    ],
+    solution: `<pre class="pseudo">-- 1) CHIFFRE D'AFFAIRES par annee et par mois
+SELECT EXTRACT(YEAR  FROM date_cmd) AS annee,
+       EXTRACT(MONTH FROM date_cmd) AS mois,
+       COUNT(*)                     AS nb_commandes,
+       ROUND(SUM(montant), 2)       AS ca
+FROM COMMANDE
+GROUP BY EXTRACT(YEAR FROM date_cmd),      -- l'ANNEE d'abord : indispensable
+         EXTRACT(MONTH FROM date_cmd)      -- puis le mois
+ORDER BY annee, mois;
+-- 2023 / 3 : 1 commande, 200.00
+-- 2024 / 3 : 2 commandes, 200.00
+-- 2024 / 4 : 1 commande,  50.00
+
+-- 2) FILTRER correctement le mois de mars 2024, malgre les heures
+SELECT id, date_cmd, montant
+FROM COMMANDE
+WHERE date_cmd &gt;= TIMESTAMP '2024-03-01 00:00:00'   -- borne basse INCLUSIVE
+  AND date_cmd &lt;  TIMESTAMP '2024-04-01 00:00:00';  -- borne haute EXCLUSIVE : capture le 31 mars a 23h45
+-- attendu : lignes 1 et 2
+
+-- 3) CONTROLER la coherence des dates
+SELECT id, date_cmd, date_livraison
+FROM COMMANDE
+WHERE date_livraison &lt; date_cmd                 -- livree avant d'etre commandee : impossible
+   OR date_cmd &gt; CURRENT_TIMESTAMP;             -- commande dans le futur : suspect
+-- attendu : la ligne 3
+
+-- 4) REGROUPEMENT MENSUEL plus lisible (PostgreSQL)
+SELECT DATE_TRUNC('month', date_cmd) AS mois,   -- ramene chaque date au 1er du mois
+       COUNT(*)                      AS nb,
+       ROUND(SUM(montant), 2)        AS ca
+FROM COMMANDE
+GROUP BY DATE_TRUNC('month', date_cmd)
+ORDER BY mois;                                   -- tri chronologique naturel, le resultat reste une date
+
+-- Variantes du meme regroupement :
+--   MySQL      : DATE_FORMAT(date_cmd, '%Y-%m')
+--   SQL Server : DATEFROMPARTS(YEAR(date_cmd), MONTH(date_cmd), 1)
+--                ou DATETRUNC(month, date_cmd) a partir de 2022
+
+-- 5) COMPTER les livraisons non renseignees
+SELECT COUNT(*) - COUNT(date_livraison) AS livraisons_manquantes FROM COMMANDE;   -- 1 (ligne 4)</pre>
+<p>Tu sais découper une date. Demain : calculer avec — ajouter des jours, mesurer des durées.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j11", title: "Bilan trimestriel", level: 3,
+    statement: "Table <code>VENTE(id, date_vente, montant)</code>, où <code>date_vente</code> est un <code>TIMESTAMP</code> :<pre class='pseudo'>id | date_vente            | montant\n---+-----------------------+--------\n 1 | '2024-01-15 09:00:00' |  100.00\n 2 | '2024-02-28 23:50:00' |  250.00\n 3 | '2024-04-01 00:00:00' |   80.00\n 4 | '2024-06-30 18:30:00' |  120.00\n 5 | '2023-12-31 23:59:00' |  999.00</pre>Écris une requête qui affiche, pour la seule année 2024, le chiffre d'affaires par trimestre : année, trimestre, nombre de ventes, total et montant moyen (arrondi à deux décimales). Trie chronologiquement. Attention au filtrage d'année sur une colonne horodatée.",
+    hints: [
+      "Filtre l'année par un encadrement de bornes plutôt que par EXTRACT, pour laisser l'index utilisable.",
+      "EXTRACT(QUARTER FROM date_vente) donne le trimestre ; il faut le répéter dans le GROUP BY.",
+      "Groupe sur l'année ET le trimestre, jamais sur le trimestre seul."
+    ],
+    solution: "SELECT EXTRACT(YEAR    FROM date_vente) AS annee,\n       EXTRACT(QUARTER FROM date_vente) AS trimestre,      -- 1 a 4\n       COUNT(*)                         AS nb_ventes,\n       ROUND(SUM(montant), 2)           AS ca_total,\n       ROUND(AVG(montant), 2)           AS panier_moyen\nFROM VENTE\nWHERE date_vente >= TIMESTAMP '2024-01-01 00:00:00'   -- borne basse INCLUSIVE\n  AND date_vente <  TIMESTAMP '2025-01-01 00:00:00'   -- borne haute EXCLUSIVE : exclut 2025, garde tout 2024\nGROUP BY EXTRACT(YEAR FROM date_vente),               -- l'annee d'abord\n         EXTRACT(QUARTER FROM date_vente)             -- puis le trimestre\nORDER BY annee, trimestre;                            -- tri chronologique\n\n-- Resultat attendu :\n-- annee | trimestre | nb_ventes | ca_total | panier_moyen\n-- ------+-----------+-----------+----------+-------------\n--  2024 |         1 |         2 |   350.00 |       175.00\n--  2024 |         2 |         2 |   200.00 |       100.00\n\n-- Ligne 5 ('2023-12-31 23:59') : exclue par la borne basse, malgre sa proximite.\n-- Ligne 3 ('2024-04-01 00:00') : premiere seconde du 2e trimestre, bien incluse.\n-- Ligne 4 ('2024-06-30 18:30') : dernier jour du trimestre a 18h30, capturee grace a la borne exclusive.\n\n-- Ce qu'il NE FAUT PAS ecrire :\n--   WHERE EXTRACT(YEAR FROM date_vente) = 2024\n--     -> resultat correct, mais la fonction appliquee a la colonne empeche l'usage de l'index\n--   WHERE date_vente BETWEEN '2024-01-01' AND '2024-12-31'\n--     -> perd toutes les ventes du 31 decembre 2024 passees apres minuit\n\n-- Variantes :\n--   MySQL      : QUARTER(date_vente) ou EXTRACT(QUARTER FROM date_vente)\n--   SQL Server : DATEPART(QUARTER, date_vente) et DATEPART(YEAR, date_vente)\n--                (EXTRACT n'y existe pas)",
+    note: "Piège : sur une colonne horodatée, BETWEEN sur les dates est presque toujours un bug. La borne haute étant interprétée à minuit, tout ce qui se passe le dernier jour après 00:00:00 disparaît du résultat — sans erreur, sans avertissement, et personne ne remarque que le 31 décembre manque. Bonne pratique : l'encadrement >= début AND < lendemain est à la fois exact et performant. Prends l'habitude de l'écrire même sur des colonnes DATE : le jour où le type deviendra TIMESTAMP, ton code restera juste." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 19</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 19,
+  title: "CTE chaînées et CTE récursives",
+  subtitle: "Enchaîner les étapes comme un pipeline, puis faire tourner une requête sur elle-même.",
+  theory: `
+<h3>1. Chaîner les CTE : le pipeline de nettoyage</h3>
+<p>Une requête peut déclarer <strong>plusieurs CTE d affilée</strong>, séparées par des virgules. Et surtout : une CTE peut utiliser celles déclarées <strong>avant elle</strong>. C est ce qui transforme une requête en <em>chaîne de traitement</em>, exactement comme une chaîne de montage : chaque poste reçoit le travail du poste précédent, fait sa transformation, et passe au suivant.</p>
+<pre class="pseudo">WITH etape1 AS (              -- premier poste de la chaine
+  SELECT ... FROM TABLE_SOURCE
+),                            -- VIRGULE (pas de WITH repete !)
+etape2 AS (                   -- deuxieme poste
+  SELECT ... FROM etape1      -- il consomme le resultat du premier
+),
+etape3 AS (                   -- troisieme poste
+  SELECT ... FROM etape2      -- il consomme le deuxieme
+)
+SELECT * FROM etape3;         -- la requete principale prend le dernier</pre>
+<div class="warn">Le mot <code>WITH</code> n est écrit qu <strong>une seule fois</strong>, tout au début. Les CTE suivantes sont séparées par une virgule. Écrire <code>WITH a AS (...) WITH b AS (...)</code> est une erreur de syntaxe classique.</div>
+<div class="tip">L ordre compte : <code>etape2</code> peut lire <code>etape1</code>, mais <code>etape1</code> ne peut pas lire <code>etape2</code>. On lit toujours vers le haut, jamais vers le bas.</div>
+
+<h3>2. Un pipeline réaliste de nettoyage</h3>
+<pre class="pseudo">WITH brut AS (                                     -- 1) on isole les colonnes utiles
+  SELECT id, nom, email, ville, montant_txt
+  FROM IMPORT_CSV
+),
+nettoye AS (                                       -- 2) on nettoie le texte
+  SELECT id,
+         TRIM(nom)                AS nom,          -- espaces parasites en moins
+         LOWER(TRIM(email))       AS email,        -- casse uniformisee
+         TRIM(ville)              AS ville,
+         CAST(REPLACE(montant_txt, ',', '.') AS DECIMAL(10,2)) AS montant
+  FROM brut
+),
+valide AS (                                        -- 3) on ecarte les lignes inexploitables
+  SELECT * FROM nettoye
+  WHERE email IS NOT NULL
+    AND montant IS NOT NULL
+    AND montant &gt; 0
+),
+dedoublonne AS (                                   -- 4) on numerote les copies
+  SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY email ORDER BY id) AS rang
+  FROM valide
+)
+SELECT id, nom, email, ville, montant               -- 5) le resultat final propre
+FROM dedoublonne
+WHERE rang = 1;                                     -- on ne garde qu un exemplaire</pre>
+<p>Lis cette requête de haut en bas : c est une recette. Chaque CTE porte un nom qui <em>documente</em> son rôle. Une seule requête, cinq étapes, zéro imbrication. Voilà pourquoi les CTE sont devenues l outil de base du nettoyage de données.</p>
+
+<h3>3. La CTE récursive : définition</h3>
+<p>Une <strong>CTE récursive</strong> est une CTE qui se <strong>référence elle-même</strong>. Elle sert à parcourir des structures dont on ne connaît pas la profondeur à l avance : un organigramme (qui est le chef du chef du chef ?), un arbre de catégories, une nomenclature de pièces, un fil de commentaires, ou simplement une suite de nombres ou de dates.</p>
+<div class="tip"><strong>L analogie :</strong> une CTE récursive fonctionne comme des poupées russes qu on ouvre une par une. On part de la plus grande (l <em>ancre</em>), et tant qu il y a une poupée à l intérieur, on l ouvre et on recommence. Quand il n y a plus rien dedans, on s arrête. Autre image : monter un escalier marche après marche, sans savoir combien il y en a — on s arrête quand il n y a plus de marche au-dessus.</div>
+
+<h3>4. Sa structure : trois parties obligatoires</h3>
+<pre class="pseudo">WITH RECURSIVE ma_cte AS (        -- le mot RECURSIVE (selon le SGBD, voir plus bas)
+
+    SELECT ...                    -- PARTIE 1 : L ANCRE
+    FROM ...                      -- le point de depart, execute UNE SEULE fois
+    WHERE ...                     -- (ex : les employes sans chef = la racine)
+
+  UNION ALL                       -- PARTIE 2 : le connecteur, TOUJOURS UNION ALL
+
+    SELECT ...                    -- PARTIE 3 : LE PAS RECURSIF
+    FROM une_table t
+    JOIN ma_cte m ON ...          -- il se rejoint sur LA CTE ELLE-MEME
+                                  -- rejoue tant qu il produit de nouvelles lignes
+)
+SELECT * FROM ma_cte;</pre>
+<p><strong>Comment le moteur l exécute :</strong> il calcule l ancre, obtient un premier lot de lignes. Il exécute alors le pas récursif <em>sur ce lot</em>, obtient un deuxième lot. Il rejoue le pas récursif sur le deuxième lot, obtient le troisième… et ainsi de suite jusqu à ce qu un tour ne produise <strong>aucune ligne nouvelle</strong>. Alors il s arrête et empile tous les lots.</p>
+
+<h3>5. Exemple 1 : compter de 1 à 10</h3>
+<pre class="pseudo">WITH RECURSIVE compteur AS (
+    SELECT 1 AS n                      -- ANCRE : on demarre a 1
+  UNION ALL
+    SELECT n + 1                       -- PAS : la ligne suivante vaut la precedente + 1
+    FROM compteur
+    WHERE n &lt; 10                       -- CONDITION D ARRET : on stoppe a 10
+)
+SELECT n FROM compteur;
+
+-- Resultat : 1, 2, 3, 4, 5, 6, 7, 8, 9, 10</pre>
+<div class="warn">La condition d arrêt (<code>WHERE n &lt; 10</code>) est <strong>vitale</strong>. Sans elle, la CTE tourne à l infini. PostgreSQL et MySQL finiront par saturer la mémoire ; SQL Server s arrête au bout de 100 niveaux par défaut. Écris TOUJOURS la condition d arrêt avant de lancer la requête.</div>
+
+<h3>6. Exemple 2 : remonter un organigramme</h3>
+<pre class="pseudo">-- EMPLOYE(id, nom, id_chef)
+-- id | nom     | id_chef
+-- ---+---------+--------
+--  1 | Diane   |  NULL    &lt;-- la directrice, racine de l arbre
+--  2 | Karim   |     1
+--  3 | Lea     |     2
+--  4 | Tom     |     3
+
+WITH RECURSIVE hierarchie AS (
+    SELECT id,                          -- ANCRE : la racine
+           nom,
+           id_chef,
+           1 AS niveau                  -- on marque le niveau hierarchique
+    FROM EMPLOYE
+    WHERE id_chef IS NULL               -- la racine n a pas de chef
+  UNION ALL
+    SELECT e.id,                        -- PAS : les subordonnes directs
+           e.nom,
+           e.id_chef,
+           h.niveau + 1                 -- un cran plus bas dans l arbre
+    FROM EMPLOYE e
+    JOIN hierarchie h ON e.id_chef = h.id   -- on se raccroche a la CTE
+)
+SELECT niveau, nom FROM hierarchie ORDER BY niveau;
+
+-- Resultat :
+-- niveau | nom
+-- -------+-------
+--      1 | Diane
+--      2 | Karim
+--      3 | Lea
+--      4 | Tom</pre>
+
+<h3>7. Les variantes de dialecte — le point central</h3>
+<pre class="pseudo">-- PostgreSQL : le mot RECURSIVE est OBLIGATOIRE
+WITH RECURSIVE t AS ( ... ) SELECT * FROM t;
+
+-- MySQL 8 / MariaDB 10.2+ : le mot RECURSIVE est OBLIGATOIRE
+WITH RECURSIVE t AS ( ... ) SELECT * FROM t;
+
+-- SQL Server : le mot RECURSIVE N EXISTE PAS. On ecrit simplement WITH.
+WITH t AS ( ... ) SELECT * FROM t;
+
+-- SQLite : RECURSIVE est facultatif (accepte, mais non requis)
+-- Oracle  : accepte WITH sans RECURSIVE (syntaxe ANSI) ou CONNECT BY (syntaxe maison)</pre>
+<div class="warn">C est LE piège transversal du jour : une CTE récursive écrite pour PostgreSQL ne se lance pas telle quelle sur SQL Server (il refuse le mot RECURSIVE), et l inverse est vrai aussi (PostgreSQL exige le mot). Un seul mot à ajouter ou retirer, mais il fait échouer la requête.</div>
+<pre class="pseudo">-- Limite de profondeur, autre difference de dialecte :
+-- SQL Server  : 100 niveaux par defaut, modifiable par OPTION (MAXRECURSION 500)
+--               OPTION (MAXRECURSION 0) = illimite (a manier avec prudence)
+-- MySQL 8     : variable cte_max_recursion_depth, 1000 par defaut
+-- PostgreSQL  : aucune limite native --&gt; la condition d arret est ta seule protection</pre>
+
+<h3>8. Le piège des cycles</h3>
+<p>Si les données contiennent une boucle (A est le chef de B, qui est le chef de A), la récursion ne s arrête jamais. Deux parades :</p>
+<pre class="pseudo">-- a) Un compteur de profondeur, universel
+WHERE h.niveau &lt; 20
+
+-- b) PostgreSQL 14+ : la clause CYCLE, qui detecte les boucles
+WITH RECURSIVE h AS ( ... ) CYCLE id SET est_cycle USING chemin
+SELECT * FROM h WHERE NOT est_cycle;</pre>`,
+  exercises: [
+    { type: "input", q: "Quel caractère sépare deux CTE successives ?", ph: "un caractère", a: [",", "virgule", "la virgule"], exp: "WITH a AS (...), b AS (...) — le mot WITH n est écrit qu une fois." },
+    { type: "vf", q: "Dans un enchaînement de CTE, la deuxième peut lire le résultat de la première.", a: true, exp: "C est le principe du pipeline : chaque étape consomme la précédente." },
+    { type: "vf", q: "La première CTE peut lire le résultat de la troisième.", a: false, exp: "Une CTE ne voit que celles déclarées AVANT elle (sauf récursion sur elle-même)." },
+    { type: "input", q: "Quel mot-clé transforme une CTE en CTE récursive (PostgreSQL et MySQL) ?", ph: "REC...", a: ["RECURSIVE"], exp: "WITH RECURSIVE ... — mais SQL Server ne connaît pas ce mot." },
+    { type: "qcm", q: "En SQL Server, une CTE récursive s écrit…", opts: ["WITH RECURSIVE t AS (...)", "WITH t AS (...) — le mot RECURSIVE n existe pas", "RECURSIVE WITH t AS (...)", "CONNECT BY"], a: 1, exp: "SQL Server déduit la récursivité de l auto-référence, sans mot-clé." },
+    { type: "input", q: "Quel opérateur ensembliste relie obligatoirement l ancre et le pas récursif ?", ph: "UNION ...", a: ["UNION ALL"], exp: "UNION ALL, jamais UNION seul : UNION dédoublonne et casse la mécanique." },
+    { type: "qcm", q: "L ancre d une CTE récursive…", opts: ["S exécute à chaque tour", "S exécute une seule fois : c est le point de départ", "Est facultative", "Doit contenir un JOIN sur la CTE"], a: 1, exp: "L ancre initialise ; le pas récursif rejoue jusqu à épuisement." },
+    { type: "qcm", q: "La récursion s arrête quand…", opts: ["Au bout de 10 tours", "Le pas récursif ne produit plus aucune ligne nouvelle", "On écrit STOP", "Après le COMMIT"], a: 1, exp: "Un tour vide met fin à la boucle — d où l importance de la condition d arrêt." },
+    { type: "vf", q: "Sans condition d arrêt, une CTE récursive peut tourner à l infini.", a: true, exp: "PostgreSQL n a aucune limite native : la condition d arrêt est ta seule protection." },
+    { type: "input", q: "Quelle option SQL Server permet de dépasser les 100 niveaux de récursion par défaut ?", ph: "OPTION (MAX...)", a: ["MAXRECURSION", "OPTION (MAXRECURSION)", "OPTION MAXRECURSION"], exp: "OPTION (MAXRECURSION 500) ; la valeur 0 signifie illimité." },
+    { type: "qcm", q: "Pour lister toute une hiérarchie d employés, l ancre sélectionne…", opts: ["Tous les employés", "Les employés dont id_chef IS NULL (la racine)", "Le dernier employé embauché", "Les employés d un service"], a: 1, exp: "On part du sommet de l arbre, puis on descend niveau par niveau." },
+    { type: "qcm", q: "Si les données contiennent un cycle (A chef de B, B chef de A), la récursion…", opts: ["Se corrige toute seule", "Boucle indéfiniment : il faut un compteur de profondeur", "Renvoie NULL", "Est refusée à la compilation"], a: 1, exp: "Ajoute WHERE niveau < 20, ou utilise la clause CYCLE de PostgreSQL 14+." },
+    { type: "input", q: "Dans le pas récursif, sur quoi porte le JOIN ?", ph: "sur la ...", a: ["la CTE", "CTE", "sur la CTE", "la cte elle-meme", "elle-même"], exp: "Le pas récursif se joint sur la CTE elle-même : c est ce qui fait la récursion." },
+    { type: "vf", q: "UNION (sans ALL) est accepté à la place d UNION ALL dans une CTE récursive.", a: false, exp: "La plupart des SGBD l interdisent ; UNION dédoublonnerait et fausserait la progression." },
+    { type: "qcm", q: "Quel est l intérêt principal du chaînage de CTE pour le nettoyage ?", opts: ["Il crée des index", "Il découpe le traitement en étapes nommées et lisibles de haut en bas", "Il accélère toujours la requête", "Il évite les NULL"], a: 1, exp: "Un pipeline documenté : chaque CTE porte le nom de ce qu elle fait." }
+  ],
+  final: {
+    title: "Exercice final — Générer un calendrier et remonter un arbre",
+    intro: `<p>Deux usages classiques de la récursion.</p>
+<pre class="pseudo">-- Cas A : generer toutes les dates de janvier 2024, meme celles sans vente
+--         (pour qu un rapport n ait pas de trou)
+-- Cas B : CATEGORIE(id, libelle, id_parent) — un arbre de rayons
+-- id | libelle       | id_parent
+-- ---+---------------+----------
+--  1 | Informatique  |  NULL
+--  2 | Ordinateurs   |     1
+--  3 | Portables     |     2
+--  4 | Peripheriques |     1</pre>`,
+    questions: [
+      { type: "input", q: "Quelle partie de la CTE récursive fixe la date de départ (2024-01-01) ?", ph: "l a...", a: ["ANCRE", "L ANCRE", "l ancre"], exp: "L ancre s exécute une seule fois : c est le point de départ." },
+      { type: "qcm", q: "La condition d arrêt du calendrier de janvier s écrit…", opts: ["WHERE jour < '2024-01-31'", "WHERE jour IS NOT NULL", "LIMIT 31", "HAVING COUNT(*) = 31"], a: 0, exp: "Tant que le jour courant est avant le 31, on ajoute un jour de plus." },
+      { type: "qcm", q: "Pour le cas B, l ancre sélectionne…", opts: ["id_parent IS NULL", "id = 3", "libelle LIKE 'P%'", "Toutes les catégories"], a: 0, exp: "La racine de l arbre est la catégorie sans parent : Informatique." },
+      { type: "input", q: "Quel niveau aura la catégorie Portables si la racine est au niveau 1 ?", ph: "un nombre", a: ["3", "trois"], exp: "Informatique 1, Ordinateurs 2, Portables 3." },
+      { type: "vf", q: "En SQL Server, il faudra retirer le mot RECURSIVE de ces deux requêtes.", a: true, exp: "SQL Server ne connaît pas ce mot-clé et déduit la récursion de l auto-référence." }
+    ],
+    solution: `<pre class="pseudo">-- ===== CAS A : le calendrier de janvier 2024 =====
+WITH RECURSIVE calendrier AS (
+    SELECT CAST('2024-01-01' AS DATE) AS jour        -- ANCRE : premier jour
+  UNION ALL
+    SELECT jour + INTERVAL 1 DAY                     -- PAS : jour suivant (MySQL)
+    FROM calendrier
+    WHERE jour &lt; '2024-01-31'                        -- ARRET au 31
+)
+SELECT jour FROM calendrier;
+
+-- PostgreSQL : SELECT jour + INTERVAL '1 day'
+-- SQL Server : SELECT DATEADD(day, 1, jour)  et on ecrit WITH (sans RECURSIVE)
+
+-- Usage typique : joindre ce calendrier aux ventes en LEFT JOIN
+-- pour afficher 0 les jours sans vente, au lieu de sauter la ligne.
+
+-- ===== CAS B : l arbre des categories =====
+WITH RECURSIVE arbre AS (
+    SELECT id,                                       -- ANCRE : la racine
+           libelle,
+           id_parent,
+           1 AS niveau,
+           CAST(libelle AS CHAR(200)) AS chemin       -- on construit le chemin complet
+    FROM CATEGORIE
+    WHERE id_parent IS NULL
+  UNION ALL
+    SELECT c.id,                                     -- PAS : les enfants directs
+           c.libelle,
+           c.id_parent,
+           a.niveau + 1,                             -- un cran plus bas
+           CONCAT(a.chemin, ' &gt; ', c.libelle)        -- on prolonge le chemin
+    FROM CATEGORIE c
+    JOIN arbre a ON c.id_parent = a.id               -- raccrochage sur la CTE
+    WHERE a.niveau &lt; 20                              -- garde-fou anti-cycle
+)
+SELECT niveau, chemin FROM arbre ORDER BY chemin;
+
+-- Resultat :
+-- niveau | chemin
+-- -------+------------------------------------------
+--      1 | Informatique
+--      2 | Informatique &gt; Ordinateurs
+--      3 | Informatique &gt; Ordinateurs &gt; Portables
+--      2 | Informatique &gt; Peripheriques</pre>
+<p>Tu sais désormais découper un traitement en étapes et parcourir un arbre. Demain commence le morceau de bravoure de ce cours : les <strong>fonctions de fenêtre</strong>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j19", title: "Un pipeline de nettoyage en CTE chaînées", level: 3,
+    statement: "La table IMPORT_VENTE(ligne_id, client_txt, ville_txt, montant_txt, date_txt) provient d un CSV : le texte contient des espaces parasites, des casses mélangées, des montants avec virgule décimale, et certaines lignes ont un montant vide. Écris une requête à CTE chaînées qui : (1) nettoie le texte, (2) convertit le montant en nombre, (3) écarte les lignes sans montant exploitable, (4) calcule le total par client, et (5) n affiche que les clients dont le total dépasse 500, triés du plus gros au plus petit. Nomme et commente chaque étape.",
+    hints: [
+      "Un seul WITH au début, puis les CTE séparées par des virgules : WITH nettoye AS (...), valide AS (...), totaux AS (...).",
+      "Pour le montant : REPLACE(montant_txt, ',', '.') puis CAST(... AS DECIMAL(10,2)). NULLIF(TRIM(montant_txt), '') évite de convertir une chaîne vide.",
+      "Le filtre sur le total (> 500) porte sur un agrégat : mets-le dans un HAVING à l intérieur de la CTE totaux, ou dans un WHERE de la requête principale qui lit totaux."
+    ],
+    solution: "WITH nettoye AS (                                   -- ETAPE 1 : uniformiser le texte\n  SELECT ligne_id,\n         LOWER(TRIM(client_txt))  AS client,        -- espaces retires, casse uniforme\n         TRIM(ville_txt)          AS ville,\n         NULLIF(TRIM(montant_txt), '') AS montant_txt,  -- chaine vide -> NULL\n         TRIM(date_txt)           AS date_txt\n  FROM IMPORT_VENTE\n),\nconverti AS (                                       -- ETAPE 2 : typer correctement\n  SELECT ligne_id,\n         client,\n         ville,\n         CAST(REPLACE(montant_txt, ',', '.') AS DECIMAL(10,2)) AS montant\n  FROM nettoye\n),\nvalide AS (                                         -- ETAPE 3 : ecarter l inexploitable\n  SELECT *\n  FROM converti\n  WHERE montant IS NOT NULL\n    AND montant > 0                                 -- on ignore les montants nuls/negatifs\n),\ntotaux AS (                                         -- ETAPE 4 : agreger par client\n  SELECT client,\n         COUNT(*)      AS nb_ventes,\n         SUM(montant)  AS total\n  FROM valide\n  GROUP BY client\n)\nSELECT client,                                      -- ETAPE 5 : le resultat final\n       nb_ventes,\n       total\nFROM totaux\nWHERE total > 500                                   -- seulement les gros clients\nORDER BY total DESC;                                -- du plus gros au plus petit\n\n-- Resultat attendu (exemple) :\n-- client   | nb_ventes | total\n-- ---------+-----------+--------\n-- dupont   |         4 | 1250.00\n-- martin   |         2 |  830.50\n-- leroy    |         3 |  610.00",
+    note: "Cinq étapes, cinq noms, zéro imbrication : la requête se lit comme une recette. Rappel de dialecte : CAST(... AS DECIMAL(10,2)) fonctionne partout ; MySQL accepte aussi CAST(... AS DECIMAL) sans précision, et PostgreSQL admet la notation courte montant_txt::numeric. Si tu tournes sur MySQL 5.7, aucune de ces CTE n est disponible : il faudrait tout réécrire en tables dérivées imbriquées — ce qui montre bien le gain de lisibilité." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

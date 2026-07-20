@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 16</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 16,
+  title: "Détecter les doublons",
+  subtitle: "Compter, localiser et qualifier les lignes en double — avant même de songer à en supprimer.",
+  theory: `
+<h3>1. Qu'est-ce qu'un doublon ?</h3>
+<p>Un <strong>doublon</strong> est une ligne qui représente la <strong>même réalité</strong> qu'une autre. La difficulté n'est pas technique, elle est sémantique : c'est toi qui dois définir ce que « la même réalité » veut dire. On distingue deux familles.</p>
+<pre class="pseudo">-- DOUBLON EXACT : toutes les colonnes sont identiques (hors identifiant technique)
+id | nom      | email         | ville
+ 1 | 'Dupont' | 'a@mail.be'   | 'Namur'
+ 2 | 'Dupont' | 'a@mail.be'   | 'Namur'     -- copie parfaite : import lance deux fois
+
+-- DOUBLON LOGIQUE (ou fonctionnel) : la meme personne, ecrite differemment
+id | nom        | email         | ville
+ 3 | '  DUPONT '| 'a@mail.be'   | 'namur'
+ 4 | 'dupont'   | 'A@MAIL.BE'   | 'NAMUR '   -- meme personne, formatage different</pre>
+<div class="warn">Avant toute requête, réponds à cette question : <strong>quelles colonnes définissent l'unicité ?</strong> Deux clients de même nom et même ville sont-ils la même personne ? Et s'ils ont deux emails différents ? Ce choix est métier, pas technique — et il conditionne tout le reste.</div>
+
+<h3>2. La requête fondamentale : GROUP BY et HAVING</h3>
+<p>Le principe tient en une ligne : on regroupe sur les colonnes qui définissent l'unicité, et on ne garde que les groupes contenant plus d'une ligne.</p>
+<pre class="pseudo">SELECT email,                    -- la colonne censee etre unique
+       COUNT(*) AS nb_lignes     -- combien de lignes partagent cette valeur
+FROM CLIENT
+GROUP BY email                   -- un groupe par valeur d'email
+HAVING COUNT(*) &gt; 1              -- ne garde que les groupes en doublon
+ORDER BY nb_lignes DESC;         -- les pires cas en tete
+
+-- resultat :
+-- email        | nb_lignes
+-- 'a@mail.be'  | 3
+-- 'b@mail.be'  | 2</pre>
+<div class="tip">Rappel du jour 3 : <code>HAVING</code> filtre les <strong>groupes</strong> après agrégation ; <code>WHERE</code> filtre les <strong>lignes</strong> avant. Un <code>WHERE COUNT(*) &gt; 1</code> est impossible.</div>
+
+<h3>3. Doublons sur plusieurs colonnes</h3>
+<pre class="pseudo">-- L'unicite est definie par la combinaison nom + ville :
+SELECT nom, ville, COUNT(*) AS nb
+FROM CLIENT
+GROUP BY nom, ville             -- le groupe est la COMBINAISON des deux valeurs
+HAVING COUNT(*) &gt; 1;
+
+-- Attention : cette requete est sensible au formatage.
+-- '  Dupont ' et 'dupont' formeront DEUX groupes distincts, donc AUCUN doublon detecte.
+-- Il faut normaliser AVANT de grouper (tout le travail des jours 1 a 15) :
+
+SELECT UPPER(TRIM(nom))   AS nom_norme,
+       UPPER(TRIM(ville)) AS ville_norme,
+       COUNT(*)           AS nb
+FROM CLIENT
+GROUP BY UPPER(TRIM(nom)), UPPER(TRIM(ville))   -- on groupe sur les valeurs NORMALISEES
+HAVING COUNT(*) &gt; 1
+ORDER BY nb DESC;</pre>
+<div class="warn">C'est le point le plus important du jour : <strong>une détection de doublons sans normalisation préalable ne détecte presque rien</strong>. Elle renvoie zéro ligne, on conclut que la table est propre, et les trois Dupont restent en base.</div>
+
+<h3>4. Retrouver les LIGNES, pas seulement les valeurs</h3>
+<p><code>GROUP BY</code> renvoie les valeurs en double, mais pas les identifiants des lignes concernées. Trois techniques permettent de les récupérer.</p>
+<pre class="pseudo">-- TECHNIQUE 1 : agreger les identifiants dans une seule chaine
+SELECT UPPER(TRIM(email)) AS email_norme,
+       COUNT(*)           AS nb,
+       MIN(id)            AS id_le_plus_ancien,
+       MAX(id)            AS id_le_plus_recent,
+       STRING_AGG(CAST(id AS VARCHAR), ', ' ORDER BY id) AS tous_les_ids   -- PostgreSQL, SQL Server 2017+
+FROM CLIENT
+GROUP BY UPPER(TRIM(email))
+HAVING COUNT(*) &gt; 1;
+-- 'A@MAIL.BE' | 3 | 1 | 12 | '1, 5, 12'
+-- MySQL : GROUP_CONCAT(id ORDER BY id SEPARATOR ', ')
+-- Oracle : LISTAGG(id, ', ') WITHIN GROUP (ORDER BY id)
+
+-- TECHNIQUE 2 : sous-requete IN, pour recuperer les lignes completes
+SELECT *
+FROM CLIENT
+WHERE UPPER(TRIM(email)) IN (                     -- l'email fait-il partie des valeurs en doublon ?
+        SELECT UPPER(TRIM(email))
+        FROM CLIENT
+        GROUP BY UPPER(TRIM(email))
+        HAVING COUNT(*) &gt; 1
+      )
+ORDER BY UPPER(TRIM(email)), id;                  -- les doublons apparaissent les uns sous les autres
+
+-- TECHNIQUE 3 : auto-jointure (la table jointe a elle-meme)
+SELECT a.id AS id_a, b.id AS id_b, a.email
+FROM CLIENT a
+JOIN CLIENT b ON UPPER(TRIM(a.email)) = UPPER(TRIM(b.email))   -- meme email normalise
+              AND a.id &lt; b.id                                  -- evite les paires en double et l'auto-appariement
+ORDER BY a.id;
+-- la condition a.id &lt; b.id est essentielle : sans elle, chaque ligne se joindrait a elle-meme
+-- et chaque paire apparaitrait deux fois (1-5 puis 5-1)</pre>
+
+<h3>5. Doublons exacts sur TOUTES les colonnes</h3>
+<pre class="pseudo">-- Comptage global : y a-t-il des lignes strictement identiques ?
+SELECT COUNT(*)                                        AS total_lignes,
+       COUNT(DISTINCT CONCAT_WS('|', nom, email, ville)) AS combinaisons_distinctes,
+       COUNT(*) - COUNT(DISTINCT CONCAT_WS('|', nom, email, ville)) AS doublons_exacts
+FROM CLIENT;
+-- CONCAT_WS avec un separateur improbable ('|') fabrique une CLE composite
+-- attention : sans separateur, 'ab'+'c' et 'a'+'bc' donneraient la meme cle. Le separateur evite ce piege.
+
+-- Detail des lignes en doublon exact :
+SELECT nom, email, ville, COUNT(*) AS nb
+FROM CLIENT
+GROUP BY nom, email, ville         -- toutes les colonnes metier, sauf l'identifiant technique
+HAVING COUNT(*) &gt; 1;</pre>
+
+<h3>6. Qualifier les doublons : lesquels sont dangereux ?</h3>
+<p>Tous les doublons ne se valent pas. Deux lignes identiques en tout point sont faciles à traiter ; deux lignes de même identité mais aux données divergentes posent un vrai problème de décision.</p>
+<pre class="pseudo">SELECT UPPER(TRIM(email)) AS email_norme,
+       COUNT(*)                          AS nb_lignes,
+       COUNT(DISTINCT UPPER(TRIM(nom)))  AS nb_noms_differents,     -- 1 = coherent, plus = conflit
+       COUNT(DISTINCT UPPER(TRIM(ville)))AS nb_villes_differentes,
+       CASE WHEN COUNT(DISTINCT UPPER(TRIM(nom))) &gt; 1
+              OR COUNT(DISTINCT UPPER(TRIM(ville))) &gt; 1
+            THEN 'CONFLIT : donnees divergentes, arbitrage necessaire'
+            ELSE 'doublon simple : fusion sans risque'
+       END AS qualification
+FROM CLIENT
+GROUP BY UPPER(TRIM(email))
+HAVING COUNT(*) &gt; 1
+ORDER BY nb_lignes DESC;</pre>
+<div class="tip">Cette qualification est ce que le métier attend réellement. « Vous avez 340 doublons » n'aide personne. « 310 sont des copies identiques, fusionnables automatiquement ; 30 présentent des données divergentes et demandent un arbitrage » permet de décider.</div>
+
+<h3>7. Mesurer le taux de doublons</h3>
+<pre class="pseudo">SELECT COUNT(*)                                          AS lignes_totales,
+       COUNT(DISTINCT UPPER(TRIM(email)))                AS emails_uniques,
+       COUNT(*) - COUNT(DISTINCT UPPER(TRIM(email)))     AS lignes_en_trop,
+       ROUND(100.0 * (COUNT(*) - COUNT(DISTINCT UPPER(TRIM(email)))) / COUNT(*), 1) AS taux_doublons_pct
+FROM CLIENT
+WHERE email IS NOT NULL;    -- les NULL ne comptent pas comme des doublons (voir avertissement)</pre>
+<div class="warn">Piège des NULL : <code>COUNT(DISTINCT col)</code> ignore les NULL, et <code>GROUP BY</code> les rassemble tous dans un unique groupe. Cent clients sans email formeraient un « doublon » de 100 lignes — un artefact, pas un vrai doublon. Filtre toujours <code>WHERE col IS NOT NULL</code> dans une détection de doublons.</div>
+
+<h3>8. Ce qu'il ne faut PAS faire aujourd'hui</h3>
+<div class="warn">Ne supprime rien. La détection et la suppression sont deux journées distinctes, et c'est volontaire. Une suppression mal ciblée est irréversible ; un rapport de détection, lui, peut être discuté, corrigé et validé par le métier. Le jour 17 sera consacré à la suppression propre — avec les précautions qui s'imposent.</div>
+<pre class="pseudo">-- Le LIVRABLE d'aujourd'hui est un RAPPORT, pas un DELETE :
+SELECT UPPER(TRIM(email))                        AS cle_doublon,
+       COUNT(*)                                  AS nb_lignes,
+       MIN(id)                                   AS id_a_conserver,   -- proposition, a valider
+       STRING_AGG(CAST(id AS VARCHAR), ', ')     AS ids_concernes,
+       COUNT(DISTINCT UPPER(TRIM(nom)))          AS variantes_de_nom
+FROM CLIENT
+WHERE email IS NOT NULL AND TRIM(email) &lt;&gt; ''    -- exclut NULL et chaines vides
+GROUP BY UPPER(TRIM(email))
+HAVING COUNT(*) &gt; 1
+ORDER BY nb_lignes DESC, cle_doublon;
+-- c'est CE tableau qu'on presente au metier pour faire valider la regle de fusion</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la requête fondamentale de détection de doublons ?", opts: ["SELECT DISTINCT", "GROUP BY colonne HAVING COUNT(*) > 1", "WHERE COUNT(*) > 1", "ORDER BY colonne"], a: 1, exp: "On regroupe sur la clé d'unicité et on ne garde que les groupes de plus d'une ligne." },
+    { type: "input", q: "Complète : GROUP BY email ______ COUNT(*) > 1;", a: ["having"], ph: "un mot-clé", exp: "HAVING filtre les groupes ; WHERE ne peut pas porter sur un agrégat." },
+    { type: "vf", q: "WHERE COUNT(*) > 1 est une écriture valide.", a: false, exp: "WHERE agit avant le regroupement, quand les groupes n'existent pas encore. Il faut HAVING." },
+    { type: "qcm", q: "Pourquoi normaliser avant de détecter des doublons ?", opts: ["Pour accélérer la requête", "Parce que '  Dupont ' et 'dupont' formeraient deux groupes distincts, donc aucun doublon détecté", "Pour éviter les NULL", "Ce n'est pas nécessaire"], a: 1, exp: "Sans normalisation, la détection renvoie zéro ligne et on conclut à tort que la table est propre." },
+    { type: "input", q: "Complète pour agréger les identifiants en PostgreSQL : ______(CAST(id AS VARCHAR), ', ')", a: ["string_agg"], ph: "une fonction", exp: "STRING_AGG en PostgreSQL et SQL Server 2017+, GROUP_CONCAT en MySQL, LISTAGG en Oracle." },
+    { type: "qcm", q: "Quelle fonction MySQL équivaut à STRING_AGG ?", opts: ["LISTAGG", "GROUP_CONCAT", "ARRAY_AGG", "JOIN_STR"], a: 1, exp: "GROUP_CONCAT(id ORDER BY id SEPARATOR ', ') en MySQL." },
+    { type: "qcm", q: "Dans une auto-jointure, à quoi sert la condition a.id < b.id ?", opts: ["À trier le résultat", "À éviter qu'une ligne se joigne à elle-même et que chaque paire apparaisse deux fois", "À filtrer les NULL", "À accélérer la requête"], a: 1, exp: "Sans elle, on obtient les paires 1-1, 1-5 et 5-1 : du bruit inexploitable." },
+    { type: "vf", q: "GROUP BY rassemble toutes les valeurs NULL dans un même groupe.", a: true, exp: "Cent lignes sans email formeraient un faux doublon de 100 lignes. Il faut filtrer les NULL." },
+    { type: "input", q: "Complète le filtre indispensable : WHERE email ______ ______ NULL;", a: ["is not"], ph: "deux mots-clés", exp: "IS NOT NULL évite l'artefact du groupe de NULL." },
+    { type: "qcm", q: "Pourquoi utiliser un séparateur dans CONCAT_WS('|', nom, ville) pour fabriquer une clé ?", opts: ["Pour la lisibilité", "Parce que sans lui, 'ab'+'c' et 'a'+'bc' donneraient la même clé", "Pour économiser de la place", "Pour éviter les NULL"], a: 1, exp: "Un séparateur improbable garantit qu'aucune combinaison différente ne produit la même clé." },
+    { type: "qcm", q: "Quelle différence entre doublon exact et doublon logique ?", opts: ["Aucune", "L'exact a toutes ses colonnes identiques ; le logique désigne la même réalité avec un formatage différent", "L'exact est plus grave", "Le logique concerne les NULL"], a: 1, exp: "Le doublon logique est le plus fréquent et le plus difficile à détecter." },
+    { type: "input", q: "Complète pour proposer la ligne à conserver : SELECT ______(id) AS id_a_garder ... GROUP BY ...", a: ["min"], ph: "une fonction", exp: "MIN(id) désigne la plus ancienne — une convention fréquente, mais qui doit être validée par le métier." },
+    { type: "vf", q: "Il faut supprimer les doublons dès qu'on les a détectés.", a: false, exp: "Détecter et supprimer sont deux étapes distinctes. Le livrable de la détection est un rapport à faire valider." },
+    { type: "qcm", q: "Que révèle COUNT(DISTINCT UPPER(TRIM(nom))) > 1 dans un groupe d'emails identiques ?", opts: ["Une erreur de requête", "Un conflit : les lignes ont le même email mais des noms différents, un arbitrage est nécessaire", "Un doublon exact", "Un NULL"], a: 1, exp: "C'est la qualification qui distingue une fusion sans risque d'un cas à trancher manuellement." },
+    { type: "qcm", q: "Comment calculer le taux de doublons ?", opts: ["COUNT(*) / COUNT(DISTINCT col)", "(COUNT(*) - COUNT(DISTINCT col_normalisee)) / COUNT(*) × 100", "COUNT(DISTINCT col)", "SUM(col) / COUNT(*)"], a: 1, exp: "La différence entre lignes totales et valeurs distinctes donne les lignes en trop." }
+  ],
+  final: {
+    title: "Exercice final — Rapport de doublons",
+    intro: `<p>Table <code>CLIENT</code>, alimentée par deux imports successifs.</p>
+<pre class="pseudo">id | nom        | email          | ville
+---+------------+----------------+-----------
+ 1 | 'Dupont'   | 'a@mail.be'    | 'Namur'
+ 2 | '  DUPONT '| 'A@MAIL.BE'    | 'namur '
+ 3 | 'Dupond'   | 'a@mail.be'    | 'Liege'
+ 4 | 'Leroy'    | 'b@mail.be'    | 'Liege'
+ 5 | 'Leroy'    | 'b@mail.be'    | 'Liege'
+ 6 | 'Simon'    | NULL           | 'Namur'
+ 7 | 'Martin'   | NULL           | 'Namur'</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de groupes en doublon détecte GROUP BY email HAVING COUNT(*) > 1, sans normalisation ?", opts: ["Un seul : 'a@mail.be' (lignes 1 et 3)", "Deux : 'a@mail.be' et 'b@mail.be'", "Trois", "Aucun"], a: 1, exp: "'A@MAIL.BE' de la ligne 2 forme un groupe séparé faute de normalisation ; 'a@mail.be' regroupe 1 et 3, 'b@mail.be' regroupe 4 et 5." },
+      { type: "qcm", q: "Avec UPPER(TRIM(email)), combien de lignes contient le groupe 'A@MAIL.BE' ?", opts: ["Deux", "Trois : lignes 1, 2 et 3", "Une", "Quatre"], a: 1, exp: "La normalisation fait entrer la ligne 2 dans le groupe." },
+      { type: "vf", q: "Les lignes 6 et 7 constituent un doublon.", a: false, exp: "Elles ont toutes deux un email NULL, ce que GROUP BY rassemble artificiellement. Deux inconnus ne sont pas égaux." },
+      { type: "qcm", q: "Le groupe 'A@MAIL.BE' est-il un doublon simple ?", opts: ["Oui, fusion automatique possible", "Non : la ligne 3 a le nom 'Dupond' et la ville 'Liege' — les données divergent, un arbitrage est nécessaire", "Impossible à dire", "Oui, car les emails sont identiques"], a: 1, exp: "COUNT(DISTINCT nom) vaut 2 dans ce groupe : c'est un conflit, pas une simple copie." },
+      { type: "qcm", q: "Les lignes 4 et 5 relèvent de quelle catégorie ?", opts: ["Un conflit", "Un doublon exact : toutes les colonnes métier sont identiques", "Un faux positif", "Pas un doublon"], a: 1, exp: "Nom, email et ville sont rigoureusement identiques : fusion sans risque." }
+    ],
+    solution: `<pre class="pseudo">-- 1) MESURER le taux de doublons, en excluant les NULL
+SELECT COUNT(*)                                              AS lignes_totales,
+       COUNT(email)                                          AS emails_renseignes,
+       COUNT(DISTINCT UPPER(TRIM(email)))                    AS emails_uniques,
+       COUNT(email) - COUNT(DISTINCT UPPER(TRIM(email)))     AS lignes_en_trop,
+       ROUND(100.0 * (COUNT(email) - COUNT(DISTINCT UPPER(TRIM(email)))) / COUNT(email), 1)
+                                                             AS taux_doublons_pct
+FROM CLIENT;
+-- 7 lignes, 5 emails renseignes, 2 emails uniques, 3 lignes en trop, 60.0 %
+
+-- 2) RAPPORT DE DOUBLONS, qualifie
+SELECT UPPER(TRIM(email))                             AS cle_doublon,
+       COUNT(*)                                       AS nb_lignes,
+       MIN(id)                                        AS id_propose_a_conserver,
+       STRING_AGG(CAST(id AS VARCHAR), ', ' ORDER BY id) AS ids_concernes,
+       COUNT(DISTINCT UPPER(TRIM(nom)))               AS variantes_nom,
+       COUNT(DISTINCT UPPER(TRIM(ville)))             AS variantes_ville,
+       CASE WHEN COUNT(DISTINCT UPPER(TRIM(nom)))   &gt; 1
+              OR COUNT(DISTINCT UPPER(TRIM(ville))) &gt; 1
+            THEN 'CONFLIT : arbitrage necessaire'
+            ELSE 'doublon simple : fusion sans risque'
+       END                                            AS qualification
+FROM CLIENT
+WHERE email IS NOT NULL                    -- INDISPENSABLE : sinon les lignes 6 et 7 formeraient un faux groupe
+  AND TRIM(email) &lt;&gt; ''                    -- on ecarte aussi les chaines vides
+GROUP BY UPPER(TRIM(email))
+HAVING COUNT(*) &gt; 1
+ORDER BY nb_lignes DESC;
+-- 'A@MAIL.BE' | 3 | 1 | '1, 2, 3' | 2 | 2 | 'CONFLIT : arbitrage necessaire'
+-- 'B@MAIL.BE' | 2 | 4 | '4, 5'    | 1 | 1 | 'doublon simple : fusion sans risque'
+
+-- 3) VOIR les lignes completes des groupes en doublon
+SELECT c.*
+FROM CLIENT c
+WHERE UPPER(TRIM(c.email)) IN (
+        SELECT UPPER(TRIM(email))
+        FROM CLIENT
+        WHERE email IS NOT NULL
+        GROUP BY UPPER(TRIM(email))
+        HAVING COUNT(*) &gt; 1
+      )
+ORDER BY UPPER(TRIM(c.email)), c.id;       -- les doublons s'affichent les uns sous les autres
+
+-- 4) DOUBLONS EXACTS sur toutes les colonnes metier
+SELECT nom, email, ville, COUNT(*) AS nb, STRING_AGG(CAST(id AS VARCHAR), ', ') AS ids
+FROM CLIENT
+GROUP BY nom, email, ville                 -- l'identifiant technique est volontairement exclu
+HAVING COUNT(*) &gt; 1;
+-- 'Leroy' | 'b@mail.be' | 'Liege' | 2 | '4, 5'   -- le seul doublon strictement exact
+
+-- 5) PAIRES de doublons, par auto-jointure
+SELECT a.id AS id_a, b.id AS id_b, a.nom AS nom_a, b.nom AS nom_b, UPPER(TRIM(a.email)) AS email
+FROM CLIENT a
+JOIN CLIENT b ON UPPER(TRIM(a.email)) = UPPER(TRIM(b.email))
+              AND a.id &lt; b.id              -- une seule fois par paire, jamais une ligne avec elle-meme
+WHERE a.email IS NOT NULL
+ORDER BY a.id;
+-- (1,2), (1,3), (2,3), (4,5)
+
+-- AUCUN DELETE aujourd'hui. Le livrable est le rapport du point 2 :
+-- 'B@MAIL.BE' peut etre fusionne automatiquement,
+-- 'A@MAIL.BE' doit remonter au metier -- 'Dupont' de Namur et 'Dupond' de Liege
+-- partagent un email : erreur de saisie, ou deux personnes reelles ? Le SQL ne peut pas trancher.
+
+-- Variantes : GROUP_CONCAT(id ORDER BY id SEPARATOR ', ') en MySQL,
+--             LISTAGG(id, ', ') WITHIN GROUP (ORDER BY id) en Oracle.</pre>
+<p>Tu sais détecter et qualifier les doublons. Le jour 17 abordera leur suppression — avec toutes les précautions que cela exige.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j16", title: "Rapport de doublons qualifié", level: 3,
+    statement: "Table <code>INSCRIPTION(id, nom, email, telephone)</code> :<pre class='pseudo'>id | nom        | email           | telephone\n---+------------+-----------------+-------------\n 1 | 'Martin'   | 'm@mail.be'     | '081112233'\n 2 | '  MARTIN '| 'M@MAIL.BE'     | '081112233'\n 3 | 'Martine'  | 'm@mail.be'     | '081998877'\n 4 | 'Leroy'    | 'l@mail.be'     | '081445566'\n 5 | 'Leroy'    | 'l@mail.be'     | '081445566'\n 6 | 'Simon'    | ''              | '081334455'\n 7 | 'Durand'   | NULL            | '081667788'</pre>Écris le <strong>rapport de doublons</strong> basé sur l'email normalisé : clé, nombre de lignes, identifiants concernés, identifiant proposé à conserver, nombre de variantes de nom et de téléphone, et une qualification distinguant fusion automatique et arbitrage manuel. Exclus rigoureusement les valeurs vides et NULL. Aucun DELETE.",
+    hints: [
+      "Normalise l'email avec UPPER(TRIM(...)) dans le SELECT, le GROUP BY et nulle part ailleurs.",
+      "Le filtre WHERE doit exclure à la fois NULL et chaîne vide, sinon les lignes 6 et 7 créeront un faux groupe.",
+      "La qualification compare COUNT(DISTINCT ...) sur les autres colonnes : plus d'une valeur distincte signale un conflit."
+    ],
+    solution: "SELECT UPPER(TRIM(email))                                  AS cle_doublon,\n       COUNT(*)                                            AS nb_lignes,\n       STRING_AGG(CAST(id AS VARCHAR), ', ' ORDER BY id)   AS ids_concernes,\n       MIN(id)                                             AS id_propose_a_conserver,   -- convention : le plus ancien\n       COUNT(DISTINCT UPPER(TRIM(nom)))                    AS variantes_nom,\n       COUNT(DISTINCT telephone)                           AS variantes_telephone,\n       CASE WHEN COUNT(DISTINCT UPPER(TRIM(nom))) > 1\n                 OR COUNT(DISTINCT telephone)     > 1\n            THEN 'CONFLIT : arbitrage metier necessaire'\n            ELSE 'doublon simple : fusion automatisable'\n       END                                                 AS qualification\nFROM INSCRIPTION\nWHERE email IS NOT NULL                 -- ecarte la ligne 7\n  AND TRIM(email) <> ''                 -- ecarte la ligne 6\nGROUP BY UPPER(TRIM(email))             -- on groupe sur la valeur NORMALISEE, jamais sur la brute\nHAVING COUNT(*) > 1                     -- ne garde que les groupes reellement en doublon\nORDER BY nb_lignes DESC, cle_doublon;\n\n-- Resultat attendu :\n-- cle_doublon  | nb_lignes | ids_concernes | id_propose | variantes_nom | variantes_tel | qualification\n-- -------------+-----------+---------------+------------+---------------+---------------+----------------------------------------\n-- 'M@MAIL.BE'  |         3 | '1, 2, 3'     |          1 |             2 |             2 | 'CONFLIT : arbitrage metier necessaire'\n-- 'L@MAIL.BE'  |         2 | '4, 5'        |          4 |             1 |             1 | 'doublon simple : fusion automatisable'\n\n-- LECTURE DU RAPPORT :\n--   'L@MAIL.BE' : les lignes 4 et 5 sont identiques en tout point -> on garde la 4, on supprime la 5.\n--   'M@MAIL.BE' : trois lignes, mais DEUX noms ('MARTIN' et 'MARTINE') et DEUX telephones.\n--                 Les lignes 1 et 2 sont bien la meme personne (formatage different).\n--                 La ligne 3, 'Martine' avec un autre telephone, est probablement une AUTRE personne\n--                 qui a saisi par erreur l'email de Martin. Le SQL ne peut pas trancher : arbitrage.\n\n-- SANS le WHERE, les lignes 6 (chaine vide) et 7 (NULL) auraient produit du bruit :\n--   GROUP BY rassemble tous les NULL dans un seul groupe, et toutes les chaines vides dans un autre.\n--   On aurait signale de faux doublons entre des personnes n'ayant simplement pas d'email.\n\n-- Variantes de l'agregation des identifiants :\n--   MySQL      : GROUP_CONCAT(id ORDER BY id SEPARATOR ', ')\n--   Oracle     : LISTAGG(id, ', ') WITHIN GROUP (ORDER BY id)\n--   SQL Server : STRING_AGG(CAST(id AS VARCHAR), ', ') WITHIN GROUP (ORDER BY id)  -- 2017+\n\n-- AUCUN DELETE : le livrable est ce tableau, a faire valider par le metier\n-- AVANT toute suppression (voir jour 17).",
+    note: "Piège : MIN(id) comme ligne à conserver est une convention, pas une vérité. La plus ancienne ligne est souvent la moins complète — elle a été créée avant que d'autres champs ne soient renseignés. Selon le cas, on préférera garder la ligne la plus récente, ou celle qui a le plus de champs non NULL. Bonne pratique : ne présente jamais un simple compte de doublons au métier. La colonne de qualification transforme un chiffre inexploitable (« 340 doublons ») en plan d'action (« 310 fusionnables automatiquement, 30 à arbitrer »). C'est cette distinction qui fait la différence entre un audit utile et un audit qui finit au fond d'un tiroir." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

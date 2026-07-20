@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 01</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 1,
+  title: "Du SQL qui interroge au SQL qui nettoie",
+  subtitle: "Les vraies données sont sales. Voici pourquoi, et la méthode pour les remettre d'aplomb.",
+  theory: `
+<h3>1. Le SQL que tu connais déjà, et celui qui commence ici</h3>
+<p>Jusqu'à présent, tu as appris à <strong>interroger</strong> une base : <code>SELECT</code> pour choisir des colonnes, <code>WHERE</code> pour filtrer des lignes, les jointures pour relier des tables, <code>GROUP BY</code> pour résumer. Tout cela suppose une chose que personne ne dit jamais à voix haute : que les données sont <strong>propres</strong>.</p>
+<p>Une donnée est dite <strong>propre</strong> quand elle est écrite de façon régulière et prévisible : un nom toujours sans espace parasite, une date toujours stockée comme une date, un code pays toujours en majuscules, une seule ligne par client. Dans la vraie vie, ce n'est presque jamais le cas. Les données arrivent d'un formulaire web où l'utilisateur a tapé n'importe quoi, d'un fichier Excel recopié à la main, d'un ancien logiciel des années 90, ou de trois systèmes différents fusionnés un lundi matin.</p>
+<p>Ce cours est la suite logique : on passe du <strong>SQL qui interroge</strong> au <strong>SQL qui nettoie et transforme</strong>. L'outil central sera la <strong>fonction</strong> — un petit mécanisme qui prend une valeur en entrée et en renvoie une autre, transformée. <code>TRIM(nom)</code> prend un nom et renvoie le même nom sans les espaces autour. La colonne d'origine n'est pas modifiée : on affiche seulement une version corrigée.</p>
+
+<h3>2. Le catalogue des saletés</h3>
+<p>Il existe une petite dizaine de défauts qui reviennent partout. Les connaître, c'est déjà savoir quoi chercher :</p>
+<pre class="pseudo">-- Voici une table CLIENT telle qu'elle arrive vraiment du terrain :
+
+id | nom            | ville      | email              | date_inscr   | telephone
+---+----------------+------------+--------------------+--------------+-------------
+ 1 | '  Dupont '    | 'Namur'    | 'a@mail.be'        | '2023-05-12' | '081/22.33.44'
+ 2 | 'DUPONT'       | 'namur'    | NULL               | '12/05/2023' | '0811-223344'
+ 3 | 'dupont'       | 'NAMUR '   | 'A@MAIL.BE'        | ''           | '+32 81 223344'
+ 4 | 'Lefevre'      | 'Liege'    | 'b@mail.be'        | '2023-13-45' | NULL
+
+-- Ce qui cloche, defaut par defaut :
+--   espaces parasites  : '  Dupont ' n'est PAS egal a 'Dupont'
+--   casse incoherente  : 'DUPONT', 'Dupont', 'dupont' = trois valeurs differentes pour le SGBD
+--   valeurs NULL       : email inconnu -> tout calcul avec NULL donne NULL
+--   chaine vide        : '' n'est PAS la meme chose que NULL (piege classique)
+--   dates en TEXTE     : '12/05/2023' stocke comme du texte -> impossible de trier ou soustraire
+--   date impossible    : '2023-13-45' : mois 13, jour 45 -> aucune validation a l'entree
+--   formats melanges   : le meme numero de telephone ecrit de trois facons
+--   doublons caches    : les lignes 1, 2 et 3 sont probablement LA MEME personne</pre>
+<div class="warn">Le piège le plus coûteux est l'invisible : <code>'  Dupont '</code> s'affiche comme <code>Dupont</code> à l'écran. Ton <code>WHERE nom = 'Dupont'</code> ne renvoie rien, et tu perds une heure à chercher pourquoi. Les espaces ne se voient pas, mais le SGBD, lui, les compte.</p></div>
+
+<h3>3. Qu'est-ce qu'un pipeline de nettoyage ?</h3>
+<p>Un <strong>pipeline</strong> (littéralement « conduite », « tuyauterie ») est un enchaînement d'étapes où la sortie de chacune devient l'entrée de la suivante. En SQL, cela se traduit par des fonctions <strong>imbriquées</strong> : on écrit une fonction à l'intérieur d'une autre, et le SGBD évalue de l'intérieur vers l'extérieur, exactement comme en mathématiques.</p>
+<pre class="pseudo">-- Nettoyer un nom en trois passes, de l'interieur vers l'exterieur :
+
+SELECT UPPER(TRIM(nom)) AS nom_propre   -- 1) TRIM(nom) enleve les espaces autour -> '  Dupont ' devient 'Dupont'
+FROM CLIENT;                            -- 2) UPPER(...) met en majuscules       -> 'Dupont'    devient 'DUPONT'
+
+-- AVANT : '  Dupont '   (10 caracteres, dont 3 espaces)
+-- APRES : 'DUPONT'      (6 caracteres, comparable a coup sur)</pre>
+<p>La méthode de travail tient en quatre temps, toujours les mêmes :</p>
+<pre class="pseudo">-- 1) OBSERVER : a quoi ressemblent vraiment les donnees ?
+SELECT DISTINCT ville FROM CLIENT ORDER BY ville;   -- DISTINCT : liste les valeurs differentes, une seule fois chacune
+
+-- 2) MESURER : combien de lignes sont concernees ?
+SELECT COUNT(*) AS nb_sales                         -- COUNT(*) compte les lignes retenues
+FROM CLIENT
+WHERE nom &lt;&gt; TRIM(nom);                             -- &lt;&gt; signifie DIFFERENT : le nom brut differe de sa version nettoyee
+
+-- 3) TESTER en SELECT : verifier le resultat AVANT de toucher a quoi que ce soit
+SELECT id, nom AS avant, TRIM(nom) AS apres         -- on affiche l'ancien ET le nouveau, cote a cote
+FROM CLIENT
+WHERE nom &lt;&gt; TRIM(nom);
+
+-- 4) APPLIQUER : seulement maintenant, la modification reelle
+UPDATE CLIENT SET nom = TRIM(nom) WHERE nom &lt;&gt; TRIM(nom);   -- UPDATE ecrit dans la table pour de bon</pre>
+
+<h3>4. La règle d'or : jamais d'UPDATE sans SELECT de contrôle</h3>
+<p><code>UPDATE</code> et <code>DELETE</code> modifient la base <strong>définitivement</strong>. Il n'y a pas de Ctrl+Z en SQL. Un <code>UPDATE</code> auquel tu as oublié le <code>WHERE</code> écrase toute la table en une fraction de seconde.</p>
+<p>La parade est simple et non négociable : écris d'abord ta requête en <code>SELECT</code> avec exactement le même <code>WHERE</code>. Tu vois alors précisément quelles lignes seront touchées et à quoi elles ressembleront après. Une fois le résultat vérifié à l'œil, tu transformes le <code>SELECT</code> en <code>UPDATE</code>.</p>
+<pre class="pseudo">-- ETAPE 1 : je regarde ce que je m'apprete a faire (aucun risque)
+SELECT id, nom AS avant, TRIM(nom) AS apres   -- colonne avant / colonne apres pour comparer d'un coup d'oeil
+FROM CLIENT
+WHERE nom &lt;&gt; TRIM(nom);                       -- exactement le WHERE que j'utiliserai ensuite
+
+-- ETAPE 2 : le resultat me convient, je passe a l'acte
+UPDATE CLIENT
+SET nom = TRIM(nom)                           -- SET : la nouvelle valeur de la colonne
+WHERE nom &lt;&gt; TRIM(nom);                       -- MEME WHERE : je ne touche que les lignes reellement sales</pre>
+<div class="tip">Deuxième filet de sécurité : travaille dans une <strong>transaction</strong>. <code>BEGIN;</code> ouvre un espace de travail provisoire, <code>ROLLBACK;</code> annule tout, <code>COMMIT;</code> valide. Nous y consacrerons une journée entière plus tard dans le cours.</div>
+
+<h3>5. Pourquoi ce cours est TRANSVERSAL</h3>
+<p>Le SQL de base (SELECT, WHERE, JOIN) est normalisé : il s'écrit presque à l'identique partout. Les <strong>fonctions</strong>, elles, sont le domaine où chaque éditeur a fait ses propres choix. La même idée porte trois noms différents selon le SGBD.</p>
+<pre class="pseudo">-- Coller deux textes bout a bout (concatener) :
+CONCAT(prenom, ' ', nom)      -- standard, et disponible en MySQL, PostgreSQL, SQL Server 2012+
+prenom || ' ' || nom          -- PostgreSQL (et le standard SQL officiel) : l'operateur ||
+prenom + ' ' + nom            -- SQL Server : l'operateur +
+
+-- Remplacer un NULL par une valeur de secours :
+COALESCE(email, 'inconnu')    -- STANDARD : fonctionne PARTOUT, a privilegier toujours
+IFNULL(email, 'inconnu')      -- MySQL / MariaDB uniquement
+ISNULL(email, 'inconnu')      -- SQL Server uniquement (attention : sens different en MySQL !)
+
+-- Mesurer la longueur d'un texte :
+LENGTH(nom)                   -- MySQL, PostgreSQL, SQLite
+LEN(nom)                      -- SQL Server (et LEN ignore les espaces de FIN : piege classique)</pre>
+<div class="tip">Réflexe à prendre dès aujourd'hui : quand une fonction standard existe (<code>COALESCE</code>, <code>CAST</code>, <code>TRIM</code>, <code>SUBSTRING</code>), utilise-la. Ton code restera lisible et portable d'un SGBD à l'autre. Les variantes propriétaires sont utiles à <em>reconnaître</em> quand tu lis le code d'un collègue, pas à écrire par défaut.</div>
+
+<h3>6. Ce que tu vas savoir faire</h3>
+<p>Dans les quinze jours qui viennent : rogner les espaces, uniformiser la casse, découper et recoller des chaînes, chercher-remplacer, valider un format avec une expression régulière, dompter les NULL, convertir les types, arrondir les nombres, extraire et calculer avec les dates, écrire de la logique conditionnelle avec <code>CASE WHEN</code>, et enfin traquer les doublons. Aujourd'hui, retiens surtout la méthode : <strong>observer, mesurer, tester en SELECT, puis seulement appliquer</strong>.</p>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi WHERE nom = 'Dupont' ne trouve-t-il pas la ligne contenant '  Dupont ' ?", opts: ["Parce que la casse diffère", "Parce que les espaces font partie de la valeur stockée", "Parce que le SGBD ignore les apostrophes", "Parce qu'il manque un index"], a: 1, exp: "Les espaces sont des caractères comme les autres : '  Dupont ' et 'Dupont' sont deux chaînes différentes." },
+    { type: "input", q: "Complète : SELECT ______(nom) FROM CLIENT;  — la fonction qui enlève les espaces au début ET à la fin.", a: ["trim"], ph: "une fonction", exp: "TRIM rogne les espaces des deux côtés de la chaîne." },
+    { type: "vf", q: "Une chaîne vide '' et la valeur NULL sont exactement la même chose.", a: false, exp: "'' est une chaîne connue de longueur zéro ; NULL signifie « valeur inconnue ». Le SGBD les traite différemment." },
+    { type: "qcm", q: "Dans SELECT UPPER(TRIM(nom)), quelle fonction s'exécute en premier ?", opts: ["UPPER", "TRIM", "Les deux en même temps", "Cela dépend du SGBD"], a: 1, exp: "Les fonctions imbriquées s'évaluent de l'intérieur vers l'extérieur : TRIM d'abord, puis UPPER sur son résultat." },
+    { type: "input", q: "Complète le contrôle avant modification : ______ id, nom, TRIM(nom) FROM CLIENT WHERE nom <> TRIM(nom);", a: ["select"], ph: "un mot-clé", exp: "On teste toujours avec un SELECT avant de lancer un UPDATE." },
+    { type: "qcm", q: "Quelle fonction de remplacement du NULL fonctionne sur TOUS les SGBD ?", opts: ["IFNULL", "ISNULL", "COALESCE", "NVL"], a: 2, exp: "COALESCE est la fonction standard SQL, présente partout. IFNULL est MySQL, ISNULL est SQL Server, NVL est Oracle." },
+    { type: "vf", q: "Un UPDATE lancé sans clause WHERE ne modifie qu'une seule ligne.", a: false, exp: "Sans WHERE, l'UPDATE s'applique à TOUTES les lignes de la table. C'est l'erreur la plus coûteuse en SQL." },
+    { type: "qcm", q: "Que fait l'opérateur || en PostgreSQL ?", opts: ["Il compare deux valeurs", "Il concatène deux chaînes", "Il signifie OU logique", "Il arrondit un nombre"], a: 1, exp: "|| est l'opérateur de concaténation du standard SQL et de PostgreSQL. SQL Server utilise + à la place." },
+    { type: "input", q: "Complète : SELECT ______ ville FROM CLIENT; — le mot-clé qui liste chaque valeur une seule fois, pour observer les variantes d'écriture.", a: ["distinct"], ph: "un mot-clé", exp: "DISTINCT est l'outil d'observation numéro 1 : il révèle d'un coup 'Namur', 'namur' et 'NAMUR '." },
+    { type: "qcm", q: "Une date stockée comme du TEXTE ('12/05/2023') pose surtout quel problème ?", opts: ["Elle prend trop de place", "On ne peut ni la trier chronologiquement ni calculer des durées", "Elle est illisible à l'écran", "Elle empêche les jointures"], a: 1, exp: "Trié en texte, '12/05/2023' vient avant '31/01/2020'. Il faut convertir en vrai type date pour trier et soustraire." },
+    { type: "vf", q: "En SQL, une commande UPDATE peut être annulée avec Ctrl+Z.", a: false, exp: "Aucun Ctrl+Z. Seule une transaction non validée peut être annulée par ROLLBACK." },
+    { type: "input", q: "Complète l'opérateur « différent de » : WHERE nom ______ TRIM(nom);", a: ["<>", "!=", "&lt;&gt;"], ph: "un opérateur", exp: "<> est l'opérateur standard « différent de ». != est accepté par la plupart des SGBD." },
+    { type: "qcm", q: "Quel est l'ordre correct de la méthode de nettoyage ?", opts: ["Appliquer, observer, mesurer, tester", "Observer, mesurer, tester en SELECT, appliquer", "Tester, appliquer, observer, mesurer", "Mesurer, appliquer, observer, tester"], a: 1, exp: "On regarde, on chiffre, on simule, et seulement ensuite on écrit dans la table." },
+    { type: "input", q: "Complète : SELECT ______(nom) — la fonction qui met un texte en MAJUSCULES.", a: ["upper"], ph: "une fonction", exp: "UPPER met en majuscules, LOWER en minuscules. Ces deux-là sont standard partout." },
+    { type: "qcm", q: "Pourquoi ce cours présente-t-il systématiquement plusieurs syntaxes ?", opts: ["Pour occuper de la place", "Parce que les fonctions varient d'un SGBD à l'autre alors que le SELECT de base est normalisé", "Parce que le standard SQL n'existe pas", "Parce que MySQL est obsolète"], a: 1, exp: "SELECT/WHERE/JOIN sont normalisés ; les fonctions de chaîne et de date sont le terrain des divergences entre éditeurs." }
+  ],
+  final: {
+    title: "Exercice final — Diagnostiquer une table sale",
+    intro: `<p>Voici la table <code>INSCRIPTION</code> telle qu'elle sort d'un formulaire web. Repère les défauts avant de répondre.</p>
+<pre class="pseudo">id | nom_participant | email              | ville     | date_inscription
+---+-----------------+--------------------+-----------+------------------
+ 1 | '  Martin '     | 'martin@mail.be'   | 'Namur'   | '2024-03-01'
+ 2 | 'MARTIN'        | NULL               | 'namur'   | '01/03/2024'
+ 3 | 'martin'        | ''                 | 'NAMUR '  | '2024-03-01'
+ 4 | 'Leroy'         | 'LEROY@MAIL.BE'    | 'Liege'   | ''</pre>`,
+    questions: [
+      { type: "qcm", q: "Combien de personnes DIFFÉRENTES contient vraisemblablement cette table ?", opts: ["Quatre", "Deux : Martin et Leroy, la première apparaissant trois fois", "Trois", "Impossible à dire"], a: 1, exp: "Les lignes 1, 2 et 3 ne diffèrent que par les espaces et la casse : c'est un doublon caché." },
+      { type: "qcm", q: "Quelle requête révèle le mieux les variantes d'écriture de la ville ?", opts: ["SELECT COUNT(*) FROM INSCRIPTION", "SELECT DISTINCT ville FROM INSCRIPTION ORDER BY ville", "SELECT * FROM INSCRIPTION WHERE ville = 'Namur'", "SELECT MAX(ville) FROM INSCRIPTION"], a: 1, exp: "DISTINCT affiche 'NAMUR ', 'Namur' et 'namur' comme trois valeurs distinctes : le problème saute aux yeux." },
+      { type: "vf", q: "Les lignes 2 et 3 ont toutes deux un email « vide » au même sens pour le SGBD.", a: false, exp: "La ligne 2 contient NULL (inconnu), la ligne 3 une chaîne vide ''. Un WHERE email IS NULL ne trouvera que la ligne 2." },
+      { type: "qcm", q: "Quelle expression rendrait comparables les trois écritures de « martin » ?", opts: ["TRIM(nom_participant)", "UPPER(nom_participant)", "UPPER(TRIM(nom_participant))", "LENGTH(nom_participant)"], a: 2, exp: "Il faut cumuler les deux traitements : TRIM contre les espaces, UPPER contre la casse." },
+      { type: "qcm", q: "Avant de lancer l'UPDATE de nettoyage, quelle est l'étape obligatoire ?", opts: ["Sauvegarder la page HTML", "Écrire le même WHERE dans un SELECT et vérifier les lignes affichées", "Supprimer la table", "Ajouter un index"], a: 1, exp: "Le SELECT de contrôle avec le WHERE identique : c'est la règle d'or du jour." }
+    ],
+    solution: `<pre class="pseudo">-- ETAPE 1 : OBSERVER les variantes d'ecriture de la ville
+SELECT DISTINCT ville                       -- DISTINCT : chaque valeur listee une seule fois
+FROM INSCRIPTION
+ORDER BY ville;                             -- trie pour regrouper visuellement les variantes
+
+-- ETAPE 2 : MESURER combien de noms sont sales
+SELECT COUNT(*) AS nb_noms_sales            -- COUNT(*) compte les lignes retenues par le WHERE
+FROM INSCRIPTION
+WHERE nom_participant &lt;&gt; TRIM(nom_participant);   -- le nom brut differe de sa version rognee
+
+-- ETAPE 3 : TESTER le nettoyage en SELECT, avant / apres cote a cote
+SELECT id,
+       nom_participant                AS avant,   -- la valeur actuelle, telle qu'elle est stockee
+       UPPER(TRIM(nom_participant))   AS apres    -- TRIM enleve les espaces, puis UPPER uniformise la casse
+FROM INSCRIPTION;
+
+-- ETAPE 4 : APPLIQUER, avec un WHERE qui limite aux lignes reellement concernees
+UPDATE INSCRIPTION
+SET nom_participant = TRIM(nom_participant)       -- ici on ne corrige que les espaces
+WHERE nom_participant &lt;&gt; TRIM(nom_participant);   -- MEME condition que le SELECT de controle</pre>
+<p>Tu tiens la méthode. Demain : la fonction TRIM en détail, et ses variantes selon le SGBD.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j01", title: "Le SELECT de contrôle", level: 2,
+    statement: "Table <code>FOURNISSEUR(id, raison_sociale, ville)</code> :<pre class='pseudo'>id | raison_sociale   | ville\n---+------------------+-----------\n 1 | '  Delta SA '    | 'Namur'\n 2 | 'DELTA SA'       | 'namur'\n 3 | 'Omega SPRL'     | 'Liege'\n 4 | ' Omega SPRL'    | 'LIEGE '</pre>Écris le <strong>SELECT de contrôle</strong> qui, avant tout UPDATE, affiche l'identifiant, la raison sociale actuelle et sa version nettoyée (espaces rognés puis mise en majuscules) — uniquement pour les lignes dont la raison sociale comporte des espaces parasites.",
+    hints: [
+      "Deux colonnes de comparaison : la valeur brute avec un alias avant, la valeur transformée avec un alias apres.",
+      "Imbrique les fonctions : UPPER(TRIM(colonne)) — TRIM s'exécute en premier.",
+      "Le WHERE qui détecte les espaces parasites : la colonne est différente (<>) de sa version TRIM."
+    ],
+    solution: "SELECT id,                                          -- l'identifiant, pour retrouver la ligne ensuite\n       raison_sociale              AS avant,       -- la valeur actuellement stockee (avec ses defauts)\n       UPPER(TRIM(raison_sociale)) AS apres        -- TRIM rogne les espaces, puis UPPER met en majuscules\nFROM FOURNISSEUR\nWHERE raison_sociale <> TRIM(raison_sociale);      -- ne garde que les lignes ayant reellement des espaces parasites\n\n-- Resultat attendu :\n-- id | avant         | apres\n-- ---+---------------+------------\n--  1 | '  Delta SA ' | 'DELTA SA'\n--  4 | ' Omega SPRL' | 'OMEGA SPRL'\n\n-- La ligne 2 ('DELTA SA') et la ligne 3 ('Omega SPRL') n'ont pas d'espaces parasites :\n-- elles sont exclues par le WHERE, donc l'UPDATE qui suivra ne les touchera pas.",
+    note: "Piège : sans le WHERE, l'UPDATE réécrirait les quatre lignes, y compris les propres — inutile, et bruyant dans les journaux de la base. Bonne pratique : garder toujours des alias avant / apres dans le SELECT de contrôle, c'est ce qui permet de valider le résultat d'un seul coup d'œil." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

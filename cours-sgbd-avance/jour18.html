@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 18</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 18,
+  title: "Les CTE : la clause WITH",
+  subtitle: "Donner un nom à une étape de calcul pour arrêter d empiler des sous-requêtes illisibles.",
+  theory: `
+<h3>1. Le problème : la sous-requête poupée russe</h3>
+<p>Hier, pour dédupliquer, tu as écrit une requête à trois niveaux : un SELECT dans un SELECT dans un DELETE. Ça marche, mais ça se lit de l intérieur vers l extérieur, et au quatrième niveau plus personne ne comprend rien — pas même toi, trois semaines plus tard.</p>
+<p>Le SQL a une réponse à ça : la <strong>CTE</strong>.</p>
+
+<h3>2. Définition : qu est-ce qu une CTE ?</h3>
+<p><strong>CTE</strong> signifie <em>Common Table Expression</em>, en français « expression de table commune ». C est un <strong>résultat temporaire nommé</strong>, défini au début de la requête, qui n existe que le temps de cette requête. On l introduit avec le mot-clé <code>WITH</code>.</p>
+<div class="tip"><strong>L analogie :</strong> une CTE, c est comme poser une variable intermédiaire dans un calcul. Au lieu d écrire <code>((3+4)*2-1)/5</code> d un seul jet, tu écris : « soit <em>a</em> = 3+4 ; soit <em>b</em> = a*2-1 ; le résultat est b/5 ». Même calcul, mais chaque étape a un nom et se lit dans l ordre. Une CTE fait exactement cela pour un jeu de lignes.</div>
+<p>Autre image : c est un <strong>brouillon jetable</strong>. Tu poses un résultat sur une feuille de brouillon, tu lui donnes un nom, tu t en sers, et la feuille est jetée dès la requête terminée. Rien n est stocké, rien n est créé sur le disque.</p>
+
+<h3>3. La syntaxe standard</h3>
+<pre class="pseudo">WITH nom_de_la_cte AS (       -- WITH ouvre le brouillon, on lui donne un nom
+  SELECT ...                  -- la requete qui remplit le brouillon
+  FROM ...
+  WHERE ...
+)                             -- parenthese fermante : le brouillon est pret
+SELECT ...                    -- LA requete principale, qui suit obligatoirement
+FROM nom_de_la_cte;           -- on utilise le brouillon comme une table normale</pre>
+<div class="warn">Une CTE ne vit pas toute seule. Elle DOIT être immédiatement suivie d une requête principale (SELECT, INSERT, UPDATE ou DELETE) qui l utilise. Écrire un WITH tout seul provoque une erreur de syntaxe.</div>
+
+<h3>4. Un exemple concret</h3>
+<p>Objectif : afficher les clients dont le total de commandes dépasse la moyenne générale.</p>
+<pre class="pseudo">-- SANS CTE : illisible, et la sous-requete est ecrite DEUX fois
+SELECT client, SUM(montant) AS total
+FROM COMMANDE
+GROUP BY client
+HAVING SUM(montant) &gt; (
+  SELECT AVG(t.total) FROM (
+    SELECT SUM(montant) AS total FROM COMMANDE GROUP BY client
+  ) AS t
+);</pre>
+<pre class="pseudo">-- AVEC CTE : chaque etape a un nom, et se lit de haut en bas
+WITH totaux AS (                          -- etape 1 : le total par client
+  SELECT client,
+         SUM(montant) AS total            -- somme des montants du client
+  FROM COMMANDE
+  GROUP BY client                         -- un tas par client
+)
+SELECT client, total                      -- etape 2 : on exploite le brouillon
+FROM totaux
+WHERE total &gt; (SELECT AVG(total) FROM totaux);   -- la CTE est reutilisable !</pre>
+<pre class="pseudo">-- Donnees COMMANDE :          Resultat de la CTE totaux :
+-- client | montant            client | total
+-- -------+---------           -------+------
+-- Dupont |   100              Dupont |  250
+-- Dupont |   150              Martin |   40
+-- Martin |    40              Leroy  |  310
+-- Leroy  |   310
+-- moyenne des totaux = 200 --&gt; resultat final : Dupont (250) et Leroy (310)</pre>
+<div class="tip">Note le gain majeur : la CTE <code>totaux</code> est utilisée <strong>deux fois</strong> dans la requête principale, alors qu elle n est écrite qu une seule fois. Une sous-requête, elle, doit être recopiée à chaque emplacement.</div>
+
+<h3>5. Les variantes selon le SGBD</h3>
+<p>Bonne nouvelle : <code>WITH</code> est une des rares choses vraiment standardisées. La syntaxe est identique partout. Ce sont les <strong>versions minimales</strong> qui diffèrent.</p>
+<pre class="pseudo">-- Support de WITH selon le SGBD :
+-- PostgreSQL   : depuis la version 8.4 (2009)  -- toujours dispo
+-- SQL Server   : depuis 2005                    -- toujours dispo
+-- MySQL        : depuis 8.0 (2018)              -- ABSENT en MySQL 5.7 !
+-- MariaDB      : depuis 10.2 (2017)
+-- SQLite       : depuis 3.8.3 (2014)
+-- Oracle       : depuis 9i</pre>
+<div class="warn">MySQL 5.7 et antérieur ne connaissent pas WITH. Sur ces versions, il faut revenir aux sous-requêtes dans le FROM (appelées <em>tables dérivées</em>), ou créer une vue. Vérifie ta version avec <code>SELECT VERSION();</code>.</div>
+<p>Deux détails de dialecte à connaître :</p>
+<pre class="pseudo">-- SQL Server : si l instruction precedente n est pas terminee par ;
+-- le WITH est mal interprete. Bonne pratique : prefixer d un point-virgule.
+;WITH totaux AS ( ... )
+SELECT * FROM totaux;
+
+-- PostgreSQL : le mot-cle MATERIALIZED (depuis la v12) force le calcul
+-- de la CTE une seule fois, au lieu de la fusionner dans la requete.
+WITH totaux AS MATERIALIZED ( ... )
+SELECT * FROM totaux;</pre>
+
+<h3>6. CTE, sous-requête ou vue ?</h3>
+<pre class="pseudo">-- Sous-requete  : anonyme, locale, recopiee a chaque usage, lecture inversee
+-- CTE (WITH)    : nommee, locale a UNE requete, reutilisable dedans, lecture lineaire
+-- Vue (VIEW)    : nommee, PERSISTANTE en base, reutilisable dans TOUTES les requetes</pre>
+<p>Résumé : la CTE est une <strong>vue jetable</strong>. Si tu réutilises le même calcul dans plusieurs requêtes différentes, crée une vue. Si c est le temps d une requête, une CTE suffit — et elle ne pollue pas le schéma.</p>
+
+<h3>7. Ce qu on peut faire avec une CTE</h3>
+<pre class="pseudo">-- 1) L utiliser dans une jointure comme une table
+WITH gros_clients AS (
+  SELECT client FROM COMMANDE GROUP BY client HAVING SUM(montant) &gt; 200
+)
+SELECT c.nom, c.ville                       -- infos du client
+FROM CLIENT c
+JOIN gros_clients g ON g.client = c.nom;    -- la CTE se joint comme une table
+
+-- 2) L utiliser dans un DELETE ou un UPDATE (PostgreSQL, SQL Server)
+WITH obsoletes AS (
+  SELECT id FROM COMMANDE WHERE date_cmd &lt; '2020-01-01'
+)
+DELETE FROM COMMANDE WHERE id IN (SELECT id FROM obsoletes);</pre>
+<div class="tip">Reprends le DELETE de déduplication du jour 17 et réécris-le avec une CTE : la lisibilité fait un bond. C est l exercice d écriture du jour.</div>
+
+<h3>8. Les pièges</h3>
+<p>• Une CTE <strong>n est pas un index</strong> et ne rend pas magiquement la requête plus rapide. Elle rend le code lisible ; le plan d exécution reste à surveiller (jour 30).<br>
+• En PostgreSQL avant la v12, une CTE était toujours matérialisée : elle pouvait <em>ralentir</em> une requête en empêchant l optimiseur de pousser les filtres dedans.<br>
+• Une CTE ne peut pas être référencée par une <em>autre</em> requête : sa portée s arrête au point-virgule.<br>
+• On ne peut pas mettre <code>ORDER BY</code> dans une CTE en espérant que le résultat final soit trié : le tri final se met dans la requête principale.</p>`,
+  exercises: [
+    { type: "input", q: "Quel mot-clé introduit une CTE ?", ph: "W...", a: ["WITH"], exp: "WITH nom AS ( ... ) puis la requête principale." },
+    { type: "input", q: "Que signifie le sigle CTE (en anglais) ?", ph: "Common ...", a: ["Common Table Expression", "common table expression"], exp: "Expression de table commune : un résultat temporaire nommé." },
+    { type: "qcm", q: "Une CTE est…", opts: ["Une table créée sur le disque", "Un résultat temporaire nommé, valable le temps d une seule requête", "Un index", "Une contrainte"], a: 1, exp: "C est un brouillon jetable : rien n est stocké." },
+    { type: "vf", q: "Un WITH peut être écrit seul, sans requête qui suit.", a: false, exp: "Une CTE doit être suivie d une requête principale qui l utilise, sinon erreur de syntaxe." },
+    { type: "qcm", q: "Le principal avantage d une CTE sur une sous-requête est…", opts: ["Elle est toujours plus rapide", "Elle est nommée, se lit de haut en bas et est réutilisable dans la requête", "Elle crée un index", "Elle évite les jointures"], a: 1, exp: "Lisibilité et réutilisation : une sous-requête doit être recopiée à chaque usage." },
+    { type: "qcm", q: "Depuis quelle version MySQL connaît-il WITH ?", opts: ["MySQL 5.5", "MySQL 5.7", "MySQL 8.0", "Toutes les versions"], a: 2, exp: "MySQL 8.0 (2018). En 5.7, il faut des tables dérivées ou des vues." },
+    { type: "input", q: "Quel objet de base de données est l équivalent PERSISTANT d une CTE ?", ph: "V...", a: ["VUE", "VIEW", "UNE VUE"], exp: "Une vue est nommée et stockée dans le schéma ; la CTE, elle, est jetable." },
+    { type: "vf", q: "Une CTE peut être utilisée dans une jointure, exactement comme une table.", a: true, exp: "Du point de vue de la requête principale, la CTE se comporte comme une table." },
+    { type: "qcm", q: "En SQL Server, la bonne pratique consiste à écrire…", opts: [";WITH totaux AS (...)", "WITH; totaux AS (...)", "WITH RECURSIVE obligatoire", "BEGIN WITH"], a: 0, exp: "Le point-virgule initial évite que le WITH soit rattaché à l instruction précédente." },
+    { type: "input", q: "Quel mot-clé PostgreSQL (v12+) force le calcul de la CTE une seule fois ?", ph: "MATER...", a: ["MATERIALIZED"], exp: "WITH x AS MATERIALIZED (...) empêche l optimiseur de fusionner la CTE." },
+    { type: "vf", q: "Une CTE accélère toujours la requête.", a: false, exp: "Elle améliore la lisibilité, pas nécessairement la performance ; elle peut même la dégrader si elle bloque l optimiseur." },
+    { type: "qcm", q: "Combien de fois peut-on référencer une même CTE dans la requête principale ?", opts: ["Une seule fois", "Autant de fois qu on veut", "Deux fois maximum", "Zéro"], a: 1, exp: "C est justement son intérêt : écrite une fois, utilisée n fois." },
+    { type: "input", q: "Après le mot-clé WITH et le nom de la CTE, quel mot-clé précède la parenthèse ?", ph: "A...", a: ["AS"], exp: "WITH totaux AS ( ... )." },
+    { type: "qcm", q: "La portée d une CTE s arrête…", opts: ["À la fin de la session", "Au point-virgule de la requête", "Après un COMMIT", "Jamais"], a: 1, exp: "La CTE n existe que pour la requête qui la déclare." },
+    { type: "qcm", q: "Peut-on utiliser une CTE dans un DELETE ?", opts: ["Jamais", "Oui, notamment en PostgreSQL et SQL Server", "Uniquement en MySQL 5.7", "Seulement avec un index"], a: 1, exp: "WITH ... DELETE FROM ... est une écriture classique de nettoyage." }
+  ],
+  final: {
+    title: "Exercice final — Réécrire une requête avec WITH",
+    intro: `<p>On analyse les ventes par vendeur et on veut isoler ceux qui dépassent la moyenne de l équipe.</p>
+<pre class="pseudo">-- VENTE(id, vendeur, region, montant, date_vente)
+-- id | vendeur | region | montant
+-- ---+---------+--------+--------
+--  1 | Alice   | Nord   |   500
+--  2 | Bob     | Sud    |   200
+--  3 | Alice   | Nord   |   300
+--  4 | Chloe   | Sud    |   900
+--  5 | Bob     | Sud    |   100
+-- Totaux : Alice 800, Bob 300, Chloe 900 --&gt; moyenne des totaux = 666,67</pre>`,
+    questions: [
+      { type: "input", q: "Quel mot-clé ouvre la requête pour créer le brouillon des totaux ?", ph: "W...", a: ["WITH"], exp: "WITH totaux AS (...)." },
+      { type: "qcm", q: "Que contient la CTE totaux ?", opts: ["Toutes les lignes de VENTE", "Une ligne par vendeur avec la somme de ses montants", "La moyenne générale", "Les régions"], a: 1, exp: "SELECT vendeur, SUM(montant) FROM VENTE GROUP BY vendeur." },
+      { type: "qcm", q: "Quels vendeurs dépassent la moyenne des totaux (666,67) ?", opts: ["Alice (800) et Chloe (900)", "Chloe uniquement", "Bob uniquement", "Aucun"], a: 0, exp: "Alice totalise 800 et Chloe 900 : les deux dépassent 666,67. Bob (300) est en dessous." },
+      { type: "vf", q: "Dans la requête principale, on peut écrire SELECT AVG(total) FROM totaux, car la CTE est réutilisable.", a: true, exp: "C est l avantage décisif de la CTE sur la sous-requête." },
+      { type: "input", q: "Quelle clause place-t-on dans la requête PRINCIPALE (et non dans la CTE) pour trier le résultat final ?", ph: "ORD...", a: ["ORDER BY", "ORDER"], exp: "Le tri d une CTE n est pas garanti : le ORDER BY final va dans la requête principale." }
+    ],
+    solution: `<pre class="pseudo">WITH totaux AS (                       -- brouillon : le total vendu par vendeur
+  SELECT vendeur,                      -- le nom du vendeur
+         SUM(montant) AS total         -- la somme de ses ventes
+  FROM VENTE
+  GROUP BY vendeur                     -- un tas par vendeur
+)
+SELECT vendeur,                        -- requete principale
+       total,
+       (SELECT AVG(total) FROM totaux) AS moyenne_equipe   -- CTE reutilisee (1)
+FROM totaux                                                 -- CTE reutilisee (2)
+WHERE total &gt; (SELECT AVG(total) FROM totaux)               -- CTE reutilisee (3)
+ORDER BY total DESC;                   -- le tri final va ICI, pas dans la CTE
+
+-- Resultat :
+-- vendeur | total | moyenne_equipe
+-- --------+-------+---------------
+-- Chloe   |   900 |         666.67
+-- Alice   |   800 |         666.67</pre>
+<p>Une seule définition, trois utilisations. Demain, on enchaîne plusieurs CTE et on découvre la CTE <strong>récursive</strong>, celle qui s appelle elle-même.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j18", title: "Réécrire la déduplication avec une CTE", level: 2,
+    statement: "Reprends la table CONTACT(id, prenom, nom, email, source, ajoute_le) du jour 17. Réécris la requête de déduplication en utilisant une CTE au lieu de sous-requêtes empilées : une CTE nommée copies qui calcule le rang de chaque ligne (partition sur email, la plus récente en rang 1), puis un SELECT de contrôle sur cette CTE, puis le DELETE. Commente chaque ligne.",
+    hints: [
+      "WITH copies AS ( ... ) puis la requête principale : la CTE remplace exactement la sous-requête nommée t.",
+      "Le calcul ROW_NUMBER() OVER (PARTITION BY email ORDER BY ajoute_le DESC) se met À L INTÉRIEUR de la CTE.",
+      "Pour le DELETE universel, la requête principale devient DELETE FROM CONTACT WHERE id IN (SELECT id FROM copies WHERE rang > 1)."
+    ],
+    solution: "-- ETAPE 1 : le brouillon nomme, puis le SELECT de controle\nWITH copies AS (                        -- CTE : le rang de chaque ligne\n  SELECT id,\n         email,\n         ajoute_le,\n         ROW_NUMBER() OVER (\n           PARTITION BY email           -- une pile par email\n           ORDER BY ajoute_le DESC      -- la plus recente recoit le rang 1\n         ) AS rang\n  FROM CONTACT\n)\nSELECT *                                -- requete principale : on REGARDE\nFROM copies\nWHERE rang > 1;                         -- les copies perimees\n\n-- ETAPE 2 : la meme CTE, mais la requete principale est un DELETE\nWITH copies AS (\n  SELECT id,\n         ROW_NUMBER() OVER (PARTITION BY email ORDER BY ajoute_le DESC) AS rang\n  FROM CONTACT\n)\nDELETE FROM CONTACT\nWHERE id IN (SELECT id FROM copies WHERE rang > 1);\n\n-- Variante SQL Server, encore plus courte :\n-- WITH copies AS (SELECT *, ROW_NUMBER() OVER (...) AS rang FROM CONTACT)\n-- DELETE FROM copies WHERE rang > 1;\n\n-- Resultat attendu : identique au jour 17, mais la requete se lit\n-- de haut en bas au lieu de l interieur vers l exterieur.",
+    note: "Compare visuellement avec la version du jour 17 : même logique, même plan d exécution, mais la CTE nomme l étape intermédiaire (copies) et supprime un niveau d imbrication. Attention en MySQL 8 : le DELETE avec CTE fonctionne, mais si tu obtiens l erreur 1093, repasse par la sous-requête à double niveau." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

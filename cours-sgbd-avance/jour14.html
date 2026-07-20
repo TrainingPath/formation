@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 14</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 14,
+  title: "La logique conditionnelle : CASE WHEN",
+  subtitle: "Le SI...ALORS...SINON du SQL : classer, catégoriser, compter conditionnellement.",
+  theory: `
+<h3>1. CASE WHEN, l'expression conditionnelle</h3>
+<p><code>CASE WHEN</code> est le « si... alors... sinon » du SQL. C'est une <strong>expression</strong> : elle produit une valeur, et peut donc apparaître partout où une valeur est attendue — dans le <code>SELECT</code>, le <code>WHERE</code>, le <code>ORDER BY</code>, le <code>GROUP BY</code>, à l'intérieur d'une fonction d'agrégation.</p>
+<p>C'est aussi l'une des rares constructions <strong>totalement standard</strong> : la syntaxe est identique sur MySQL, PostgreSQL, SQL Server et Oracle. Aucune variante à mémoriser.</p>
+<pre class="pseudo">CASE
+  WHEN condition1 THEN resultat1     -- si la condition 1 est vraie, la valeur est resultat1
+  WHEN condition2 THEN resultat2     -- sinon, si la condition 2 est vraie, resultat2
+  ELSE resultat_par_defaut           -- sinon, dans tous les autres cas
+END                                  -- fin de l'expression : le END est OBLIGATOIRE</pre>
+<pre class="pseudo">-- Exemple concret : classer des commandes par montant
+SELECT id,
+       montant,
+       CASE
+         WHEN montant &gt;= 1000 THEN 'grosse commande'
+         WHEN montant &gt;=  100 THEN 'commande moyenne'
+         ELSE                      'petite commande'
+       END AS categorie
+FROM COMMANDE;
+-- 1500 donne 'grosse commande' ; 250 donne 'commande moyenne' ; 40 donne 'petite commande'</pre>
+
+<h3>2. L'ordre des conditions est décisif</h3>
+<p>Le SGBD évalue les <code>WHEN</code> <strong>de haut en bas</strong> et s'arrête au <strong>premier</strong> qui est vrai. L'ordre n'est donc pas indifférent : il faut aller du cas le plus restrictif au plus général.</p>
+<pre class="pseudo">-- FAUX : l'ordre est inverse
+CASE
+  WHEN montant &gt;= 100  THEN 'moyenne'    -- 1500 satisfait DEJA cette condition
+  WHEN montant &gt;= 1000 THEN 'grosse'     -- cette ligne ne sera JAMAIS atteinte
+END
+-- toute commande de 1000 ou plus sera etiquetee 'moyenne' : le bug est silencieux
+
+-- CORRECT : du plus restrictif au plus general
+CASE
+  WHEN montant &gt;= 1000 THEN 'grosse'     -- on teste d'abord le seuil le plus eleve
+  WHEN montant &gt;=  100 THEN 'moyenne'
+  ELSE                      'petite'
+END</pre>
+<div class="warn">Si aucun <code>WHEN</code> n'est vrai et qu'il n'y a pas de <code>ELSE</code>, l'expression renvoie <code>NULL</code>. Ce NULL silencieux se propage ensuite dans les calculs. Mets systématiquement un <code>ELSE</code>, ne serait-ce que <code>ELSE 'autre'</code>.</div>
+
+<h3>3. Les deux formes : recherchée et simple</h3>
+<pre class="pseudo">-- FORME RECHERCHEE (searched CASE) : chaque WHEN porte une condition complete
+CASE
+  WHEN statut = 'A' THEN 'Actif'
+  WHEN statut = 'S' THEN 'Suspendu'
+  WHEN montant &gt; 100 AND ville = 'Namur' THEN 'cas particulier'   -- conditions complexes possibles
+  ELSE 'Inconnu'
+END
+
+-- FORME SIMPLE (simple CASE) : on cite la colonne UNE fois, puis les valeurs
+CASE statut
+  WHEN 'A' THEN 'Actif'
+  WHEN 'S' THEN 'Suspendu'
+  ELSE 'Inconnu'
+END
+-- plus courte, mais limitee a l'egalite stricte sur une seule expression</pre>
+<div class="warn">Piège de la forme simple : elle compare avec <code>=</code>, or <code>NULL = NULL</code> ne vaut pas vrai. <code>CASE statut WHEN NULL THEN 'inconnu' END</code> ne fonctionne <strong>jamais</strong>. Il faut la forme recherchée : <code>CASE WHEN statut IS NULL THEN 'inconnu' ... END</code>.</div>
+
+<h3>4. L'agrégation conditionnelle : le vrai pouvoir de CASE</h3>
+<p>Placer un <code>CASE</code> à l'intérieur d'un <code>SUM</code> ou d'un <code>COUNT</code> permet de compter ou sommer <strong>sous condition</strong>, et surtout de produire plusieurs comptages différents en une seule requête et un seul parcours de table.</p>
+<pre class="pseudo">-- Compter des sous-ensembles, en une seule passe :
+SELECT COUNT(*)                                                      AS total,
+       SUM(CASE WHEN statut = 'A' THEN 1 ELSE 0 END)                 AS nb_actifs,
+       SUM(CASE WHEN statut = 'S' THEN 1 ELSE 0 END)                 AS nb_suspendus,
+       SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END)                AS nb_sans_email,
+       ROUND(100.0 * SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_sans_email
+FROM CLIENT;
+-- une seule lecture de la table pour cinq indicateurs : c'est bien plus rapide que cinq requetes
+
+-- Variante avec COUNT : COUNT ignore les NULL, donc on renvoie NULL au lieu de 0
+SUM(CASE WHEN statut = 'A' THEN 1 ELSE 0 END)        -- somme de 1 et de 0
+COUNT(CASE WHEN statut = 'A' THEN 1 END)             -- compte les non-NULL : meme resultat, sans ELSE
+
+-- Sommer conditionnellement : le chiffre d'affaires par categorie, en colonnes
+SELECT EXTRACT(YEAR FROM date_cmd) AS annee,
+       SUM(CASE WHEN type = 'web'     THEN montant ELSE 0 END) AS ca_web,
+       SUM(CASE WHEN type = 'magasin' THEN montant ELSE 0 END) AS ca_magasin
+FROM COMMANDE
+GROUP BY EXTRACT(YEAR FROM date_cmd);
+-- c'est un PIVOT artisanal : les valeurs deviennent des colonnes</pre>
+
+<h3>5. CASE dans le ORDER BY et le WHERE</h3>
+<pre class="pseudo">-- Tri personnalise, selon un ordre metier qui n'est ni alphabetique ni numerique :
+SELECT id, priorite
+FROM TICKET
+ORDER BY CASE priorite
+           WHEN 'critique' THEN 1
+           WHEN 'haute'    THEN 2
+           WHEN 'normale'  THEN 3
+           ELSE 4
+         END;
+-- sans cela, l'ordre alphabetique donnerait : critique, haute, normale -- correct par hasard,
+-- mais 'basse' viendrait en premier. Le CASE impose l'ordre METIER.
+
+-- Placer les NULL en fin de tri :
+ORDER BY CASE WHEN date_livraison IS NULL THEN 1 ELSE 0 END,   -- les NULL en dernier
+         date_livraison;
+
+-- CASE dans le WHERE (possible, mais souvent moins lisible qu'un OR bien ecrit) :
+WHERE CASE WHEN type = 'pro' THEN montant &gt; 1000
+           ELSE montant &gt; 100
+      END;
+-- « les pros au-dela de 1000, les particuliers au-dela de 100 »</pre>
+
+<h3>6. Les raccourcis propriétaires</h3>
+<div class="tip"><strong>MySQL</strong> : <code>IF(condition, si_vrai, si_faux)</code> — un CASE à deux branches, en plus court.<br>
+<strong>SQL Server</strong> : <code>IIF(condition, si_vrai, si_faux)</code> depuis 2012.<br>
+<strong>PostgreSQL</strong> : aucun raccourci. On écrit <code>CASE WHEN ... THEN ... ELSE ... END</code>.<br>
+Ces raccourcis sont pratiques mais non portables : <code>CASE WHEN</code> fonctionne partout et reste lisible.</div>
+<pre class="pseudo">IF(montant &gt; 100, 'grosse', 'petite')                                    -- MySQL
+IIF(montant &gt; 100, 'grosse', 'petite')                                   -- SQL Server
+CASE WHEN montant &gt; 100 THEN 'grosse' ELSE 'petite' END                  -- STANDARD, partout</pre>
+
+<h3>7. CASE au service du contrôle qualité</h3>
+<pre class="pseudo">-- Un diagnostic complet en une colonne, avec des conditions cumulables :
+SELECT id,
+       nom,
+       email,
+       CASE
+         WHEN nom IS NULL OR TRIM(nom) = ''         THEN 'nom manquant'
+         WHEN nom &lt;&gt; TRIM(nom)                      THEN 'espaces parasites'
+         WHEN email IS NULL                         THEN 'email manquant'
+         WHEN POSITION('@' IN email) = 0            THEN 'email invalide'
+         WHEN LENGTH(code_postal) &lt;&gt; 4              THEN 'code postal suspect'
+         ELSE 'ok'
+       END AS diagnostic
+FROM CLIENT
+ORDER BY diagnostic;
+
+-- Puis un tableau de bord de la qualite :
+SELECT COUNT(*)                                                       AS total,
+       SUM(CASE WHEN nom IS NULL OR TRIM(nom) = '' THEN 1 ELSE 0 END) AS noms_manquants,
+       SUM(CASE WHEN nom &lt;&gt; TRIM(nom)              THEN 1 ELSE 0 END) AS noms_avec_espaces,
+       SUM(CASE WHEN email IS NULL                 THEN 1 ELSE 0 END) AS emails_manquants,
+       SUM(CASE WHEN POSITION('@' IN COALESCE(email,'')) = 0 THEN 1 ELSE 0 END) AS emails_invalides
+FROM CLIENT;
+-- attention au COALESCE : sans lui, POSITION sur un email NULL renverrait NULL,
+-- et le CASE tomberait dans le ELSE au lieu de compter le probleme</pre>
+<div class="tip">L'ordre des <code>WHEN</code> dans un diagnostic définit une <strong>priorité</strong> : chaque ligne ne reçoit qu'un seul diagnostic, le premier qui s'applique. Si tu veux tous les défauts d'une ligne, il faut une colonne booléenne par défaut, pas un CASE unique.</div>`,
+  exercises: [
+    { type: "input", q: "Complète : ______ WHEN montant > 100 THEN 'grosse' ELSE 'petite' END;", a: ["case"], ph: "un mot-clé", exp: "CASE ouvre l'expression conditionnelle." },
+    { type: "qcm", q: "Que renvoie un CASE dont aucun WHEN n'est vrai et qui n'a pas de ELSE ?", opts: ["0", "Une chaîne vide", "NULL", "Une erreur"], a: 2, exp: "Sans ELSE, l'absence de correspondance produit un NULL silencieux." },
+    { type: "input", q: "Complète le mot-clé obligatoire qui ferme l'expression : CASE WHEN ... THEN ... ______", a: ["end"], ph: "un mot-clé", exp: "END est obligatoire ; l'oublier provoque une erreur de syntaxe." },
+    { type: "qcm", q: "Dans quel ordre le SGBD évalue-t-il les WHEN ?", opts: ["De bas en haut", "De haut en bas, en s'arrêtant au premier vrai", "Dans un ordre aléatoire", "Tous en même temps"], a: 1, exp: "Le premier WHEN vrai l'emporte, les suivants ne sont pas évalués." },
+    { type: "vf", q: "L'ordre des conditions dans un CASE n'a pas d'importance.", a: false, exp: "Placer WHEN montant >= 100 avant WHEN montant >= 1000 rend la seconde condition inatteignable." },
+    { type: "qcm", q: "Pourquoi CASE statut WHEN NULL THEN 'inconnu' END ne fonctionne-t-il jamais ?", opts: ["La syntaxe est fausse", "La forme simple compare avec =, or NULL = NULL n'est pas vrai", "NULL n'est pas autorisé", "Il manque un ELSE"], a: 1, exp: "Il faut la forme recherchée : CASE WHEN statut IS NULL THEN ..." },
+    { type: "input", q: "Complète le comptage conditionnel : SELECT ______(CASE WHEN statut = 'A' THEN 1 ELSE 0 END) FROM CLIENT;", a: ["sum"], ph: "une fonction", exp: "SUM additionne les 1 et les 0, ce qui revient à compter les lignes satisfaisant la condition." },
+    { type: "qcm", q: "Quelle écriture est équivalente à SUM(CASE WHEN x = 'A' THEN 1 ELSE 0 END) ?", opts: ["COUNT(*)", "COUNT(CASE WHEN x = 'A' THEN 1 END)", "AVG(x)", "MAX(x)"], a: 1, exp: "COUNT ignore les NULL, donc le ELSE devient inutile." },
+    { type: "qcm", q: "Quel est l'intérêt principal de l'agrégation conditionnelle ?", opts: ["Écrire moins de caractères", "Produire plusieurs indicateurs en un seul parcours de table", "Éviter les NULL", "Trier plus vite"], a: 1, exp: "Cinq indicateurs en une lecture, au lieu de cinq requêtes distinctes." },
+    { type: "input", q: "Complète le raccourci MySQL : SELECT ______(montant > 100, 'grosse', 'petite');", a: ["if"], ph: "une fonction", exp: "IF en MySQL, IIF en SQL Server, CASE WHEN partout." },
+    { type: "vf", q: "CASE WHEN a exactement la même syntaxe sur MySQL, PostgreSQL et SQL Server.", a: true, exp: "C'est une des rares constructions totalement standard, sans aucune variante." },
+    { type: "qcm", q: "À quoi sert ORDER BY CASE priorite WHEN 'critique' THEN 1 WHEN 'haute' THEN 2 ELSE 3 END ?", opts: ["À filtrer les tickets", "À imposer un ordre MÉTIER plutôt qu'alphabétique", "À compter les priorités", "À convertir en nombre"], a: 1, exp: "Le CASE traduit chaque libellé en rang de tri, indépendamment de l'alphabet." },
+    { type: "input", q: "Complète pour placer les NULL en fin de tri : ORDER BY CASE WHEN date_liv ______ NULL THEN 1 ELSE 0 END, date_liv;", a: ["is"], ph: "un mot-clé", exp: "IS NULL est le seul test valide sur une valeur inconnue." },
+    { type: "qcm", q: "Pourquoi écrire POSITION('@' IN COALESCE(email, '')) dans un CASE de diagnostic ?", opts: ["Pour aller plus vite", "Parce que POSITION sur un email NULL renvoie NULL, et le CASE tomberait dans le ELSE", "Pour convertir en texte", "Ce n'est pas nécessaire"], a: 1, exp: "Le COALESCE neutralise le NULL pour que la condition soit réellement évaluable." },
+    { type: "qcm", q: "Comment obtenir TOUS les défauts d'une même ligne, et non le premier seulement ?", opts: ["Avec un seul CASE plus long", "Avec une colonne booléenne par type de défaut", "Avec un ORDER BY", "Avec DISTINCT"], a: 1, exp: "Un CASE ne rend qu'une valeur par ligne : il faut une colonne d'indicateur par défaut recherché." }
+  ],
+  final: {
+    title: "Exercice final — Tableau de bord qualité",
+    intro: `<p>Table <code>CLIENT</code>, avec des défauts variés.</p>
+<pre class="pseudo">id | nom        | email            | code_postal | montant_total
+---+------------+------------------+-------------+---------------
+ 1 | 'Dupont'   | 'a@mail.be'      | '5000'      |       1500.00
+ 2 | '  Leroy ' | NULL             | '4000'      |        250.00
+ 3 | ''         | 'paul-mail-be'   | '100'       |         40.00
+ 4 | 'Martin'   | 'm@mail.be'      | '6000'      |          NULL</pre>`,
+    questions: [
+      { type: "qcm", q: "Quel diagnostic reçoit la ligne 2 si le CASE teste d'abord le nom vide, puis les espaces, puis l'email ?", opts: ["'nom manquant'", "'espaces parasites'", "'email manquant'", "'ok'"], a: 1, exp: "Le nom n'est pas vide mais comporte des espaces : le deuxième WHEN s'applique, et les suivants sont ignorés." },
+      { type: "qcm", q: "Quel diagnostic reçoit la ligne 3 avec ce même ordre ?", opts: ["'nom manquant'", "'email invalide'", "'code postal suspect'", "'ok'"], a: 0, exp: "Le nom est une chaîne vide : le premier WHEN l'emporte, alors que la ligne cumule trois défauts." },
+      { type: "vf", q: "La ligne 3 ne présente qu'un seul défaut.", a: false, exp: "Elle en cumule trois : nom vide, email sans arobase et code postal à 3 chiffres. Le CASE n'en révèle qu'un." },
+      { type: "qcm", q: "Quelle expression classe la ligne 4 dans une catégorie de montant ?", opts: ["Elle tombera dans le ELSE, car toute comparaison avec NULL est inconnue", "Elle sera classée 'grosse'", "Elle provoquera une erreur", "Elle sera ignorée"], a: 0, exp: "montant >= 1000 avec un NULL ne vaut pas vrai : aucun WHEN ne s'applique, le ELSE prend la main." },
+      { type: "qcm", q: "Quelle requête donne le nombre de clients sans email en une seule passe ?", opts: ["SELECT COUNT(*) FROM CLIENT WHERE email IS NULL", "SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END) dans un SELECT global", "Les deux fonctionnent, mais la seconde se combine à d'autres indicateurs", "Aucune"], a: 2, exp: "Les deux sont justes ; l'agrégation conditionnelle permet de cumuler plusieurs indicateurs sans multiplier les requêtes." }
+    ],
+    solution: `<pre class="pseudo">-- 1) DIAGNOSTIC ligne par ligne, avec une priorite explicite
+SELECT id,
+       nom,
+       email,
+       code_postal,
+       CASE
+         WHEN nom IS NULL OR TRIM(nom) = ''                    THEN '1-nom manquant'
+         WHEN nom &lt;&gt; TRIM(nom)                                 THEN '2-espaces parasites'
+         WHEN email IS NULL                                    THEN '3-email manquant'
+         WHEN POSITION('@' IN COALESCE(email, '')) = 0         THEN '4-email invalide'
+         WHEN LENGTH(COALESCE(code_postal, '')) &lt;&gt; 4           THEN '5-code postal suspect'
+         ELSE '9-ok'
+       END AS diagnostic
+FROM CLIENT
+ORDER BY diagnostic;
+-- ligne 3 : '1-nom manquant'      (elle cumule pourtant 3 defauts)
+-- ligne 2 : '2-espaces parasites'
+-- lignes 1 et 4 : '9-ok'
+-- le prefixe numerique force un tri par gravite plutot qu'alphabetique
+
+-- 2) TOUS les defauts d'une ligne : une colonne par controle
+SELECT id,
+       CASE WHEN nom IS NULL OR TRIM(nom) = ''            THEN 'X' ELSE '' END AS d_nom_vide,
+       CASE WHEN nom &lt;&gt; TRIM(nom)                         THEN 'X' ELSE '' END AS d_espaces,
+       CASE WHEN email IS NULL                            THEN 'X' ELSE '' END AS d_email_nul,
+       CASE WHEN POSITION('@' IN COALESCE(email,'')) = 0  THEN 'X' ELSE '' END AS d_email_invalide,
+       CASE WHEN LENGTH(COALESCE(code_postal,'')) &lt;&gt; 4    THEN 'X' ELSE '' END AS d_cp
+FROM CLIENT;
+-- la ligne 3 montre desormais SES TROIS croix
+
+-- 3) TABLEAU DE BORD : tous les indicateurs en un seul parcours
+SELECT COUNT(*)                                                            AS total,
+       SUM(CASE WHEN nom IS NULL OR TRIM(nom) = '' THEN 1 ELSE 0 END)      AS noms_vides,
+       SUM(CASE WHEN nom &lt;&gt; TRIM(nom)              THEN 1 ELSE 0 END)      AS noms_espaces,
+       SUM(CASE WHEN email IS NULL                 THEN 1 ELSE 0 END)      AS emails_nuls,
+       SUM(CASE WHEN POSITION('@' IN COALESCE(email,'')) = 0 THEN 1 ELSE 0 END) AS emails_invalides,
+       SUM(CASE WHEN LENGTH(COALESCE(code_postal,'')) &lt;&gt; 4  THEN 1 ELSE 0 END) AS cp_suspects,
+       ROUND(100.0 * SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_sans_email
+FROM CLIENT;
+-- total 4, noms_vides 1, noms_espaces 1, emails_nuls 1, emails_invalides 2, cp_suspects 1
+
+-- 4) SEGMENTATION par montant, en gerant le NULL
+SELECT CASE
+         WHEN montant_total IS NULL   THEN 'non renseigne'   -- a tester EN PREMIER
+         WHEN montant_total &gt;= 1000   THEN 'premium'
+         WHEN montant_total &gt;=  100   THEN 'standard'
+         ELSE                              'occasionnel'
+       END                AS segment,
+       COUNT(*)           AS nb_clients,
+       ROUND(SUM(COALESCE(montant_total, 0)), 2) AS ca_segment
+FROM CLIENT
+GROUP BY CASE
+           WHEN montant_total IS NULL   THEN 'non renseigne'
+           WHEN montant_total &gt;= 1000   THEN 'premium'
+           WHEN montant_total &gt;=  100   THEN 'standard'
+           ELSE                              'occasionnel'
+         END
+ORDER BY ca_segment DESC;
+-- le test IS NULL vient en premier : sinon la ligne 4 tomberait silencieusement dans 'occasionnel'</pre>
+<p>CASE WHEN est l'outil qui manquait. Demain : un atelier complet, où tout ce qui précède se combine sur une vraie colonne sale.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j14", title: "Segmenter et compter", level: 3,
+    statement: "Table <code>COMMANDE(id, client, type_canal, montant, date_livraison)</code> :<pre class='pseudo'>id | client   | type_canal | montant | date_livraison\n---+----------+------------+---------+---------------\n 1 | 'Dupont' | 'web'      | 1500.00 | '2024-03-10'\n 2 | 'Leroy'  | 'magasin'  |  250.00 | NULL\n 3 | 'Simon'  | 'web'      |   40.00 | '2024-03-12'\n 4 | 'Martin' | 'tel'      |    NULL | NULL\n 5 | 'Durand' | 'web'      | 2000.00 | NULL</pre>Écris une requête qui affiche, par <strong>segment de montant</strong> (premium ≥ 1000, standard ≥ 100, occasionnel en dessous, et « non renseigne » pour les NULL) : le nombre de commandes, le chiffre d'affaires, et le nombre de commandes non encore livrées. Trie du chiffre d'affaires le plus élevé au plus bas.",
+    hints: [
+      "Teste IS NULL en PREMIER dans le CASE, sinon les montants NULL tomberont dans le ELSE.",
+      "Le CASE complet doit être répété à l'identique dans le GROUP BY (l'alias n'y est pas accepté partout).",
+      "Les non-livrées se comptent par SUM(CASE WHEN date_livraison IS NULL THEN 1 ELSE 0 END)."
+    ],
+    solution: "SELECT CASE\n         WHEN montant IS NULL THEN 'non renseigne'   -- teste EN PREMIER : une comparaison avec NULL n'est jamais vraie\n         WHEN montant >= 1000 THEN 'premium'         -- puis du seuil le plus HAUT au plus bas\n         WHEN montant >=  100 THEN 'standard'\n         ELSE                      'occasionnel'\n       END                                              AS segment,\n       COUNT(*)                                         AS nb_commandes,\n       ROUND(SUM(COALESCE(montant, 0)), 2)              AS ca_segment,      -- COALESCE : le NULL ne casse pas la somme\n       SUM(CASE WHEN date_livraison IS NULL THEN 1 ELSE 0 END) AS nb_non_livrees,\n       ROUND(100.0 * SUM(CASE WHEN date_livraison IS NULL THEN 1 ELSE 0 END) / COUNT(*), 1) AS pct_non_livrees\nFROM COMMANDE\nGROUP BY CASE                                            -- le CASE est REPETE a l'identique\n           WHEN montant IS NULL THEN 'non renseigne'\n           WHEN montant >= 1000 THEN 'premium'\n           WHEN montant >=  100 THEN 'standard'\n           ELSE                      'occasionnel'\n         END\nORDER BY ca_segment DESC;\n\n-- Resultat attendu :\n-- segment         | nb_commandes | ca_segment | nb_non_livrees | pct_non_livrees\n-- ----------------+--------------+------------+----------------+----------------\n-- 'premium'       |            2 |    3500.00 |              1 |            50.0\n-- 'standard'      |            1 |     250.00 |              1 |           100.0\n-- 'occasionnel'   |            1 |      40.00 |              0 |             0.0\n-- 'non renseigne' |            1 |       0.00 |              1 |           100.0\n\n-- POURQUOI l'ordre des WHEN est critique :\n--   Si WHEN montant >= 100 venait avant WHEN montant >= 1000, les commandes 1 et 5\n--   seraient classees 'standard' : le segment 'premium' resterait vide en permanence,\n--   et personne ne s'en apercevrait.\n--   Si le test IS NULL venait en dernier, la ligne 4 tomberait dans le ELSE 'occasionnel' :\n--   une commande de montant INCONNU serait comptee comme une petite commande. Faux.\n\n-- Variantes :\n--   MySQL      : GROUP BY segment est tolere (l'alias y est accepte) -- plus court, moins portable\n--   SQL Server : le CASE doit imperativement etre repete dans le GROUP BY\n--   Raccourcis : IF(...) en MySQL, IIF(...) en SQL Server -- limites a deux branches, inutiles ici",
+    note: "Piège : sans COALESCE dans le SUM, le segment 'non renseigne' afficherait NULL comme chiffre d'affaires plutôt que 0.00 — ce qui est défendable (on ne sait pas) mais casse tout ORDER BY et toute somme en aval. Décide explicitement lequel des deux tu veux. Bonne pratique : dans un CASE de segmentation, place TOUJOURS les tests IS NULL en tête. Une valeur inconnue n'appartient à aucune tranche de valeur, et la laisser tomber dans le ELSE est une erreur d'analyse silencieuse — la pire espèce." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

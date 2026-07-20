@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Supprimer les doublons proprement",
+  subtitle: "Numéroter les copies avec ROW_NUMBER, garder la première, supprimer le reste — sans jamais casser la base.",
+  theory: `
+<h3>1. Détecter, c'est bien ; supprimer, c'est risqué</h3>
+<p>Hier tu as appris à <strong>repérer</strong> les doublons avec <code>GROUP BY ... HAVING COUNT(*) &gt; 1</code>. Aujourd'hui on passe à l'acte : les faire disparaître. Mais un <code>DELETE</code> ne se rejoue pas. Une requête de suppression mal écrite, et ce sont des lignes légitimes qui partent.</p>
+<p>La règle absolue de ce jour, à graver : <strong>on écrit d'abord un SELECT de contrôle, on le lit, on compte les lignes — et seulement ensuite on transforme ce SELECT en DELETE.</strong></p>
+<div class="warn">Ne tape JAMAIS un DELETE directement. Écris la requête en SELECT, regarde ce qu'elle renvoie, vérifie que le nombre de lignes correspond à ce que tu attends (nombre total moins nombre de valeurs distinctes), et alors seulement remplace le SELECT par DELETE.</div>
+
+<h3>2. Qu'est-ce qu'un doublon, au juste ?</h3>
+<p>Un <strong>doublon</strong> n'est pas forcément une ligne strictement identique à une autre. C'est une ligne qui représente <em>la même chose du monde réel</em> qu'une autre. Deux clients avec le même email sont des doublons, même si l'un s'appelle « Dupont » et l'autre « DUPONT » et que leurs identifiants diffèrent.</p>
+<p>Avant de supprimer, il faut donc décider deux choses :</p>
+<p>1) <strong>La clé de doublon</strong> : quelles colonnes définissent « la même chose » ? (email seul ? nom + date de naissance ? nom + ville ?)<br>
+2) <strong>La règle de survie</strong> : parmi les copies, laquelle garde-t-on ? (la plus ancienne ? la plus récente ? celle dont l'email n'est pas NULL ?)</p>
+
+<pre class="pseudo">-- Le jeu de données de travail : la table CLIENT
+-- id | nom      | email             | ville     | cree_le
+-- ---+----------+-------------------+-----------+------------
+--  1 | Dupont   | jd@mail.com       | Namur     | 2023-01-10
+--  2 | DUPONT   | jd@mail.com       | Namur     | 2023-05-02
+--  3 | Martin   | m.martin@mail.com | Liege     | 2023-02-14
+--  4 | Dupont   | jd@mail.com       | Bruxelles | 2024-03-01
+--  5 | Leroy    | leroy@mail.com    | Mons      | 2023-03-20
+-- La cle de doublon retenue : email. On veut garder la ligne la plus ancienne.</pre>
+
+<h3>3. La technique reine : ROW_NUMBER + PARTITION BY</h3>
+<p><code>ROW_NUMBER()</code> est une <strong>fonction de fenêtre</strong> (on les étudiera en détail à partir du jour 20). Pour aujourd'hui, retiens l'image : imagine que tu poses toutes tes lignes sur une table, que tu les <strong>ranges en piles</strong> — une pile par email — puis que tu numérotes chaque pile de haut en bas : 1, 2, 3… La numérotation <strong>repart à 1</strong> à chaque nouvelle pile.</p>
+<p>Dans la clause <code>OVER (...)</code> :</p>
+<p>• <code>PARTITION BY email</code> = « fais une pile par email » (c'est la clé de doublon)<br>
+• <code>ORDER BY cree_le</code> = « dans chaque pile, mets la plus ancienne en haut » (c'est la règle de survie)</p>
+<pre class="pseudo">SELECT id,                                  -- l identifiant de la ligne
+       email,                               -- la cle de doublon
+       cree_le,                             -- la colonne qui decide qui survit
+       ROW_NUMBER() OVER (                  -- numerote les lignes...
+         PARTITION BY email                 -- ...une pile par email
+         ORDER BY cree_le ASC               -- ...la plus ancienne recoit le numero 1
+       ) AS rang                            -- on nomme le numero obtenu
+FROM CLIENT;</pre>
+<pre class="pseudo">-- Resultat :
+-- id | email             | cree_le    | rang
+-- ---+-------------------+------------+-----
+--  1 | jd@mail.com       | 2023-01-10 |  1   &lt;-- a garder
+--  2 | jd@mail.com       | 2023-05-02 |  2   &lt;-- doublon
+--  4 | jd@mail.com       | 2024-03-01 |  3   &lt;-- doublon
+--  5 | leroy@mail.com    | 2023-03-20 |  1   &lt;-- a garder
+--  3 | m.martin@mail.com | 2023-02-14 |  1   &lt;-- a garder</pre>
+<div class="tip">Une fois la colonne <code>rang</code> obtenue, tout devient simple : <strong>rang = 1 est l original, rang &gt; 1 sont les copies</strong>. Tu n as plus qu à supprimer les rangs supérieurs à 1.</div>
+
+<h3>4. Le SELECT de contrôle (étape obligatoire)</h3>
+<p>On ne peut pas filtrer directement sur <code>rang</code> dans un WHERE : les fonctions de fenêtre sont calculées <em>après</em> le WHERE. Il faut donc envelopper la requête dans une <strong>sous-requête</strong> (ou une CTE, que l on verra demain).</p>
+<pre class="pseudo">SELECT *                                     -- on REGARDE d abord ce qu on va detruire
+FROM (
+  SELECT id,
+         email,
+         ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le) AS rang
+  FROM CLIENT
+) AS t                                       -- la sous-requete doit etre nommee (alias t)
+WHERE t.rang &gt; 1;                            -- les copies, et seulement elles</pre>
+<p>Cette requête renvoie ici 2 lignes (les id 2 et 4). Compte-les. Elles correspondent bien aux copies ? Alors on peut supprimer.</p>
+
+<h3>5. Le DELETE — trois dialectes</h3>
+<p>C est ici que les SGBD divergent le plus. Le principe reste identique : on récupère les <strong>identifiants</strong> des lignes de rang &gt; 1, puis on supprime ces identifiants.</p>
+<p><strong>Méthode universelle (fonctionne partout)</strong> — on supprime par liste d id :</p>
+<pre class="pseudo">DELETE FROM CLIENT                            -- on supprime dans CLIENT
+WHERE id IN (                                 -- ...les lignes dont l id figure dans la liste
+  SELECT id FROM (                            -- sous-requete : les id de rang &gt; 1
+    SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le) AS rang
+    FROM CLIENT
+  ) AS copies
+  WHERE copies.rang &gt; 1
+);</pre>
+<div class="warn">MySQL / MariaDB refuse historiquement de lire la table qu il est en train de modifier (erreur 1093 : « You can t specify target table for update in FROM clause »). La parade : ajouter un niveau de sous-requête supplémentaire, <code>SELECT id FROM (SELECT ... ) AS x</code>, ce qui force la matérialisation d une table temporaire. C est exactement ce que fait la requête ci-dessus.</div>
+
+<p><strong>PostgreSQL</strong> — la version idiomatique utilise une CTE :</p>
+<pre class="pseudo">WITH copies AS (                              -- une CTE : un resultat temporaire nomme
+  SELECT ctid,                                -- ctid = identifiant physique interne de PostgreSQL
+         ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le) AS rang
+  FROM CLIENT
+)
+DELETE FROM CLIENT
+WHERE ctid IN (SELECT ctid FROM copies WHERE rang &gt; 1);</pre>
+
+<p><strong>SQL Server</strong> — le plus élégant : on peut supprimer directement <em>depuis</em> une CTE.</p>
+<pre class="pseudo">WITH copies AS (
+  SELECT *,                                   -- toutes les colonnes...
+         ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le) AS rang
+  FROM CLIENT
+)
+DELETE FROM copies WHERE rang &gt; 1;            -- SQL Server propage la suppression vers CLIENT</pre>
+
+<h3>6. Les alternatives (et leurs limites)</h3>
+<p><strong>a) Garder le plus petit id</strong> — sans fonction de fenêtre, quand la règle de survie est simplement « le plus petit identifiant » :</p>
+<pre class="pseudo">DELETE FROM CLIENT
+WHERE id NOT IN (                             -- garde uniquement les id survivants
+  SELECT MIN(id) FROM CLIENT GROUP BY email   -- le plus petit id de chaque groupe d email
+);</pre>
+<div class="warn">Piège mortel : si <code>email</code> peut être NULL, le groupe des NULL est traité à part et <code>NOT IN</code> avec un NULL dans la liste renvoie <em>inconnu</em> — la requête ne supprime alors plus rien du tout. Préfère <code>NOT EXISTS</code>, ou filtre les NULL en amont.</div>
+
+<p><strong>b) La table de recopie</strong> — la méthode la plus sûre sur de gros volumes, et celle que je recommande en production :</p>
+<pre class="pseudo">CREATE TABLE CLIENT_PROPRE AS                 -- MySQL / PostgreSQL : CREATE TABLE ... AS SELECT
+SELECT id, nom, email, ville, cree_le
+FROM (
+  SELECT c.*,
+         ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le) AS rang
+  FROM CLIENT c
+) AS t
+WHERE t.rang = 1;                             -- on ne recopie QUE les survivants
+
+-- SQL Server ecrit plutot : SELECT ... INTO CLIENT_PROPRE FROM ...</pre>
+<p>On garde l ancienne table intacte, on vérifie la nouvelle, et on ne bascule que quand tout est bon. Rien n est jamais perdu.</p>
+
+<h3>7. Et DISTINCT dans tout ça ?</h3>
+<p><code>SELECT DISTINCT</code> supprime les doublons <strong>dans le résultat affiché</strong>, pas dans la table. Et il n élimine que les lignes <em>strictement</em> identiques sur toutes les colonnes retenues. Avec des id différents, DISTINCT ne sert à rien. Ce n est pas un outil de nettoyage : c est un outil d affichage.</p>
+<div class="tip">Après un nettoyage, pose une contrainte <code>UNIQUE</code> sur la clé de doublon (<code>ALTER TABLE CLIENT ADD CONSTRAINT uq_email UNIQUE (email);</code>). Sinon les doublons reviendront la semaine prochaine. On y consacrera le jour 27.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle fonction de fenêtre numérote les lignes 1, 2, 3… à l intérieur de chaque groupe ?", ph: "ROW_...", a: ["ROW_NUMBER", "ROW_NUMBER()"], exp: "ROW_NUMBER() attribue un numéro séquentiel sans ex aequo dans chaque partition." },
+    { type: "input", q: "Dans OVER(), quel mot-clé crée une pile (un groupe) par valeur de colonne ?", ph: "PART...", a: ["PARTITION BY", "PARTITION"], exp: "PARTITION BY email = une numérotation qui repart à 1 pour chaque email." },
+    { type: "qcm", q: "Avant tout DELETE de déduplication, on doit…", opts: ["Sauvegarder la base uniquement", "Écrire la même requête en SELECT et vérifier les lignes renvoyées", "Ajouter un index", "Rien, DELETE est réversible"], a: 1, exp: "Le SELECT de contrôle est l étape non négociable : DELETE ne se rejoue pas." },
+    { type: "vf", q: "SELECT DISTINCT supprime les doublons stockés dans la table.", a: false, exp: "DISTINCT n agit que sur le résultat affiché ; la table reste inchangée." },
+    { type: "qcm", q: "Après ROW_NUMBER() OVER (PARTITION BY email ORDER BY cree_le), les lignes à supprimer sont celles où…", opts: ["rang = 1", "rang > 1", "rang = 0", "rang IS NULL"], a: 1, exp: "Le rang 1 est l original (le plus ancien) ; les rangs suivants sont les copies." },
+    { type: "input", q: "Quel mot-clé, dans OVER(), décide quelle copie reçoit le rang 1 ?", ph: "ORD...", a: ["ORDER BY", "ORDER"], exp: "ORDER BY définit la règle de survie : ASC garde la plus ancienne, DESC la plus récente." },
+    { type: "qcm", q: "Pourquoi ne peut-on pas écrire WHERE ROW_NUMBER() OVER (...) > 1 directement ?", opts: ["La syntaxe est trop longue", "Les fonctions de fenêtre sont évaluées après le WHERE", "ROW_NUMBER n existe pas en WHERE", "Il faut un index"], a: 1, exp: "WHERE s exécute avant le calcul des fenêtres : il faut une sous-requête ou une CTE." },
+    { type: "vf", q: "En SQL Server, on peut écrire DELETE FROM ma_cte WHERE rang > 1.", a: true, exp: "SQL Server permet de supprimer directement depuis une CTE, et propage vers la table de base." },
+    { type: "input", q: "Quel mot-clé introduit une CTE (un résultat temporaire nommé) ?", ph: "W...", a: ["WITH"], exp: "WITH nom AS (...) — c est le sujet du jour 18." },
+    { type: "qcm", q: "En MySQL/MariaDB, DELETE FROM CLIENT WHERE id IN (SELECT ... FROM CLIENT ...) provoque souvent…", opts: ["Une suppression totale", "L erreur 1093 : table cible interdite dans le FROM", "Un blocage définitif", "Rien de particulier"], a: 1, exp: "Il faut ajouter un niveau de sous-requête pour matérialiser le résultat." },
+    { type: "input", q: "Quelle fonction d agrégation permet de garder le plus petit identifiant de chaque groupe ?", ph: "M...", a: ["MIN", "MIN()"], exp: "SELECT MIN(id) FROM CLIENT GROUP BY email donne l id survivant de chaque groupe." },
+    { type: "qcm", q: "Le piège du DELETE ... WHERE id NOT IN (SELECT MIN(id) ...) est…", opts: ["Il est trop lent", "Si la liste contient un NULL, NOT IN ne supprime plus rien", "Il faut un COMMIT", "Il ne marche qu en Oracle"], a: 1, exp: "NOT IN avec un NULL renvoie inconnu : préfère NOT EXISTS." },
+    { type: "vf", q: "Recopier les lignes de rang 1 dans une nouvelle table est plus sûr qu un DELETE en place.", a: true, exp: "La table d origine reste intacte : on peut vérifier avant de basculer." },
+    { type: "input", q: "Quelle contrainte poser après le nettoyage pour empêcher le retour des doublons ?", ph: "U...", a: ["UNIQUE", "CONTRAINTE UNIQUE"], exp: "Une contrainte UNIQUE sur la clé de doublon refuse toute nouvelle insertion en double." },
+    { type: "qcm", q: "Pour garder la ligne la plus RÉCENTE au lieu de la plus ancienne, on modifie…", opts: ["PARTITION BY en PARTITION DESC", "ORDER BY cree_le en ORDER BY cree_le DESC", "rang > 1 en rang < 1", "COUNT(*) en MAX(*)"], a: 1, exp: "La règle de survie est portée par le ORDER BY interne à OVER()." }
+  ],
+  final: {
+    title: "Exercice final — Dédupliquer la table COMMANDE",
+    intro: `<p>Un import s est exécuté trois fois de suite. La table COMMANDE contient des lignes en triple.</p>
+<pre class="pseudo">-- COMMANDE(id, ref_commande, client, montant, importe_le)
+-- id | ref_commande | client  | montant | importe_le
+-- ---+--------------+---------+---------+------------
+--  1 | CMD-001      | Dupont  |   45.00 | 2024-01-05
+--  2 | CMD-002      | Martin  |   80.00 | 2024-01-05
+--  3 | CMD-001      | Dupont  |   45.00 | 2024-01-06
+--  4 | CMD-003      | Leroy   |   12.50 | 2024-01-06
+--  5 | CMD-001      | Dupont  |   45.00 | 2024-01-07
+--  6 | CMD-002      | Martin  |   80.00 | 2024-01-07
+-- Cle de doublon : ref_commande. On garde le PREMIER import (importe_le le plus ancien).</pre>`,
+    questions: [
+      { type: "input", q: "Quelle colonne mettre dans PARTITION BY pour former les piles ?", ph: "ref_...", a: ["ref_commande"], exp: "C est la clé de doublon : une pile par référence de commande." },
+      { type: "qcm", q: "Pour garder le premier import, l ordre interne est…", opts: ["ORDER BY importe_le DESC", "ORDER BY importe_le ASC", "ORDER BY id DESC", "ORDER BY montant"], a: 1, exp: "ASC met la date la plus ancienne en position 1." },
+      { type: "input", q: "Combien de lignes le SELECT de contrôle (rang > 1) va-t-il renvoyer ici ?", ph: "un nombre", a: ["3", "trois"], exp: "CMD-001 a 2 copies (id 3 et 5), CMD-002 en a 1 (id 6) : 3 lignes à supprimer." },
+      { type: "qcm", q: "Quels id resteront après le nettoyage ?", opts: ["1, 2, 4", "3, 5, 6", "1, 3, 5", "Tous"], a: 0, exp: "Les rangs 1 : id 1 (CMD-001), id 2 (CMD-002), id 4 (CMD-003)." },
+      { type: "vf", q: "Après nettoyage, ALTER TABLE COMMANDE ADD CONSTRAINT uq_ref UNIQUE (ref_commande) empêchera un quatrième import de recréer les doublons.", a: true, exp: "La contrainte rejettera les insertions en double — la base se défend elle-même." }
+    ],
+    solution: `<pre class="pseudo">-- ETAPE 1 : le SELECT de controle (JAMAIS sauter cette etape)
+SELECT *
+FROM (
+  SELECT id,
+         ref_commande,
+         importe_le,
+         ROW_NUMBER() OVER (
+           PARTITION BY ref_commande       -- une pile par reference
+           ORDER BY importe_le ASC         -- le premier import recoit le rang 1
+         ) AS rang
+  FROM COMMANDE
+) AS t
+WHERE t.rang &gt; 1;                          -- attendu : 3 lignes (id 3, 5, 6)
+
+-- ETAPE 2 : la suppression (version universelle)
+DELETE FROM COMMANDE
+WHERE id IN (
+  SELECT id FROM (                          -- double niveau : contourne l erreur 1093 de MySQL
+    SELECT id,
+           ROW_NUMBER() OVER (PARTITION BY ref_commande ORDER BY importe_le ASC) AS rang
+    FROM COMMANDE
+  ) AS copies
+  WHERE copies.rang &gt; 1
+);
+
+-- ETAPE 3 : le controle final
+SELECT ref_commande, COUNT(*) AS nb
+FROM COMMANDE
+GROUP BY ref_commande
+HAVING COUNT(*) &gt; 1;                        -- doit renvoyer 0 ligne
+
+-- ETAPE 4 : verrouiller pour l avenir
+ALTER TABLE COMMANDE ADD CONSTRAINT uq_ref UNIQUE (ref_commande);</pre>
+<p>Retiens le rituel : <strong>SELECT de contrôle → DELETE → SELECT de vérification → contrainte</strong>. Demain, on remplace ces sous-requêtes empilées par quelque chose de bien plus lisible : les CTE.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j17", title: "Dédupliquer un fichier de contacts", level: 3,
+    statement: "La table CONTACT(id, prenom, nom, email, source, ajoute_le) contient des contacts importés depuis plusieurs fichiers. Un même email peut apparaître plusieurs fois. On veut garder, pour chaque email, la ligne ajoutée le plus RÉCEMMENT (la plus à jour). Écris d abord le SELECT de contrôle qui liste les lignes à supprimer, puis le DELETE universel correspondant. Commente chaque ligne.",
+    hints: [
+      "ROW_NUMBER() OVER (PARTITION BY email ORDER BY ...) : la partition porte la clé de doublon.",
+      "Garder la plus récente signifie que la plus récente doit recevoir le rang 1 : trie donc en DESC.",
+      "Les fonctions de fenêtre ne sont pas utilisables dans un WHERE : enveloppe la requête dans une sous-requête nommée, puis filtre sur rang > 1."
+    ],
+    solution: "-- ETAPE 1 : SELECT de controle — on regarde AVANT de detruire\nSELECT *\nFROM (\n  SELECT id,\n         email,\n         ajoute_le,\n         ROW_NUMBER() OVER (\n           PARTITION BY email        -- une pile par email (la cle de doublon)\n           ORDER BY ajoute_le DESC   -- la plus RECENTE recoit le rang 1\n         ) AS rang\n  FROM CONTACT\n) AS t\nWHERE t.rang > 1;                    -- toutes les copies perimees\n\n-- ETAPE 2 : suppression (fonctionne sur MySQL, PostgreSQL, SQL Server)\nDELETE FROM CONTACT\nWHERE id IN (\n  SELECT id FROM (                   -- niveau supplementaire : evite l erreur 1093 de MySQL\n    SELECT id,\n           ROW_NUMBER() OVER (PARTITION BY email ORDER BY ajoute_le DESC) AS rang\n    FROM CONTACT\n  ) AS copies\n  WHERE copies.rang > 1\n);\n\n-- ETAPE 3 : verification — doit renvoyer 0 ligne\nSELECT email, COUNT(*) FROM CONTACT GROUP BY email HAVING COUNT(*) > 1;\n\n-- Resultat attendu sur un jeu de 3 emails dupliques :\n-- l etape 1 liste les copies, l etape 2 les supprime,\n-- l etape 3 ne renvoie plus aucune ligne.",
+    note: "Le seul changement entre « garder la plus ancienne » et « garder la plus récente » tient dans un mot : ASC ou DESC. Tout le reste de la requête est identique. C est pour cela que ROW_NUMBER est la technique de déduplication la plus souple : la règle de survie est un simple ORDER BY." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

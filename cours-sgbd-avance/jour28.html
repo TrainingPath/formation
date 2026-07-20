@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 28</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 28,
+  title: "Transformer en masse : UPDATE avec jointure",
+  subtitle: "Corriger des milliers de lignes à partir d une autre table — la syntaxe qui change le plus d un SGBD à l autre.",
+  theory: `
+<h3>1. Le besoin : mettre à jour depuis une autre table</h3>
+<p>Tu as une table de <strong>correspondance</strong> (un référentiel propre) et une table sale à corriger. Exemples typiques :</p>
+<pre class="pseudo">-- Remplacer les libelles de villes mal orthographies par le libelle officiel
+-- Recopier le prix du catalogue dans les lignes de commande
+-- Affecter la categorie du produit a chaque ligne de vente
+-- Normaliser des codes pays a partir d une table de reference</pre>
+<p>C est l opération de <strong>transformation en masse</strong> : un seul UPDATE corrige des milliers de lignes, à condition de savoir joindre.</p>
+
+<h3>2. La syntaxe standard : UPDATE avec sous-requête corrélée</h3>
+<p>C est la forme la plus portable. Elle fonctionne <strong>partout</strong>, y compris là où les syntaxes spécifiques n existent pas.</p>
+<pre class="pseudo">UPDATE COMMANDE c                       -- la table a modifier, avec un alias
+SET prix_unitaire = (                   -- la nouvelle valeur vient d une sous-requete
+      SELECT p.prix                     -- le prix officiel...
+      FROM PRODUIT p
+      WHERE p.ref = c.ref_produit       -- ...de CE produit-la (correlation)
+    )
+WHERE EXISTS (                          -- ne modifie QUE les lignes ayant un produit
+      SELECT 1 FROM PRODUIT p WHERE p.ref = c.ref_produit
+    );</pre>
+<div class="warn">Le <code>WHERE EXISTS</code> final est <strong>vital</strong>. Sans lui, les lignes sans correspondance verraient leur prix écrasé par <code>NULL</code> (une sous-requête sans résultat renvoie NULL). Tu détruirais des données au lieu de les corriger. C est l erreur la plus coûteuse de ce chapitre.</div>
+<div class="tip">Une sous-requête est dite <strong>corrélée</strong> quand elle fait référence à une colonne de la requête extérieure (ici <code>c.ref_produit</code>). Elle est réévaluée pour chaque ligne : c est ce qui permet à chaque ligne d obtenir SA valeur.</div>
+
+<h3>3. Les syntaxes spécifiques — le grand écart des dialectes</h3>
+<p>Chaque SGBD propose une forme plus lisible, mais <strong>toutes différentes</strong>. C est l un des points les moins portables de tout le SQL.</p>
+<pre class="pseudo">-- ===== MySQL / MariaDB : la jointure est DANS le UPDATE =====
+UPDATE COMMANDE c
+JOIN PRODUIT p ON p.ref = c.ref_produit       -- la jointure avant le SET
+SET c.prix_unitaire = p.prix,
+    c.categorie     = p.categorie             -- plusieurs colonnes d un coup
+WHERE c.date_cmd &gt;= '2024-01-01';             -- filtre optionnel</pre>
+<pre class="pseudo">-- ===== PostgreSQL : la clause FROM =====
+UPDATE COMMANDE c
+SET prix_unitaire = p.prix,                   -- PAS de prefixe c. dans le SET !
+    categorie     = p.categorie
+FROM PRODUIT p                                -- la table jointe arrive apres le SET
+WHERE p.ref = c.ref_produit                   -- la condition de jointure va dans le WHERE
+  AND c.date_cmd &gt;= '2024-01-01';</pre>
+<pre class="pseudo">-- ===== SQL Server : UPDATE alias ... FROM =====
+UPDATE c                                      -- on met a jour l ALIAS, pas la table
+SET c.prix_unitaire = p.prix,
+    c.categorie     = p.categorie
+FROM COMMANDE c                               -- la table cible est declaree ici
+JOIN PRODUIT p ON p.ref = c.ref_produit
+WHERE c.date_cmd &gt;= '2024-01-01';</pre>
+<div class="warn">Trois pièges de syntaxe à mémoriser. <strong>PostgreSQL</strong> : dans le SET, on n écrit <em>pas</em> le préfixe de table (<code>SET prix = ...</code>, jamais <code>SET c.prix = ...</code>). <strong>SQL Server</strong> : après UPDATE on met l <em>alias</em>, et la table cible doit apparaître dans le FROM. <strong>MySQL</strong> : le WHERE s applique après la jointure, donc une jointure interne suffit à limiter les lignes.</div>
+<pre class="pseudo">-- ===== Le tableau de survie =====
+-- Besoin : UPDATE avec jointure
+--   Portable partout   --&gt; sous-requete correlee + WHERE EXISTS
+--   MySQL / MariaDB    --&gt; UPDATE t JOIN u ON ... SET ...
+--   PostgreSQL         --&gt; UPDATE t SET ... FROM u WHERE ...
+--   SQL Server         --&gt; UPDATE alias SET ... FROM t alias JOIN u ON ...
+--   Oracle             --&gt; sous-requete correlee (pas de JOIN dans UPDATE) ou MERGE
+--   SQLite             --&gt; UPDATE t SET ... FROM u WHERE ... (depuis 3.33, 2020)</pre>
+
+<h3>4. Le rituel de sécurité</h3>
+<p>Un UPDATE de masse est aussi destructeur qu un DELETE : il écrase l ancienne valeur, définitivement. Le rituel en cinq temps :</p>
+<pre class="pseudo">-- 1) COMPTER les lignes qui seront touchees
+SELECT COUNT(*) FROM COMMANDE c
+JOIN PRODUIT p ON p.ref = c.ref_produit
+WHERE c.prix_unitaire &lt;&gt; p.prix;
+
+-- 2) VOIR l avant/apres avant de decider
+SELECT c.id,
+       c.ref_produit,
+       c.prix_unitaire AS ancien_prix,     -- la valeur actuelle
+       p.prix          AS nouveau_prix     -- la valeur qui va la remplacer
+FROM COMMANDE c
+JOIN PRODUIT p ON p.ref = c.ref_produit
+WHERE c.prix_unitaire &lt;&gt; p.prix
+LIMIT 20;
+
+-- 3) SAUVEGARDER l ancien etat (une table de secours coute trois secondes)
+CREATE TABLE COMMANDE_AVANT AS SELECT * FROM COMMANDE;
+-- SQL Server : SELECT * INTO COMMANDE_AVANT FROM COMMANDE;
+
+-- 4) ENVELOPPER dans une transaction (jour 29)
+-- 5) EXECUTER l UPDATE, puis RE-COMPTER pour verifier</pre>
+<div class="tip">Le SELECT de contrôle du point 2 est le meilleur outil du métier : deux colonnes côte à côte, l ancienne valeur et la nouvelle. En trois secondes, tu vois si ta jointure est correcte ou si elle va faire n importe quoi.</div>
+
+<h3>5. Le piège de la jointure multiple</h3>
+<pre class="pseudo">-- Si la table de reference contient PLUSIEURS lignes pour une meme cle,
+-- l UPDATE devient NON DETERMINISTE.
+-- PRODUIT : ref 'A1' apparait 2 fois, avec les prix 10 et 20.
+-- --&gt; MySQL et SQL Server : prennent une valeur AU HASARD, sans avertissement.
+-- --&gt; PostgreSQL : prend aussi une valeur arbitraire.
+-- --&gt; Sous-requete correlee : ERREUR explicite (sous-requete renvoyant
+--     plus d une ligne) — c est un avantage de la forme portable !
+
+-- VERIFIER AVANT, toujours :
+SELECT ref, COUNT(*) FROM PRODUIT GROUP BY ref HAVING COUNT(*) &gt; 1;
+-- Doit renvoyer 0 ligne.</pre>
+
+<h3>6. UPDATE conditionnel avec CASE WHEN</h3>
+<p>Un seul UPDATE peut appliquer plusieurs règles différentes selon la ligne.</p>
+<pre class="pseudo">UPDATE CLIENT
+SET segment = CASE
+      WHEN total_achats &gt;= 10000 THEN 'premium'    -- premiere regle
+      WHEN total_achats &gt;=  1000 THEN 'fidele'     -- deuxieme regle
+      WHEN total_achats &gt;      0 THEN 'occasionnel'
+      ELSE 'inactif'                                -- le reste
+    END;                                            -- une seule passe sur la table</pre>
+<div class="warn">Avec un CASE sans ELSE, les lignes ne correspondant à aucun WHEN reçoivent <code>NULL</code>. Mets toujours un ELSE — ne serait-ce que <code>ELSE segment</code> pour conserver la valeur actuelle.</div>
+
+<h3>7. UPDATE de nettoyage : le grand classique</h3>
+<pre class="pseudo">UPDATE CLIENT
+SET nom   = TRIM(nom),                            -- espaces au bord
+    email = LOWER(TRIM(email)),                   -- casse + espaces
+    ville = UPPER(TRIM(ville)),
+    tel   = REPLACE(REPLACE(REPLACE(tel, ' ', ''), '.', ''), '-', '')
+WHERE nom   &lt;&gt; TRIM(nom)                          -- IMPORTANT : ne toucher QUE
+   OR email &lt;&gt; LOWER(TRIM(email))                 -- les lignes reellement sales
+   OR ville &lt;&gt; UPPER(TRIM(ville));</pre>
+<div class="tip">Le WHERE qui filtre les lignes déjà propres n est pas de la coquetterie. Sur une table de dix millions de lignes dont mille sont sales, il évite dix millions d écritures inutiles — donc des heures de verrous, un journal de transaction saturé et une réplication en retard. Un UPDATE ne doit toucher que ce qui doit changer.</div>
+
+<h3>8. MERGE : l instruction tout-en-un</h3>
+<p><code>MERGE</code> (aussi appelé UPSERT) combine INSERT, UPDATE et DELETE selon qu une correspondance existe ou non. C est l outil de synchronisation par excellence.</p>
+<pre class="pseudo">MERGE INTO CLIENT AS cible                        -- la table a synchroniser
+USING IMPORT_CLIENT AS source                     -- la table de reference
+   ON cible.email = source.email                  -- la cle de rapprochement
+WHEN MATCHED THEN                                 -- la ligne existe deja
+  UPDATE SET cible.nom = source.nom,
+             cible.ville = source.ville
+WHEN NOT MATCHED THEN                             -- la ligne est nouvelle
+  INSERT (email, nom, ville)
+  VALUES (source.email, source.nom, source.ville);</pre>
+<pre class="pseudo">-- SUPPORT DE MERGE :
+--   SQL Server : OUI (2008)      Oracle : OUI       PostgreSQL : OUI (15+)
+--   MySQL      : NON --&gt; INSERT ... ON DUPLICATE KEY UPDATE
+--   MariaDB    : NON --&gt; idem
+--   SQLite     : NON --&gt; INSERT ... ON CONFLICT DO UPDATE
+--   PostgreSQL avant 15 --&gt; INSERT ... ON CONFLICT DO UPDATE</pre>
+<pre class="pseudo">-- L equivalent MySQL / MariaDB
+INSERT INTO CLIENT (email, nom, ville)
+SELECT email, nom, ville FROM IMPORT_CLIENT
+ON DUPLICATE KEY UPDATE                            -- si la cle unique existe deja
+  nom = VALUES(nom), ville = VALUES(ville);
+
+-- L equivalent PostgreSQL / SQLite
+INSERT INTO CLIENT (email, nom, ville)
+SELECT email, nom, ville FROM IMPORT_CLIENT
+ON CONFLICT (email) DO UPDATE                      -- en cas de conflit sur email
+  SET nom = EXCLUDED.nom, ville = EXCLUDED.ville;  -- EXCLUDED = la ligne proposee</pre>
+<div class="warn">Ces syntaxes reposent sur l existence d une contrainte UNIQUE (ou PRIMARY KEY) sur la clé de rapprochement. Sans elle, aucun conflit n est détecté et tout est inséré en double. Les contraintes du jour 27 ne sont donc pas seulement défensives : elles sont un <em>prérequis technique</em> pour l UPSERT.</div>`,
+  exercises: [
+    { type: "qcm", q: "Quelle forme d UPDATE avec jointure est portable sur tous les SGBD ?", opts: ["UPDATE t JOIN u ON ...", "UPDATE t SET ... FROM u", "UPDATE avec sous-requête corrélée + WHERE EXISTS", "MERGE"], a: 2, exp: "Les syntaxes JOIN et FROM diffèrent selon le moteur ; la sous-requête corrélée passe partout." },
+    { type: "input", q: "Quel prédicat faut-il ajouter dans le WHERE pour ne pas écraser les lignes sans correspondance par NULL ?", ph: "EX...", a: ["EXISTS", "WHERE EXISTS"], exp: "Sans lui, une sous-requête sans résultat renvoie NULL et détruit la donnée." },
+    { type: "qcm", q: "La syntaxe UPDATE t JOIN u ON ... SET ... est celle de…", opts: ["PostgreSQL", "MySQL et MariaDB", "SQL Server", "Oracle"], a: 1, exp: "MySQL place la jointure entre UPDATE et SET." },
+    { type: "qcm", q: "La syntaxe UPDATE t SET ... FROM u WHERE ... est celle de…", opts: ["MySQL", "PostgreSQL (et SQLite 3.33+)", "Oracle", "MariaDB"], a: 1, exp: "PostgreSQL utilise une clause FROM après le SET." },
+    { type: "vf", q: "En PostgreSQL, on écrit SET c.prix = p.prix avec le préfixe de table.", a: false, exp: "PostgreSQL refuse le préfixe dans le SET : on écrit SET prix = p.prix." },
+    { type: "qcm", q: "En SQL Server, que met-on juste après le mot UPDATE ?", opts: ["Le nom de la table", "L alias de la table, la table étant déclarée dans le FROM", "Le mot SET", "Une sous-requête"], a: 1, exp: "UPDATE c SET ... FROM COMMANDE c JOIN ... : c est la forme attendue." },
+    { type: "qcm", q: "Que se passe-t-il si la table de référence contient deux lignes pour la même clé ?", opts: ["Une erreur systématique", "MySQL et SQL Server prennent une valeur arbitraire, sans avertissement", "Les deux valeurs sont écrites", "La ligne est ignorée"], a: 1, exp: "L UPDATE devient non déterministe : vérifie l unicité de la clé AVANT." },
+    { type: "input", q: "Quelle requête de contrôle faut-il écrire avant tout UPDATE de masse ?", ph: "un SEL...", a: ["SELECT", "UN SELECT", "select de controle", "SELECT de contrôle"], exp: "Un SELECT montrant l ancienne et la nouvelle valeur côte à côte." },
+    { type: "vf", q: "Un WHERE limitant l UPDATE aux lignes réellement sales n a aucun intérêt.", a: false, exp: "Il évite des millions d écritures inutiles : verrous, journal, réplication." },
+    { type: "input", q: "Quelle expression conditionnelle permet d appliquer plusieurs règles dans un même UPDATE ?", ph: "CASE ...", a: ["CASE WHEN", "CASE"], exp: "SET segment = CASE WHEN ... THEN ... ELSE ... END." },
+    { type: "qcm", q: "Un CASE sans ELSE dans un UPDATE…", opts: ["Provoque une erreur", "Met NULL sur les lignes ne correspondant à aucun WHEN", "Conserve la valeur actuelle", "Ignore la ligne"], a: 1, exp: "Ajoute ELSE colonne pour conserver l existant." },
+    { type: "input", q: "Quelle instruction combine INSERT et UPDATE selon qu une correspondance existe ?", ph: "M...", a: ["MERGE", "UPSERT"], exp: "MERGE en SQL Server, Oracle et PostgreSQL 15+." },
+    { type: "qcm", q: "L équivalent MySQL de MERGE est…", opts: ["ON CONFLICT DO UPDATE", "INSERT ... ON DUPLICATE KEY UPDATE", "REPLACE ONLY", "UPSERT INTO"], a: 1, exp: "MySQL et MariaDB utilisent ON DUPLICATE KEY UPDATE." },
+    { type: "input", q: "Quelle clause PostgreSQL et SQLite remplace MERGE ?", ph: "ON C...", a: ["ON CONFLICT", "ON CONFLICT DO UPDATE"], exp: "INSERT ... ON CONFLICT (cle) DO UPDATE SET ... = EXCLUDED...." },
+    { type: "vf", q: "Un UPSERT nécessite une contrainte UNIQUE sur la clé de rapprochement.", a: true, exp: "Sans elle, aucun conflit n est détecté et tout part en insertion double." }
+  ],
+  final: {
+    title: "Exercice final — Normaliser des villes depuis un référentiel",
+    intro: `<p>Une table sale et un référentiel propre.</p>
+<pre class="pseudo">-- CLIENT(id, nom, ville_saisie, code_ville)     REF_VILLE(code, libelle_officiel)
+-- id | ville_saisie |                            code | libelle_officiel
+-- ---+--------------+                            -----+-----------------
+--  1 |  namur       |                            NAM  | Namur
+--  2 | NAMUR        |                            LIE  | Liege
+--  3 | Liege        |                            MON  | Mons
+--  4 | Bruxelle     |     &lt;-- faute de frappe, absente du referentiel
+-- La jointure se fait sur UPPER(TRIM(ville_saisie)) = UPPER(libelle_officiel).</pre>`,
+    questions: [
+      { type: "input", q: "Combien de lignes CLIENT trouveront une correspondance dans REF_VILLE ?", ph: "un nombre", a: ["3", "trois"], exp: "Les lignes 1, 2 et 3 ; Bruxelle n existe pas au référentiel." },
+      { type: "qcm", q: "Sans WHERE EXISTS, que deviendrait le code_ville de la ligne 4 ?", opts: ["Il resterait inchangé", "Il serait écrasé par NULL", "La requête échouerait", "Il vaudrait 0"], a: 1, exp: "Une sous-requête sans résultat renvoie NULL : c est la destruction silencieuse." },
+      { type: "vf", q: "Il faut vérifier que REF_VILLE ne contient pas deux fois le même libellé avant de lancer l UPDATE.", a: true, exp: "Sinon l UPDATE devient non déterministe et écrit une valeur arbitraire." },
+      { type: "qcm", q: "La syntaxe MySQL de cet UPDATE commence par…", opts: ["UPDATE CLIENT SET ... FROM REF_VILLE", "UPDATE CLIENT c JOIN REF_VILLE r ON ... SET ...", "UPDATE c SET ... FROM CLIENT c JOIN ...", "MERGE INTO CLIENT"], a: 1, exp: "MySQL place la jointure entre UPDATE et SET." },
+      { type: "input", q: "Comment traiter proprement la ligne 4 après l UPDATE ?", ph: "la mettre en q...", a: ["QUARANTAINE", "EN QUARANTAINE", "quarantaine"], exp: "On isole les lignes non rapprochées dans une table de quarantaine pour traitement manuel." }
+    ],
+    solution: `<pre class="pseudo">-- ===== ETAPE 1 : verifier l unicite du referentiel =====
+SELECT UPPER(libelle_officiel) AS lib, COUNT(*) AS nb
+FROM REF_VILLE
+GROUP BY UPPER(libelle_officiel)
+HAVING COUNT(*) &gt; 1;
+-- DOIT renvoyer 0 ligne, sinon l UPDATE serait non deterministe.
+
+-- ===== ETAPE 2 : le SELECT de controle (avant / apres) =====
+SELECT c.id,
+       c.ville_saisie              AS avant,
+       r.libelle_officiel          AS apres,
+       r.code                      AS nouveau_code
+FROM CLIENT c
+LEFT JOIN REF_VILLE r
+       ON UPPER(TRIM(c.ville_saisie)) = UPPER(r.libelle_officiel)
+ORDER BY c.id;
+
+-- id | avant     | apres | nouveau_code
+-- ---+-----------+-------+-------------
+--  1 |  namur    | Namur | NAM
+--  2 | NAMUR     | Namur | NAM
+--  3 | Liege     | Liege | LIE
+--  4 | Bruxelle  | NULL  | NULL          &lt;-- non rapproche : a traiter a part
+
+-- ===== ETAPE 3 : sauvegarder =====
+CREATE TABLE CLIENT_AVANT AS SELECT * FROM CLIENT;
+-- SQL Server : SELECT * INTO CLIENT_AVANT FROM CLIENT;
+
+-- ===== ETAPE 4 : l UPDATE, version PORTABLE (tous SGBD) =====
+UPDATE CLIENT c
+SET ville_saisie = (
+      SELECT r.libelle_officiel
+      FROM REF_VILLE r
+      WHERE UPPER(r.libelle_officiel) = UPPER(TRIM(c.ville_saisie))
+    ),
+    code_ville = (
+      SELECT r.code
+      FROM REF_VILLE r
+      WHERE UPPER(r.libelle_officiel) = UPPER(TRIM(c.ville_saisie))
+    )
+WHERE EXISTS (                        -- SANS CETTE LIGNE, la ligne 4 perdrait tout
+      SELECT 1 FROM REF_VILLE r
+      WHERE UPPER(r.libelle_officiel) = UPPER(TRIM(c.ville_saisie))
+    );
+
+-- ===== ETAPE 4 bis : les versions specifiques, plus lisibles =====
+
+-- MySQL / MariaDB
+UPDATE CLIENT c
+JOIN REF_VILLE r ON UPPER(r.libelle_officiel) = UPPER(TRIM(c.ville_saisie))
+SET c.ville_saisie = r.libelle_officiel,
+    c.code_ville   = r.code;
+-- La jointure INTERNE exclut naturellement la ligne 4 : pas besoin d EXISTS.
+
+-- PostgreSQL
+UPDATE CLIENT c
+SET ville_saisie = r.libelle_officiel,      -- pas de prefixe c. dans le SET
+    code_ville   = r.code
+FROM REF_VILLE r
+WHERE UPPER(r.libelle_officiel) = UPPER(TRIM(c.ville_saisie));
+
+-- SQL Server
+UPDATE c                                     -- l ALIAS, pas la table
+SET c.ville_saisie = r.libelle_officiel,
+    c.code_ville   = r.code
+FROM CLIENT c
+JOIN REF_VILLE r ON UPPER(r.libelle_officiel) = UPPER(LTRIM(RTRIM(c.ville_saisie)));
+-- SQL Server avant 2017 n a pas TRIM : LTRIM(RTRIM(x))
+
+-- ===== ETAPE 5 : la quarantaine des lignes non rapprochees =====
+CREATE TABLE CLIENT_QUARANTAINE AS
+SELECT c.*, 'ville inconnue du referentiel' AS motif
+FROM CLIENT c
+WHERE c.code_ville IS NULL;
+-- --&gt; la ligne 4 (Bruxelle) attend une decision humaine :
+--     corriger la faute, ou enrichir le referentiel.
+
+-- ===== ETAPE 6 : verification finale =====
+SELECT COUNT(*) AS non_rapprochees FROM CLIENT WHERE code_ville IS NULL;
+-- Attendu : 1 (uniquement Bruxelle)
+SELECT code_ville, COUNT(*) FROM CLIENT GROUP BY code_ville;
+-- NAM : 2, LIE : 1, NULL : 1</pre>
+<p>Tu transformes en masse sans casse. Demain, le filet de sécurité ultime : les transactions.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j28", title: "Recalculer les totaux de commande", level: 3,
+    statement: "La table COMMANDE(id, id_client, total_ht, total_ttc, nb_lignes) contient des totaux devenus faux après un import. La table LIGNE_COMMANDE(id, id_commande, quantite, prix_unitaire) contient le détail exact, et TAUX_TVA(pays, taux) le taux applicable par pays de CLIENT(id, pays). Écris le script complet qui : (1) compte les commandes dont le total est faux, (2) montre l avant/après, (3) recalcule total_ht, total_ttc et nb_lignes depuis le détail. Donne la version portable, puis les versions MySQL, PostgreSQL et SQL Server. Commente.",
+    hints: [
+      "Le total réel d une commande s obtient par une agrégation du détail : SUM(quantite * prix_unitaire) GROUP BY id_commande. Mets-la dans une CTE pour la réutiliser.",
+      "Le taux de TVA exige un double saut : COMMANDE vers CLIENT pour le pays, puis CLIENT vers TAUX_TVA pour le taux. Prévois un COALESCE si un pays n a pas de taux défini.",
+      "En version portable, chaque colonne du SET porte sa propre sous-requête corrélée, et le WHERE EXISTS protège les commandes sans aucune ligne de détail — sinon leurs totaux passeraient à NULL."
+    ],
+    solution: "-- ============ ETAPE 1 : DIAGNOSTIC ============\n-- Combien de commandes ont un total faux ?\nWITH reel AS (\n  SELECT id_commande,\n         SUM(quantite * prix_unitaire) AS ht_reel,   -- le vrai total HT\n         COUNT(*)                      AS nb_reel    -- le vrai nombre de lignes\n  FROM LIGNE_COMMANDE\n  GROUP BY id_commande\n)\nSELECT COUNT(*) AS commandes_fausses\nFROM COMMANDE c\nJOIN reel r ON r.id_commande = c.id\nWHERE COALESCE(c.total_ht, -1) <> r.ht_reel\n   OR COALESCE(c.nb_lignes, -1) <> r.nb_reel;\n\n-- ============ ETAPE 2 : AVANT / APRES ============\nWITH reel AS (\n  SELECT id_commande,\n         SUM(quantite * prix_unitaire) AS ht_reel,\n         COUNT(*)                      AS nb_reel\n  FROM LIGNE_COMMANDE\n  GROUP BY id_commande\n)\nSELECT c.id,\n       c.total_ht  AS ht_avant,\n       r.ht_reel   AS ht_apres,\n       c.nb_lignes AS nb_avant,\n       r.nb_reel   AS nb_apres,\n       ROUND(r.ht_reel * (1 + COALESCE(t.taux, 0.21)), 2) AS ttc_apres\nFROM COMMANDE c\nJOIN reel r      ON r.id_commande = c.id\nJOIN CLIENT cl   ON cl.id = c.id_client            -- pour connaitre le pays\nLEFT JOIN TAUX_TVA t ON t.pays = cl.pays           -- LEFT : un pays peut manquer\nWHERE COALESCE(c.total_ht, -1) <> r.ht_reel\nORDER BY ABS(COALESCE(c.total_ht, 0) - r.ht_reel) DESC   -- les pires ecarts d abord\nLIMIT 20;\n\n-- id  | ht_avant | ht_apres | nb_avant | nb_apres | ttc_apres\n-- ----+----------+----------+----------+----------+----------\n-- 412 |     0.00 |   840.00 |        0 |        6 |   1016.40\n-- 388 |   120.00 |   145.50 |        2 |        3 |    176.06\n\n-- ============ ETAPE 3 : SAUVEGARDE ============\nCREATE TABLE COMMANDE_AVANT AS SELECT * FROM COMMANDE;\n-- SQL Server : SELECT * INTO COMMANDE_AVANT FROM COMMANDE;\n\n-- ============ ETAPE 4 : VERSION PORTABLE (tous SGBD) ============\nUPDATE COMMANDE c\nSET total_ht = (\n      SELECT SUM(l.quantite * l.prix_unitaire)\n      FROM LIGNE_COMMANDE l\n      WHERE l.id_commande = c.id                   -- correlation\n    ),\n    nb_lignes = (\n      SELECT COUNT(*)\n      FROM LIGNE_COMMANDE l\n      WHERE l.id_commande = c.id\n    ),\n    total_ttc = (\n      SELECT ROUND(SUM(l.quantite * l.prix_unitaire)\n                   * (1 + COALESCE(\n                       (SELECT t.taux FROM TAUX_TVA t\n                        JOIN CLIENT cl ON cl.pays = t.pays\n                        WHERE cl.id = c.id_client), 0.21)), 2)\n      FROM LIGNE_COMMANDE l\n      WHERE l.id_commande = c.id\n    )\nWHERE EXISTS (                                     -- INDISPENSABLE : protege les\n      SELECT 1 FROM LIGNE_COMMANDE l               -- commandes sans aucune ligne,\n      WHERE l.id_commande = c.id                   -- dont les totaux passeraient\n    );                                             -- sinon a NULL\n\n-- ============ ETAPE 4 bis : LES VERSIONS SPECIFIQUES ============\n\n-- ----- MySQL / MariaDB : la jointure DANS le UPDATE -----\nUPDATE COMMANDE c\nJOIN (\n  SELECT id_commande,\n         SUM(quantite * prix_unitaire) AS ht,\n         COUNT(*)                      AS nb\n  FROM LIGNE_COMMANDE\n  GROUP BY id_commande\n) r ON r.id_commande = c.id\nJOIN CLIENT cl ON cl.id = c.id_client\nLEFT JOIN TAUX_TVA t ON t.pays = cl.pays\nSET c.total_ht  = r.ht,\n    c.nb_lignes = r.nb,\n    c.total_ttc = ROUND(r.ht * (1 + COALESCE(t.taux, 0.21)), 2);\n-- La jointure INTERNE sur r exclut deja les commandes sans detail.\n\n-- ----- PostgreSQL : la clause FROM, pas de prefixe dans le SET -----\nUPDATE COMMANDE c\nSET total_ht  = r.ht,                              -- PAS c.total_ht ici !\n    nb_lignes = r.nb,\n    total_ttc = ROUND(r.ht * (1 + COALESCE(t.taux, 0.21)), 2)\nFROM (\n  SELECT id_commande,\n         SUM(quantite * prix_unitaire) AS ht,\n         COUNT(*)                      AS nb\n  FROM LIGNE_COMMANDE\n  GROUP BY id_commande\n) r\nJOIN CLIENT cl ON TRUE                             -- jointures dans le FROM\nLEFT JOIN TAUX_TVA t ON t.pays = cl.pays\nWHERE r.id_commande = c.id                         -- la correlation va dans le WHERE\n  AND cl.id = c.id_client;\n\n-- ----- SQL Server : UPDATE alias ... FROM -----\nUPDATE c                                           -- l ALIAS, pas la table\nSET total_ht  = r.ht,\n    nb_lignes = r.nb,\n    total_ttc = ROUND(r.ht * (1 + COALESCE(t.taux, 0.21)), 2)\nFROM COMMANDE c                                    -- la cible est declaree ici\nJOIN (\n  SELECT id_commande,\n         SUM(quantite * prix_unitaire) AS ht,\n         COUNT(*)                      AS nb\n  FROM LIGNE_COMMANDE\n  GROUP BY id_commande\n) r ON r.id_commande = c.id\nJOIN CLIENT cl ON cl.id = c.id_client\nLEFT JOIN TAUX_TVA t ON t.pays = cl.pays;\n\n-- ============ ETAPE 5 : VERIFICATION ============\nWITH reel AS (\n  SELECT id_commande, SUM(quantite * prix_unitaire) AS ht_reel\n  FROM LIGNE_COMMANDE GROUP BY id_commande\n)\nSELECT COUNT(*) AS encore_fausses\nFROM COMMANDE c JOIN reel r ON r.id_commande = c.id\nWHERE ABS(c.total_ht - r.ht_reel) > 0.01;          -- tolerance d arrondi\n-- Attendu : 0",
+    note: "Trois points de vigilance. D abord le WHERE EXISTS de la version portable : une commande sans ligne de détail (annulée, ou import partiel) verrait ses trois totaux passer à NULL sans lui — la version MySQL avec jointure interne les exclut naturellement, ce qui illustre bien pourquoi les syntaxes spécifiques sont plus sûres à écrire. Ensuite, le LEFT JOIN sur TAUX_TVA avec COALESCE : un pays absent du référentiel ne doit pas faire disparaître la commande du calcul. Enfin, la vérification finale utilise ABS(...) > 0.01 plutôt qu une égalité stricte : sur des décimaux, comparer avec <> produit des faux positifs d arrondi." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

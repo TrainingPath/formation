@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 13</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 13,
+  title: "Convertir et formater les dates",
+  subtitle: "Du texte vers la date, et de la date vers le texte : les deux sens, et leurs pièges.",
+  theory: `
+<h3>1. Deux opérations opposées, à ne jamais confondre</h3>
+<p>Il y a deux conversions à distinguer soigneusement :</p>
+<pre class="pseudo">-- PARSING (analyse) : TEXTE -&gt; DATE
+'15/03/2024'  devient  une vraie valeur DATE
+-- but : rendre la donnee triable, comparable, calculable. C'est du NETTOYAGE.
+
+-- FORMATAGE : DATE -&gt; TEXTE
+une valeur DATE  devient  '15 mars 2024'
+-- but : afficher joliment dans un rapport. C'est de la PRESENTATION.</pre>
+<div class="warn">Règle d'or : <strong>on stocke des DATE, on affiche du TEXTE</strong>. Ne stocke jamais une date formatée en base — tu perdrais le tri, les calculs et les comparaisons. Le formatage se fait au dernier moment, dans le SELECT final.</div>
+
+<h3>2. Le format ISO 8601, seul format sans ambiguïté</h3>
+<p>La norme <strong>ISO 8601</strong> écrit les dates <code>AAAA-MM-JJ</code> : année sur quatre chiffres, tiret, mois sur deux, tiret, jour sur deux. C'est le seul format compris de la même façon par tous les SGBD, dans tous les pays.</p>
+<pre class="pseudo">'2024-03-15'   -- ISO : sans ambiguite possible, le 15 mars 2024
+'15/03/2024'   -- format europeen : 15 mars
+'03/15/2024'   -- format americain : 15 mars aussi, mais l'ordre est inverse
+'01/02/2024'   -- CATASTROPHE : 1er fevrier ou 2 janvier ? Impossible a trancher sans savoir la locale
+
+-- Et le tri en texte n'est correct QU'EN ISO :
+ORDER BY date_texte   -- avec '2024-03-15' : tri chronologique CORRECT (par chance : ISO est trie-compatible)
+ORDER BY date_texte   -- avec '15/03/2024' : tri par JOUR d'abord. Absurde.</pre>
+<div class="tip">Une propriété remarquable d'ISO 8601 : le tri alphabétique d'une date ISO en texte donne le même résultat que le tri chronologique. C'est la raison pour laquelle ce format s'impose partout en informatique.</div>
+
+<h3>3. TEXTE vers DATE : le parsing</h3>
+<pre class="pseudo">-- Si le texte est deja en ISO, un simple CAST suffit, partout :
+SELECT CAST('2024-03-15' AS DATE);          -- standard, fonctionne sur tous les SGBD
+SELECT DATE '2024-03-15';                   -- litteral de date, standard aussi
+SELECT '2024-03-15'::DATE;                  -- raccourci PostgreSQL
+
+-- Si le texte est dans un AUTRE format, il faut decrire ce format :
+
+-- POSTGRESQL et ORACLE : TO_DATE(texte, masque)
+SELECT TO_DATE('15/03/2024', 'DD/MM/YYYY');       -- masque en majuscules
+SELECT TO_DATE('15 mars 2024', 'DD TMMonth YYYY');-- TM = localise
+
+-- MYSQL : STR_TO_DATE(texte, masque)  -- masque avec des % comme en langage C
+SELECT STR_TO_DATE('15/03/2024', '%d/%m/%Y');
+SELECT STR_TO_DATE('15-03-24',   '%d-%m-%y');     -- %y = annee sur 2 chiffres
+
+-- SQL SERVER : CONVERT avec un CODE DE STYLE numerique
+SELECT CONVERT(DATE, '15/03/2024', 103);          -- 103 = jj/mm/aaaa (britannique/francais)
+SELECT CONVERT(DATE, '03/15/2024', 101);          -- 101 = mm/jj/aaaa (americain)
+SELECT TRY_CONVERT(DATE, '32/13/2024', 103);      -- NULL au lieu d'une erreur : la version SURE</pre>
+<div class="warn">Les codes de style de SQL Server (101, 103, 112, 120...) sont à mémoriser ou à chercher. Les plus utiles : <strong>103</strong> = jj/mm/aaaa, <strong>101</strong> = mm/jj/aaaa, <strong>112</strong> = aaaammjj, <strong>120</strong> = aaaa-mm-jj hh:mi:ss.</div>
+
+<h3>4. Les masques de format</h3>
+<pre class="pseudo">-- POSTGRESQL / ORACLE (masques litteraux, en majuscules) :
+YYYY   annee sur 4 chiffres        MM   mois sur 2 chiffres      DD    jour sur 2 chiffres
+YY     annee sur 2 chiffres        MON  mois abrege (JAN)        DY    jour abrege (LUN)
+HH24   heure sur 24h               MI   minutes                  SS    secondes
+Month  nom du mois complet         Day  nom du jour complet
+
+-- MYSQL (masques avec %, comme en C) :
+%Y  annee 4 chiffres    %m  mois 2 chiffres    %d  jour 2 chiffres
+%y  annee 2 chiffres    %M  nom du mois        %W  nom du jour
+%H  heure 24h           %i  minutes            %s  secondes
+
+-- ATTENTION : %m (mois) et %i (minutes) en MySQL, contre MM (mois) et MI (minutes) ailleurs.
+-- Confondre %m et %M, ou MM et MI, est l'erreur la plus frequente.</pre>
+
+<h3>5. DATE vers TEXTE : le formatage d'affichage</h3>
+<pre class="pseudo">-- POSTGRESQL et ORACLE : TO_CHAR(date, masque)
+SELECT TO_CHAR(date_cmd, 'DD/MM/YYYY');           -- '15/03/2024'
+SELECT TO_CHAR(date_cmd, 'DD Month YYYY');        -- '15 March 2024' (langue selon la locale)
+SELECT TO_CHAR(date_cmd, 'YYYY-MM');              -- '2024-03' : parfait pour un GROUP BY mensuel
+
+-- MYSQL : DATE_FORMAT(date, masque)
+SELECT DATE_FORMAT(date_cmd, '%d/%m/%Y');         -- '15/03/2024'
+SELECT DATE_FORMAT(date_cmd, '%Y-%m');            -- '2024-03'
+
+-- SQL SERVER : FORMAT (depuis 2012) ou CONVERT avec un style
+SELECT FORMAT(date_cmd, 'dd/MM/yyyy');            -- '15/03/2024' (masque a la .NET, casse significative)
+SELECT FORMAT(date_cmd, 'dd MMMM yyyy', 'fr-FR'); -- '15 mars 2024' : la LOCALE est un argument
+SELECT CONVERT(VARCHAR, date_cmd, 103);           -- '15/03/2024' : plus rapide que FORMAT</pre>
+<div class="warn">La fonction <code>FORMAT</code> de SQL Server est élégante mais <strong>très lente</strong> : elle passe par le moteur .NET, ligne par ligne. Sur un million de lignes, préfère <code>CONVERT</code> avec un style numérique. C'est un cas où le code le plus lisible n'est pas celui qu'il faut écrire.</div>
+
+<h3>6. Les dates invalides et les valeurs sentinelles</h3>
+<pre class="pseudo">-- Que se passe-t-il si le texte n'est pas une date valide ?
+TO_DATE('32/13/2024', 'DD/MM/YYYY')       -- PostgreSQL : ERREUR, la requete s'arrete
+STR_TO_DATE('32/13/2024', '%d/%m/%Y')     -- MySQL      : NULL + avertissement
+CONVERT(DATE, '32/13/2024', 103)          -- SQL Server : ERREUR
+TRY_CONVERT(DATE, '32/13/2024', 103)      -- SQL Server : NULL, sans erreur -- la bonne version
+
+-- La parade PORTABLE : valider par regex AVANT de convertir
+SELECT id, date_texte
+FROM IMPORT
+WHERE date_texte !~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$';   -- structure invalide (PostgreSQL)
+-- attention : la regex valide la STRUCTURE, pas la VALIDITE : '32/13/2024' la satisfait
+
+-- Validation complete, en deux etapes :
+-- 1) la structure, par regex   2) les bornes de valeur, par des tests explicites
+WHERE date_texte ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+  AND CAST(SUBSTRING(date_texte, 4, 2) AS INTEGER) BETWEEN 1 AND 12   -- mois plausible
+  AND CAST(SUBSTRING(date_texte, 1, 2) AS INTEGER) BETWEEN 1 AND 31   -- jour plausible</pre>
+<div class="tip">Valeurs sentinelles à connaître : <code>'1900-01-01'</code> (défaut de nombreux logiciels de gestion), <code>'1970-01-01'</code> (l'époque Unix, c'est-à-dire le timestamp zéro), <code>'9999-12-31'</code> (marqueur de « fin des temps » pour un enregistrement toujours actif). Une forte concentration de lignes sur l'une de ces dates est un signal : ce ne sont pas de vraies dates.</div>
+
+<h3>7. Le pipeline complet de récupération</h3>
+<pre class="pseudo">-- Table IMPORT avec une colonne date_txt en VARCHAR, format 'jj/mm/aaaa'
+
+-- 1) MESURER l'ampleur du probleme
+SELECT COUNT(*)                                                          AS total,
+       SUM(CASE WHEN date_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' THEN 1 ELSE 0 END) AS structure_ok,
+       SUM(CASE WHEN date_txt IS NULL OR TRIM(date_txt) = ''   THEN 1 ELSE 0 END) AS vides
+FROM IMPORT;
+
+-- 2) LISTER les valeurs a corriger a la main
+SELECT DISTINCT date_txt
+FROM IMPORT
+WHERE date_txt !~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+ORDER BY date_txt;          -- DISTINCT limite la liste aux formes DIFFERENTES : souvent une poignee
+
+-- 3) TESTER la conversion sur les lignes valides
+SELECT id,
+       date_txt                              AS avant,
+       TO_DATE(date_txt, 'DD/MM/YYYY')       AS apres
+FROM IMPORT
+WHERE date_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$';
+
+-- 4) AJOUTER une vraie colonne DATE et l'alimenter (on ne detruit pas l'originale)
+ALTER TABLE IMPORT ADD COLUMN date_reelle DATE;
+UPDATE IMPORT
+SET date_reelle = TO_DATE(date_txt, 'DD/MM/YYYY')
+WHERE date_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$';
+
+-- 5) CONTROLER ce qui n'a pas ete converti
+SELECT id, date_txt FROM IMPORT WHERE date_reelle IS NULL;   -- la liste des cas a traiter manuellement</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel format de date est sans ambiguïté dans le monde entier ?", opts: ["jj/mm/aaaa", "mm/jj/aaaa", "aaaa-mm-jj (ISO 8601)", "jj-mmm-aa"], a: 2, exp: "ISO 8601 : l'ordre décroissant année-mois-jour ne se confond avec rien." },
+    { type: "input", q: "Complète la fonction PostgreSQL de parsing : SELECT ______('15/03/2024', 'DD/MM/YYYY');", a: ["to_date"], ph: "une fonction", exp: "TO_DATE(texte, masque) en PostgreSQL et Oracle." },
+    { type: "qcm", q: "Quelle fonction MySQL convertit un texte en date ?", opts: ["TO_DATE", "STR_TO_DATE", "CONVERT_DATE", "PARSE_DATE"], a: 1, exp: "STR_TO_DATE(texte, masque), avec des masques en % comme en langage C." },
+    { type: "input", q: "Complète le masque MySQL pour 'jj/mm/aaaa' : STR_TO_DATE(txt, '%d/%m/%______');", a: ["Y"], ph: "une lettre", exp: "%Y donne l'année sur quatre chiffres ; %y ne donnerait que deux chiffres." },
+    { type: "qcm", q: "Que signifie le code de style 103 en SQL Server ?", opts: ["mm/jj/aaaa", "jj/mm/aaaa", "aaaa-mm-jj", "aaaammjj"], a: 1, exp: "103 correspond au format britannique et français jj/mm/aaaa." },
+    { type: "vf", q: "'01/02/2024' peut être interprété de deux façons selon le pays.", a: true, exp: "1er février en Europe, 2 janvier aux États-Unis. C'est précisément pourquoi ISO 8601 existe." },
+    { type: "input", q: "Complète la fonction PostgreSQL de formatage : SELECT ______(date_cmd, 'DD/MM/YYYY');", a: ["to_char"], ph: "une fonction", exp: "TO_CHAR(date, masque) fait le chemin inverse de TO_DATE." },
+    { type: "qcm", q: "Quelle fonction MySQL formate une date en texte ?", opts: ["TO_CHAR", "DATE_FORMAT", "FORMAT", "CONVERT"], a: 1, exp: "DATE_FORMAT(date, masque) est le pendant de STR_TO_DATE." },
+    { type: "vf", q: "La fonction FORMAT de SQL Server est recommandée sur de gros volumes.", a: false, exp: "Elle passe par le moteur .NET ligne par ligne et s'avère très lente. Préfère CONVERT avec un style numérique." },
+    { type: "qcm", q: "En MySQL, que signifie %i dans un masque de date ?", opts: ["Les minutes", "Le mois", "L'index", "L'année"], a: 0, exp: "%i = minutes, %m = mois. Confondre les deux est l'erreur classique." },
+    { type: "input", q: "Complète la conversion sûre de SQL Server : SELECT ______(DATE, '32/13/2024', 103);", a: ["try_convert"], ph: "une fonction", exp: "TRY_CONVERT renvoie NULL au lieu de lever une erreur." },
+    { type: "vf", q: "Le tri alphabétique d'une date ISO en texte donne le bon ordre chronologique.", a: true, exp: "C'est la propriété remarquable d'ISO 8601, et l'une des raisons de son adoption universelle." },
+    { type: "qcm", q: "Que révèle une forte concentration de lignes au 1970-01-01 ?", opts: ["Une période d'activité intense", "Une valeur sentinelle : l'époque Unix, donc des dates jamais renseignées", "Une erreur de fuseau horaire", "Rien de particulier"], a: 1, exp: "Le timestamp zéro apparaît quand une date n'a jamais été saisie." },
+    { type: "qcm", q: "Faut-il stocker une date formatée en 'jj/mm/aaaa' dans la base ?", opts: ["Oui, c'est plus lisible", "Non : on stocke un type DATE et on formate seulement à l'affichage", "Oui, si les utilisateurs sont français", "Cela n'a aucune importance"], a: 1, exp: "Formatée, la date perd le tri, les calculs et les comparaisons. Le formatage appartient à la présentation." },
+    { type: "qcm", q: "Une regex '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' valide-t-elle '32/13/2024' ?", opts: ["Non", "Oui, car la regex ne contrôle que la STRUCTURE, pas la validité des valeurs", "Cela dépend du SGBD", "Elle lève une erreur"], a: 1, exp: "Il faut compléter par des tests de bornes sur le mois et le jour." }
+  ],
+  final: {
+    title: "Exercice final — Récupérer une colonne de dates en texte",
+    intro: `<p>Table <code>IMPORT_RH</code>. La colonne <code>date_entree_txt</code> est un <code>VARCHAR</code> censé contenir des dates au format jj/mm/aaaa.</p>
+<pre class="pseudo">id | employe   | date_entree_txt
+---+-----------+-----------------
+ 1 | 'Dupont'  | '15/03/2020'
+ 2 | 'Leroy'   | '2021-06-01'
+ 3 | 'Simon'   | '32/13/2019'
+ 4 | 'Martin'  | ''
+ 5 | 'Durand'  | '01/01/1900'</pre>`,
+    questions: [
+      { type: "qcm", q: "Quelles lignes satisfont la regex '^[0-9]{2}/[0-9]{2}/[0-9]{4}$' ?", opts: ["Les lignes 1 et 2", "Les lignes 1, 3 et 5", "Toutes", "La ligne 1 seulement"], a: 1, exp: "La ligne 3 a la bonne STRUCTURE malgré des valeurs impossibles ; la ligne 2 est en ISO, la ligne 4 est vide." },
+      { type: "qcm", q: "Que provoque TO_DATE('32/13/2019', 'DD/MM/YYYY') en PostgreSQL ?", opts: ["Renvoie NULL", "Renvoie le 32 décembre", "Lève une erreur qui interrompt la requête", "Renvoie '2019-01-01'"], a: 2, exp: "Ni le mois 13 ni le jour 32 n'existent : PostgreSQL refuse et arrête l'exécution." },
+      { type: "vf", q: "La ligne 2 doit être traitée par le même masque que la ligne 1.", a: false, exp: "Elle est déjà en ISO : un simple CAST suffit. Le masque jj/mm/aaaa échouerait dessus." },
+      { type: "qcm", q: "Que signale la ligne 5 ?", opts: ["Un employé très ancien", "Une valeur sentinelle : la date n'a jamais été renseignée", "Une erreur de fuseau", "Rien"], a: 1, exp: "1900-01-01 est une date par défaut classique, pas une vraie date d'entrée." },
+      { type: "qcm", q: "Quelle est la bonne démarche pour récupérer cette colonne ?", opts: ["UPDATE direct avec TO_DATE", "Ajouter une colonne DATE, la remplir pour les lignes valides, puis traiter les rejets", "Supprimer les lignes fautives", "Convertir toute la table en texte"], a: 1, exp: "On ajoute sans détruire, on convertit ce qui est convertible, et on isole les cas à traiter manuellement." }
+    ],
+    solution: `<pre class="pseudo">-- 1) DIAGNOSTIC : classer chaque valeur par type de probleme
+SELECT id,
+       employe,
+       date_entree_txt,
+       CASE
+         WHEN date_entree_txt IS NULL OR TRIM(date_entree_txt) = ''       THEN 'vide'
+         WHEN date_entree_txt ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'            THEN 'deja ISO'
+         WHEN date_entree_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'            THEN 'format jj/mm/aaaa'
+         ELSE 'format inconnu'
+       END AS diagnostic
+FROM IMPORT_RH
+ORDER BY id;
+-- 1 : format jj/mm/aaaa   2 : deja ISO   3 : format jj/mm/aaaa (mais valeurs impossibles)
+-- 4 : vide                5 : format jj/mm/aaaa
+
+-- 2) AFFINER : parmi les 'jj/mm/aaaa', reperer les valeurs impossibles
+SELECT id, date_entree_txt
+FROM IMPORT_RH
+WHERE date_entree_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+  AND (   CAST(SUBSTRING(date_entree_txt, 4, 2) AS INTEGER) NOT BETWEEN 1 AND 12    -- mois hors bornes
+       OR CAST(SUBSTRING(date_entree_txt, 1, 2) AS INTEGER) NOT BETWEEN 1 AND 31);  -- jour hors bornes
+-- attendu : la ligne 3 ('32/13/2019')
+
+-- 3) AJOUTER une vraie colonne DATE, sans detruire l'originale
+ALTER TABLE IMPORT_RH ADD COLUMN date_entree DATE;
+
+-- 4) CONVERTIR les lignes au format jj/mm/aaaa et valides
+UPDATE IMPORT_RH
+SET date_entree = TO_DATE(date_entree_txt, 'DD/MM/YYYY')
+WHERE date_entree_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'
+  AND CAST(SUBSTRING(date_entree_txt, 4, 2) AS INTEGER) BETWEEN 1 AND 12
+  AND CAST(SUBSTRING(date_entree_txt, 1, 2) AS INTEGER) BETWEEN 1 AND 31;
+
+-- 5) CONVERTIR les lignes deja en ISO, avec un simple CAST
+UPDATE IMPORT_RH
+SET date_entree = CAST(date_entree_txt AS DATE)
+WHERE date_entree_txt ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$';
+
+-- 6) NEUTRALISER les valeurs sentinelles : 1900-01-01 n'est pas une vraie date
+UPDATE IMPORT_RH
+SET date_entree = NULL                      -- un NULL honnete vaut mieux qu'une fausse date
+WHERE date_entree = DATE '1900-01-01';
+
+-- 7) CONTROLER les rejets restants
+SELECT id, employe, date_entree_txt
+FROM IMPORT_RH
+WHERE date_entree IS NULL;
+-- attendu : lignes 3 (valeurs impossibles), 4 (vide) et 5 (sentinelle neutralisee)
+
+-- 8) AFFICHER proprement, une fois la colonne fiable
+SELECT employe,
+       TO_CHAR(date_entree, 'DD/MM/YYYY')     AS entree_fr,       -- '15/03/2020'
+       TO_CHAR(date_entree, 'YYYY-MM')        AS mois_entree      -- '2020-03', pratique a grouper
+FROM IMPORT_RH
+WHERE date_entree IS NOT NULL
+ORDER BY date_entree;                          -- tri CHRONOLOGIQUE, enfin possible
+
+-- Variantes MySQL      : STR_TO_DATE(txt, '%d/%m/%Y') et DATE_FORMAT(d, '%d/%m/%Y')
+-- Variantes SQL Server : TRY_CONVERT(DATE, txt, 103) et CONVERT(VARCHAR, d, 103)</pre>
+<p>Les dates sont récupérées. Demain : la logique conditionnelle avec CASE WHEN, l'outil qui manquait à tous ces diagnostics.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j13", title: "Trier des dates en texte", level: 3,
+    statement: "Table <code>EVENEMENT(id, titre, date_txt)</code>, où <code>date_txt</code> est un <code>VARCHAR</code> au format jj/mm/aaaa :<pre class='pseudo'>id | titre        | date_txt\n---+--------------+-------------\n 1 | 'Salon'      | '05/09/2024'\n 2 | 'Formation'  | '12/01/2024'\n 3 | 'Audit'      | '30/11/2024'\n 4 | 'Reunion'    | '31/02/2024'\n 5 | 'Seminaire'  | ''</pre>Écris une requête (PostgreSQL) qui affiche les événements dont la date est convertible, triés <strong>chronologiquement</strong>, avec la date au format ISO et le nom du mois. Explique en commentaire pourquoi ORDER BY date_txt donnerait un ordre faux, et signale le cas de la ligne 4.",
+    hints: [
+      "Valide la structure par regex avant toute conversion, sinon TO_DATE lève une erreur qui tue la requête.",
+      "TO_DATE(date_txt, 'DD/MM/YYYY') pour convertir ; TO_CHAR pour reformater en ISO et en nom de mois.",
+      "Le ORDER BY doit porter sur la DATE convertie, pas sur la colonne texte."
+    ],
+    solution: "SELECT id,\n       titre,\n       date_txt                                        AS date_source,\n       TO_DATE(date_txt, 'DD/MM/YYYY')                 AS date_reelle,   -- texte -> vraie DATE\n       TO_CHAR(TO_DATE(date_txt, 'DD/MM/YYYY'), 'YYYY-MM-DD') AS date_iso,\n       TO_CHAR(TO_DATE(date_txt, 'DD/MM/YYYY'), 'Month')      AS nom_mois\nFROM EVENEMENT\nWHERE date_txt ~ '^[0-9]{2}/[0-9]{2}/[0-9]{4}$'       -- 1) la STRUCTURE est-elle bonne ?\n  AND CAST(SUBSTRING(date_txt, 4, 2) AS INTEGER) BETWEEN 1 AND 12   -- 2) le mois est-il plausible ?\n  AND CAST(SUBSTRING(date_txt, 1, 2) AS INTEGER) BETWEEN 1 AND 31   -- 3) le jour est-il plausible ?\nORDER BY TO_DATE(date_txt, 'DD/MM/YYYY') ASC;         -- tri sur la DATE, pas sur le texte\n\n-- Resultat attendu :\n-- id | titre       | date_source  | date_reelle  | date_iso     | nom_mois\n-- ---+-------------+--------------+--------------+--------------+-----------\n--  2 | 'Formation' | '12/01/2024' | '2024-01-12' | '2024-01-12' | 'January'\n--  1 | 'Salon'     | '05/09/2024' | '2024-09-05' | '2024-09-05' | 'September'\n--  3 | 'Audit'     | '30/11/2024' | '2024-11-30' | '2024-11-30' | 'November'\n\n-- POURQUOI ORDER BY date_txt SERAIT FAUX :\n--   Le tri alphabetique compare caractere par caractere, en commencant par le JOUR :\n--   '05/09/2024' < '12/01/2024' < '30/11/2024'\n--   L'ordre obtenu ressemble par hasard au bon ici, mais ajoute '01/12/2024' (1er decembre)\n--   et il se placerait EN PREMIER, avant le 12 janvier. Le tri est structurellement faux.\n--   Seul le format ISO 'aaaa-mm-jj' donne un tri alphabetique = tri chronologique.\n\n-- LE CAS DE LA LIGNE 4 ('31/02/2024') :\n--   Elle passe la regex : deux chiffres, slash, deux chiffres, slash, quatre chiffres.\n--   Elle passe meme les tests de bornes : mois 02 (entre 1 et 12), jour 31 (entre 1 et 31).\n--   Mais le 31 fevrier N'EXISTE PAS : TO_DATE leverait encore une erreur.\n--   Une validation vraiment complete exige de connaitre le nombre de jours de chaque mois.\n--   En pratique : TRY_CONVERT (SQL Server), ou une fonction PL/pgSQL avec un bloc EXCEPTION.\n\n-- LIGNE 5 ('') : exclue des la regex, qui exige au moins 10 caracteres.\n\n-- Variantes :\n--   MySQL      : STR_TO_DATE(date_txt, '%d/%m/%Y') renvoie NULL (pas d'erreur) sur '31/02/2024'\n--                -- comportement plus souple, mais le NULL passe inapercu\n--   SQL Server : TRY_CONVERT(DATE, date_txt, 103) renvoie NULL proprement, sans regex prealable",
+    note: "Piège : la ligne 4 ('31/02/2024') démontre qu'une regex et des tests de bornes ne suffisent pas — le nombre de jours dépend du mois et des années bissextiles. Aucune validation par expression simple n'est complète. Bonne pratique : sur PostgreSQL, la seule parade robuste est une fonction avec bloc EXCEPTION renvoyant NULL en cas d'échec ; c'est exactement ce que TRY_CONVERT offre nativement en SQL Server. Retiens surtout la leçon générale : ne trie JAMAIS sur une date stockée en texte non ISO." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

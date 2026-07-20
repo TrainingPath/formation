@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 29</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 29,
+  title: "Nettoyer sans risque : les transactions",
+  subtitle: "Le bouton « annuler » du SQL — et la technique du ROLLBACK de test qui devrait être un réflexe.",
+  theory: `
+<h3>1. Définition : qu est-ce qu une transaction ?</h3>
+<p>Une <strong>transaction</strong> est un groupe d instructions traité comme un <strong>bloc indivisible</strong> : soit tout réussit et devient définitif, soit tout est annulé et la base revient exactement à son état de départ. Il n existe pas d entre-deux.</p>
+<div class="tip"><strong>L analogie :</strong> le virement bancaire. Débiter le compte A et créditer le compte B forment un tout. Si la machine tombe entre les deux, l argent ne doit pas s évaporer. La transaction garantit qu on n aura jamais « débité mais pas crédité » : soit les deux, soit ni l un ni l autre.</div>
+<p>Autre image, plus proche de notre sujet : c est le <strong>brouillon avec bouton annuler</strong>. Tu ouvres une transaction, tu fais tes modifications, tu regardes le résultat — et tu décides seulement ensuite de valider ou de tout effacer.</p>
+
+<h3>2. Les trois instructions</h3>
+<pre class="pseudo">BEGIN;          -- ouvre la transaction : a partir d ici, tout est provisoire
+  UPDATE ...    -- les modifications s appliquent... pour MOI seul
+  DELETE ...
+  SELECT ...    -- je verifie ce que ca donne
+COMMIT;         -- VALIDE : les changements deviennent definitifs et visibles de tous
+-- ou
+ROLLBACK;       -- ANNULE : la base revient exactement a son etat d avant BEGIN</pre>
+<div class="warn">Tant que le COMMIT n a pas eu lieu, <strong>personne d autre ne voit tes modifications</strong> (dans le niveau d isolation par défaut). Tu travailles dans une bulle. C est précisément ce qui rend la technique du ROLLBACK de test possible et sûre.</div>
+
+<h3>3. LA technique du jour : le ROLLBACK de test</h3>
+<p>C est le réflexe professionnel à acquérir aujourd hui. Au lieu d exécuter un UPDATE de masse en priant, tu l exécutes dans une transaction, tu <strong>vérifies le résultat</strong>, et tu annules. Rien n a bougé, mais tu sais exactement ce qui se serait passé.</p>
+<pre class="pseudo">BEGIN;
+
+-- 1) l etat AVANT
+SELECT COUNT(*) AS avant FROM CLIENT WHERE ville IS NULL;
+-- --&gt; 1240
+
+-- 2) l operation, en vrai
+UPDATE CLIENT SET ville = 'INCONNU' WHERE ville IS NULL;
+-- --&gt; 1240 lignes affectees
+
+-- 3) l etat APRES : est-ce bien ce que je voulais ?
+SELECT COUNT(*) AS apres FROM CLIENT WHERE ville IS NULL;      -- --&gt; 0
+SELECT COUNT(*) FROM CLIENT WHERE ville = 'INCONNU';           -- --&gt; 1240
+SELECT * FROM CLIENT WHERE ville = 'INCONNU' LIMIT 10;         -- coup d oeil
+
+ROLLBACK;   -- ON ANNULE TOUT. La base n a jamais bouge.
+
+-- 4) Les chiffres sont bons ? On rejoue le meme bloc en terminant par COMMIT.</pre>
+<div class="tip">Le gain est énorme : tu obtiens le <strong>nombre exact de lignes affectées</strong> et tu peux <strong>inspecter le résultat réel</strong>, avec les vraies données, sans aucun risque. Aucune simulation ne vaut ça. Fais-en un automatisme : tout UPDATE ou DELETE de masse commence par BEGIN et finit par ROLLBACK, au moins la première fois.</div>
+
+<h3>4. Les propriétés ACID</h3>
+<p>Les transactions garantissent quatre propriétés, résumées par l acronyme <strong>ACID</strong> :</p>
+<pre class="pseudo">-- A - ATOMICITE   : tout ou rien. Aucune execution partielle possible.
+-- C - COHERENCE   : la base passe d un etat valide a un autre etat valide.
+--                   Les contraintes (jour 27) sont respectees a la fin.
+-- I - ISOLATION   : les transactions concurrentes ne se marchent pas dessus.
+-- D - DURABILITE  : apres le COMMIT, meme une coupure de courant ne perd rien.</pre>
+
+<h3>5. Les SAVEPOINT : annuler partiellement</h3>
+<p>Un <strong>savepoint</strong> est un point de reprise à l intérieur d une transaction. Il permet d annuler une partie du travail sans tout perdre.</p>
+<pre class="pseudo">BEGIN;
+  UPDATE CLIENT SET email = LOWER(TRIM(email));    -- etape 1 : sure
+  SAVEPOINT apres_emails;                          -- point de reprise
+
+  UPDATE CLIENT SET tel = REPLACE(tel, ' ', '');   -- etape 2 : risquee
+  SELECT COUNT(*) FROM CLIENT WHERE tel = '';      -- ...et ratee !
+
+  ROLLBACK TO SAVEPOINT apres_emails;              -- on annule l etape 2 SEULEMENT
+                                                   -- l etape 1 tient toujours
+  UPDATE CLIENT SET tel = REPLACE(COALESCE(tel,''), ' ', '');  -- 2e essai
+COMMIT;                                            -- on valide 1 et 2 corrige</pre>
+
+<h3>6. Les variantes de dialecte — un point crucial</h3>
+<pre class="pseudo">-- OUVRIR une transaction :
+--   Standard SQL : START TRANSACTION;
+--   PostgreSQL   : BEGIN;  ou  START TRANSACTION;
+--   MySQL        : START TRANSACTION;  ou  BEGIN;
+--   SQL Server   : BEGIN TRANSACTION;  (ou BEGIN TRAN)  -- pas BEGIN seul !
+--   Oracle       : implicite, aucune instruction a taper
+--   SQLite       : BEGIN;  ou  BEGIN TRANSACTION;
+
+-- COMMIT et ROLLBACK : identiques partout.
+-- SAVEPOINT : partout, mais SQL Server ecrit SAVE TRANSACTION nom;</pre>
+<div class="warn">La différence la plus dangereuse est l <strong>autocommit</strong>. Par défaut, la plupart des SGBD valident automatiquement chaque instruction : ton UPDATE est <em>déjà définitif</em> avant que tu aies eu le temps de réfléchir. Il faut explicitement ouvrir une transaction — ou désactiver l autocommit — pour bénéficier du filet.</div>
+<pre class="pseudo">-- L AUTOCOMMIT selon le SGBD :
+--   MySQL / MariaDB : ACTIVE par defaut.  SET autocommit = 0;  pour le couper
+--   SQL Server      : ACTIVE par defaut.  SET IMPLICIT_TRANSACTIONS ON;
+--   PostgreSQL      : ACTIVE par defaut cote serveur ; psql a l option \\set AUTOCOMMIT off
+--   Oracle          : DESACTIVE — tout est transactionnel, COMMIT obligatoire
+--                     (c est l inverse : ne pas oublier de valider !)</pre>
+<pre class="pseudo">-- PIEGE MAJEUR MySQL : le DDL provoque un COMMIT IMPLICITE.
+BEGIN;
+  UPDATE CLIENT SET ville = 'X';
+  ALTER TABLE CLIENT ADD COLUMN test INT;   -- &lt;-- COMMIT AUTOMATIQUE ICI !
+ROLLBACK;                                    -- n annule PLUS l UPDATE : trop tard.
+-- CREATE, ALTER, DROP, TRUNCATE valident implicitement la transaction en cours.
+-- Ne melange JAMAIS DDL et DML dans une meme transaction sur MySQL.
+-- PostgreSQL, lui, est transactionnel sur le DDL : un ROLLBACK y annule un ALTER TABLE.</pre>
+
+<h3>7. La gestion des erreurs</h3>
+<pre class="pseudo">-- PostgreSQL : une erreur AVORTE toute la transaction.
+-- Toutes les instructions suivantes sont refusees avec
+-- « current transaction is aborted, commands ignored until end of transaction block ».
+-- Il FAUT faire un ROLLBACK (ou ROLLBACK TO SAVEPOINT) avant de continuer.
+
+-- MySQL : une erreur n annule QUE l instruction fautive.
+-- La transaction continue, et un COMMIT validerait le travail partiel.
+-- C est plus permissif... et donc plus dangereux : verifie toujours.
+
+-- SQL Server : le comportement depend de l erreur et de XACT_ABORT.
+-- Bonne pratique : SET XACT_ABORT ON; pour que toute erreur annule la transaction.</pre>
+<pre class="pseudo">-- SQL Server : le bloc de securite complet
+SET XACT_ABORT ON;
+BEGIN TRY
+    BEGIN TRANSACTION;
+        UPDATE CLIENT SET ville = UPPER(TRIM(ville));
+        DELETE FROM CLIENT WHERE email IS NULL;
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT &gt; 0 ROLLBACK TRANSACTION;    -- annule tout en cas d erreur
+    SELECT ERROR_MESSAGE() AS message_erreur;
+END CATCH;</pre>
+
+<h3>8. Les pièges des transactions longues</h3>
+<div class="warn">Une transaction ouverte pose des <strong>verrous</strong> sur les lignes modifiées. Tant qu elle n est pas terminée, les autres sessions attendent. Une transaction laissée ouverte pendant une pause café peut bloquer toute une application. Règle : une transaction doit être <strong>courte</strong>, et on ne laisse jamais un BEGIN sans COMMIT ni ROLLBACK.</div>
+<pre class="pseudo">-- Autres pieges :
+-- 1) Sur une TRES grosse mise a jour (des millions de lignes), la transaction
+--    sature le journal. Decoupe en lots : UPDATE ... LIMIT 10000, en boucle,
+--    avec un COMMIT a chaque lot.
+-- 2) TRUNCATE TABLE n est PAS annulable en MySQL (c est du DDL).
+--    En PostgreSQL et SQL Server, si.
+--    Pour pouvoir annuler : utilise DELETE FROM, plus lent mais transactionnel.
+-- 3) MyISAM (MySQL) ne gere PAS les transactions. BEGIN et ROLLBACK sont
+--    acceptes... et sans effet. Seul InnoDB est transactionnel.</pre>
+
+<h3>9. Le patron de nettoyage sécurisé</h3>
+<pre class="pseudo">-- 1. SAUVEGARDER          CREATE TABLE t_avant AS SELECT * FROM t;
+-- 2. BEGIN
+-- 3. MESURER l etat avant (SELECT COUNT)
+-- 4. NETTOYER             (UPDATE / DELETE)
+-- 5. MESURER l etat apres, et le comparer a l attendu
+-- 6. ROLLBACK             --&gt; on verifie sans risque
+-- 7. Chiffres corrects ? rejouer le bloc avec COMMIT au lieu de ROLLBACK
+-- 8. CONTRAINDRE          (ALTER TABLE ADD CONSTRAINT, hors transaction sur MySQL)</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle instruction ouvre une transaction en PostgreSQL et MySQL ?", ph: "B...", a: ["BEGIN", "START TRANSACTION"], exp: "BEGIN ou START TRANSACTION ; SQL Server exige BEGIN TRANSACTION." },
+    { type: "input", q: "Quelle instruction rend les modifications définitives ?", ph: "C...", a: ["COMMIT"], exp: "COMMIT valide et rend le travail visible de tous." },
+    { type: "input", q: "Quelle instruction annule tout et revient à l état de départ ?", ph: "R...", a: ["ROLLBACK"], exp: "ROLLBACK : le bouton annuler du SQL." },
+    { type: "qcm", q: "En quoi consiste le ROLLBACK de test ?", opts: ["Sauvegarder la base", "Exécuter l opération dans une transaction, vérifier le résultat, puis annuler", "Créer un index", "Désactiver les contraintes"], a: 1, exp: "On voit le vrai résultat sur les vraies données, sans aucun risque." },
+    { type: "qcm", q: "Que signifie le A de ACID ?", opts: ["Automatique", "Atomicité : tout ou rien", "Accès", "Agrégation"], a: 1, exp: "Aucune exécution partielle n est possible." },
+    { type: "input", q: "Quelle instruction crée un point de reprise dans une transaction ?", ph: "SAVE...", a: ["SAVEPOINT", "SAVE TRANSACTION"], exp: "SAVEPOINT nom, puis ROLLBACK TO SAVEPOINT nom. SQL Server écrit SAVE TRANSACTION." },
+    { type: "qcm", q: "En SQL Server, on ouvre une transaction avec…", opts: ["BEGIN", "BEGIN TRANSACTION", "START", "OPEN TRAN"], a: 1, exp: "BEGIN seul y délimite un bloc d instructions, pas une transaction." },
+    { type: "vf", q: "Par défaut, MySQL et SQL Server valident automatiquement chaque instruction.", a: true, exp: "L autocommit est actif : sans BEGIN explicite, ton UPDATE est déjà définitif." },
+    { type: "qcm", q: "En MySQL, que provoque un ALTER TABLE au milieu d une transaction ?", opts: ["Rien de particulier", "Un COMMIT implicite : le ROLLBACK suivant n annulera plus rien", "Une erreur", "Un rollback automatique"], a: 1, exp: "Tout DDL valide implicitement en MySQL : ne mélange jamais DDL et DML." },
+    { type: "vf", q: "En PostgreSQL, un ROLLBACK peut annuler un ALTER TABLE.", a: true, exp: "PostgreSQL est transactionnel sur le DDL, contrairement à MySQL." },
+    { type: "qcm", q: "En PostgreSQL, après une erreur dans une transaction…", opts: ["On peut continuer normalement", "Toute la transaction est avortée : il faut un ROLLBACK avant de continuer", "L erreur est ignorée", "Le COMMIT se fait seul"], a: 1, exp: "Toutes les instructions suivantes sont refusées jusqu au ROLLBACK." },
+    { type: "input", q: "Quelle option SQL Server fait qu une erreur annule toute la transaction ?", ph: "XACT_...", a: ["XACT_ABORT", "SET XACT_ABORT ON"], exp: "SET XACT_ABORT ON, à combiner avec BEGIN TRY / BEGIN CATCH." },
+    { type: "qcm", q: "Pourquoi ne faut-il pas laisser une transaction ouverte longtemps ?", opts: ["Elle consomme du disque", "Elle pose des verrous et bloque les autres sessions", "Elle ralentit les index", "Elle vide le cache"], a: 1, exp: "Une transaction oubliée peut bloquer toute une application." },
+    { type: "qcm", q: "TRUNCATE TABLE en MySQL est-il annulable par ROLLBACK ?", opts: ["Oui", "Non, c est du DDL : utilise DELETE FROM si tu veux pouvoir annuler", "Seulement avec InnoDB", "Seulement avec un savepoint"], a: 1, exp: "En PostgreSQL et SQL Server il l est, mais pas en MySQL." },
+    { type: "vf", q: "Le moteur MyISAM de MySQL gère les transactions.", a: false, exp: "BEGIN et ROLLBACK y sont acceptés sans effet. Seul InnoDB est transactionnel." }
+  ],
+  final: {
+    title: "Exercice final — Un nettoyage sous filet",
+    intro: `<p>Il faut nettoyer une table de production, en heures ouvrées, sans droit à l erreur.</p>
+<pre class="pseudo">-- CLIENT(id, nom, email, ville, actif)  — 48 000 lignes
+-- Operations demandees :
+--   1) normaliser les emails (minuscules, sans espaces)
+--   2) mettre 'INCONNU' dans les villes NULL ou vides
+--   3) supprimer les clients inactifs sans email
+-- Verification attendue : ~1240 villes corrigees, ~85 suppressions.</pre>`,
+    questions: [
+      { type: "input", q: "Par quelle instruction commencer le bloc ?", ph: "B...", a: ["BEGIN", "START TRANSACTION", "BEGIN TRANSACTION"], exp: "Sans BEGIN, l autocommit rend chaque instruction immédiatement définitive." },
+      { type: "qcm", q: "Après avoir exécuté les trois opérations et vérifié les compteurs, on termine par…", opts: ["COMMIT directement", "ROLLBACK, pour vérifier sans risque, puis on rejoue avec COMMIT", "TRUNCATE", "SAVEPOINT"], a: 1, exp: "C est le ROLLBACK de test : on valide les chiffres avant de valider les données." },
+      { type: "vf", q: "Créer la table de sauvegarde CLIENT_AVANT à l intérieur de la transaction est une bonne idée en MySQL.", a: false, exp: "CREATE TABLE est du DDL : en MySQL il provoque un COMMIT implicite et casse le filet. On la crée AVANT le BEGIN." },
+      { type: "input", q: "Quelle instruction permettrait d annuler uniquement la troisième opération ?", ph: "ROLLBACK TO ...", a: ["SAVEPOINT", "ROLLBACK TO SAVEPOINT", "ROLLBACK TO SAVEPOINT nom"], exp: "Un savepoint posé après l opération 2 permet de ne défaire que la 3." },
+      { type: "qcm", q: "Si le compteur de suppressions affiche 8500 au lieu de 85, il faut…", opts: ["Faire COMMIT quand même", "Faire ROLLBACK immédiatement et revoir la condition WHERE", "Relancer la requête", "Ajouter un index"], a: 1, exp: "L écart révèle un WHERE trop large : le ROLLBACK vient de sauver 8415 clients." }
+    ],
+    solution: `<pre class="pseudo">-- ===== ETAPE 0 : la sauvegarde, HORS transaction (DDL) =====
+CREATE TABLE CLIENT_AVANT AS SELECT * FROM CLIENT;
+-- SQL Server : SELECT * INTO CLIENT_AVANT FROM CLIENT;
+SELECT COUNT(*) FROM CLIENT_AVANT;      -- --&gt; 48000, la photo est prise
+
+-- ===== ETAPE 1 : la passe de TEST =====
+BEGIN;                                  -- SQL Server : BEGIN TRANSACTION;
+
+-- 1a) mesurer AVANT
+SELECT COUNT(*) AS total          FROM CLIENT;
+SELECT COUNT(*) AS emails_sales   FROM CLIENT WHERE email &lt;&gt; LOWER(TRIM(email));
+SELECT COUNT(*) AS villes_vides   FROM CLIENT
+  WHERE ville IS NULL OR TRIM(ville) = '';
+SELECT COUNT(*) AS a_supprimer    FROM CLIENT
+  WHERE actif = 0 AND (email IS NULL OR TRIM(email) = '');
+-- --&gt; total 48000 | emails_sales 3120 | villes_vides 1240 | a_supprimer 85
+
+-- 1b) operation 1 : normaliser les emails
+UPDATE CLIENT
+SET email = LOWER(TRIM(email))
+WHERE email IS NOT NULL
+  AND email &lt;&gt; LOWER(TRIM(email));     -- ne toucher QUE les lignes sales
+SAVEPOINT sp_emails;                    -- SQL Server : SAVE TRANSACTION sp_emails;
+
+-- 1c) operation 2 : combler les villes manquantes
+UPDATE CLIENT
+SET ville = 'INCONNU'
+WHERE ville IS NULL OR TRIM(ville) = '';
+SAVEPOINT sp_villes;
+
+-- 1d) operation 3 : supprimer les inactifs sans email
+DELETE FROM CLIENT
+WHERE actif = 0
+  AND (email IS NULL OR TRIM(email) = '');
+
+-- 1e) mesurer APRES, et COMPARER a l attendu
+SELECT COUNT(*) AS total_apres     FROM CLIENT;                       -- 47915 ?
+SELECT COUNT(*) AS emails_restants FROM CLIENT
+  WHERE email &lt;&gt; LOWER(TRIM(email));                                  -- 0 ?
+SELECT COUNT(*) AS villes_inconnu  FROM CLIENT WHERE ville = 'INCONNU'; -- 1240 ?
+SELECT * FROM CLIENT WHERE ville = 'INCONNU' LIMIT 5;                  -- coup d oeil
+
+-- 48000 - 85 = 47915. Si le total affiche 47915, tout est coherent.
+-- S il affiche 39500, le DELETE a debordé : le ROLLBACK va nous sauver.
+
+ROLLBACK;                               -- ON ANNULE TOUT. Rien n a bouge.
+
+-- ===== ETAPE 2 : verifier que la base est bien intacte =====
+SELECT COUNT(*) FROM CLIENT;            -- --&gt; 48000, comme avant
+
+-- ===== ETAPE 3 : les chiffres etaient bons ? on rejoue pour de vrai =====
+BEGIN;
+  UPDATE CLIENT SET email = LOWER(TRIM(email))
+   WHERE email IS NOT NULL AND email &lt;&gt; LOWER(TRIM(email));
+  UPDATE CLIENT SET ville = 'INCONNU'
+   WHERE ville IS NULL OR TRIM(ville) = '';
+  DELETE FROM CLIENT
+   WHERE actif = 0 AND (email IS NULL OR TRIM(email) = '');
+  SELECT COUNT(*) FROM CLIENT;          -- ultime controle : 47915
+COMMIT;                                 -- CETTE FOIS, on valide.
+
+-- ===== ETAPE 4 : verification post-commit =====
+SELECT (SELECT COUNT(*) FROM CLIENT_AVANT) AS avant,
+       (SELECT COUNT(*) FROM CLIENT)       AS apres,
+       (SELECT COUNT(*) FROM CLIENT_AVANT)
+     - (SELECT COUNT(*) FROM CLIENT)       AS supprimees;
+-- avant 48000 | apres 47915 | supprimees 85   --&gt; conforme a l attendu
+
+-- ===== ETAPE 5 : et si on s etait trompe malgre tout ? =====
+-- La table de sauvegarde permet encore de restaurer :
+-- DELETE FROM CLIENT;
+-- INSERT INTO CLIENT SELECT * FROM CLIENT_AVANT;
+-- On ne supprime CLIENT_AVANT qu apres quelques jours de recul.
+
+-- ===== VERSION SQL SERVER, avec gestion d erreur =====
+-- SET XACT_ABORT ON;
+-- BEGIN TRY
+--     BEGIN TRANSACTION;
+--         UPDATE CLIENT SET email = LOWER(LTRIM(RTRIM(email))) WHERE ...;
+--         UPDATE CLIENT SET ville = 'INCONNU' WHERE ...;
+--         DELETE FROM CLIENT WHERE ...;
+--     COMMIT TRANSACTION;
+-- END TRY
+-- BEGIN CATCH
+--     IF @@TRANCOUNT &gt; 0 ROLLBACK TRANSACTION;
+--     SELECT ERROR_MESSAGE();
+-- END CATCH;</pre>
+<p>Tu travailles sous filet. Demain : comprendre pourquoi une requête est lente, avec EXPLAIN et les index.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j29", title: "Une fusion de doublons sous transaction", level: 3,
+    statement: "La table CLIENT(id, email, nom, ville, total_achats) contient des doublons d email. Il faut, pour chaque email, conserver la ligne la plus ancienne (id le plus petit) mais y reporter la SOMME des total_achats de toutes ses copies, puis supprimer les copies. Écris le script complet sous transaction, avec passe de test : sauvegarde hors transaction, BEGIN, mesures avant, report des totaux, suppression des copies, mesures après (le total général des achats doit être strictement inchangé), ROLLBACK, puis la version définitive. Signale les pièges de dialecte.",
+    hints: [
+      "L invariant à vérifier est le meilleur garde-fou : SUM(total_achats) sur toute la table doit être identique avant et après. Si ce n est pas le cas, tu as perdu ou dupliqué de l argent.",
+      "Ordre impératif : reporter les sommes AVANT de supprimer les copies. Dans l autre sens, tu supprimes les montants que tu voulais additionner.",
+      "La sauvegarde CREATE TABLE est du DDL : en MySQL elle provoque un COMMIT implicite. Elle doit donc être exécutée AVANT le BEGIN, jamais à l intérieur."
+    ],
+    solution: "-- ============ ETAPE 0 : SAUVEGARDE, HORS TRANSACTION ============\n-- CREATE TABLE est du DDL : sur MySQL il declencherait un COMMIT implicite\n-- et casserait le filet. On le fait AVANT le BEGIN.\nCREATE TABLE CLIENT_AVANT AS SELECT * FROM CLIENT;\n-- SQL Server : SELECT * INTO CLIENT_AVANT FROM CLIENT;\n\n-- ============ ETAPE 1 : LA PASSE DE TEST ============\nBEGIN;                          -- SQL Server : BEGIN TRANSACTION;\n\n-- 1a) MESURES AVANT — noter ces chiffres\nSELECT COUNT(*)            AS nb_lignes,\n       COUNT(DISTINCT email) AS nb_emails,\n       SUM(total_achats)   AS somme_globale     -- L INVARIANT a preserver\nFROM CLIENT;\n-- --> nb_lignes 12480 | nb_emails 11930 | somme_globale 3891250.00\n\n-- 1b) Les survivants : le plus petit id de chaque email\n--     (on le calcule une fois, on s en sert deux fois)\nSELECT COUNT(*) AS copies_a_supprimer\nFROM CLIENT c\nWHERE c.id > (SELECT MIN(c2.id) FROM CLIENT c2 WHERE c2.email = c.email);\n-- --> 550   (soit 12480 - 11930, coherent)\n\n-- 1c) REPORT DES SOMMES sur le survivant — AVANT toute suppression !\n--     Version portable (tous SGBD)\nUPDATE CLIENT c\nSET total_achats = (\n      SELECT SUM(c2.total_achats)              -- la somme de TOUTES les copies\n      FROM CLIENT c2\n      WHERE c2.email = c.email                 -- du meme email\n    )\nWHERE c.id = (SELECT MIN(c3.id) FROM CLIENT c3 WHERE c3.email = c.email)\n  AND EXISTS (                                 -- uniquement les emails en doublon\n      SELECT 1 FROM CLIENT c4\n      WHERE c4.email = c.email AND c4.id <> c.id\n    );\n\n-- 1d) SUPPRESSION des copies (tout ce qui n est pas le plus petit id)\nDELETE FROM CLIENT\nWHERE id IN (\n  SELECT id FROM (                             -- double niveau : erreur 1093 MySQL\n    SELECT c.id\n    FROM CLIENT c\n    WHERE c.id > (SELECT MIN(c2.id) FROM CLIENT c2 WHERE c2.email = c.email)\n  ) AS copies\n);\n\n-- 1e) MESURES APRES — comparer a l attendu\nSELECT COUNT(*)             AS nb_lignes,      -- attendu : 11930\n       COUNT(DISTINCT email) AS nb_emails,     -- attendu : 11930 (identique)\n       SUM(total_achats)    AS somme_globale   -- attendu : 3891250.00 INCHANGE\nFROM CLIENT;\n\n-- Le controle decisif : plus aucun doublon\nSELECT email, COUNT(*) FROM CLIENT GROUP BY email HAVING COUNT(*) > 1;\n-- attendu : 0 ligne\n\n-- Verification croisee de l invariant financier\nSELECT (SELECT SUM(total_achats) FROM CLIENT_AVANT) AS somme_avant,\n       (SELECT SUM(total_achats) FROM CLIENT)       AS somme_apres,\n       (SELECT SUM(total_achats) FROM CLIENT_AVANT)\n     - (SELECT SUM(total_achats) FROM CLIENT)       AS ecart;\n-- ecart DOIT valoir 0.00. Toute autre valeur = argent perdu ou duplique.\n\nROLLBACK;                       -- ON ANNULE. La base n a jamais bouge.\n\n-- ============ ETAPE 2 : CONTROLE QUE RIEN N A BOUGE ============\nSELECT COUNT(*), SUM(total_achats) FROM CLIENT;   -- 12480 | 3891250.00\n\n-- ============ ETAPE 3 : LA VERSION DEFINITIVE ============\n-- Les chiffres de l etape 1 etaient conformes ? On rejoue avec COMMIT.\nBEGIN;\n  UPDATE CLIENT c\n  SET total_achats = (SELECT SUM(c2.total_achats) FROM CLIENT c2\n                      WHERE c2.email = c.email)\n  WHERE c.id = (SELECT MIN(c3.id) FROM CLIENT c3 WHERE c3.email = c.email)\n    AND EXISTS (SELECT 1 FROM CLIENT c4\n                WHERE c4.email = c.email AND c4.id <> c.id);\n\n  DELETE FROM CLIENT\n  WHERE id IN (SELECT id FROM (\n      SELECT c.id FROM CLIENT c\n      WHERE c.id > (SELECT MIN(c2.id) FROM CLIENT c2 WHERE c2.email = c.email)\n    ) AS copies);\n\n  SELECT COUNT(*), SUM(total_achats) FROM CLIENT;  -- ultime controle\nCOMMIT;                                            -- validation definitive\n\n-- ============ ETAPE 4 : VERROUILLER (hors transaction) ============\nALTER TABLE CLIENT ADD CONSTRAINT uq_client_email UNIQUE (email);\n-- Sur MySQL, cet ALTER doit imperativement etre HORS transaction.\n\n-- ============ PIEGES DE DIALECTE ============\n-- MySQL / MariaDB :\n--   * CREATE TABLE et ALTER TABLE = COMMIT implicite. Jamais dans le BEGIN.\n--   * Erreur 1093 sur DELETE lisant sa propre table --> double sous-requete.\n--   * Moteur MyISAM = AUCUNE transaction. Verifier InnoDB avec\n--     SHOW TABLE STATUS WHERE Name = 'client';\n--   * Une erreur n annule que l instruction fautive : verifier manuellement.\n-- PostgreSQL :\n--   * DDL transactionnel : CREATE TABLE peut rester dans le bloc si on veut.\n--   * Une erreur AVORTE toute la transaction : plus rien ne passe\n--     jusqu au ROLLBACK. Prevoir des SAVEPOINT si besoin.\n-- SQL Server :\n--   * BEGIN TRANSACTION (pas BEGIN seul), SAVE TRANSACTION (pas SAVEPOINT).\n--   * SET XACT_ABORT ON + BEGIN TRY / BEGIN CATCH pour un rollback automatique.\n--   * SELECT ... INTO au lieu de CREATE TABLE ... AS SELECT.",
+    note: "L invariant financier est la vraie leçon de cet exercice. Sur une opération de fusion, compter les lignes ne suffit pas : on peut parfaitement obtenir le bon nombre de lignes tout en ayant perdu des montants. Identifie systématiquement une grandeur qui doit être rigoureusement conservée (une somme, un nombre de clients distincts, un total de stock) et vérifie-la avant/après. Note aussi l ordre non négociable : reporter les sommes d abord, supprimer ensuite. Inversé, le script détruit exactement les données qu il devait agréger — et cette fois le ROLLBACK est ton seul recours." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

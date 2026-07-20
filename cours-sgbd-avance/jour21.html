@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Numéroter et classer : ROW_NUMBER, RANK, DENSE_RANK",
+  subtitle: "Trois fonctions qui se ressemblent, trois comportements différents face aux ex aequo.",
+  theory: `
+<h3>1. Le ORDER BY dans OVER()</h3>
+<p>Hier, <code>OVER()</code> était vide : la fenêtre couvrait toute la table, sans ordre. Aujourd hui on remplit les parenthèses avec un <code>ORDER BY</code>. Attention, ce n est <strong>pas</strong> le ORDER BY final de la requête : c est l ordre <em>à l intérieur de la fenêtre</em>, celui qui décide qui est premier, deuxième, troisième.</p>
+<pre class="pseudo">FONCTION() OVER (ORDER BY colonne DESC)
+--                ^
+--                +-- ordre INTERNE a la fenetre, sert au classement
+
+SELECT ... FROM ... ORDER BY colonne DESC;
+--                  ^
+--                  +-- ordre d AFFICHAGE du resultat final</pre>
+<div class="warn">Les deux ORDER BY sont indépendants et peuvent être différents. Tu peux classer par montant décroissant dans la fenêtre, et afficher le résultat trié par nom alphabétique. Confondre les deux est l erreur la plus fréquente des débutants en fenêtrage.</div>
+
+<h3>2. Les trois fonctions de classement</h3>
+<p>Elles répondent toutes les trois à « quelle est la position de cette ligne dans le classement ? ». Elles ne diffèrent <strong>que sur le traitement des ex aequo</strong>.</p>
+<p>• <code>ROW_NUMBER()</code> — <strong>numéro de ligne</strong>. Numérote 1, 2, 3, 4… <em>sans jamais</em> d ex aequo. Deux lignes de même valeur reçoivent quand même des numéros différents (l ordre entre elles est alors arbitraire).<br>
+• <code>RANK()</code> — <strong>rang sportif</strong>. Les ex aequo partagent le même rang, et le rang suivant <em>saute</em> les places consommées. Comme sur un podium : deux médaillés d argent, et pas de médaille de bronze.<br>
+• <code>DENSE_RANK()</code> — <strong>rang dense</strong>. Les ex aequo partagent le même rang, mais le rang suivant <em>ne saute pas</em>. La numérotation reste compacte, sans trou.</p>
+
+<h3>3. La comparaison qui fixe tout</h3>
+<pre class="pseudo">SELECT nom,
+       note,
+       ROW_NUMBER() OVER (ORDER BY note DESC) AS num,    -- jamais d ex aequo
+       RANK()       OVER (ORDER BY note DESC) AS rang,   -- ex aequo + saut
+       DENSE_RANK() OVER (ORDER BY note DESC) AS dense   -- ex aequo sans saut
+FROM ELEVE;</pre>
+<pre class="pseudo">-- nom    | note | num | rang | dense
+-- -------+------+-----+------+------
+-- Alice  |   18 |   1 |    1 |     1
+-- Bob    |   16 |   2 |    2 |     2
+-- Chloe  |   16 |   3 |    2 |     2      &lt;-- meme note que Bob
+-- David  |   16 |   4 |    2 |     2      &lt;-- meme note encore
+-- Emma   |   12 |   5 |    5 |     3
+--                  ^      ^        ^
+--                  |      |        +-- DENSE : 1,2,2,2,3 --&gt; pas de trou
+--                  |      +-- RANK : 1,2,2,2,5 --&gt; saute 3 et 4
+--                  +-- ROW_NUMBER : 1,2,3,4,5 --&gt; tous differents</pre>
+<div class="tip">Moyen mnémotechnique : <strong>ROW_NUMBER compte les LIGNES</strong> (donc jamais deux fois le même numéro). <strong>RANK compte les PLACES</strong> (trois deuxièmes occupent les places 2, 3 et 4, donc le suivant est cinquième). <strong>DENSE_RANK compte les VALEURS DISTINCTES</strong> (trois notes différentes : 18, 16, 12 donnent les rangs 1, 2, 3).</div>
+
+<h3>4. Laquelle choisir ?</h3>
+<pre class="pseudo">-- Dedupliquer (jour 17)          --&gt; ROW_NUMBER
+--   il faut UN survivant par groupe, jamais deux : ROW_NUMBER garantit l unicite.
+-- Classement sportif, podium     --&gt; RANK
+--   les ex aequo partagent la place, la suivante saute.
+-- Numeroter des paliers/niveaux  --&gt; DENSE_RANK
+--   ex : les 3 meilleurs SALAIRES distincts, meme si 10 personnes les touchent.
+-- Pagination stable              --&gt; ROW_NUMBER
+--   les lignes 21 a 40 exigent une numerotation sans trou ni doublon.</pre>
+
+<h3>5. PARTITION BY : un classement par groupe</h3>
+<p>Ajoute <code>PARTITION BY</code> et tu obtiens un classement qui <strong>repart à 1</strong> dans chaque groupe. C est l usage massif de ces fonctions.</p>
+<pre class="pseudo">SELECT region,
+       vendeur,
+       montant,
+       RANK() OVER (
+         PARTITION BY region          -- un classement SEPARE par region
+         ORDER BY montant DESC        -- du plus gros au plus petit
+       ) AS rang_region
+FROM VENTE;
+
+-- region | vendeur | montant | rang_region
+-- -------+---------+---------+------------
+-- Nord   | Alice   |     900 |           1
+-- Nord   | Bob     |     500 |           2
+-- Nord   | Chloe   |     200 |           3
+-- Sud    | David   |     700 |           1   &lt;-- le compteur REPART a 1
+-- Sud    | Emma    |     300 |           2</pre>
+
+<h3>6. Le Top N par groupe : le grand classique</h3>
+<p>« Les 2 meilleurs vendeurs de chaque région » est impossible avec GROUP BY seul. Avec une fonction de rang + une CTE, c est trois lignes.</p>
+<pre class="pseudo">WITH classement AS (
+  SELECT region,
+         vendeur,
+         montant,
+         ROW_NUMBER() OVER (PARTITION BY region ORDER BY montant DESC) AS rang
+  FROM VENTE
+)
+SELECT region, vendeur, montant
+FROM classement
+WHERE rang &lt;= 2                       -- les 2 premiers de CHAQUE region
+ORDER BY region, rang;
+
+-- region | vendeur | montant
+-- -------+---------+--------
+-- Nord   | Alice   |     900
+-- Nord   | Bob     |     500
+-- Sud    | David   |     700
+-- Sud    | Emma    |     300</pre>
+<div class="tip">Cette requête est un patron à mémoriser tel quel. « Top N par catégorie » revient sans arrêt : meilleures ventes par mois, dernière commande par client, produit le plus cher par rayon. Change juste le PARTITION BY et le ORDER BY.</div>
+<p>Nuance : avec <code>ROW_NUMBER</code>, tu obtiens <strong>exactement</strong> 2 lignes par région, même en cas d égalité. Avec <code>RANK</code>, tu peux en obtenir 3 si deux vendeurs sont à égalité au 2e rang. À toi de choisir selon la règle métier.</p>
+
+<h3>7. Les variantes de dialecte</h3>
+<p>Bonne nouvelle : les trois fonctions sont <strong>identiques</strong> en MySQL 8+, MariaDB 10.2+, PostgreSQL, SQL Server, SQLite 3.25+ et Oracle. La syntaxe ne bouge pas.</p>
+<p>Ce qui diffère, c est la <strong>limitation du résultat</strong> et les <strong>raccourcis</strong> :</p>
+<pre class="pseudo">-- Limiter le resultat : le grand classique des differences de dialecte
+-- MySQL / MariaDB / PostgreSQL / SQLite :
+SELECT * FROM VENTE ORDER BY montant DESC LIMIT 5;
+-- SQL Server :
+SELECT TOP 5 * FROM VENTE ORDER BY montant DESC;
+-- Standard SQL:2008 (accepte par PostgreSQL, SQL Server 2012+, Oracle 12c+) :
+SELECT * FROM VENTE ORDER BY montant DESC OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY;</pre>
+<pre class="pseudo">-- SQL Server propose un raccourci pour le Top N AVEC ex aequo :
+SELECT TOP 2 WITH TIES * FROM VENTE ORDER BY montant DESC;
+--   equivalent d un RANK() &lt;= 2 : renvoie 3 lignes si egalite au 2e rang.
+-- Aucun autre SGBD n a cette clause : ailleurs, on passe par RANK + CTE.</pre>
+<div class="warn">LIMIT et TOP ne remplacent PAS les fonctions de rang : ils limitent le résultat GLOBAL, pas par groupe. « Les 2 meilleurs de chaque région » est hors de leur portée. C est exactement pour ça que les fonctions de fenêtre existent.</div>
+
+<h3>8. Deux fonctions de classement bonus</h3>
+<pre class="pseudo">-- NTILE(n) : decoupe le classement en n paquets de taille egale (quartiles, deciles)
+SELECT vendeur, montant,
+       NTILE(4) OVER (ORDER BY montant DESC) AS quartile   -- 1 = top 25 %
+FROM VENTE;
+
+-- PERCENT_RANK() : la position relative, entre 0 et 1
+SELECT vendeur, montant,
+       ROUND(PERCENT_RANK() OVER (ORDER BY montant), 2) AS position_relative
+FROM VENTE;</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle fonction numérote sans jamais produire deux fois le même numéro ?", ph: "ROW_...", a: ["ROW_NUMBER", "ROW_NUMBER()"], exp: "ROW_NUMBER compte les lignes : 1, 2, 3, 4… quels que soient les ex aequo." },
+    { type: "qcm", q: "Avec les notes 18, 16, 16, 12, RANK() donne…", opts: ["1, 2, 3, 4", "1, 2, 2, 4", "1, 2, 2, 3", "1, 1, 2, 3"], a: 1, exp: "Deux ex aequo au rang 2 consomment les places 2 et 3 : le suivant est 4e." },
+    { type: "qcm", q: "Avec les mêmes notes 18, 16, 16, 12, DENSE_RANK() donne…", opts: ["1, 2, 2, 4", "1, 2, 2, 3", "1, 2, 3, 4", "1, 1, 2, 2"], a: 1, exp: "DENSE_RANK compte les valeurs distinctes : pas de trou après les ex aequo." },
+    { type: "input", q: "Quelle fonction compte les VALEURS DISTINCTES et ne saute donc aucun rang ?", ph: "DENSE_...", a: ["DENSE_RANK", "DENSE_RANK()"], exp: "1, 2, 2, 3 : la numérotation reste compacte." },
+    { type: "vf", q: "Le ORDER BY à l intérieur de OVER() et le ORDER BY final de la requête sont la même chose.", a: false, exp: "L un fixe l ordre du classement dans la fenêtre, l autre l ordre d affichage : ils sont indépendants." },
+    { type: "input", q: "Quelle clause fait repartir le classement à 1 dans chaque groupe ?", ph: "PART...", a: ["PARTITION BY", "PARTITION"], exp: "PARTITION BY region : un classement séparé par région." },
+    { type: "qcm", q: "Pour dédupliquer une table, quelle fonction de rang faut-il impérativement choisir ?", opts: ["RANK", "DENSE_RANK", "ROW_NUMBER", "NTILE"], a: 2, exp: "Seule ROW_NUMBER garantit un survivant unique ; RANK laisserait plusieurs lignes au rang 1." },
+    { type: "qcm", q: "« Les 2 meilleurs vendeurs de chaque région » s obtient avec…", opts: ["LIMIT 2", "TOP 2", "ROW_NUMBER OVER (PARTITION BY region ORDER BY montant DESC) dans une CTE, puis WHERE rang <= 2", "GROUP BY region HAVING COUNT(*) = 2"], a: 2, exp: "LIMIT et TOP limitent le résultat global, pas par groupe." },
+    { type: "input", q: "Quel mot-clé limite le résultat en MySQL et PostgreSQL ?", ph: "L...", a: ["LIMIT"], exp: "LIMIT 5. SQL Server écrit SELECT TOP 5." },
+    { type: "input", q: "Quel mot-clé limite le résultat en SQL Server ?", ph: "T...", a: ["TOP"], exp: "SELECT TOP 5 * FROM ... — placé juste après SELECT, sans parenthèses obligatoires." },
+    { type: "vf", q: "SELECT TOP 2 WITH TIES existe uniquement en SQL Server.", a: true, exp: "Ailleurs, on reproduit ce comportement avec RANK() <= 2 dans une CTE." },
+    { type: "qcm", q: "La syntaxe standard SQL:2008 pour limiter est…", opts: ["LIMIT 5", "TOP 5", "OFFSET 0 ROWS FETCH NEXT 5 ROWS ONLY", "ROWNUM <= 5"], a: 2, exp: "FETCH NEXT est reconnu par PostgreSQL, SQL Server 2012+ et Oracle 12c+." },
+    { type: "input", q: "Quelle fonction découpe un classement en 4 paquets égaux (quartiles) ?", ph: "NT...", a: ["NTILE", "NTILE(4)", "NTILE()"], exp: "NTILE(4) OVER (ORDER BY montant DESC) : le quartile 1 est le top 25 %." },
+    { type: "qcm", q: "Si deux vendeurs sont à égalité au 2e rang, WHERE rang <= 2 renvoie…", opts: ["2 lignes avec ROW_NUMBER, 3 lignes avec RANK", "Toujours 2 lignes", "Toujours 3 lignes", "Une erreur"], a: 0, exp: "ROW_NUMBER tranche arbitrairement ; RANK garde les deux ex aequo." },
+    { type: "vf", q: "ROW_NUMBER, RANK et DENSE_RANK s écrivent de la même façon en MySQL 8, PostgreSQL et SQL Server.", a: true, exp: "C est une des rares zones parfaitement portables du SQL avancé." }
+  ],
+  final: {
+    title: "Exercice final — Le podium des vendeurs",
+    intro: `<p>Les résultats commerciaux du trimestre, région par région.</p>
+<pre class="pseudo">-- VENTE(id, vendeur, region, montant)
+-- vendeur | region | montant
+-- --------+--------+--------
+-- Alice   | Nord   |    900
+-- Bob     | Nord   |    500
+-- Chloe   | Nord   |    500
+-- David   | Nord   |    200
+-- Emma    | Sud    |    700
+-- Farid   | Sud    |    650</pre>`,
+    questions: [
+      { type: "input", q: "Quel rang RANK() attribuera-t-il à David (région Nord) ?", ph: "un nombre", a: ["4"], exp: "Alice 1, Bob et Chloe ex aequo au rang 2 (places 2 et 3), donc David est 4e." },
+      { type: "input", q: "Quel rang DENSE_RANK() attribuera-t-il à David ?", ph: "un nombre", a: ["3"], exp: "Trois valeurs distinctes : 900 (1), 500 (2), 200 (3)." },
+      { type: "qcm", q: "Avec ROW_NUMBER() OVER (PARTITION BY region ORDER BY montant DESC), Emma reçoit…", opts: ["Le numéro 5", "Le numéro 1, car le compteur repart à 1 dans la région Sud", "Le numéro 4", "NULL"], a: 1, exp: "PARTITION BY isole chaque région : la numérotation redémarre." },
+      { type: "qcm", q: "Pour obtenir exactement 2 lignes par région, quelle fonction utiliser dans la CTE ?", opts: ["RANK", "DENSE_RANK", "ROW_NUMBER", "NTILE"], a: 2, exp: "RANK renverrait 3 lignes pour le Nord à cause de l égalité Bob/Chloe." },
+      { type: "vf", q: "SELECT TOP 2 ... ORDER BY montant DESC donnerait le même résultat que le Top 2 par région.", a: false, exp: "TOP limite le résultat global (2 lignes en tout), pas 2 lignes par région." }
+    ],
+    solution: `<pre class="pseudo">-- PARTIE 1 : les trois classements cote a cote, pour comparer
+SELECT region,
+       vendeur,
+       montant,
+       ROW_NUMBER() OVER (PARTITION BY region ORDER BY montant DESC) AS num,
+       RANK()       OVER (PARTITION BY region ORDER BY montant DESC) AS rang,
+       DENSE_RANK() OVER (PARTITION BY region ORDER BY montant DESC) AS dense
+FROM VENTE
+ORDER BY region, montant DESC;
+
+-- region | vendeur | montant | num | rang | dense
+-- -------+---------+---------+-----+------+------
+-- Nord   | Alice   |     900 |   1 |    1 |     1
+-- Nord   | Bob     |     500 |   2 |    2 |     2
+-- Nord   | Chloe   |     500 |   3 |    2 |     2
+-- Nord   | David   |     200 |   4 |    4 |     3
+-- Sud    | Emma    |     700 |   1 |    1 |     1
+-- Sud    | Farid   |     650 |   2 |    2 |     2
+
+-- PARTIE 2 : le Top 2 de chaque region, exactement 2 lignes par region
+WITH classement AS (
+  SELECT region,
+         vendeur,
+         montant,
+         ROW_NUMBER() OVER (
+           PARTITION BY region        -- un classement par region
+           ORDER BY montant DESC      -- le plus gros montant en tete
+         ) AS rang
+  FROM VENTE
+)
+SELECT region, rang, vendeur, montant
+FROM classement
+WHERE rang &lt;= 2                       -- le filtre porte sur la CTE, pas sur la fenetre
+ORDER BY region, rang;
+
+-- region | rang | vendeur | montant
+-- -------+------+---------+--------
+-- Nord   |    1 | Alice   |     900
+-- Nord   |    2 | Bob     |     500
+-- Sud    |    1 | Emma    |     700
+-- Sud    |    2 | Farid   |     650
+
+-- Variante « avec ex aequo » : remplacer ROW_NUMBER par RANK
+-- --&gt; le Nord renverrait alors 3 lignes (Alice, Bob et Chloe).
+-- En SQL Server sans partition, le raccourci equivalent serait
+-- SELECT TOP 2 WITH TIES ... ORDER BY montant DESC.</pre>
+<p>Tu sais classer. Demain, on regarde la ligne d à côté avec <code>LAG</code> et <code>LEAD</code>.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "sgbd-j21", title: "La dernière commande de chaque client", level: 3,
+    statement: "La table COMMANDE(id, client, montant, date_cmd, statut) contient l historique complet. Écris une requête qui affiche, pour chaque client, sa commande la plus récente uniquement (une seule ligne par client, même si deux commandes tombent le même jour). Ajoute une colonne indiquant le rang de cette commande dans le total des commandes du client, et une colonne comptant le nombre total de commandes de ce client. Commente chaque ligne, et précise en commentaire ce qui changerait en SQL Server.",
+    hints: [
+      "Une seule ligne par client, même en cas d égalité de date : c est le critère qui impose ROW_NUMBER plutôt que RANK.",
+      "PARTITION BY client fait repartir la numérotation à 1 pour chaque client ; ORDER BY date_cmd DESC place la plus récente en rang 1.",
+      "COUNT(*) OVER (PARTITION BY client) donne le nombre total de commandes du client sans détruire les lignes. Le filtre rang = 1 se met dans la requête principale, jamais dans le WHERE de la CTE."
+    ],
+    solution: "WITH classement AS (\n  SELECT id,\n         client,\n         montant,\n         date_cmd,\n         statut,\n         ROW_NUMBER() OVER (\n           PARTITION BY client        -- une numerotation par client\n           ORDER BY date_cmd DESC,    -- la plus recente en rang 1\n                    id DESC           -- departage les ex aequo de date\n         ) AS rang,\n         COUNT(*) OVER (PARTITION BY client) AS nb_commandes  -- total du client\n  FROM COMMANDE\n)\nSELECT client,\n       id          AS derniere_commande,\n       date_cmd,\n       montant,\n       statut,\n       nb_commandes\nFROM classement\nWHERE rang = 1                        -- une seule ligne par client\nORDER BY date_cmd DESC;\n\n-- client | derniere_commande | date_cmd   | montant | statut  | nb_commandes\n-- -------+-------------------+------------+---------+---------+-------------\n-- Chloe  |              1042 | 2024-06-18 |  240.00 | livree  |            7\n-- Alice  |              1039 | 2024-06-12 |   85.50 | en_cours|            3\n-- Bob    |              1021 | 2024-05-30 |  310.00 | livree  |            1\n\n-- En SQL Server : la requete est IDENTIQUE (ROW_NUMBER, PARTITION BY,\n-- COUNT OVER et WITH s ecrivent pareil). Seule difference si on voulait\n-- limiter le resultat global : LIMIT 10 deviendrait SELECT TOP 10.\n-- En MySQL 5.7, rien de tout cela n existe : il faudrait une auto-jointure\n-- sur MAX(date_cmd) par client.",
+    note: "Le second critère de tri (id DESC) est ce qui rend la requête déterministe : sans lui, deux commandes du même jour donneraient un résultat qui peut changer d une exécution à l autre. Prends l habitude d ajouter systématiquement un départageur unique dans le ORDER BY d un ROW_NUMBER. Note aussi que la même CTE porte deux fonctions de fenêtre différentes : rien n empêche d en empiler autant qu on veut." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>
