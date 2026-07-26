@@ -1,0 +1,158 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Écrire un DAO pour une table (LivreDAO)",
+  subtitle: "Les cinq méthodes qui couvrent tout le cycle de vie d'un livre.",
+  theory: `
+<h3>1. L'interface d'un DAO complet</h3>
+<p>Un DAO de table expose en général cinq méthodes qui couvrent le CRUD plus la recherche par identifiant :</p>
+<pre class="pseudo">List&lt;Livre&gt; lireTout();                                 // READ : tous les livres
+Livre rechercheParId(int id);                          // READ : un livre précis (ou null)
+boolean creer(Livre l);                                // CREATE : insère un livre
+boolean update(Livre l);                               // UPDATE : modifie un livre
+boolean supprimer(int id);                             // DELETE : supprime par id</pre>
+<div class="tip">Remarque la signature : c'est le DAO qui reçoit le Bean (<code>creer(Livre l)</code>) ou l'id (<code>supprimer(int id)</code>). Le Bean, lui, reste passif.</div>
+
+<h3>2. CREATE : insérer avec un PreparedStatement</h3>
+<p>Un <strong>PreparedStatement</strong> est une requête <em>précompilée et paramétrée</em> : les valeurs remplacent des <code>?</code>. Il protège contre les <strong>injections SQL</strong> et gère proprement les types (String, int, double).</p>
+<pre class="pseudo">public boolean creer(Livre l) {                         // insère le Bean reçu
+    String sql = "INSERT INTO livres (titre, annee, prix_unitaire, section_id, collection_id) "
+               + "VALUES (?, ?, ?, ?, ?)";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setString(1, l.getTitre());                   // 1er ? = titre
+        p.setInt(2, l.getAnnee());                      // 2e ? = année
+        p.setDouble(3, l.getPrix());                    // 3e ? = prix
+        p.setInt(4, l.getSectionId());                  // 4e ? = section_id (FK)
+        p.setInt(5, l.getCollectionId());               // 5e ? = collection_id (FK)
+        int n = p.executeUpdate(); p.close();
+        return n &gt; 0;                                   // vrai si insertion réussie
+    } catch (SQLException e) { return false; }
+}</pre>
+
+<h3>3. READ par id : rechercheParId</h3>
+<p>Cette méthode renvoie <em>un seul</em> Bean, ou <code>null</code> si l'id n'existe pas. Elle est indispensable avant une modification (afficher les valeurs actuelles).</p>
+<pre class="pseudo">public Livre rechercheParId(int id) {                   // cherche un livre précis
+    String sql = "SELECT * FROM livres WHERE livre_id = ?";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setInt(1, id);                                // paramètre du WHERE
+        ResultSet rs = p.executeQuery();
+        if (rs.next()) {                                // au plus une ligne
+            Livre l = new Livre();
+            l.setId(rs.getInt("livre_id"));
+            l.setTitre(rs.getString("titre"));
+            l.setPrix(rs.getDouble("prix_unitaire"));
+            rs.close(); p.close();
+            return l;                                   // le livre trouvé
+        }
+        rs.close(); p.close();
+    } catch (SQLException e) { }
+    return null;                                        // aucun livre : null
+}</pre>
+
+<h3>4. UPDATE et DELETE</h3>
+<pre class="pseudo">public boolean update(Livre l) {                        // modifie un livre existant
+    String sql = "UPDATE livres SET titre=?, annee=?, prix_unitaire=? WHERE livre_id=?";
+    // setString(1,...); setInt(2,...); setDouble(3,...); setInt(4, l.getId());
+    // return executeUpdate() &gt; 0;
+}
+public boolean supprimer(int id) {                      // supprime par id
+    String sql = "DELETE FROM livres WHERE livre_id = ?";
+    // setInt(1, id); return executeUpdate() &gt; 0;
+}</pre>
+<div class="warn">Le <code>WHERE livre_id = ?</code> est vital dans UPDATE et DELETE : sans lui, toute la table serait affectée. Le paramètre vient toujours du Bean (<code>l.getId()</code>) ou de l'argument (<code>id</code>).</div>
+
+<h3>5. Les getters indispensables</h3>
+<p>Les getters du Bean ne sont pas décoratifs : la Vue s'en sert pour afficher les valeurs actuelles avant modification (<code>livre.getTitre()</code>), le Contrôleur pour cibler la ligne (<code>getId()</code> dans le <code>WHERE</code>), et le DAO pour extraire les données à réinsérer.</p>
+<div class="tip">Astuce validation : le Contrôleur peut vérifier le prix (par ex. <code>prix &gt; 0</code>) <em>avant</em> d'appeler le DAO. Et même s'il ne le fait pas, la contrainte <code>CHECK (prix_unitaire &gt;= 0)</code> de <code>library_db</code> protégera l'intégrité.</div>`,
+  exercises: [
+    { type: "qcm", q: "Combien de méthodes couvre typiquement un DAO de table (CRUD + recherche) ?", opts: ["2", "5", "10", "1"], a: 1, exp: "lireTout, rechercheParId, creer, update, supprimer." },
+    { type: "qcm", q: "creer(Livre l) reçoit…", opts: ["Un id", "Un Bean Livre", "Un ResultSet", "Une String SQL"], a: 1, exp: "Le DAO reçoit l'objet à insérer." },
+    { type: "input", q: "Objet JDBC paramétré et sécurisé contre les injections : Prepared_____", a: ["Statement", "PreparedStatement"], exp: "Requête précompilée avec des ?." },
+    { type: "qcm", q: "rechercheParId renvoie quoi si l'id n'existe pas ?", opts: ["Une liste vide", "null", "false", "0"], a: 1, exp: "Un seul objet ou null." },
+    { type: "input", q: "Pour lire le résultat d'un PreparedStatement SELECT : p.execute_____()", a: ["Query", "executeQuery"], exp: "executeQuery() renvoie un ResultSet." },
+    { type: "input", q: "Pour injecter un entier en 1re position : p.set_____(1, id)", a: ["Int", "setInt"], exp: "setInt(index, valeur)." },
+    { type: "vf", q: "supprimer(int id) doit contenir une clause WHERE livre_id = ?.", a: true, exp: "Sinon toute la table est supprimée." },
+    { type: "qcm", q: "Avant de modifier un livre, on appelle d'abord…", opts: ["supprimer()", "rechercheParId() pour afficher les valeurs actuelles", "creer()", "lireTout()"], a: 1, exp: "On montre l'existant puis on met à jour." },
+    { type: "input", q: "Méthode JDBC exécutée par creer/update/supprimer : execute_____()", a: ["Update", "executeUpdate"], exp: "Renvoie le nombre de lignes affectées." },
+    { type: "qcm", q: "Le WHERE de l'UPDATE est ciblé par…", opts: ["Le titre", "l.getId()", "Le prix", "Le Scanner"], a: 1, exp: "La clé primaire cible la ligne." },
+    { type: "vf", q: "Le PreparedStatement gère automatiquement les types (String, int, double).", a: true, exp: "Via setString/setInt/setDouble." },
+    { type: "qcm", q: "if (rs.next()) dans rechercheParId sert à…", opts: ["Boucler sur toutes les lignes", "Lire l'unique ligne éventuelle", "Fermer la connexion", "Insérer"], a: 1, exp: "Au plus une ligne pour un id." },
+    { type: "vf", q: "Le Contrôleur peut valider prix > 0 avant d'appeler le DAO.", a: true, exp: "Validation applicative en amont." },
+    { type: "qcm", q: "La contrainte CHECK (prix_unitaire >= 0) protège…", opts: ["La Vue", "L'intégrité même si le code Java est permissif", "Le Scanner", "Le driver"], a: 1, exp: "Dernière barrière côté base." },
+    { type: "input", q: "Nombre de ? dans l'INSERT (titre, annee, prix, section_id, collection_id) : _____", a: ["5", "cinq"], exp: "Cinq colonnes, cinq paramètres." }
+  ],
+  final: {
+    title: "Exercice final — LivreDAO au complet",
+    intro: `<p>On écrit les méthodes creer, rechercheParId, update et supprimer d'un DAO de table.</p>`,
+    questions: [
+      { type: "qcm", q: "creer(Livre l) utilise…", opts: ["Un Statement concaténé", "Un PreparedStatement paramétré", "Un Scanner", "Un CallableStatement"], a: 1, exp: "Sécurité + typage." },
+      { type: "qcm", q: "rechercheParId(int id) renvoie…", opts: ["List<Livre>", "un Livre ou null", "boolean", "void"], a: 1, exp: "Un seul objet." },
+      { type: "qcm", q: "update(Livre l) cible la ligne avec…", opts: ["Rien", "WHERE livre_id = l.getId()", "un LIKE", "un ORDER BY"], a: 1, exp: "La clé primaire." },
+      { type: "vf", q: "supprimer(int id) exécute DELETE ... WHERE livre_id = ?.", a: true, exp: "Suppression ciblée." },
+      { type: "vf", q: "Un id inexistant fait renvoyer null à rechercheParId.", a: true, exp: "Le contrôleur teste ce null avant d'agir." }
+    ],
+    solution: `<pre class="pseudo">public boolean creer(Livre l) {                         // CREATE
+    String sql = "INSERT INTO livres (titre, annee, prix_unitaire, section_id, collection_id) "
+               + "VALUES (?, ?, ?, ?, ?)";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setString(1, l.getTitre()); p.setInt(2, l.getAnnee());
+        p.setDouble(3, l.getPrix());
+        p.setInt(4, l.getSectionId()); p.setInt(5, l.getCollectionId());
+        int n = p.executeUpdate(); p.close();
+        return n &gt; 0;
+    } catch (SQLException e) { return false; }
+}
+
+public boolean update(Livre l) {                        // UPDATE
+    String sql = "UPDATE livres SET titre=?, annee=?, prix_unitaire=? WHERE livre_id=?";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setString(1, l.getTitre()); p.setInt(2, l.getAnnee());
+        p.setDouble(3, l.getPrix()); p.setInt(4, l.getId());   // WHERE ciblé
+        int n = p.executeUpdate(); p.close();
+        return n &gt; 0;
+    } catch (SQLException e) { return false; }
+}
+
+public boolean supprimer(int id) {                      // DELETE
+    String sql = "DELETE FROM livres WHERE livre_id = ?";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setInt(1, id); int n = p.executeUpdate(); p.close();
+        return n &gt; 0;
+    } catch (SQLException e) { return false; }
+}</pre>
+<p>Un DAO de table complet et réutilisable. Demain : gérer plusieurs tables et les jointures.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes méthodes DAO ici…",
+  items: [
+  { id: "projsgbd-j21", title: "creer() et rechercheParId() pour AuteurDAO", level: 3,
+    statement: "Complète AuteurDAO avec deux méthodes : creer(Auteur a) qui insère un auteur (nom, prenom) via un PreparedStatement et renvoie true/false, et rechercheParId(int id) qui renvoie l'Auteur correspondant ou null.",
+    hints: [
+      "creer : INSERT INTO auteurs (nom, prenom) VALUES (?, ?) ; setString(1, a.getNom()) ; setString(2, a.getPrenom()).",
+      "rechercheParId : SELECT * FROM auteurs WHERE auteur_id = ? ; setInt(1, id) ; executeQuery().",
+      "Dans rechercheParId, if (rs.next()) remplis un Auteur et renvoie-le, sinon renvoie null."
+    ],
+    solution: "public boolean creer(Auteur a) {                        // CREATE\n    String sql = \"INSERT INTO auteurs (nom, prenom) VALUES (?, ?)\";\n    try {\n        Connection c = DatabaseConnection.getInstance().getConnection();\n        PreparedStatement p = c.prepareStatement(sql);   // requete preparee\n        p.setString(1, a.getNom());                     // 1er ? = nom\n        p.setString(2, a.getPrenom());                  // 2e ? = prenom\n        int n = p.executeUpdate();                      // execute l'INSERT\n        p.close();                                      // ferme l'outil\n        return n > 0;                                   // vrai si insertion reussie\n    } catch (SQLException e) { return false; }          // echec signale\n}\n\npublic Auteur rechercheParId(int id) {                  // READ par id\n    String sql = \"SELECT * FROM auteurs WHERE auteur_id = ?\";\n    try {\n        Connection c = DatabaseConnection.getInstance().getConnection();\n        PreparedStatement p = c.prepareStatement(sql);\n        p.setInt(1, id);                                // parametre du WHERE\n        ResultSet rs = p.executeQuery();                // execute le SELECT\n        if (rs.next()) {                                // au plus une ligne\n            Auteur a = new Auteur();\n            a.setAuteurId(rs.getInt(\"auteur_id\"));\n            a.setNom(rs.getString(\"nom\"));\n            a.setPrenom(rs.getString(\"prenom\"));\n            rs.close(); p.close();\n            return a;                                   // l'auteur trouve\n        }\n        rs.close(); p.close();\n    } catch (SQLException e) { }\n    return null;                                        // aucun auteur : null\n}",
+    note: "creer() reçoit le Bean et le transforme en INSERT paramétré ; rechercheParId() renvoie soit l'objet, soit null. Ce null est important : le contrôleur le testera avant de proposer une modification, évitant ainsi une NullPointerException. Les deux méthodes utilisent des PreparedStatement, comme partout ailleurs, pour la sécurité et le bon typage." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

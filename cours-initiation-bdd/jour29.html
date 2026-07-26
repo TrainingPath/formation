@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 29</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 29,
+  title: "Les verrous (LOCK TABLES)",
+  subtitle: "Contrôler l'accès concurrent aux données pour éviter les conflits.",
+  theory: `
+<h3>1. Qu'est-ce qu'un verrou ?</h3>
+<p>Un <strong>verrou</strong> (<em>lock</em>) est le complément indispensable des transactions. Quand une session pose un verrou sur un élément de la base, elle <strong>restreint ou interdit l'accès</strong> à cet élément aux <strong>autres sessions</strong>. C'est ce qui permet à plusieurs utilisateurs de travailler en même temps sans que leurs modifications se marchent dessus.</p>
+<div class="tip">Une <strong>session</strong> est une connexion à la base. Chaque utilisateur d'une application (site web, jeu en ligne…) ouvre sa propre session. La <strong>concurrence</strong> désigne l'accès simultané aux données par plusieurs sessions.</div>
+
+<h3>2. Verrou de table ou verrou de ligne ?</h3>
+<p>On peut verrouiller une <strong>table entière</strong> ou seulement <strong>certaines lignes</strong>. Comme un verrou bloque les autres sessions, il vaut mieux verrouiller la <strong>plus petite portion possible</strong> pour laisser un maximum de concurrence.</p>
+<pre class="pseudo">-- Si l'on travaille avec les chiens de la table Animal :
+-- Verrou de TABLE  : bloque toute la table Animal (chiens, chats, oiseaux... tout est bloque)
+-- Verrou de LIGNE  : bloque seulement les lignes des chiens
+--                    (les autres sessions peuvent encore travailler sur les chats, etc.)</pre>
+<div class="warn">Règle d'or : préférez, autant que possible, les verrous de LIGNE aux verrous de TABLE. Plus la concurrence reste possible, mieux c'est pour les performances.</div>
+
+<h3>3. Poser un verrou de table : LOCK TABLES</h3>
+<p>La commande <code>LOCK TABLES</code> verrouille une ou plusieurs tables. Deux modes :</p>
+<p><code>READ</code> (verrou de <strong>lecture</strong>) : les autres sessions peuvent toujours <strong>lire</strong> la table, mais ne peuvent plus la <strong>modifier</strong>.</p>
+<p><code>WRITE</code> (verrou d'<strong>écriture</strong>) : les autres sessions ne peuvent plus <strong>ni lire ni modifier</strong> la table.</p>
+<pre class="pseudo">LOCK TABLES Espece READ,          -- verrou de lecture sur Espece
+            Adoption AS adopt WRITE;   -- verrou d'ecriture sur Adoption (via l'alias adopt)</pre>
+
+<h3>4. Déverrouiller : UNLOCK TABLES</h3>
+<p><code>UNLOCK TABLES</code> relâche <strong>tous</strong> les verrous de table de la session en une fois (on ne peut pas en préciser un seul). De plus, un nouveau <code>LOCK TABLES</code> commence par <strong>relâcher tous les verrous existants</strong> avant d'en poser de nouveaux : il faut donc acquérir tous les verrous nécessaires en une <strong>seule</strong> commande <code>LOCK TABLES</code>.</p>
+<pre class="pseudo">UNLOCK TABLES;   -- relache tous les verrous de table de la session</pre>
+
+<h3>5. Conséquences pour la session qui a verrouillé</h3>
+<p>Poser un verrou de table impose des contraintes à la session elle-même :</p>
+<pre class="pseudo">-- 1) Elle ne peut plus acceder qu'aux tables qu'elle a verrouillees.
+-- 2) Elle doit utiliser exactement le nom (ou l'alias) donne lors du LOCK.
+--    Verrou pose sur 'Espece' -> SELECT ... FROM Espece  OK
+--                              -> SELECT ... FROM Espece AS x  ECHOUE (alias non verrouille)
+-- 3) Avec un verrou READ, elle peut lire mais PAS modifier la table.</pre>
+
+<h3>6. Verrous de ligne : automatiques et explicites</h3>
+<p>Les <strong>verrous de ligne</strong> n'existent que sur les tables InnoDB. Les requêtes de modification les posent <strong>automatiquement</strong> :</p>
+<pre class="pseudo">-- UPDATE / DELETE  : verrou exclusif automatique sur les lignes du WHERE
+-- INSERT           : verrou exclusif sur la ligne inseree
+-- SELECT simple    : AUCUN verrou par defaut</pre>
+<p>Pour verrouiller explicitement des lignes lors d'une lecture, on ajoute une clause à la fin du <code>SELECT</code> :</p>
+<pre class="pseudo">-- Verrou PARTAGE : les autres peuvent lire, mais pas modifier
+SELECT * FROM Animal WHERE espece_id = 5 LOCK IN SHARE MODE;
+
+-- Verrou EXCLUSIF : les autres ne peuvent ni lire (avec verrou) ni modifier
+SELECT * FROM Animal WHERE espece_id = 5 FOR UPDATE;</pre>
+
+<h3>7. Verrous de ligne et transactions</h3>
+<p>Un verrou de ligne est <strong>lié à la transaction</strong> dans laquelle il est posé : il dure tant que la transaction n'est pas terminée, et il est <strong>levé automatiquement</strong> au <code>COMMIT</code> ou au <code>ROLLBACK</code>. C'est pourquoi les verrous de ligne s'utilisent <strong>en conjonction avec les transactions</strong> : on ouvre une transaction, on lit les lignes en les verrouillant (FOR UPDATE), on les modifie, puis on valide — ce qui libère les verrous.</p>
+<pre class="pseudo">START TRANSACTION;
+SELECT prix FROM Espece WHERE id = 5 FOR UPDATE;   -- verrouille la ligne pendant qu'on decide
+UPDATE Espece SET prix = 20 WHERE id = 5;          -- personne d'autre n'a pu modifier entre-temps
+COMMIT;                                             -- valide et libere le verrou</pre>
+<div class="tip">Partagé (LOCK IN SHARE MODE) = « je lis, vous pouvez lire aussi mais pas modifier ». Exclusif (FOR UPDATE) = « je vais probablement modifier, ne touchez pas ». C'est le mécanisme derrière l'Isolation vue hier.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un verrou sert à…", opts: ["Trier les lignes", "Restreindre l'accès à des données pour les autres sessions", "Supprimer des doublons", "Créer une clé"], a: 1, exp: "Un verrou limite l'accès concurrent des autres sessions." },
+    { type: "qcm", q: "La concurrence désigne…", opts: ["Le tri des données", "L'accès simultané aux données par plusieurs sessions", "Le nombre de colonnes", "Un type de jointure"], a: 1, exp: "Concurrence = accès simultané par plusieurs sessions." },
+    { type: "qcm", q: "En général, il vaut mieux verrouiller…", opts: ["Toute la base", "La plus petite portion possible (préférer les lignes)", "Toujours la table entière", "Rien du tout"], a: 1, exp: "Plus la portion verrouillée est petite, plus la concurrence reste possible." },
+    { type: "qcm", q: "LOCK TABLES … READ signifie que les autres sessions…", opts: ["Ne peuvent ni lire ni modifier", "Peuvent lire mais pas modifier", "Peuvent tout faire", "Sont déconnectées"], a: 1, exp: "Un verrou READ autorise la lecture, interdit la modification." },
+    { type: "qcm", q: "LOCK TABLES … WRITE signifie que les autres sessions…", opts: ["Peuvent lire seulement", "Ne peuvent ni lire ni modifier la table", "Peuvent modifier", "Ne sont pas affectées"], a: 1, exp: "Un verrou WRITE interdit lecture et modification aux autres." },
+    { type: "qcm", q: "UNLOCK TABLES…", opts: ["Relâche un seul verrou choisi", "Relâche tous les verrous de table de la session", "Verrouille toutes les tables", "Ferme la session"], a: 1, exp: "UNLOCK TABLES relâche tous les verrous de table d'un coup." },
+    { type: "qcm", q: "Un nouveau LOCK TABLES…", opts: ["S'ajoute aux verrous existants", "Relâche d'abord tous les verrous existants avant d'en poser de nouveaux", "Est interdit", "Ferme la transaction"], a: 1, exp: "Il faut donc tout verrouiller en une seule commande LOCK TABLES." },
+    { type: "qcm", q: "Après un verrou de table, la session ne peut accéder…", opts: ["À aucune table", "Qu'aux tables qu'elle a verrouillées, avec le nom/alias donné", "À toutes les tables", "Qu'aux vues"], a: 1, exp: "Elle est limitée aux tables verrouillées et au nom exact utilisé." },
+    { type: "qcm", q: "Quelle clause pose un verrou EXCLUSIF sur les lignes lues ?", opts: ["LOCK IN SHARE MODE", "FOR UPDATE", "READ", "GROUP BY"], a: 1, exp: "SELECT … FOR UPDATE pose un verrou exclusif." },
+    { type: "qcm", q: "Quelle clause pose un verrou PARTAGÉ sur les lignes lues ?", opts: ["FOR UPDATE", "LOCK IN SHARE MODE", "WRITE", "UNLOCK"], a: 1, exp: "SELECT … LOCK IN SHARE MODE pose un verrou partagé." },
+    { type: "vf", q: "Un SELECT simple (sans clause spéciale) pose un verrou par défaut sur les lignes lues.", a: false, exp: "Faux : un SELECT simple ne pose aucun verrou par défaut." },
+    { type: "vf", q: "Un verrou de ligne est levé automatiquement au COMMIT ou au ROLLBACK.", a: true, exp: "Le verrou de ligne est lié à la transaction qui le pose." },
+    { type: "input", q: "Quelle commande (deux mots) verrouille une table ? ___ Espece READ", a: ["LOCK TABLES", "lock tables"], ph: "deux mots-clés", exp: "LOCK TABLES verrouille une ou plusieurs tables." },
+    { type: "input", q: "Quelle commande (deux mots) relâche tous les verrous de table ?", a: ["UNLOCK TABLES", "unlock tables"], ph: "deux mots-clés", exp: "UNLOCK TABLES relâche tous les verrous de table." },
+    { type: "input", q: "Quelle clause (deux mots) ajoutée à un SELECT pose un verrou exclusif sur les lignes lues ?", a: ["FOR UPDATE", "for update"], ph: "deux mots-clés", exp: "SELECT … FOR UPDATE pose un verrou exclusif." }
+  ],
+  final: {
+    title: "Exercice final — Verrouiller pour une adoption",
+    intro: `<p>Base animalerie InnoDB. Tables Espece(id, nom, prix), Animal(id, nom, espece_id, disponible), Adoption(client_id, animal_id, paye). Plusieurs employés adoptent des animaux en même temps.</p>`,
+    questions: [
+      { type: "qcm", q: "Empêcher les autres de MODIFIER la table Espece tout en les laissant la lire :", opts: ["LOCK TABLES Espece WRITE", "LOCK TABLES Espece READ", "UNLOCK TABLES", "FOR UPDATE"], a: 1, exp: "READ = les autres lisent mais ne modifient pas." },
+      { type: "qcm", q: "Empêcher toute lecture ET modification de la table Adoption par les autres :", opts: ["LOCK TABLES Adoption READ", "LOCK TABLES Adoption WRITE", "SELECT ... LOCK IN SHARE MODE", "UNLOCK TABLES"], a: 1, exp: "WRITE bloque lecture et modification pour les autres." },
+      { type: "qcm", q: "Verrouiller seulement la ligne de l'animal qu'on va adopter, pendant une transaction :", opts: ["LOCK TABLES Animal WRITE", "SELECT ... WHERE id = 49 FOR UPDATE", "UNLOCK TABLES", "SELECT ... (simple)"], a: 1, exp: "FOR UPDATE pose un verrou exclusif sur la ligne, dans la transaction." },
+      { type: "qcm", q: "Quand les verrous de ligne de la transaction sont-ils levés ?", opts: ["Jamais", "Au COMMIT ou au ROLLBACK", "Après le premier SELECT", "À la fermeture du serveur"], a: 1, exp: "Le verrou de ligne dure jusqu'à la fin de la transaction." },
+      { type: "vf", q: "Il vaut mieux verrouiller une ligne qu'une table entière pour préserver la concurrence.", a: true, exp: "Un verrou plus fin laisse plus de sessions travailler en parallèle." }
+    ],
+    solution: `<pre class="pseudo">-- Adoption fiable avec un verrou de LIGNE dans une transaction (approche recommandee)
+START TRANSACTION;
+-- On verrouille et on lit la ligne de l'animal convoite
+SELECT disponible FROM Animal WHERE id = 49 FOR UPDATE;   -- verrou exclusif sur cette ligne
+-- (si disponible) on enregistre l'adoption et on marque l'animal indisponible
+INSERT INTO Adoption (client_id, animal_id, paye) VALUES (10, 49, 1);
+UPDATE Animal SET disponible = 0 WHERE id = 49;
+COMMIT;   -- valide et libere le verrou de ligne
+
+-- Alternative avec verrou de TABLE (bloque toute la table, moins de concurrence) :
+LOCK TABLES Animal WRITE;
+-- ... requetes ...
+UNLOCK TABLES;</pre>
+<p>Verrous de table (LOCK TABLES) ou de ligne (FOR UPDATE), tu contrôles l'accès concurrent. Demain : variables utilisateur et requêtes préparées.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "initbdd-j29", title: "Verrouiller deux tables", level: 2,
+    statement: "Base animalerie. Tu vas enregistrer une adoption : tu dois pouvoir LIRE la table Espece (sans la modifier) et MODIFIER la table Adoption. Écris la commande LOCK TABLES qui pose, en une seule instruction, un verrou de lecture sur Espece et un verrou d'écriture sur Adoption. Ajoute ensuite la commande qui relâchera ces verrous.",
+    hints: [
+      "Une seule commande LOCK TABLES doit poser les deux verrous (un nouveau LOCK TABLES effacerait les précédents).",
+      "READ pour Espece (lecture seule), WRITE pour Adoption (lecture + écriture pour toi, tout bloqué pour les autres).",
+      "UNLOCK TABLES relâche tous les verrous de table de la session."
+    ],
+    solution: "LOCK TABLES Espece READ,       -- verrou de lecture : les autres peuvent lire, pas modifier\n            Adoption WRITE;    -- verrou d'ecriture : les autres ne peuvent ni lire ni modifier\n\n-- ... on execute ici les requetes de lecture sur Espece\n--     et de modification sur Adoption ...\n\nUNLOCK TABLES;                 -- relache TOUS les verrous de table de la session\n\n-- Rappel : les deux verrous doivent etre poses par la MEME commande LOCK TABLES,\n-- car un nouveau LOCK TABLES commence par relacher les verrous existants.",
+    note: "READ autorise les autres sessions à lire Espece mais pas à la modifier ; WRITE leur interdit tout accès à Adoption. Poser les deux verrous en une seule commande est indispensable, sinon le second LOCK TABLES libérerait le premier verrou." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

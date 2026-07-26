@@ -1,0 +1,165 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les classes entités (POJO) et le CRUD console",
+  subtitle: "Une classe Java qui connaît sa table et sait se sauvegarder elle-même.",
+  theory: `
+<h3>1. Rappel : l'architecture MVC</h3>
+<p>Le <strong>MVC</strong> (Modèle-Vue-Contrôleur) est une <em>architecture logicielle</em> : elle découpe l'application en trois responsabilités séparées, pour faciliter la maintenance et l'évolution.</p>
+<ul>
+<li><strong>M — Modèle</strong> : gère les données et la logique d'accès à la base (le SQL).</li>
+<li><strong>V — Vue</strong> : gère l'interface. En mode console, ce sont les <code>System.out.println()</code> et les saisies <code>Scanner</code>.</li>
+<li><strong>C — Contrôleur</strong> : fait le lien entre la Vue et le Modèle. Il reçoit les ordres de la Vue et pilote le Modèle.</li>
+</ul>
+<p>Aujourd'hui, nous commençons par le <strong>Modèle</strong>, appliqué à notre fil rouge : la base <code>library_db</code> (livres, auteurs, ventes, commissions).</p>
+
+<h3>2. La classe entité (POJO) « intelligente »</h3>
+<p>Un <strong>POJO</strong> (<em>Plain Old Java Object</em>, « bon vieil objet Java tout simple ») est une classe ordinaire : des attributs privés, un constructeur, des getters et setters. Une <strong>entité</strong> est un POJO qui représente une <em>ligne d'une table</em> de la base.</p>
+<p>Dans ce cours, notre entité est <strong>intelligente</strong> : contrairement à un simple objet de données, elle <em>connaît sa table SQL</em> et porte ses propres méthodes CRUD. Ce style s'appelle <strong>Active Record</strong> : l'objet sait se lire, se sauvegarder et se supprimer tout seul. La Vue et le Contrôleur n'écrivent jamais de SQL.</p>
+<div class="tip">CRUD = les quatre opérations de base sur des données : <strong>C</strong>reate (créer), <strong>R</strong>ead (lire), <strong>U</strong>pdate (mettre à jour), <strong>D</strong>elete (supprimer).</div>
+
+<h3>3. Attributs et constructeur : l'entité Section</h3>
+<p>Commençons par la table la plus simple, <code>sections</code> (colonnes <code>section_id</code>, <code>nom_section</code>). Chaque colonne devient un attribut privé.</p>
+<pre class="pseudo">public class Section {                                  // entité : représente la table sections
+    private int sectionId;                              // colonne section_id (clé primaire)
+    private String nomSection;                          // colonne nom_section
+
+    public Section() { }                                // constructeur vide : utile pour la lecture
+    public Section(String nomSection) {                 // constructeur de création
+        this.nomSection = nomSection;                   // on mémorise le nom reçu
+    }
+    public int getSectionId() { return sectionId; }     // getter : lu par la Vue
+    public String getNomSection() { return nomSection; }
+    public void setNomSection(String n) { this.nomSection = n; }   // setter : renseigné par le Contrôleur
+}</pre>
+
+<h3>4. Les quatre méthodes CRUD</h3>
+<p>L'entité encapsule les requêtes SQL. Voici la création et la lecture. La connexion est obtenue par le <strong>Singleton</strong> <code>DatabaseConnection</code> (une instance unique, partagée par toute l'application).</p>
+<pre class="pseudo">public boolean creer() {                                // insère l'objet courant dans la base
+    String sql = "INSERT INTO sections (nom_section) VALUES (?)";   // requête paramétrée
+    try {
+        Connection conn = DatabaseConnection.getInstance().getConnection();   // connexion unique
+        PreparedStatement pstmt = conn.prepareStatement(sql);   // requête préparée (sécurisée)
+        pstmt.setString(1, this.nomSection);            // on injecte le nom à la place du ?
+        int lignes = pstmt.executeUpdate();             // exécute l'INSERT ; renvoie le nb de lignes
+        pstmt.close();                                  // on ferme l'outil, PAS la connexion
+        return lignes &gt; 0;                              // vrai si une ligne a bien été insérée
+    } catch (SQLException e) {                           // en cas d'erreur SQL
+        return false;                                   // on signale l'échec au contrôleur
+    }
+}
+
+public List&lt;Section&gt; lireTout() {                       // renvoie toutes les sections
+    List&lt;Section&gt; liste = new ArrayList&lt;&gt;();             // liste résultat (vide au départ)
+    String sql = "SELECT * FROM sections";              // on lit toute la table
+    try {
+        Connection conn = DatabaseConnection.getInstance().getConnection();
+        Statement stmt = conn.createStatement();        // Statement simple (aucun paramètre)
+        ResultSet rs = stmt.executeQuery(sql);          // exécute le SELECT ; renvoie les lignes
+        while (rs.next()) {                             // pour chaque ligne du résultat
+            Section s = new Section();                  // on crée un objet vide
+            s.sectionId = rs.getInt("section_id");      // on remplit depuis la colonne
+            s.nomSection = rs.getString("nom_section");
+            liste.add(s);                               // on ajoute l'objet à la liste
+        }
+        rs.close(); stmt.close();                       // on ferme ResultSet et Statement
+    } catch (SQLException e) { }
+    return liste;                                       // on renvoie la liste d'objets Java
+}</pre>
+<p><code>mettreAJour()</code> (UPDATE … SET … WHERE section_id = ?) et <code>supprimer()</code> (DELETE … WHERE section_id = ?) suivent le même schéma : un <code>PreparedStatement</code>, puis <code>executeUpdate()</code>.</p>
+
+<h3>5. Le Singleton : ne pas fermer la connexion</h3>
+<p>Puisque la connexion est un <strong>Singleton</strong> (instance unique), la « porte » de la base doit rester ouverte tant que l'application tourne. On ne ferme que les <em>outils</em> de travail (<code>Statement</code>, <code>ResultSet</code>) à chaque opération, mais jamais la <code>Connection</code>.</p>
+<div class="warn">Si on ferme la <code>Connection</code> dans une méthode CRUD, l'application se bloque après la première opération : la lecture fermerait la porte et empêcherait l'ajout suivant. On ferme les outils, on garde la connexion.</div>
+<div class="tip">Le grand avantage : la Vue et le Contrôleur ignorent totalement le SQL. Si demain on passe de la console à JavaFX, seule la Vue change — le Modèle reste identique.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans MVC, qui contient le SQL ?", opts: ["La Vue", "Le Modèle", "Le Contrôleur", "Le Scanner"], a: 1, exp: "Le Modèle (l'entité) encapsule les requêtes SQL." },
+    { type: "qcm", q: "Un POJO, c'est…", opts: ["Un objet Java simple (attributs, getters/setters)", "Une requête SQL", "Un serveur", "Un pilote JDBC"], a: 0, exp: "Plain Old Java Object." },
+    { type: "qcm", q: "Le style « Active Record » signifie que…", opts: ["La Vue écrit le SQL", "L'objet sait se lire et se sauvegarder lui-même", "On n'utilise pas de base", "Le contrôleur stocke les données"], a: 1, exp: "L'entité porte ses méthodes CRUD." },
+    { type: "input", q: "Le sigle des 4 opérations de base (Créer, Lire, Modifier, Supprimer) : _____", a: ["CRUD", "crud"], exp: "Create, Read, Update, Delete." },
+    { type: "input", q: "Méthode SQL exécutée par un INSERT/UPDATE/DELETE en JDBC : execute_____()", a: ["Update", "executeUpdate"], exp: "executeUpdate() renvoie le nombre de lignes affectées." },
+    { type: "input", q: "Méthode JDBC qui exécute un SELECT et renvoie les lignes : execute_____()", a: ["Query", "executeQuery"], exp: "executeQuery() renvoie un ResultSet." },
+    { type: "vf", q: "Dans une méthode CRUD, il faut fermer la Connection du Singleton après usage.", a: false, exp: "Non : on ferme Statement et ResultSet, jamais la Connection partagée." },
+    { type: "qcm", q: "Que renvoie lireTout() ?", opts: ["Un ResultSet", "Une List d'objets Section", "Un booléen", "Une String"], a: 1, exp: "Une List<Section> : les lignes converties en objets Java." },
+    { type: "qcm", q: "Pour insérer une valeur en sécurité, on utilise…", opts: ["Un Statement + concaténation", "Un PreparedStatement + set...(...)", "System.out", "un Scanner"], a: 1, exp: "PreparedStatement paramétré." },
+    { type: "input", q: "Objet JDBC qui parcourt les lignes d'un SELECT : Result_____", a: ["Set", "ResultSet"], exp: "ResultSet, parcouru avec rs.next()." },
+    { type: "vf", q: "La classe entité connaît le nom de sa table SQL.", a: true, exp: "C'est ce qui la rend « intelligente » (Active Record)." },
+    { type: "qcm", q: "rs.getInt(\"section_id\") sert à…", opts: ["Insérer un entier", "Lire la colonne section_id de la ligne courante", "Fermer le ResultSet", "Ouvrir la connexion"], a: 1, exp: "On mappe la colonne vers l'attribut." },
+    { type: "input", q: "Méthode du ResultSet qui avance d'une ligne dans une boucle while : _____()", a: ["next", "next()"], exp: "while (rs.next()) { ... }." },
+    { type: "vf", q: "Le Contrôleur et la Vue écrivent des requêtes SQL directement.", a: false, exp: "Non : seul le Modèle parle SQL." },
+    { type: "qcm", q: "Avantage principal de tout ce découpage :", opts: ["Le code est plus lent", "Changer d'interface n'impacte que la Vue", "On supprime la base", "On évite les getters"], a: 1, exp: "Séparation des responsabilités : Vue interchangeable." }
+  ],
+  final: {
+    title: "Exercice final — L'entité Section",
+    intro: `<p>On construit l'entité Section de <code>library_db</code>, capable de se lire et de se créer.</p>`,
+    questions: [
+      { type: "qcm", q: "Les attributs de l'entité correspondent…", opts: ["Aux boutons", "Aux colonnes de la table", "Aux menus", "Aux fichiers"], a: 1, exp: "sectionId ↔ section_id, nomSection ↔ nom_section." },
+      { type: "qcm", q: "creer() doit utiliser…", opts: ["Un Statement concaténé", "Un PreparedStatement paramétré", "Un Scanner", "Un System.out"], a: 1, exp: "Sécurité + typage." },
+      { type: "qcm", q: "lireTout() renvoie…", opts: ["void", "une List<Section>", "un int", "un ResultSet"], a: 1, exp: "Des objets Java prêts pour la Vue." },
+      { type: "vf", q: "On ferme le Statement mais pas la Connection Singleton.", a: true, exp: "On garde la porte ouverte." },
+      { type: "vf", q: "creer() renvoie false si l'INSERT échoue.", a: true, exp: "Le contrôleur pourra alors afficher un message d'erreur." }
+    ],
+    solution: `<pre class="pseudo">public class Section {                                  // entité de la table sections
+    private int sectionId;                              // colonne section_id
+    private String nomSection;                          // colonne nom_section
+
+    public Section() { }                                // constructeur vide (lecture)
+    public Section(String nom) { this.nomSection = nom; }   // constructeur de création
+    public int getSectionId() { return sectionId; }     // getter id
+    public String getNomSection() { return nomSection; } // getter nom
+
+    public boolean creer() {                            // CREATE
+        String sql = "INSERT INTO sections (nom_section) VALUES (?)";
+        try {
+            Connection c = DatabaseConnection.getInstance().getConnection();
+            PreparedStatement p = c.prepareStatement(sql);
+            p.setString(1, this.nomSection);            // injection sécurisée
+            int n = p.executeUpdate();                  // exécute l'INSERT
+            p.close();                                  // on ferme l'outil
+            return n &gt; 0;                               // vrai si insertion réussie
+        } catch (SQLException e) { return false; }      // échec signalé au contrôleur
+    }
+
+    public List&lt;Section&gt; lireTout() {                   // READ
+        List&lt;Section&gt; l = new ArrayList&lt;&gt;();
+        try {
+            Connection c = DatabaseConnection.getInstance().getConnection();
+            Statement s = c.createStatement();
+            ResultSet rs = s.executeQuery("SELECT * FROM sections");
+            while (rs.next()) {                         // pour chaque ligne
+                Section x = new Section();
+                x.sectionId = rs.getInt("section_id");
+                x.nomSection = rs.getString("nom_section");
+                l.add(x);
+            }
+            rs.close(); s.close();                      // outils fermés, connexion gardée
+        } catch (SQLException e) { }
+        return l;
+    }
+}</pre>
+<p>L'entité porte ses données ET son CRUD. Demain : le Contrôleur et la Vue console qui l'utilisent.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton entité Java ici…",
+  items: [
+  { id: "projsgbd-j17", title: "L'entité Auteur (table auteurs)", level: 2,
+    statement: "Écris la classe entité Auteur pour la table auteurs de library_db (colonnes auteur_id, nom, prenom). Ajoute les attributs privés, un constructeur de création (nom, prenom), les getters, et la méthode creer() qui insère l'auteur via un PreparedStatement (sans fermer la connexion Singleton).",
+    hints: [
+      "Trois attributs : private int auteurId; private String nom; private String prenom;",
+      "creer() : INSERT INTO auteurs (nom, prenom) VALUES (?, ?) puis setString(1,...) et setString(2,...).",
+      "Ferme le PreparedStatement mais PAS la Connection ; renvoie executeUpdate() > 0."
+    ],
+    solution: "public class Auteur {                                   // entite de la table auteurs\n    private int auteurId;                               // colonne auteur_id\n    private String nom;                                 // colonne nom\n    private String prenom;                              // colonne prenom\n\n    public Auteur() { }                                 // constructeur vide (lecture)\n    public Auteur(String nom, String prenom) {          // constructeur de creation\n        this.nom = nom;                                 // on memorise le nom\n        this.prenom = prenom;                           // on memorise le prenom\n    }\n    public int getAuteurId() { return auteurId; }       // getter id\n    public String getNom() { return nom; }              // getter nom\n    public String getPrenom() { return prenom; }        // getter prenom\n\n    public boolean creer() {                            // CREATE\n        String sql = \"INSERT INTO auteurs (nom, prenom) VALUES (?, ?)\";\n        try {\n            Connection c = DatabaseConnection.getInstance().getConnection();  // connexion unique\n            PreparedStatement p = c.prepareStatement(sql);   // requete preparee\n            p.setString(1, this.nom);                   // 1er ? = nom\n            p.setString(2, this.prenom);                // 2e ? = prenom\n            int n = p.executeUpdate();                  // execute l'INSERT\n            p.close();                                  // on ferme l'outil, pas la connexion\n            return n > 0;                               // vrai si insertion reussie\n        } catch (SQLException e) { return false; }      // echec signale au controleur\n    }\n}",
+    note: "L'entité Auteur suit exactement le même moule que Section : des attributs qui reflètent les colonnes, un constructeur de création, des getters pour la Vue, et un CRUD paramétré par PreparedStatement. On ne ferme jamais la connexion Singleton, seulement le Statement. C'est le patron que l'on répétera pour chaque table." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

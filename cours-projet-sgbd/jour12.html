@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Établir et fermer une connexion (DriverManager)",
+  subtitle: "Ouvrir un tunnel vers MySQL, le fermer proprement, mutualiser avec un Singleton.",
+  theory: `
+<h3>1. DriverManager : l'ouvreur de connexion</h3>
+<p><strong>DriverManager</strong> est la classe JDBC qui fabrique les connexions. On lui donne l'URL, l'utilisateur et le mot de passe ; il repère le bon driver et renvoie un objet <strong>Connection</strong> — le « tunnel » ouvert vers la base.</p>
+<pre class="pseudo">import java.sql.*;                                     // Connection, DriverManager, SQLException
+Connection conn = DriverManager.getConnection(        // demande une connexion
+    "jdbc:mysql://localhost:3306/library_db",         // URL de la base
+    "root",                                            // utilisateur
+    "motdepasse");                                     // mot de passe
+System.out.println("Connexion etablie !");            // si on arrive ici, tout va bien</pre>
+<div class="tip"><strong>Connection</strong> est une interface JDBC : elle représente une session active avec la base. Tout passe par elle : requêtes de lecture, d'écriture, transactions.</div>
+
+<h3>2. Utiliser la config plutôt que des valeurs en dur</h3>
+<p>On ne réécrit pas l'URL partout : on interroge la classe <code>DatabaseConfig</code> d'hier.</p>
+<pre class="pseudo">Connection conn = DriverManager.getConnection(        // connexion sans identifiants "en dur"
+    DatabaseConfig.getUrl(),                          // URL lue depuis config.properties
+    DatabaseConfig.getUser(),                         // utilisateur lu depuis le fichier
+    DatabaseConfig.getPassword());                    // mot de passe lu depuis le fichier</pre>
+
+<h3>3. Toujours fermer la connexion (SQLException)</h3>
+<p>Une connexion non fermée est une ressource gaspillée : elle épuise le SGBD. On la ferme avec <code>close()</code>. Comme une connexion peut échouer, on gère l'exception <strong>SQLException</strong> (l'erreur propre à JDBC). La syntaxe moderne est le <strong>try-with-resources</strong> : la ressource déclarée entre parenthèses est fermée automatiquement, même en cas d'erreur.</p>
+<pre class="pseudo">// try-with-resources : la connexion est fermee automatiquement a la fin
+try (Connection conn = DriverManager.getConnection(   // ressource "auto-fermante"
+        DatabaseConfig.getUrl(),
+        DatabaseConfig.getUser(),
+        DatabaseConfig.getPassword())) {
+    System.out.println("Connecte a library_db.");     // travail avec la base ici
+} catch (SQLException e) {                             // en cas d'echec de connexion
+    System.out.println("Erreur : " + e.getMessage()); // message d'erreur JDBC
+}
+// pas besoin de conn.close() : le try-with-resources s'en charge</pre>
+
+<h3>4. Le patron Singleton pour la connexion</h3>
+<p>Ouvrir 50 connexions identiques vers MySQL est un gaspillage. Le <strong>Singleton</strong> garantit qu'une <strong>seule instance</strong> de connexion existe dans toute l'application, partagée par tous.</p>
+<pre class="pseudo">public class DatabaseConnection {                     // gestionnaire de connexion unique
+    private static Connection instance;               // l'unique connexion partagee
+    private DatabaseConnection() { }                  // constructeur prive : on interdit le new externe
+    public static Connection getInstance() throws SQLException {   // point d'acces unique
+        if (instance == null || instance.isClosed()) {            // pas encore creee ou fermee ?
+            instance = DriverManager.getConnection(               // on (re)cree la connexion
+                DatabaseConfig.getUrl(),
+                DatabaseConfig.getUser(),
+                DatabaseConfig.getPassword());
+        }
+        return instance;                              // on renvoie toujours la meme connexion
+    }
+}</pre>
+<div class="tip">Le test <code>isClosed()</code> rend le Singleton robuste : si la base a coupé la connexion, il en recrée une automatiquement. On appelle ensuite partout <code>DatabaseConnection.getInstance()</code>.</div>
+
+<h3>5. Attention : on ne ferme pas la connexion partagée</h3>
+<p>Avec un Singleton, la connexion doit rester <strong>ouverte</strong> tant que l'application tourne. On ne ferme donc que les « outils » de travail (Statement, ResultSet, vus demain), <strong>jamais</strong> la Connection elle-même à l'intérieur des méthodes.</p>
+<div class="warn">Erreur classique : fermer la connexion partagée après une opération. La suivante échouerait faute de connexion. On garde la « porte » ouverte ; on ne referme que les outils.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle classe JDBC fournit une connexion via getConnection(...) ?", a: ["drivermanager"], ph: "classe", exp: "DriverManager.getConnection(...)." },
+    { type: "qcm", q: "Que représente un objet Connection ?", opts: ["Une table", "Une session active (tunnel) vers la base", "Un fichier .jar", "Une regex"], a: 1, exp: "Connection est la session ouverte avec le SGBD." },
+    { type: "input", q: "Quelle exception JDBC gère les erreurs de base de données ?", a: ["sqlexception"], ph: "classe d'exception", exp: "SQLException." },
+    { type: "qcm", q: "À quoi sert le try-with-resources ?", opts: ["À trier les résultats", "À fermer automatiquement la ressource, même en cas d'erreur", "À chiffrer", "À compiler"], a: 1, exp: "La ressource déclarée est fermée automatiquement." },
+    { type: "vf", q: "Une connexion non fermée gaspille les ressources du SGBD.", a: true, exp: "Il faut la fermer (ou laisser le try-with-resources le faire)." },
+    { type: "input", q: "Quelle méthode ferme explicitement une connexion ?", a: ["close", "close()"], ph: "méthode", exp: "conn.close()." },
+    { type: "qcm", q: "Le patron Singleton garantit…", opts: ["Plusieurs connexions", "Une seule instance de connexion partagée", "Aucune connexion", "Une nouvelle connexion par requête"], a: 1, exp: "Une instance unique pour toute l'application." },
+    { type: "vf", q: "Le constructeur d'un Singleton est privé pour empêcher les new externes.", a: true, exp: "On force le passage par getInstance()." },
+    { type: "input", q: "Quelle méthode vérifie si une connexion est fermée ?", a: ["isclosed", "isclosed()"], ph: "méthode", exp: "isClosed() (rend le Singleton robuste)." },
+    { type: "vf", q: "Avec un Singleton, on ferme la connexion partagée après chaque opération.", a: false, exp: "On la garde ouverte ; on ne ferme que Statement/ResultSet." },
+    { type: "qcm", q: "Pourquoi passer par DatabaseConfig pour l'URL et le mot de passe ?", opts: ["Pour aller plus lentement", "Pour éviter les valeurs en dur et centraliser la config", "Pour chiffrer la base", "Pour créer des tables"], a: 1, exp: "Les identifiants viennent de config.properties." },
+    { type: "qcm", q: "Le point d'accès unique du Singleton s'appelle par convention…", opts: ["main()", "getInstance()", "open()", "connect()"], a: 1, exp: "getInstance() renvoie l'instance unique." },
+    { type: "input", q: "Quelle méthode de getConnection reçoit l'URL en premier argument ? (classe appelante)", a: ["drivermanager"], ph: "classe", exp: "DriverManager.getConnection(url, user, password)." },
+    { type: "vf", q: "isClosed() permet au Singleton de recréer une connexion coupée.", a: true, exp: "Il vérifie et reconnecte si nécessaire." },
+    { type: "qcm", q: "Dans getConnection(url, user, password), le 3e argument est…", opts: ["la table", "le mot de passe", "le port", "le driver"], a: 1, exp: "URL, utilisateur, puis mot de passe." }
+  ],
+  final: {
+    title: "Exercice final — Connexion robuste",
+    intro: `<p>DriverManager, try-with-resources et Singleton.</p>`,
+    questions: [
+      { type: "input", q: "Classe qui ouvre une connexion :", a: ["drivermanager"], ph: "classe", exp: "DriverManager." },
+      { type: "input", q: "Exception à capturer :", a: ["sqlexception"], ph: "classe", exp: "SQLException." },
+      { type: "vf", q: "Le try-with-resources ferme la connexion automatiquement.", a: true, exp: "Fermeture garantie, même en cas d'erreur." },
+      { type: "qcm", q: "Le Singleton assure :", opts: ["une connexion par requête", "une instance de connexion unique et partagée", "aucune connexion", "deux connexions"], a: 1, exp: "Instance unique." },
+      { type: "vf", q: "On ne ferme jamais la connexion partagée d'un Singleton dans les méthodes du modèle.", a: true, exp: "On garde la porte ouverte ; on ferme les outils." }
+    ],
+    solution: `<pre class="pseudo">public class DatabaseConnection {                     // Singleton de connexion
+    private static Connection instance;               // unique connexion partagee
+    private DatabaseConnection() { }                  // constructeur prive
+    public static Connection getInstance() throws SQLException {
+        if (instance == null || instance.isClosed()) {// absente ou fermee ?
+            instance = DriverManager.getConnection(   // (re)creation
+                DatabaseConfig.getUrl(),
+                DatabaseConfig.getUser(),
+                DatabaseConfig.getPassword());
+        }
+        return instance;                              // toujours la meme connexion
+    }
+}
+// Usage : Connection c = DatabaseConnection.getInstance();
+// On ne fait PAS c.close() ici : la connexion reste ouverte pour l'appli.</pre>
+<p>La connexion est prête et mutualisée. Demain : lire des données avec Statement et ResultSet.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta méthode de connexion ici…",
+  items: [
+  { id: "projsgbd-j12", title: "Tester la connexion à library_db", level: 3,
+    statement: "Écris une méthode Java testerConnexion() qui ouvre une connexion à library_db via DriverManager en utilisant DatabaseConfig, affiche un message de succès, gère SQLException, et ferme automatiquement la connexion grâce au try-with-resources.",
+    hints: [
+      "Déclare la Connection dans les parenthèses du try (try-with-resources).",
+      "Appelle DriverManager.getConnection avec DatabaseConfig.getUrl(), getUser(), getPassword().",
+      "Capture SQLException et affiche e.getMessage()."
+    ],
+    solution: "import java.sql.*;                                          // Connection, DriverManager, SQLException\n\npublic static void testerConnexion() {                     // teste l'ouverture d'une connexion\n    try (Connection conn = DriverManager.getConnection(    // try-with-resources : fermeture auto\n            DatabaseConfig.getUrl(),                       // URL lue dans config.properties\n            DatabaseConfig.getUser(),                      // utilisateur\n            DatabaseConfig.getPassword())) {               // mot de passe\n        System.out.println(\"Connexion a library_db reussie !\");   // succes\n    } catch (SQLException e) {                             // echec de connexion\n        System.out.println(\"Echec : \" + e.getMessage());   // message d'erreur JDBC\n    }\n    // Aucune fermeture manuelle : le try-with-resources ferme conn automatiquement.\n}\n// Resultat attendu si la base et le driver sont OK :\n//   Connexion a library_db reussie !",
+    note: "Pour un simple test ponctuel, le try-with-resources suffit et garantit la fermeture. Dans l'application réelle (jour 16), on préférera le Singleton DatabaseConnection pour réutiliser une connexion unique et ne fermer que les Statement/ResultSet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

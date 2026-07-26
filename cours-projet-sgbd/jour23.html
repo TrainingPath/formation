@@ -1,0 +1,119 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 23</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 23,
+  title: "Transactions applicatives et gestion des erreurs",
+  subtitle: "Tout ou rien : garantir la cohérence quand plusieurs requêtes s'enchaînent.",
+  theory: `
+<h3>1. Le problème : une opération en deux étapes</h3>
+<p>Modifier les auteurs d'un livre se fait souvent en deux temps : <strong>supprimer</strong> les anciennes associations, puis <strong>insérer</strong> les nouvelles. Si le programme s'arrête <em>entre</em> les deux, le livre se retrouve <strong>sans aucun auteur</strong>. Il faut donc que les deux requêtes forment un bloc indivisible.</p>
+
+<h3>2. La transaction et l'ACID</h3>
+<p>Une <strong>transaction</strong> est un groupe d'opérations traitées comme une seule : soit toutes réussissent, soit aucune n'est appliquée. Elle respecte les propriétés <strong>ACID</strong> :</p>
+<ul>
+<li><strong>Atomicité</strong> : « tout ou rien ». On ne veut pas de suppression sans l'ajout qui suit.</li>
+<li><strong>Cohérence</strong> : la base passe d'un état valide à un autre, en respectant les contraintes (clés étrangères).</li>
+<li><strong>Isolation</strong> : les autres utilisateurs ne voient pas l'état intermédiaire.</li>
+<li><strong>Durabilité</strong> : une fois validé (<code>commit</code>), les données sont sauvées définitivement.</li>
+</ul>
+
+<h3>3. En JDBC : désactiver l'auto-commit</h3>
+<p>Par défaut, JDBC valide chaque requête aussitôt (<em>auto-commit</em>). Pour grouper, on le désactive, puis on valide manuellement avec <code>commit()</code> ou on annule avec <code>rollback()</code>.</p>
+<pre class="pseudo">Connection c = DatabaseConnection.getInstance().getConnection();
+try {
+    c.setAutoCommit(false);                             // début de transaction (on ne valide plus auto)
+    supprimerAnciensAuteurs(livreId);                   // étape 1 : DELETE
+    ajouterNouvelAuteur(livreId, auteurId, pct);        // étape 2 : INSERT
+    c.commit();                                         // les DEUX étapes sont validées ensemble
+} catch (SQLException e) {
+    c.rollback();                                       // une erreur : on annule TOUT
+} finally {
+    c.setAutoCommit(true);                              // on rétablit le mode normal (crucial !)
+}</pre>
+<div class="warn">Avec un Singleton, remettre <code>setAutoCommit(true)</code> dans le <code>finally</code> est <strong>vital</strong> : sinon toutes les futures requêtes de l'application resteraient « en attente » d'un commit et ne seraient jamais visibles.</div>
+
+<h3>4. commit et rollback</h3>
+<ul>
+<li><code>commit()</code> : valide définitivement toutes les opérations depuis le début de la transaction.</li>
+<li><code>rollback()</code> : annule toutes les opérations et ramène la base à son état d'avant la transaction.</li>
+</ul>
+<div class="tip">Le <code>rollback()</code> se place dans le <code>catch</code> : dès qu'une requête échoue, on annule le lot entier plutôt que de laisser la base à moitié modifiée.</div>
+
+<h3>5. Gérer les erreurs : laisser remonter l'exception</h3>
+<p>En vue d'une future interface graphique, le DAO ne doit <em>pas</em> avaler les erreurs en silence (pas de <code>e.printStackTrace()</code> muet). On préfère qu'il <strong>propage</strong> l'exception (<code>throws SQLException</code>) : ainsi le Contrôleur peut décider comment l'afficher (message clair, boîte de dialogue…).</p>
+<pre class="pseudo">public void modifierAuteurs(int livreId, int auteurId, double pct) throws SQLException {
+    // le DAO propage l'erreur : c'est le contrôleur qui décidera de l'affichage
+}</pre>
+<div class="tip">Une SQLException fréquente : violer une contrainte (clé étrangère, CHECK). Bien gérée, elle devient un message utile pour l'utilisateur plutôt qu'un plantage.</div>`,
+  exercises: [
+    { type: "input", q: "Groupe d'opérations « tout ou rien » : une _____", a: ["transaction"], exp: "Elle garantit l'atomicité." },
+    { type: "input", q: "Acronyme des 4 propriétés d'une transaction : _____", a: ["ACID", "acid"], exp: "Atomicité, Cohérence, Isolation, Durabilité." },
+    { type: "qcm", q: "Pour grouper des requêtes, on appelle d'abord…", opts: ["commit()", "setAutoCommit(false)", "rollback()", "close()"], a: 1, exp: "On désactive la validation automatique." },
+    { type: "input", q: "Méthode qui valide définitivement la transaction : _____()", a: ["commit", "commit()", "c.commit"], exp: "commit() rend les changements permanents." },
+    { type: "input", q: "Méthode qui annule toute la transaction en cas d'erreur : _____()", a: ["rollback", "rollback()", "c.rollback"], exp: "rollback() ramène la base à l'état initial." },
+    { type: "qcm", q: "Le rollback() se place typiquement dans le bloc…", opts: ["try", "catch", "finally", "main"], a: 1, exp: "Dès qu'une requête échoue." },
+    { type: "vf", q: "Il faut remettre setAutoCommit(true) dans le finally.", a: true, exp: "Sinon les futures requêtes du Singleton restent bloquées." },
+    { type: "qcm", q: "L'Atomicité signifie…", opts: ["Les données sont chiffrées", "Tout ou rien", "La base est rapide", "Les index sont créés"], a: 1, exp: "Aucune étape partielle." },
+    { type: "qcm", q: "L'Isolation garantit que…", opts: ["Les autres ne voient pas l'état intermédiaire", "La base est sauvegardée", "Le prix est validé", "La Vue est rapide"], a: 0, exp: "Pas de fuite d'état transitoire." },
+    { type: "vf", q: "En vue d'une IHM, le DAO doit propager (throws) les SQLException plutôt que les avaler.", a: true, exp: "Le contrôleur décide de l'affichage." },
+    { type: "qcm", q: "Modifier les auteurs d'un livre (supprimer puis ajouter) doit être…", opts: ["Deux transactions", "Une seule transaction atomique", "Sans transaction", "Dans la Vue"], a: 1, exp: "Éviter un livre sans auteur." },
+    { type: "vf", q: "Par défaut, JDBC valide chaque requête immédiatement (auto-commit).", a: true, exp: "On le désactive pour grouper." },
+    { type: "qcm", q: "La Durabilité signifie qu'après commit…", opts: ["On peut annuler", "Les données sont sauvées même en cas de coupure", "La connexion se ferme", "Le rollback est automatique"], a: 1, exp: "Persistance garantie." },
+    { type: "input", q: "Type d'exception levée par une violation de contrainte SQL : _____Exception", a: ["SQL", "SQLException"], exp: "SQLException remonte au contrôleur." },
+    { type: "vf", q: "Un e.printStackTrace() muet dans le DAO est déconseillé pour une future IHM.", a: true, exp: "L'utilisateur ne verrait rien à l'écran." }
+  ],
+  final: {
+    title: "Exercice final — Une transaction atomique",
+    intro: `<p>On sécurise la modification des auteurs d'un livre par une transaction commit/rollback.</p>`,
+    questions: [
+      { type: "qcm", q: "Avant les deux requêtes, on écrit…", opts: ["c.commit()", "c.setAutoCommit(false)", "c.rollback()", "c.close()"], a: 1, exp: "On ouvre la transaction." },
+      { type: "qcm", q: "Après les deux requêtes réussies…", opts: ["c.rollback()", "c.commit()", "rien", "c.close()"], a: 1, exp: "On valide l'ensemble." },
+      { type: "qcm", q: "En cas d'exception…", opts: ["c.commit()", "c.rollback()", "on ignore", "on relance le main"], a: 1, exp: "On annule tout." },
+      { type: "vf", q: "Le finally rétablit setAutoCommit(true).", a: true, exp: "Indispensable avec le Singleton." },
+      { type: "vf", q: "Sans transaction, un plantage entre DELETE et INSERT laisse le livre sans auteur.", a: true, exp: "C'est le risque évité." }
+    ],
+    solution: `<pre class="pseudo">public void modifierAuteurs(int livreId, int nouvelAuteurId, double pct) throws SQLException {
+    Connection c = DatabaseConnection.getInstance().getConnection();
+    try {
+        c.setAutoCommit(false);                         // ouverture de la transaction
+        // étape 1 : DELETE des anciennes associations
+        PreparedStatement d = c.prepareStatement("DELETE FROM livre_auteur WHERE livre_id = ?");
+        d.setInt(1, livreId); d.executeUpdate(); d.close();
+        // étape 2 : INSERT de la nouvelle association
+        PreparedStatement i = c.prepareStatement(
+            "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) VALUES (?, ?, ?)");
+        i.setInt(1, livreId); i.setInt(2, nouvelAuteurId); i.setDouble(3, pct);
+        i.executeUpdate(); i.close();
+        c.commit();                                     // tout réussit → on valide le lot
+    } catch (SQLException e) {
+        c.rollback();                                   // une erreur → on annule tout
+        throw e;                                        // on propage pour l'affichage
+    } finally {
+        c.setAutoCommit(true);                          // on rétablit le mode normal (crucial)
+    }
+}</pre>
+<p>Atomicité garantie : le livre n'est jamais laissé sans auteur. Demain : on quitte la console pour JavaFX.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta transaction ici…",
+  items: [
+  { id: "projsgbd-j23", title: "Une vente avec transaction", level: 3,
+    statement: "Écris une méthode enregistrerVente(int clientId, int livreId, double prixFinal) qui insère une vente dans une transaction : désactive l'auto-commit, exécute l'INSERT dans ventes, fais commit() en cas de succès et rollback() en cas d'erreur, puis rétablis setAutoCommit(true) dans un finally. Propage la SQLException.",
+    hints: [
+      "Récupère la Connection du Singleton, puis c.setAutoCommit(false).",
+      "PreparedStatement sur INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (?, ?, ?).",
+      "try { ... c.commit(); } catch(SQLException e){ c.rollback(); throw e; } finally { c.setAutoCommit(true); }"
+    ],
+    solution: "public void enregistrerVente(int clientId, int livreId, double prixFinal) throws SQLException {\n    Connection c = DatabaseConnection.getInstance().getConnection();  // connexion unique\n    try {\n        c.setAutoCommit(false);                         // debut de la transaction\n        String sql = \"INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (?, ?, ?)\";\n        PreparedStatement p = c.prepareStatement(sql);\n        p.setInt(1, clientId);                          // 1er ? = client\n        p.setInt(2, livreId);                           // 2e ? = livre\n        p.setDouble(3, prixFinal);                      // 3e ? = prix final\n        p.executeUpdate();                              // execute l'INSERT\n        p.close();                                      // ferme l'outil\n        c.commit();                                     // succes : on valide\n    } catch (SQLException e) {                           // une erreur SQL survient\n        c.rollback();                                   // on annule tout\n        throw e;                                         // on propage vers le controleur\n    } finally {\n        c.setAutoCommit(true);                          // on retablit le mode normal (crucial)\n    }\n}",
+    note: "Même pour une seule requête, encadrer par une transaction est une bonne habitude : le déclencheur trg_apres_vente_commission de library_db insère automatiquement les commissions APRES la vente. Si ce trigger échoue, le rollback annule aussi la vente, garantissant que vente et commissions restent cohérentes. Le setAutoCommit(true) du finally évite de bloquer les modules suivants qui partagent la connexion Singleton." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

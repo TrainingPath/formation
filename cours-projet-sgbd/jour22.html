@@ -1,0 +1,147 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 22</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 22,
+  title: "DAO et relations : gérer plusieurs tables",
+  subtitle: "Des jointures dans le DAO pour afficher des libellés, pas des ID.",
+  theory: `
+<h3>1. Le problème des ID « nus »</h3>
+<p>Afficher <em>« Section : 1 »</em> n'a aucun sens pour l'utilisateur. On préfère <em>« Section : Informatique »</em>. Or le nom vit dans une <strong>autre table</strong> (<code>sections</code>), reliée à <code>livres</code> par la clé étrangère <code>section_id</code>. La solution : une <strong>jointure</strong> (<code>JOIN</code>) dans le DAO.</p>
+<div class="tip">C'est la force du Modèle : masquer la complexité SQL. La Vue appelle une méthode simple et reçoit un objet déjà « augmenté » des libellés.</div>
+
+<h3>2. Enrichir le Bean : attributs de confort</h3>
+<p>On ajoute au Bean <code>Livre</code> des champs <code>String</code> pour stocker les noms récupérés par la jointure.</p>
+<pre class="pseudo">public class Livre {
+    private int id; private String titre; private double prix;
+    private int sectionId;                              // la FK (technique)
+    private String nomSection;                          // attribut de confort (le libellé)
+    // getter/setter pour nomSection…
+}</pre>
+
+<h3>3. La jointure dans le DAO : LEFT JOIN</h3>
+<p>Une <strong>jointure</strong> combine des lignes de plusieurs tables selon une condition. Deux variantes utiles :</p>
+<ul>
+<li><strong>INNER JOIN</strong> : n'affiche que les livres qui ont bien une section ET une collection valides (plus rigoureux).</li>
+<li><strong>LEFT JOIN</strong> : affiche <em>tous</em> les livres, même « orphelins » (section ou collection nulle). Plus permissif — on le privilégie ici.</li>
+</ul>
+<pre class="pseudo">public List&lt;Livre&gt; listeLivreAvecDetails() {            // livres + libellés
+    String sql = "SELECT l.*, s.nom_section, c.nom_collection "
+               + "FROM livres l "
+               + "LEFT JOIN sections s ON l.section_id = s.section_id "        // relie la section
+               + "LEFT JOIN collections c ON l.collection_id = c.collection_id"; // relie la collection
+    try {
+        Connection cx = DatabaseConnection.getInstance().getConnection();
+        Statement st = cx.createStatement();
+        ResultSet rs = st.executeQuery(sql);
+        List&lt;Livre&gt; liste = new ArrayList&lt;&gt;();
+        while (rs.next()) {
+            Livre l = new Livre();
+            l.setId(rs.getInt("livre_id"));
+            l.setTitre(rs.getString("titre"));
+            l.setNomSection(rs.getString("nom_section"));     // le libellé, pas l'ID
+            liste.add(l);
+        }
+        rs.close(); st.close();
+        return liste;
+    } catch (SQLException e) { return new ArrayList&lt;&gt;(); }
+}</pre>
+
+<h3>4. La relation N:M : la table de jointure</h3>
+<p>Un livre peut avoir plusieurs auteurs, et un auteur plusieurs livres : c'est une relation <strong>N:M</strong> (plusieurs-à-plusieurs). Elle est portée par la table <code>livre_auteur</code>, dont la <strong>clé primaire composée</strong> est le couple <code>(livre_id, auteur_id)</code>. Cette table porte aussi une donnée propre : <code>pourcentage_commission</code>.</p>
+<pre class="pseudo">public boolean lier(int livreId, int auteurId, double pct) {   // crée l'association
+    String sql = "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) "
+               + "VALUES (?, ?, ?)";
+    // setInt(1, livreId); setInt(2, auteurId); setDouble(3, pct);
+}</pre>
+<div class="warn">La commission n'appartient ni au livre seul ni à l'auteur seul, mais à leur <em>relation</em> : c'est pourquoi elle est stockée dans la table de jointure (un auteur peut toucher 10 % sur un livre et 15 % sur un autre).</div>
+
+<h3>5. Agréger les auteurs d'un livre</h3>
+<p>Pour lister les auteurs d'un livre sans dupliquer son titre, le DAO fait une deuxième lecture et regroupe les noms dans une <code>List&lt;String&gt;</code> à l'intérieur de l'objet <code>Livre</code>. La Vue appelle simplement <code>listerLivresComplets()</code> : elle ignore qu'une requête supplémentaire a été exécutée.</p>
+<div class="tip">Intégrité : grâce à l'<code>INNER JOIN</code> sur les trois tables (livres, auteurs, livre_auteur), on n'affiche que des données cohérentes. Une FK invalide (livre inexistant) est rejetée par la contrainte <code>fk_la_livre</code>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi faire une jointure dans le DAO ?", opts: ["Pour aller plus vite", "Pour afficher des libellés au lieu d'ID", "Pour fermer la connexion", "Pour valider un prix"], a: 1, exp: "« Informatique » plutôt que « 1 »." },
+    { type: "qcm", q: "Quel JOIN affiche aussi les livres « orphelins » (section nulle) ?", opts: ["INNER JOIN", "LEFT JOIN", "CROSS JOIN", "aucun"], a: 1, exp: "LEFT JOIN est permissif." },
+    { type: "qcm", q: "INNER JOIN est…", opts: ["Plus permissif", "Plus rigoureux (liens valides obligatoires)", "Sans WHERE", "Identique à LEFT"], a: 1, exp: "Exige des correspondances dans toutes les tables." },
+    { type: "input", q: "Type de relation « plusieurs-à-plusieurs » (notation) : _____", a: ["N:M", "n:m", "NM", "N-M"], exp: "Portée par une table de jointure." },
+    { type: "input", q: "Table de jointure entre livres et auteurs dans library_db : livre_____", a: ["auteur", "livre_auteur"], exp: "La table livre_auteur." },
+    { type: "vf", q: "La commission est stockée dans la table de jointure car elle appartient à la relation.", a: true, exp: "Ni au livre ni à l'auteur seul." },
+    { type: "qcm", q: "La clé primaire de livre_auteur est…", opts: ["livre_id seul", "auteur_id seul", "le couple (livre_id, auteur_id)", "pourcentage_commission"], a: 2, exp: "Clé primaire composée." },
+    { type: "input", q: "Attribut String ajouté au Bean Livre pour stocker le libellé de section : nom_____", a: ["Section", "nomSection"], exp: "Attribut de confort." },
+    { type: "vf", q: "Avec un LEFT JOIN, un livre sans collection reste affiché.", a: true, exp: "La table principale est toujours incluse." },
+    { type: "qcm", q: "On ne peut pas lier deux fois le même auteur au même livre car…", opts: ["Le prix l'interdit", "La clé primaire composée l'empêche", "Le LEFT JOIN l'interdit", "Le Scanner bloque"], a: 1, exp: "Unicité du couple." },
+    { type: "input", q: "Pour regrouper les auteurs d'un livre sans dupliquer le titre, on les met dans une List<_____>", a: ["String", "string"], exp: "Une List<String> dans l'objet Livre." },
+    { type: "vf", q: "La Vue sait qu'une deuxième requête SQL récupère les auteurs.", a: false, exp: "Non : c'est encapsulé dans le DAO/Modèle." },
+    { type: "qcm", q: "Lier un livre_id inexistant est rejeté par…", opts: ["La Vue", "La contrainte FK fk_la_livre", "Le try-catch du main", "Le getter"], a: 1, exp: "Intégrité référentielle." },
+    { type: "qcm", q: "l.section_id = s.section_id est…", opts: ["Un WHERE", "La condition de jointure (ON)", "Un ORDER BY", "Un GROUP BY"], a: 1, exp: "Condition du JOIN." },
+    { type: "vf", q: "La jointure permet à la Vue de rester ignorante de la structure SQL.", a: true, exp: "Abstraction / séparation des préoccupations." }
+  ],
+  final: {
+    title: "Exercice final — Jointures dans le DAO",
+    intro: `<p>On enrichit LivreDAO d'une lecture jointe et LivreAuteurDAO d'une association N:M.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour afficher le nom de section, on écrit…", opts: ["Un SELECT simple", "un LEFT JOIN sections ON l.section_id = s.section_id", "un DELETE", "un CALL"], a: 1, exp: "Jointure sur la FK." },
+      { type: "qcm", q: "listeLivreAvecDetails renvoie des Livre qui contiennent…", opts: ["Seulement des ID", "les libellés (nomSection, nomCollection)", "des ResultSet", "des Scanner"], a: 1, exp: "Objets augmentés." },
+      { type: "qcm", q: "lier(livreId, auteurId, pct) insère dans…", opts: ["livres", "auteurs", "livre_auteur", "sections"], a: 2, exp: "La table de jointure." },
+      { type: "vf", q: "Le pourcentage de commission est propre à chaque couple livre-auteur.", a: true, exp: "Donnée de la relation." },
+      { type: "vf", q: "Un LEFT JOIN affiche les livres même sans section renseignée.", a: true, exp: "Plus permissif que INNER." }
+    ],
+    solution: `<pre class="pseudo">// LivreDAO : lecture avec libellés (LEFT JOIN)
+public List&lt;Livre&gt; listeLivreAvecDetails() {
+    String sql = "SELECT l.*, s.nom_section, c.nom_collection "
+               + "FROM livres l "
+               + "LEFT JOIN sections s ON l.section_id = s.section_id "
+               + "LEFT JOIN collections c ON l.collection_id = c.collection_id";
+    List&lt;Livre&gt; liste = new ArrayList&lt;&gt;();
+    try {
+        Connection cx = DatabaseConnection.getInstance().getConnection();
+        Statement st = cx.createStatement();
+        ResultSet rs = st.executeQuery(sql);
+        while (rs.next()) {
+            Livre l = new Livre();
+            l.setId(rs.getInt("livre_id"));
+            l.setTitre(rs.getString("titre"));
+            l.setNomSection(rs.getString("nom_section"));
+            l.setNomCollection(rs.getString("nom_collection"));
+            liste.add(l);
+        }
+        rs.close(); st.close();
+    } catch (SQLException e) { }
+    return liste;
+}
+
+// LivreAuteurDAO : associer un auteur à un livre (N:M)
+public boolean lier(int livreId, int auteurId, double pct) {
+    String sql = "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) VALUES (?, ?, ?)";
+    try {
+        Connection c = DatabaseConnection.getInstance().getConnection();
+        PreparedStatement p = c.prepareStatement(sql);
+        p.setInt(1, livreId); p.setInt(2, auteurId); p.setDouble(3, pct);
+        int n = p.executeUpdate(); p.close();
+        return n &gt; 0;
+    } catch (SQLException e) { return false; }
+}</pre>
+<p>Le DAO masque toute la complexité relationnelle. Demain : les transactions et la gestion des erreurs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête jointe ici…",
+  items: [
+  { id: "projsgbd-j22", title: "Lister les auteurs d'un livre (jointure N:M)", level: 3,
+    statement: "Écris une méthode auteursDuLivre(int livreId) dans LivreAuteurDAO qui renvoie la liste des noms d'auteurs (avec leur pourcentage) d'un livre donné, en joignant livre_auteur et auteurs. Renvoie une List<String> du type « Asimov Isaac (12.0%) ».",
+    hints: [
+      "INNER JOIN entre livre_auteur la et auteurs a ON la.auteur_id = a.auteur_id, filtré par WHERE la.livre_id = ?.",
+      "SELECT a.nom, a.prenom, la.pourcentage_commission ; setInt(1, livreId).",
+      "Pour chaque ligne, construis une String et ajoute-la à la List<String>."
+    ],
+    solution: "public List<String> auteursDuLivre(int livreId) {       // auteurs d'un livre (relation N:M)\n    List<String> resultat = new ArrayList<>();          // liste des libelles a renvoyer\n    String sql = \"SELECT a.nom, a.prenom, la.pourcentage_commission \"\n               + \"FROM livre_auteur la \"\n               + \"INNER JOIN auteurs a ON la.auteur_id = a.auteur_id \"  // jointure sur la FK\n               + \"WHERE la.livre_id = ?\";                // filtre : le livre demande\n    try {\n        Connection c = DatabaseConnection.getInstance().getConnection();\n        PreparedStatement p = c.prepareStatement(sql);\n        p.setInt(1, livreId);                           // parametre du WHERE\n        ResultSet rs = p.executeQuery();                // execute le SELECT joint\n        while (rs.next()) {                             // pour chaque auteur\n            String ligne = rs.getString(\"nom\") + \" \"     // nom\n                         + rs.getString(\"prenom\")        // prenom\n                         + \" (\" + rs.getDouble(\"pourcentage_commission\") + \"%)\";  // commission\n            resultat.add(ligne);                        // on agrege dans la liste\n        }\n        rs.close(); p.close();                          // outils fermes\n    } catch (SQLException e) { }\n    return resultat;                                    // ex: [\"Asimov Isaac (12.0%)\"]\n}",
+    note: "L'INNER JOIN garantit que l'on ne récupère que des couples cohérents présents dans les trois tables. Le filtre WHERE la.livre_id = ? cible un livre précis, et l'on agrège les auteurs dans une List<String> plutôt que de dupliquer le titre du livre. La Vue appellera cette méthode sans jamais soupçonner la jointure sous-jacente : c'est tout l'intérêt du DAO." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

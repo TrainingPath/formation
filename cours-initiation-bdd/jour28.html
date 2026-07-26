@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 28</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 28,
+  title: "Les transactions (COMMIT, ROLLBACK, ACID)",
+  subtitle: "Grouper des requêtes en un bloc « tout ou rien » pour protéger l'intégrité des données.",
+  theory: `
+<h3>1. Le problème : une opération à moitié faite</h3>
+<p>Une <strong>transaction</strong> est un ensemble de requêtes exécutées comme un <strong>seul bloc</strong> : soit tout réussit, soit rien n'est appliqué. L'exemple classique est le <strong>virement bancaire</strong> : Monsieur Durant vire 300 € à Monsieur Dupont. Le traitement comporte deux étapes :</p>
+<pre class="pseudo">-- Etape 1 : on retire 300 du compte du donneur d'ordre
+-- Etape 2 : on ajoute 300 au compte du beneficiaire</pre>
+<p>Si une panne de courant survient <strong>pile entre l'étape 1 et l'étape 2</strong>, le compte de Durant est débité mais celui de Dupont n'est jamais crédité : 300 € se sont volatilisés. Sans transaction, la première requête reste validée toute seule. <strong>Avec</strong> une transaction, comme la seconde requête n'a pas abouti, la première n'aurait jamais été validée non plus.</p>
+
+<h3>2. Le principe : valider ou annuler tout le bloc</h3>
+<p>Dans une transaction, on exécute les requêtes une à une. Si toutes réussissent, on <strong>valide</strong> l'ensemble ; si l'une échoue ou si la transaction est interrompue, on <strong>annule</strong> tout. Deux termes de vocabulaire :</p>
+<pre class="pseudo">-- COMMIT   = valider (rendre les changements definitifs)  -> on "commite"
+-- ROLLBACK = annuler (revenir a l'etat de depart)         -> on fait un "rollback"</pre>
+
+<h3>3. Une condition : des tables transactionnelles (InnoDB)</h3>
+<p>Les transactions ne fonctionnent pas sur n'importe quelle table : elle doit être <strong>transactionnelle</strong>, ce qui dépend du <strong>moteur de stockage</strong>. Avec MySQL/MariaDB, le moteur <strong>InnoDB</strong> supporte les transactions (et les clés étrangères) ; l'ancien moteur <strong>MyISAM</strong> ne les supporte pas. C'est InnoDB qu'on utilise par défaut.</p>
+
+<h3>4. L'autocommit : le comportement par défaut</h3>
+<p>Par défaut, MySQL est en mode <strong>autocommit</strong> : chaque requête est <strong>immédiatement validée</strong>, impossible de revenir en arrière. Chaque requête forme donc une mini-transaction validée toute seule. Pour désactiver ce mode dans la session :</p>
+<pre class="pseudo">SET autocommit = 0;   -- desormais, chaque modification devra etre COMMITee pour prendre effet</pre>
+<div class="warn">SET autocommit = 0 ne vaut que pour la session courante. Si tu fermes ta connexion et en rouvres une, l'autocommit est de nouveau activé : les changements non commités sont perdus, comme s'il ne s'était rien passé.</div>
+
+<h3>5. COMMIT et ROLLBACK en action</h3>
+<p>Base « animalerie », tables <code>Animal</code> et <code>Espece</code>. On insère trois rats bruns et on change leur prix, puis on annule :</p>
+<pre class="pseudo">SET autocommit = 0;
+INSERT INTO Animal (nom, espece_id, date_naissance, sexe) VALUES
+   ('Baba', 5, '2012-02-13 15:45:00', 'F'),
+   ('Bibo', 5, '2012-02-13 15:48:00', 'M'),
+   ('Buba', 5, '2012-02-13 18:32:00', 'F');
+UPDATE Espece SET prix = 20 WHERE id = 5;   -- les rats bruns passent a 20 euros
+
+ROLLBACK;   -- ANNULE tout : Baba, Bibo, Buba disparaissent, le prix repasse a 10</pre>
+<p>Avec <code>COMMIT</code> à la place du <code>ROLLBACK</code>, les trois rats et le nouveau prix auraient été rendus définitifs.</p>
+
+<h3>6. Démarrer explicitement une transaction : START TRANSACTION</h3>
+<p>Plutôt que de désactiver l'autocommit globalement, on peut le laisser activé et ouvrir une transaction ponctuelle avec <code>START TRANSACTION</code> (commande SQL standard, préférée à <code>BEGIN</code>). Un <code>COMMIT</code> ou un <code>ROLLBACK</code> <strong>met fin</strong> à la transaction ; les requêtes suivantes seront de nouveau en autocommit tant qu'on n'ouvre pas une nouvelle transaction.</p>
+<pre class="pseudo">START TRANSACTION;                       -- ouvre la transaction
+   UPDATE compte SET solde = solde - 300 WHERE id = 1;   -- debit
+   UPDATE compte SET solde = solde + 300 WHERE id = 2;   -- credit
+COMMIT;                                  -- valide les deux etapes ensemble (ou ROLLBACK pour tout annuler)</pre>
+
+<h3>7. Les jalons (SAVEPOINT) : annuler seulement une partie</h3>
+<p>On ne peut pas imbriquer une transaction dans une autre, mais on peut poser des <strong>jalons</strong> (<code>SAVEPOINT</code>) : des points de repère permettant d'annuler seulement les requêtes faites <strong>depuis ce jalon</strong>, sans tout perdre.</p>
+<pre class="pseudo">START TRANSACTION;
+INSERT INTO Animal (nom, espece_id, ...) VALUES ('Popi', 5, ...);
+SAVEPOINT jalon1;                        -- point de repere
+INSERT INTO Animal (nom, espece_id, ...) VALUES ('Momo', 5, ...);
+ROLLBACK TO SAVEPOINT jalon1;            -- annule SEULEMENT l'insertion de Momo
+INSERT INTO Animal (nom, espece_id, ...) VALUES ('Mimi', 5, ...);
+COMMIT;                                  -- au final : Popi et Mimi existent, pas Momo</pre>
+
+<h3>8. La validation implicite (commandes DDL)</h3>
+<p>Attention : certaines commandes <strong>valident automatiquement</strong> la transaction en cours (comme un COMMIT) et ne peuvent pas être annulées. Ce sont notamment les commandes <strong>DDL</strong> qui modifient la structure de la base : <code>CREATE TABLE</code>, <code>ALTER TABLE</code>, <code>DROP TABLE</code>, <code>CREATE/DROP DATABASE</code>, <code>CREATE INDEX</code>… Un <code>START TRANSACTION</code> lancé à l'intérieur d'une transaction provoque aussi cette validation implicite.</p>
+
+<h3>9. Les critères ACID</h3>
+<p>Un système de transactions fiable doit respecter quatre critères, résumés par <strong>ACID</strong> :</p>
+<pre class="pseudo">-- A - Atomicite : la transaction est un tout indivisible (tout ou rien)
+-- C - Coherence : les donnees restent coherentes, meme en cas d'erreur ou d'interruption
+-- I - Isolation : une transaction n'interagit pas avec une autre ; ses changements
+--                 non commites sont INVISIBLES pour les autres sessions
+-- D - Durabilite : une fois commites, les changements sont stockes definitivement
+--                  (recuperables meme apres un crash serveur)</pre>
+<div class="tip">Isolation, concrètement : tant que tu n'as pas fait COMMIT, une autre session ne voit pas tes modifications. Un verrou (chapitre de demain) est même posé automatiquement pour empêcher une autre session d'écraser ton changement en cours.</div>`,
+  exercises: [
+    { type: "qcm", q: "Une transaction, c'est…", opts: ["Une seule requête isolée", "Un ensemble de requêtes exécutées comme un seul bloc (tout ou rien)", "Une sauvegarde du disque", "Un type de jointure"], a: 1, exp: "Toutes les requêtes du bloc réussissent ensemble ou sont annulées ensemble." },
+    { type: "qcm", q: "Dans l'exemple du virement, sans transaction, une panne entre les deux étapes provoque…", opts: ["Aucun problème", "Un débit sans crédit (300 € disparus)", "Un double crédit", "Une erreur de syntaxe"], a: 1, exp: "L'étape 1 reste validée seule : incohérence." },
+    { type: "qcm", q: "COMMIT sert à…", opts: ["Annuler les requêtes", "Valider (rendre définitifs) les changements", "Ouvrir une transaction", "Créer une table"], a: 1, exp: "COMMIT valide la transaction." },
+    { type: "qcm", q: "ROLLBACK sert à…", opts: ["Valider les changements", "Annuler les requêtes de la transaction", "Créer un jalon", "Verrouiller une table"], a: 1, exp: "ROLLBACK annule et revient à l'état de départ." },
+    { type: "qcm", q: "Quel moteur de stockage supporte les transactions ?", opts: ["MyISAM", "InnoDB", "CSV", "MEMORY"], a: 1, exp: "InnoDB est transactionnel ; MyISAM ne l'est pas." },
+    { type: "qcm", q: "Par défaut, MySQL est en mode…", opts: ["Rollback automatique", "Autocommit (chaque requête validée immédiatement)", "Transaction permanente", "Lecture seule"], a: 1, exp: "En autocommit, chaque requête est validée aussitôt." },
+    { type: "qcm", q: "Quelle commande démarre explicitement une transaction (standard SQL) ?", opts: ["BEGIN TRANSACTION;", "START TRANSACTION;", "OPEN;", "SET autocommit = 1;"], a: 1, exp: "START TRANSACTION est la commande standard recommandée." },
+    { type: "qcm", q: "Un COMMIT ou un ROLLBACK…", opts: ["N'a aucun effet sur la transaction", "Met fin à la transaction en cours", "Ouvre une nouvelle table", "Désactive InnoDB"], a: 1, exp: "Les deux terminent la transaction." },
+    { type: "qcm", q: "SAVEPOINT jalon1 permet de…", opts: ["Valider toute la transaction", "Poser un point de repère pour annuler seulement les requêtes faites depuis ce jalon", "Verrouiller une ligne", "Supprimer une table"], a: 1, exp: "ROLLBACK TO SAVEPOINT annule partiellement, jusqu'au jalon." },
+    { type: "qcm", q: "Les commandes DDL (CREATE, ALTER, DROP TABLE)…", opts: ["Peuvent être annulées par ROLLBACK", "Valident implicitement la transaction en cours (non annulables)", "Sont interdites", "Ne font rien"], a: 1, exp: "Le DDL provoque un COMMIT implicite non annulable." },
+    { type: "vf", q: "Les changements non commités d'une transaction sont invisibles pour les autres sessions.", a: true, exp: "C'est le critère d'Isolation d'ACID." },
+    { type: "vf", q: "SET autocommit = 0 reste actif même après reconnexion.", a: false, exp: "Faux : cela ne vaut que pour la session courante." },
+    { type: "input", q: "Quelle commande (un mot) valide définitivement une transaction ?", a: "COMMIT", ph: "un mot-clé SQL", exp: "COMMIT valide la transaction." },
+    { type: "input", q: "Quelle commande (un mot) annule les requêtes d'une transaction ?", a: "ROLLBACK", ph: "un mot-clé SQL", exp: "ROLLBACK annule la transaction." },
+    { type: "input", q: "Que signifie le A de ACID ? (un mot)", a: ["atomicite", "atomicité", "atomic"], ph: "un mot", exp: "A pour Atomicité : la transaction est un tout indivisible." }
+  ],
+  final: {
+    title: "Exercice final — Un virement fiable",
+    intro: `<p>Table compte(id, titulaire, solde) sur un moteur InnoDB. Monsieur Durant (id 1) vire 300 € à Monsieur Dupont (id 2). On veut que les deux étapes soient indivisibles.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour ouvrir la transaction :", opts: ["COMMIT;", "START TRANSACTION;", "ROLLBACK;", "SET autocommit = 1;"], a: 1, exp: "START TRANSACTION ouvre le bloc." },
+      { type: "qcm", q: "Si les deux UPDATE réussissent, on termine par :", opts: ["ROLLBACK;", "COMMIT;", "SAVEPOINT;", "DROP;"], a: 1, exp: "COMMIT valide les deux étapes ensemble." },
+      { type: "qcm", q: "Si le second UPDATE échoue, on écrit :", opts: ["COMMIT;", "ROLLBACK;", "SET autocommit = 0;", "SAVEPOINT jalon;"], a: 1, exp: "ROLLBACK annule tout, y compris le débit déjà fait." },
+      { type: "qcm", q: "Pendant la transaction non commitée, une autre session voit le solde de Durant…", opts: ["Déjà diminué de 300", "Inchangé (isolation)", "À zéro", "Négatif"], a: 1, exp: "Isolation : les changements non commités sont invisibles ailleurs." },
+      { type: "vf", q: "Ce traitement doit tourner sur une table InnoDB pour que les transactions fonctionnent.", a: true, exp: "InnoDB est le moteur transactionnel." }
+    ],
+    solution: `<pre class="pseudo">START TRANSACTION;                       -- ouvre le bloc indivisible
+   UPDATE compte SET solde = solde - 300 WHERE id = 1;   -- etape 1 : debit Durant
+   UPDATE compte SET solde = solde + 300 WHERE id = 2;   -- etape 2 : credit Dupont
+COMMIT;                                  -- tout a reussi : on valide les deux etapes
+
+-- En cas de probleme entre les deux etapes, on ferait a la place :
+-- ROLLBACK;   -- annule le debit deja effectue : aucun euro ne disparait</pre>
+<p>Atomicité, cohérence, isolation, durabilité : tes données sont protégées. Demain : les verrous, qui contrôlent l'accès concurrent aux tables.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "initbdd-j28", title: "Transaction avec jalon", level: 3,
+    statement: "Base animalerie, table Animal(id, nom, espece_id, date_naissance, sexe). Écris une transaction (START TRANSACTION … COMMIT) qui : insère le rat 'Popi', pose un jalon nommé jalon1, insère le rat 'Momo', puis annule UNIQUEMENT l'insertion de Momo grâce au jalon, insère enfin le rat 'Mimi', et valide le tout. À la fin, seuls Popi et Mimi doivent exister.",
+    hints: [
+      "Ouvre avec START TRANSACTION; et termine par COMMIT;.",
+      "Après l'insertion de Popi, pose SAVEPOINT jalon1;.",
+      "Pour annuler seulement Momo : ROLLBACK TO SAVEPOINT jalon1; avant d'insérer Mimi."
+    ],
+    solution: "START TRANSACTION;\nINSERT INTO Animal (nom, espece_id, date_naissance, sexe)\n   VALUES ('Popi', 5, '2007-03-11 12:45:00', 'M');\nSAVEPOINT jalon1;                       -- point de repere apres Popi\nINSERT INTO Animal (nom, espece_id, date_naissance, sexe)\n   VALUES ('Momo', 5, '2007-03-12 05:23:00', 'M');\nROLLBACK TO SAVEPOINT jalon1;           -- annule SEULEMENT l'insertion de Momo\nINSERT INTO Animal (nom, espece_id, date_naissance, sexe)\n   VALUES ('Mimi', 5, '2007-03-12 22:03:00', 'F');\nCOMMIT;                                 -- valide le reste\n\n-- Resultat attendu : Popi et Mimi sont enregistres, Momo ne l'est pas,\n-- alors qu'on n'a utilise qu'une seule transaction validee a la fin.",
+    note: "Le jalon (SAVEPOINT) permet une annulation partielle : ROLLBACK TO SAVEPOINT n'annule que les requêtes faites depuis le jalon, sans détruire ce qui précède ni terminer la transaction. Seul le COMMIT final clôt le bloc." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

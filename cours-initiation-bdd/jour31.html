@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : concevoir et interroger une base",
+  subtitle: "Mettre bout à bout tout le cours : concevoir, créer, peupler et interroger une petite base.",
+  theory: `
+<h3>1. L'objectif du projet</h3>
+<p>Ce dernier jour rassemble tout ce que tu as appris : conception d'un schéma, création des tables (LDD), insertion des données (LMD), interrogation avec filtres, jointures, agrégats et sous-requêtes, le tout sécurisé par une transaction. On construit une petite base pour une <strong>boutique en ligne</strong>, la base <code>Boutique</code>. Lis l'énoncé, essaie de tout écrire toi-même, puis compare au corrigé pas à pas.</p>
+
+<h3>2. Étape A — Concevoir le schéma (4 tables)</h3>
+<p>Une boutique vend des <strong>produits</strong> classés par <strong>catégorie</strong>, à des <strong>clients</strong> qui passent des <strong>commandes</strong>. On dégage quatre tables reliées par des clés étrangères :</p>
+<pre class="pseudo">-- Categorie(id, nom)
+-- Produit(id, nom, prix, stock, id_categorie -> Categorie.id)
+-- Client(id, nom, email)
+-- Commande(id, id_client -> Client.id, id_produit -> Produit.id, quantite, date_commande)
+--
+-- Relations :
+--   un Produit appartient a UNE Categorie      (id_categorie = cle etrangere)
+--   une Commande concerne UN Client et UN Produit (deux cles etrangeres)</pre>
+
+<h3>3. Étape B — Créer les tables (CREATE TABLE)</h3>
+<p>On crée les tables dans le bon ordre : les tables « parentes » (référencées) avant les « enfants » (qui référencent). Moteur InnoDB pour bénéficier des clés étrangères et des transactions.</p>
+<pre class="pseudo">CREATE TABLE Categorie (
+   id  INT PRIMARY KEY AUTO_INCREMENT,
+   nom VARCHAR(50) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE Produit (
+   id    INT PRIMARY KEY AUTO_INCREMENT,
+   nom   VARCHAR(80) NOT NULL,
+   prix  DECIMAL(8,2) NOT NULL,
+   stock INT NOT NULL DEFAULT 0,
+   id_categorie INT NOT NULL,
+   CONSTRAINT fk_produit_categorie
+      FOREIGN KEY (id_categorie) REFERENCES Categorie(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE Client (
+   id    INT PRIMARY KEY AUTO_INCREMENT,
+   nom   VARCHAR(60) NOT NULL,
+   email VARCHAR(120) NOT NULL UNIQUE
+) ENGINE=InnoDB;
+
+CREATE TABLE Commande (
+   id INT PRIMARY KEY AUTO_INCREMENT,
+   id_client  INT NOT NULL,
+   id_produit INT NOT NULL,
+   quantite   INT NOT NULL DEFAULT 1,
+   date_commande DATE NOT NULL,
+   CONSTRAINT fk_commande_client  FOREIGN KEY (id_client)  REFERENCES Client(id),
+   CONSTRAINT fk_commande_produit FOREIGN KEY (id_produit) REFERENCES Produit(id)
+) ENGINE=InnoDB;</pre>
+
+<h3>4. Étape C — Peupler les tables (INSERT)</h3>
+<pre class="pseudo">INSERT INTO Categorie (nom) VALUES ('Livres'), ('Informatique'), ('Papeterie');
+
+INSERT INTO Produit (nom, prix, stock, id_categorie) VALUES
+   ('Roman policier', 12.50, 30, 1),
+   ('Manuel SQL',     29.90, 15, 1),
+   ('Clavier',        45.00, 10, 2),
+   ('Souris',         19.90, 25, 2),
+   ('Cahier',          3.20, 100, 3);
+
+INSERT INTO Client (nom, email) VALUES
+   ('Alice Martin', 'alice@mail.com'),
+   ('Bob Durand',   'bob@mail.com'),
+   ('Chloe Petit',  'chloe@mail.com');
+
+INSERT INTO Commande (id_client, id_produit, quantite, date_commande) VALUES
+   (1, 2, 1, '2026-01-10'),   -- Alice : 1 Manuel SQL
+   (1, 4, 2, '2026-01-11'),   -- Alice : 2 Souris
+   (2, 1, 3, '2026-02-05'),   -- Bob   : 3 Romans policiers
+   (2, 3, 1, '2026-02-06');   -- Bob   : 1 Clavier
+   -- Chloe n'a encore rien commande</pre>
+
+<h3>5. Étape D — Interroger (jointures, agrégats, sous-requête)</h3>
+<p><strong>Jointure sur 3 tables</strong> — le détail de chaque commande avec le nom du client, le produit et sa catégorie :</p>
+<pre class="pseudo">SELECT cl.nom AS client, p.nom AS produit, ca.nom AS categorie,
+       co.quantite, (p.prix * co.quantite) AS total_ligne
+FROM Commande co
+JOIN Client   cl ON co.id_client  = cl.id
+JOIN Produit  p  ON co.id_produit = p.id
+JOIN Categorie ca ON p.id_categorie = ca.id;</pre>
+<p><strong>Agrégat + GROUP BY</strong> — le montant total dépensé par chaque client :</p>
+<pre class="pseudo">SELECT cl.nom, SUM(p.prix * co.quantite) AS total_depense
+FROM Commande co
+JOIN Client  cl ON co.id_client  = cl.id
+JOIN Produit p  ON co.id_produit = p.id
+GROUP BY cl.nom
+ORDER BY total_depense DESC;</pre>
+<p><strong>Jointure externe</strong> — tous les clients, y compris ceux sans commande (Chloé) :</p>
+<pre class="pseudo">SELECT cl.nom, COUNT(co.id) AS nb_commandes
+FROM Client cl
+LEFT JOIN Commande co ON cl.id = co.id_client
+GROUP BY cl.nom;   -- Chloe apparait avec 0</pre>
+<p><strong>Sous-requête</strong> — les produits plus chers que le prix moyen :</p>
+<pre class="pseudo">SELECT nom, prix
+FROM Produit
+WHERE prix &gt; ( SELECT AVG(prix) FROM Produit );</pre>
+
+<h3>6. Étape E — Passer une commande dans une transaction</h3>
+<p>Enregistrer une commande, c'est deux opérations qui doivent réussir ensemble : insérer la ligne de commande ET diminuer le stock du produit. On les regroupe dans une <strong>transaction</strong> pour garantir la cohérence (ACID).</p>
+<pre class="pseudo">START TRANSACTION;
+   -- Alice commande 5 Cahiers (produit 5)
+   INSERT INTO Commande (id_client, id_produit, quantite, date_commande)
+      VALUES (1, 5, 5, '2026-03-01');
+   -- On decremente le stock du produit correspondant
+   UPDATE Produit SET stock = stock - 5 WHERE id = 5;
+COMMIT;   -- les deux operations sont validees ensemble (ROLLBACK annulerait tout)</pre>
+<div class="tip">Si le stock devenait insuffisant ou si une requête échouait, un ROLLBACK annulerait aussi bien l'insertion que la mise à jour : jamais de commande enregistrée sans décompte du stock, ni l'inverse.</div>
+
+<h3>7. Ce que ce projet mobilise</h3>
+<pre class="pseudo">-- Conception : tables, cles primaires, cles etrangeres (jours 1 a 9)
+-- LDD        : CREATE TABLE, contraintes, ALTER TABLE (jours 6-8, 27)
+-- LMD        : INSERT, UPDATE (jours 10-11, 26)
+-- Requetes   : WHERE, ORDER BY, IN/BETWEEN/NULL, fonctions (jours 12-19)
+-- Regrouper  : COUNT/SUM/AVG, GROUP BY, HAVING (jours 20-21)
+-- Relier     : INNER JOIN, LEFT JOIN, sous-requetes (jours 22-24)
+-- Fiabilite  : transactions, verrous, requetes preparees (jours 28-30)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Dans le schéma, quelle colonne relie Produit à Categorie ?", opts: ["Produit.id", "Produit.id_categorie (clé étrangère)", "Categorie.nom", "Produit.prix"], a: 1, exp: "id_categorie est la clé étrangère vers Categorie.id." },
+    { type: "qcm", q: "Combien de clés étrangères possède la table Commande ?", opts: ["Aucune", "Une", "Deux (vers Client et vers Produit)", "Quatre"], a: 2, exp: "Commande référence à la fois un Client et un Produit." },
+    { type: "qcm", q: "Pourquoi créer Categorie avant Produit ?", opts: ["Ordre alphabétique", "Une table référencée doit exister avant la table qui la référence", "Pour aller plus vite", "Aucune raison"], a: 1, exp: "La clé étrangère de Produit pointe vers Categorie, qui doit exister d'abord." },
+    { type: "qcm", q: "Quel moteur choisir pour avoir clés étrangères et transactions ?", opts: ["MyISAM", "InnoDB", "MEMORY", "CSV"], a: 1, exp: "InnoDB supporte les clés étrangères et les transactions." },
+    { type: "qcm", q: "AUTO_INCREMENT sur id sert à…", opts: ["Trier les lignes", "Générer automatiquement un identifiant unique croissant", "Calculer un total", "Supprimer les doublons"], a: 1, exp: "AUTO_INCREMENT attribue automatiquement une clé primaire unique." },
+    { type: "qcm", q: "Le total d'une ligne de commande se calcule par…", opts: ["p.prix + co.quantite", "p.prix * co.quantite", "SUM(co.quantite)", "COUNT(*)"], a: 1, exp: "Prix unitaire multiplié par la quantité." },
+    { type: "qcm", q: "Le total dépensé PAR client s'obtient avec…", opts: ["Un simple SELECT", "SUM(...) + GROUP BY id_client", "COUNT(*) sans GROUP BY", "DISTINCT"], a: 1, exp: "SUM agrégé par client via GROUP BY." },
+    { type: "qcm", q: "Pour afficher Chloé (qui n'a aucune commande) dans le comptage :", opts: ["INNER JOIN", "LEFT JOIN de Client vers Commande", "Sous-requête", "UNION"], a: 1, exp: "Un LEFT JOIN garde les clients sans commande (compte 0)." },
+    { type: "qcm", q: "« Les produits plus chers que le prix moyen » nécessite…", opts: ["Un GROUP BY", "Une sous-requête calculant AVG(prix)", "Un LEFT JOIN", "Un ALTER TABLE"], a: 1, exp: "Une sous-requête donne le prix moyen à comparer." },
+    { type: "qcm", q: "Enregistrer une commande + décrémenter le stock doit se faire…", opts: ["Dans deux sessions", "Dans une transaction (les deux ensemble)", "Sans contrainte", "Avec DISTINCT"], a: 1, exp: "Une transaction garantit que les deux opérations réussissent ou échouent ensemble." },
+    { type: "vf", q: "Relier Commande, Client, Produit et Categorie demande trois clauses de jointure.", a: true, exp: "Quatre tables → n-1 = 3 jointures." },
+    { type: "input", q: "Quelle instruction (deux mots) crée une table ?", a: ["CREATE TABLE", "create table"], ph: "deux mots-clés", exp: "CREATE TABLE définit une nouvelle table." },
+    { type: "input", q: "Quel mot-clé (deux mots) déclare une clé étrangère dans un CREATE TABLE ?", a: ["FOREIGN KEY", "foreign key"], ph: "deux mots-clés", exp: "FOREIGN KEY (...) REFERENCES ... déclare la clé étrangère." },
+    { type: "input", q: "Quelle fonction d'agrégation (un mot) donne le total dépensé par client ?", a: "SUM", ph: "une fonction", exp: "SUM(prix * quantite) additionne les montants." },
+    { type: "input", q: "Quelle commande (deux mots) ouvre la transaction pour enregistrer une commande ?", a: ["START TRANSACTION", "start transaction"], ph: "deux mots-clés", exp: "START TRANSACTION ouvre le bloc, validé par COMMIT." }
+  ],
+  final: {
+    title: "Exercice final — Interroger la base Boutique",
+    intro: `<p>Base Boutique : Categorie(id, nom), Produit(id, nom, prix, stock, id_categorie), Client(id, nom, email), Commande(id, id_client, id_produit, quantite, date_commande).</p>`,
+    questions: [
+      { type: "qcm", q: "Nombre de produits par catégorie :", opts: ["SELECT COUNT(*) FROM Produit", "SELECT id_categorie, COUNT(*) FROM Produit GROUP BY id_categorie", "SELECT DISTINCT id_categorie", "SELECT SUM(prix)"], a: 1, exp: "GROUP BY id_categorie + COUNT(*)." },
+      { type: "qcm", q: "Détail des commandes avec nom du client et nom du produit :", opts: ["Commande seule", "Commande JOIN Client ON ... JOIN Produit ON ...", "GROUP BY", "Sous-requête"], a: 1, exp: "Deux jointures relient Commande à Client et à Produit." },
+      { type: "qcm", q: "Tous les clients, même sans commande, avec leur nombre de commandes :", opts: ["INNER JOIN + COUNT", "LEFT JOIN de Client vers Commande + COUNT + GROUP BY", "UNION", "DISTINCT"], a: 1, exp: "LEFT JOIN garde les clients sans commande (0)." },
+      { type: "qcm", q: "Les produits plus chers que le prix moyen :", opts: ["WHERE prix > AVG(prix)", "WHERE prix > (SELECT AVG(prix) FROM Produit)", "HAVING prix > AVG(prix)", "GROUP BY prix"], a: 1, exp: "Sous-requête d'agrégat comparée avec >." },
+      { type: "vf", q: "Passer une commande (insertion + baisse du stock) dans une transaction garantit la cohérence des données.", a: true, exp: "Les deux opérations sont validées ou annulées ensemble (ACID)." }
+    ],
+    solution: `<pre class="pseudo">-- 1) nombre de produits par categorie
+SELECT ca.nom, COUNT(*) AS nb_produits
+FROM Produit p
+JOIN Categorie ca ON p.id_categorie = ca.id
+GROUP BY ca.nom;
+
+-- 2) detail des commandes (3 jointures)
+SELECT cl.nom AS client, p.nom AS produit, co.quantite,
+       (p.prix * co.quantite) AS total
+FROM Commande co
+JOIN Client  cl ON co.id_client  = cl.id
+JOIN Produit p  ON co.id_produit = p.id;
+
+-- 3) tous les clients + nombre de commandes (LEFT JOIN)
+SELECT cl.nom, COUNT(co.id) AS nb_commandes
+FROM Client cl
+LEFT JOIN Commande co ON cl.id = co.id_client
+GROUP BY cl.nom;
+
+-- 4) produits plus chers que la moyenne (sous-requete)
+SELECT nom, prix
+FROM Produit
+WHERE prix &gt; ( SELECT AVG(prix) FROM Produit );
+
+-- 5) passer une commande dans une transaction
+START TRANSACTION;
+   INSERT INTO Commande (id_client, id_produit, quantite, date_commande)
+      VALUES (1, 5, 5, '2026-03-01');
+   UPDATE Produit SET stock = stock - 5 WHERE id = 5;
+COMMIT;</pre>
+<p>Bravo : tu as conçu, créé, peuplé, interrogé et sécurisé une base complète. Tu maîtrises désormais les fondamentaux des bases de données relationnelles avec MySQL / MariaDB.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "initbdd-j31", title: "Créer une table avec clé étrangère", level: 3,
+    statement: "Base Boutique. La table Categorie(id INT PRIMARY KEY AUTO_INCREMENT, nom) existe déjà. Écris l'instruction CREATE TABLE qui crée la table Produit avec : id (clé primaire auto-incrémentée), nom (VARCHAR(80), obligatoire), prix (DECIMAL(8,2), obligatoire), stock (entier, valeur par défaut 0) et id_categorie (entier, obligatoire) qui est une clé étrangère référençant Categorie(id). Utilise le moteur InnoDB.",
+    hints: [
+      "Commence par CREATE TABLE Produit ( ... ) ENGINE=InnoDB;.",
+      "id INT PRIMARY KEY AUTO_INCREMENT ; nom VARCHAR(80) NOT NULL ; prix DECIMAL(8,2) NOT NULL ; stock INT NOT NULL DEFAULT 0.",
+      "Ajoute CONSTRAINT fk_produit_categorie FOREIGN KEY (id_categorie) REFERENCES Categorie(id)."
+    ],
+    solution: "CREATE TABLE Produit (\n   id    INT PRIMARY KEY AUTO_INCREMENT,\n   nom   VARCHAR(80) NOT NULL,\n   prix  DECIMAL(8,2) NOT NULL,\n   stock INT NOT NULL DEFAULT 0,\n   id_categorie INT NOT NULL,\n   CONSTRAINT fk_produit_categorie\n      FOREIGN KEY (id_categorie) REFERENCES Categorie(id)\n) ENGINE=InnoDB;\n\n-- Resultat attendu : la table Produit est creee, chaque produit est\n-- rattache a une categorie existante grace a la cle etrangere.",
+    note: "La clé étrangère id_categorie garantit qu'un produit ne peut référencer qu'une catégorie existante (intégrité référentielle). InnoDB est requis pour faire respecter cette contrainte." },
+  { id: "initbdd-j31b", title: "Bilan des clients dans une requête complète", level: 3,
+    statement: "Base Boutique : Client(id, nom, email), Commande(id, id_client, id_produit, quantite, date_commande), Produit(id, nom, prix, stock, id_categorie). Écris UNE requête qui affiche, pour chaque client, son nom et le montant total qu'il a dépensé (somme de prix × quantité sur toutes ses commandes) — en incluant AUSSI les clients qui n'ont passé aucune commande (leur total doit alors valoir 0). Trie du plus gros acheteur au plus petit.",
+    hints: [
+      "Pars de Client et fais un LEFT JOIN vers Commande pour garder les clients sans commande.",
+      "Ajoute une jointure vers Produit pour connaître le prix ; le montant d'une ligne est p.prix * co.quantite.",
+      "Regroupe par client (GROUP BY cl.id, cl.nom) et utilise COALESCE(SUM(...), 0) pour afficher 0 au lieu de NULL, puis ORDER BY ... DESC."
+    ],
+    solution: "SELECT cl.nom,\n       COALESCE(SUM(p.prix * co.quantite), 0) AS total_depense\nFROM Client cl\nLEFT JOIN Commande co ON cl.id = co.id_client   -- garde les clients sans commande\nLEFT JOIN Produit  p  ON co.id_produit = p.id\nGROUP BY cl.id, cl.nom\nORDER BY total_depense DESC;\n\n-- Resultat attendu : chaque client avec son total depense ; un client\n-- sans commande apparait avec 0 (grace au LEFT JOIN et a COALESCE),\n-- la liste allant du plus gros acheteur au plus petit.",
+    note: "Le LEFT JOIN conserve les clients sans commande ; pour eux, SUM(...) vaut NULL, que COALESCE(..., 0) transforme en 0. Cette requête combine jointure externe, agrégat, GROUP BY et tri : une synthèse du cours." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

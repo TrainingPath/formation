@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 30</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 30,
+  title: "Variables utilisateur et requêtes préparées",
+  subtitle: "Stocker des valeurs dans des variables, et réutiliser un modèle de requête paramétré.",
+  theory: `
+<h3>1. Qu'est-ce qu'une variable utilisateur ?</h3>
+<p>Une <strong>variable</strong> est une information stockée, constituée d'un <strong>nom</strong> et d'une <strong>valeur</strong> (par exemple la variable <code>age</code> valant 24). Une <strong>variable utilisateur</strong> est une variable que tu définis toi-même. En MySQL, son nom est toujours <strong>précédé du signe <code>@</code></strong>. Elle peut contenir un entier, un réel, une chaîne de caractères ou une chaîne binaire.</p>
+<div class="warn">Les noms de variables ne sont PAS sensibles à la casse : <code>@A</code> et <code>@a</code> désignent la même variable.</div>
+
+<h3>2. Créer une variable : SET et l'opérateur :=</h3>
+<p>La façon la plus classique de créer ou modifier une variable utilisateur est la commande <code>SET</code>. Si la variable existe déjà, sa valeur est remplacée ; sinon elle est créée.</p>
+<pre class="pseudo">SET @age = 24;                          -- ne pas oublier le @
+SET @salut = 'Hello World !', @poids = 7.8;   -- plusieurs variables d'un coup
+SELECT @age, @poids, @salut;            -- on peut les afficher</pre>
+<p>On peut aussi affecter une valeur directement dans une requête avec l'<strong>opérateur d'assignation <code>:=</code></strong> (attention aux deux-points : sans eux, <code>=</code> est l'opérateur de comparaison).</p>
+<pre class="pseudo">SELECT @age := 32, @poids := 48.15;     -- assignation a l'interieur d'un SELECT</pre>
+
+<h3>3. Utiliser une variable dans une requête</h3>
+<p>Une fois créée, la variable s'emploie dans un <code>WHERE</code>, un calcul, un affichage… C'est un moyen de <strong>dynamiser</strong> une requête sans réécrire la valeur partout.</p>
+<pre class="pseudo">SET @perroquet = 4;                     -- id de l'espece perroquet
+SELECT nom FROM Animal WHERE espece_id = @perroquet;   -- selectionne les perroquets
+
+SET @conversionDollar = 1.31564;        -- taux euro -> dollar
+SELECT prix AS prix_en_euros,
+       ROUND(prix * @conversionDollar, 2) AS prix_en_dollars,
+       nom
+FROM Race;</pre>
+<div class="tip">Une variable non définie ne provoque pas d'erreur : elle vaut simplement NULL. En revanche, une variable ne peut stocker qu'une DONNÉE (valeur) — jamais un nom de table, un nom de colonne, ou un morceau de commande SQL.</div>
+
+<h3>4. La portée : limitée à la session</h3>
+<p>Une variable utilisateur n'existe que dans la <strong>session</strong> qui l'a définie. À la déconnexion, elle est perdue ; et deux sessions différentes ne partagent pas leurs variables. Si la session 1 fait <code>SET @essai = 3;</code>, la session 2 verra <code>@essai</code> à <code>NULL</code>.</p>
+
+<h3>5. La requête préparée : un modèle nommé et paramétré</h3>
+<p>Une <strong>requête préparée</strong> est un <strong>modèle de requête</strong> enregistré en mémoire (pour la session), auquel on donne un <strong>nom</strong> et qu'on exécute à volonté en lui passant des <strong>paramètres</strong>. Dans le modèle, chaque paramètre est représenté par un point d'interrogation <code>?</code>. Utile quand on répète la même requête avec des valeurs différentes.</p>
+<pre class="pseudo">-- Au lieu de reecrire cette requete pour chaque email :
+SELECT * FROM Client WHERE email = 'truc@email.com';
+SELECT * FROM Client WHERE email = 'machin@email.com';
+-- ... on prepare un modele avec un parametre ? :
+SELECT * FROM Client WHERE email = ?</pre>
+
+<h3>6. PREPARE : préparer la requête</h3>
+<p>On prépare avec <code>PREPARE nom FROM 'requête'</code>. Le <strong>nom</strong> n'est pas entre guillemets ; la <strong>requête</strong>, elle, est une <strong>chaîne de caractères</strong> (entre apostrophes). On ne met <strong>pas</strong> de guillemets autour du <code>?</code>, qu'il représente un nombre ou du texte.</p>
+<pre class="pseudo">PREPARE select_client
+   FROM 'SELECT * FROM Client WHERE email = ?';        -- un parametre
+
+PREPARE select_adoption
+   FROM 'SELECT * FROM Adoption WHERE client_id = ? AND animal_id = ?';  -- deux parametres</pre>
+
+<h3>7. EXECUTE : exécuter avec des paramètres</h3>
+<p>On exécute avec <code>EXECUTE nom [USING @var1, @var2, …]</code>. Les valeurs des paramètres doivent être passées via des <strong>variables utilisateur</strong> (on ne peut pas donner une valeur directe), et il en faut <strong>autant</strong> que de <code>?</code> dans le modèle.</p>
+<pre class="pseudo">SET @email = 'jean.dupont@email.com';
+EXECUTE select_client USING @email;     -- 1re execution
+
+SET @email = 'marie.boudur@email.com';
+EXECUTE select_client USING @email;     -- reexecution avec une autre valeur
+
+SET @client = 2; SET @id = 3;
+EXECUTE select_adoption USING @client, @id;   -- deux parametres, deux variables</pre>
+
+<h3>8. DEALLOCATE PREPARE : supprimer la requête préparée</h3>
+<pre class="pseudo">DEALLOCATE PREPARE select_client;   -- libere la requete preparee</pre>
+<p>Comme les variables, une requête préparée n'existe que pour la session qui l'a créée.</p>
+
+<h3>9. Pourquoi les requêtes préparées ? Sécurité et performance</h3>
+<p><strong>Protection contre les injections SQL.</strong> Une <strong>injection SQL</strong> survient quand un utilisateur glisse des mots-clés SQL dans une donnée pour détourner la requête. Exemple : à l'id <code>4</code> attendu, un pirate ajoute <code>OR 1 = 1</code>, et <code>DELETE FROM Membre WHERE id = 4</code> devient <code>DELETE FROM Membre WHERE id = 4 OR 1 = 1</code> — toute la table est effacée ! Avec un paramètre <code>?</code>, la donnée est traitée comme une simple <strong>valeur</strong> : les mots-clés SQL qu'elle contiendrait ne sont pas interprétés.</p>
+<div class="tip">Adage à retenir : « Never trust user input » — ne jamais faire confiance aux données fournies par l'utilisateur.</div>
+<p><strong>Gain de performance.</strong> Une requête préparée n'est <strong>compilée</strong> et son <strong>plan d'exécution</strong> calculé qu'<strong>une seule fois</strong>, à la préparation. Si on l'exécute plusieurs fois dans la même session, on ne répète que l'étape d'exécution — c'est plus rapide que de tout recompiler à chaque fois. (Pour une seule exécution, en revanche, préparer coûte un peu plus.)</p>`,
+  exercises: [
+    { type: "qcm", q: "Une variable utilisateur MySQL est toujours précédée du signe…", opts: ["#", "$", "@", "&"], a: 2, exp: "Les variables utilisateur commencent par @." },
+    { type: "qcm", q: "Quelle commande crée ou modifie une variable utilisateur ?", opts: ["PREPARE", "SET @var = valeur", "EXECUTE", "LOCK"], a: 1, exp: "SET @var = valeur crée ou met à jour la variable." },
+    { type: "qcm", q: "L'opérateur d'assignation dans un SELECT s'écrit…", opts: ["=", ":=", "==", "=>"], a: 1, exp: ":= assigne ; = seul serait une comparaison." },
+    { type: "qcm", q: "Les noms de variables utilisateur…", opts: ["Sont sensibles à la casse", "Ne sont pas sensibles à la casse (@A = @a)", "Doivent être en majuscules", "Sont interdits"], a: 1, exp: "@A et @a désignent la même variable." },
+    { type: "qcm", q: "Une variable utilisateur non définie vaut…", opts: ["0", "Une erreur", "NULL", "Une chaîne vide"], a: 2, exp: "Une variable non définie vaut NULL, sans erreur." },
+    { type: "qcm", q: "Une variable utilisateur peut stocker…", opts: ["Un nom de table", "Un morceau de commande SQL", "Une donnée (valeur)", "Une base entière"], a: 2, exp: "Elle stocke une valeur, pas un nom d'objet ni du SQL." },
+    { type: "qcm", q: "La portée d'une variable utilisateur est…", opts: ["Toute la base pour toujours", "Limitée à la session qui l'a définie", "Partagée entre toutes les sessions", "Permanente sur le disque"], a: 1, exp: "Elle disparaît à la déconnexion et n'est pas partagée." },
+    { type: "qcm", q: "Dans une requête préparée, un paramètre est représenté par…", opts: ["@", "?", "%", "*"], a: 1, exp: "Le ? représente un paramètre dans le modèle." },
+    { type: "qcm", q: "Quelle commande prépare une requête ?", opts: ["EXECUTE", "PREPARE nom FROM 'requête'", "SET", "DEALLOCATE"], a: 1, exp: "PREPARE nom FROM 'requête' enregistre le modèle." },
+    { type: "qcm", q: "Pour exécuter une requête préparée avec paramètres :", opts: ["EXECUTE nom USING @var", "RUN nom", "CALL nom", "SELECT nom"], a: 0, exp: "EXECUTE nom USING @var passe les paramètres via des variables." },
+    { type: "vf", q: "Les requêtes préparées protègent contre les injections SQL.", a: true, exp: "Le paramètre est traité comme une valeur, les mots-clés SQL n'y sont pas interprétés." },
+    { type: "vf", q: "Préparer une requête exécutée de nombreuses fois dans la session améliore les performances.", a: true, exp: "La compilation et le plan d'exécution ne sont faits qu'une fois." },
+    { type: "input", q: "Quel signe (un caractère) précède le nom d'une variable utilisateur ?", a: ["@", "arobase"], ph: "un caractère", exp: "Le signe @ précède toute variable utilisateur." },
+    { type: "input", q: "Quel caractère représente un paramètre dans une requête préparée ?", a: ["?", "point d'interrogation"], ph: "un caractère", exp: "Le ? représente un paramètre." },
+    { type: "input", q: "Quelle commande (deux mots) supprime une requête préparée nommée select_client ? Écris les deux mots-clés avant le nom.", a: ["DEALLOCATE PREPARE", "deallocate prepare"], ph: "deux mots-clés", exp: "DEALLOCATE PREPARE select_client;" }
+  ],
+  final: {
+    title: "Exercice final — Variables et modèle de requête",
+    intro: `<p>Base animalerie. Tables Client(id, nom, email), Animal(id, nom, espece_id), Race(nom, prix, espece_id).</p>`,
+    questions: [
+      { type: "qcm", q: "Créer une variable @perroquet valant 4 :", opts: ["SET perroquet = 4", "SET @perroquet = 4", "PREPARE @perroquet", "@perroquet := 4 FROM"], a: 1, exp: "SET @perroquet = 4 (avec le @)." },
+      { type: "qcm", q: "Sélectionner les animaux de l'espèce stockée dans @perroquet :", opts: ["WHERE espece_id = perroquet", "WHERE espece_id = @perroquet", "WHERE espece_id = '@perroquet'", "WHERE @perroquet"], a: 1, exp: "On utilise @perroquet directement dans le WHERE." },
+      { type: "qcm", q: "Préparer une recherche de client par email :", opts: ["PREPARE p FROM 'SELECT * FROM Client WHERE email = ?'", "PREPARE p = SELECT ...", "EXECUTE p", "SET p = SELECT"], a: 0, exp: "PREPARE nom FROM 'requête avec ?'." },
+      { type: "qcm", q: "Exécuter cette requête préparée p avec l'email stocké dans @mail :", opts: ["EXECUTE p USING @mail", "EXECUTE p = @mail", "RUN p @mail", "CALL p(@mail)"], a: 0, exp: "EXECUTE p USING @mail passe le paramètre." },
+      { type: "vf", q: "Une requête préparée, comme une variable utilisateur, n'existe que pour la session courante.", a: true, exp: "Les deux disparaissent à la fin de la session." }
+    ],
+    solution: `<pre class="pseudo">-- 1) variable utilisateur
+SET @perroquet = 4;
+SELECT nom FROM Animal WHERE espece_id = @perroquet;
+
+-- 2) calcul avec une variable
+SET @conversionDollar = 1.31564;
+SELECT prix AS prix_en_euros,
+       ROUND(prix * @conversionDollar, 2) AS prix_en_dollars, nom
+FROM Race;
+
+-- 3) requete preparee parametree
+PREPARE select_client FROM 'SELECT * FROM Client WHERE email = ?';
+SET @mail = 'jean.dupont@email.com';
+EXECUTE select_client USING @mail;
+SET @mail = 'marie.boudur@email.com';
+EXECUTE select_client USING @mail;   -- reutilisation du meme modele
+DEALLOCATE PREPARE select_client;    -- nettoyage</pre>
+<p>Tu sais dynamiser et sécuriser tes requêtes. Demain : le projet final, où tu concevras et interrogeras ta propre base de A à Z.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête SQL ici…",
+  items: [
+  { id: "initbdd-j30", title: "Modèle de requête réutilisable", level: 3,
+    statement: "Base animalerie, table Adoption(client_id, animal_id, paye). Tu dois régulièrement retrouver une adoption précise à partir du couple (client, animal). Écris : (1) la préparation d'une requête nommée select_adoption qui sélectionne toutes les colonnes d'Adoption pour un client_id et un animal_id passés en paramètres ; (2) l'affectation des variables @c = 2 et @a = 3 ; (3) l'exécution de la requête préparée avec ces deux paramètres.",
+    hints: [
+      "PREPARE select_adoption FROM '...' : la requête est une chaîne, avec deux ? (client_id = ? AND animal_id = ?), sans guillemets autour des ?.",
+      "Crée les variables avec SET @c = 2; SET @a = 3;.",
+      "EXECUTE select_adoption USING @c, @a; — autant de variables que de paramètres, dans le bon ordre."
+    ],
+    solution: "-- 1) preparation du modele (deux parametres)\nPREPARE select_adoption\n   FROM 'SELECT * FROM Adoption WHERE client_id = ? AND animal_id = ?';\n\n-- 2) valeurs des parametres dans des variables utilisateur\nSET @c = 2;\nSET @a = 3;\n\n-- 3) execution : autant de variables que de ?, dans l'ordre\nEXECUTE select_adoption USING @c, @a;\n\n-- On pourrait reexecuter avec d'autres valeurs (SET @c = ...; EXECUTE ...)\n-- puis liberer : DEALLOCATE PREPARE select_adoption;",
+    note: "Les paramètres ? sont fournis via des variables utilisateur passées à USING, dans le même ordre que les ? du modèle. Le modèle n'est compilé qu'une fois : le réexécuter avec d'autres @c/@a est rapide et à l'abri des injections SQL." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>
