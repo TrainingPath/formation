@@ -1,0 +1,134 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 19</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Déploiement continu (CD) avec Actions",
+  subtitle: "Après des tests verts, livrer automatiquement — sans intervention humaine.",
+  theory: `
+<h3>1. CI, CD : de quoi parle-t-on ?</h3>
+<p>La <strong>CI</strong> (<em>Continuous Integration</em>, « intégration continue ») consiste à fusionner et <strong>tester</strong> le code souvent, automatiquement, pour attraper les erreurs tôt. Le <strong>CD</strong> a deux sens proches : <strong>Continuous Delivery</strong> (« livraison continue ») produit à chaque changement un artefact <strong>prêt à déployer</strong>, mais c'est un humain qui appuie sur le bouton ; <strong>Continuous Deployment</strong> (« déploiement continu ») va jusqu'au bout et <strong>met en production automatiquement</strong> dès que les tests passent.</p>
+<pre class="pseudo">Integration continue (CI)  : commit -&gt; build -&gt; tests            # attraper les bugs tot
+Livraison continue         : + artefact pret, deploiement MANUEL  # un humain valide
+Deploiement continu        : + deploiement AUTOMATIQUE en prod     # zero clic si tout est vert</pre>
+
+<h3>2. La brique de base : les jobs qui s'enchaînent avec needs</h3>
+<p>Un pipeline de CD enchaîne des jobs : d'abord tester, ensuite (seulement si les tests passent) déployer. Le mot-clé <code>needs</code> crée cette <strong>dépendance</strong> : un job attend qu'un autre réussisse avant de démarrer.</p>
+<pre class="pseudo">jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci &amp;&amp; npm test
+  deploy:
+    needs: test                          # deploy NE DEMARRE que si test a REUSSI
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh                 # la mise en production proprement dite</pre>
+<div class="tip">Si <code>test</code> échoue, <code>deploy</code> est automatiquement <strong>ignoré</strong> (jamais lancé). C'est le cœur du CD : on ne déploie <strong>jamais</strong> du code qui n'a pas passé les tests.</div>
+
+<h3>3. Ne déployer que dans les bonnes conditions : if et déclencheurs</h3>
+<p>On ne veut pas déployer à chaque push de branche : seulement quand le code arrive sur <code>main</code>. Deux leviers : restreindre le <strong>déclencheur</strong> (<code>on:</code>) et ajouter une <strong>condition</strong> (<code>if:</code>) sur le job.</p>
+<pre class="pseudo">on:
+  push:
+    branches: [ main ]                   # le workflow ne se lance QUE sur main
+jobs:
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'  # ceinture + bretelles : on verifie la branche
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh</pre>
+<p><code>github.ref</code> est une donnée du contexte <code>github</code> : la référence Git qui a déclenché le workflow (ici la branche <code>main</code>). Une <strong>condition</strong> <code>if:</code> évalue une expression : si elle est fausse, le job est ignoré.</p>
+
+<h3>4. Déployer sur tag : livrer une version précise</h3>
+<pre class="pseudo">on:
+  push:
+    tags: [ 'v*' ]                        # se declenche quand on pousse un tag v1.2.0, v2.0.0...
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./build.sh &amp;&amp; ./publish.sh   # on construit et on publie CETTE version</pre>
+<p>Déployer <strong>sur tag</strong> (une étiquette Git posée sur un commit, ex. <code>v1.2.0</code>) donne un contrôle net : on livre une version <strong>choisie</strong>, pas chaque commit. C'est le modèle « livraison continue » : l'humain décide en posant le tag.</p>
+
+<h3>5. Sécurité et robustesse d'un pipeline de CD</h3>
+<pre class="pseudo">1. Le deploiement DEPEND des tests (needs) : jamais l'inverse    # pas de deploy sans tests verts
+2. Les identifiants viennent de secrets.* (jour 17)             # jamais en clair
+3. On restreint la branche (on: push branches: [main] + if:)    # pas de deploy depuis une branche au hasard
+4. Environnements proteges pour la prod (jour 27)               # approbation humaine possible
+5. Un deploiement doit etre REJOUABLE et REVERSIBLE            # pouvoir revenir en arriere (rollback)</pre>
+<div class="warn">Le déploiement continu n'est puissant que si les tests sont <strong>fiables</strong>. Automatiser la mise en production au-dessus d'une suite de tests trouée, c'est automatiser la diffusion des bugs. La confiance dans le CD repose entièrement sur la qualité de la CI.</div>
+<div class="tip">Ordre mental d'un pipeline complet : <strong>lint → tests (matrice) → build → artefact → déploiement conditionnel</strong>. C'est exactement le projet final du jour 31.</div>`,
+  exercises: [
+    { type: "qcm", q: "Le déploiement continu (Continuous Deployment) consiste à…", opts: ["Tester le code manuellement", "Mettre en production automatiquement dès que les tests passent", "Créer des branches", "Chiffrer les secrets"], a: 1, exp: "Zéro clic si tout est vert." },
+    { type: "qcm", q: "La différence livraison continue vs déploiement continu :", opts: ["Aucune", "La livraison prépare un artefact déployable, un humain valide ; le déploiement va jusqu'en prod automatiquement", "Le déploiement est plus lent", "La livraison ne teste pas"], a: 1, exp: "Delivery = humain valide ; Deployment = automatique." },
+    { type: "input", q: "Quel mot-clé fait qu'un job attend la réussite d'un autre avant de démarrer ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs crée la dépendance entre jobs." },
+    { type: "vf", q: "Si le job test échoue, un job deploy avec needs: test est ignoré.", a: true, exp: "On ne déploie jamais du code non testé." },
+    { type: "input", q: "Quel mot-clé ajoute une condition d'exécution à un job ? (le mot-clé seul)", a: ["if", "if:"], ph: "un mot-clé", exp: "if: évalue une expression ; si fausse, le job est ignoré." },
+    { type: "input", q: "Quelle expression du contexte github donne la référence Git qui a déclenché le workflow ? (ex. github.___)", a: ["github.ref", "ref"], ph: "github.___", exp: "github.ref vaut refs/heads/main sur main." },
+    { type: "qcm", q: "Pour ne lancer un workflow QUE sur main, on écrit…", opts: ["on: push: branches: [ main ]", "on: pull_request", "runs-on: main", "if: main"], a: 0, exp: "Le déclencheur filtre la branche." },
+    { type: "input", q: "Pour déployer une version précise, on déclenche sur un ___ Git (ex. v1.2.0). (le mot)", a: ["tag", "tags"], ph: "un mot", exp: "on: push: tags: [ 'v*' ] livre une version choisie." },
+    { type: "qcm", q: "Déployer sur tag correspond plutôt à…", opts: ["Déploiement continu pur", "Livraison continue : l'humain décide en posant le tag", "De la CI", "Aucun modèle"], a: 1, exp: "Le tag est une décision humaine." },
+    { type: "qcm", q: "Les identifiants de déploiement doivent venir de…", opts: ["Du YAML en clair", "secrets.* (jour 17)", "Du README", "D'un commentaire"], a: 1, exp: "Jamais en clair." },
+    { type: "vf", q: "Automatiser le déploiement au-dessus de tests peu fiables revient à automatiser la diffusion des bugs.", a: true, exp: "La confiance dans le CD repose sur la CI." },
+    { type: "qcm", q: "Un bon déploiement doit être…", opts: ["Unique et irréversible", "Rejouable et réversible (rollback possible)", "Manuel uniquement", "Sans logs"], a: 1, exp: "Pouvoir revenir en arrière est essentiel." },
+    { type: "qcm", q: "L'ordre logique d'un pipeline complet est…", opts: ["Déployer puis tester", "lint → tests → build → artefact → déploiement conditionnel", "build → déploiement → lint", "tests → déploiement → build"], a: 1, exp: "C'est le projet final du jour 31." },
+    { type: "input", q: "Complète : if: github.ref == 'refs/heads/____' pour ne déployer que depuis main.", a: ["main"], ph: "une branche", exp: "On vérifie que la référence est bien main." },
+    { type: "vf", q: "needs peut lister plusieurs jobs, et le job attend alors qu'ils réussissent tous.", a: true, exp: "needs: [lint, test] attend les deux." }
+  ],
+  final: {
+    title: "Exercice final — Un pipeline CI puis CD",
+    intro: `<p>Tu veux : tester à chaque push, puis déployer UNIQUEMENT si les tests passent ET si le push arrive sur main.</p>`,
+    questions: [
+      { type: "input", q: "Quel mot-clé lie deploy à la réussite de test ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs: test." },
+      { type: "input", q: "Quel mot-clé ajoute la condition sur la branche au job deploy ? (le mot-clé seul)", a: ["if", "if:"], ph: "un mot-clé", exp: "if: github.ref == 'refs/heads/main'." },
+      { type: "qcm", q: "Si test échoue, deploy…", opts: ["Se lance quand même", "Est ignoré", "Relance test", "Déploie en staging"], a: 1, exp: "Pas de tests verts, pas de déploiement." },
+      { type: "qcm", q: "Les identifiants du déploiement viennent de…", opts: ["secrets.*", "vars en clair", "l'URL", "un fichier commité"], a: 0, exp: "Toujours des secrets." },
+      { type: "vf", q: "Restreindre on: push: branches: [main] ET ajouter if: sur la branche est une ceinture + bretelles cohérente.", a: true, exp: "Double protection." }
+    ],
+    solution: `<pre class="pseudo">name: CI-CD
+on:
+  push:
+    branches: [ main ]                   # le workflow ne se lance que sur main
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci &amp;&amp; npm test          # la CI : build + tests
+  deploy:
+    needs: test                          # ne demarre QUE si test a reussi
+    if: github.ref == 'refs/heads/main'  # et seulement sur main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deployer
+        env:
+          DEPLOY_TOKEN: \${{ secrets.DEPLOY_TOKEN }}   # identifiant via secret
+        run: ./deploy.sh                 # mise en production</pre>
+<p>Le job <code>deploy</code> ne s'exécute jamais tant que <code>test</code> n'est pas vert : c'est la garantie fondamentale du CD.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pipeline ici…",
+  items: [
+  { id: "ghadv-j19", title: "Livraison continue sur tag", level: 3,
+    statement: "Écris un workflow qui se déclenche UNIQUEMENT quand on pousse un tag de la forme v* (ex. v1.4.0). Deux jobs : test (npm ci && npm test) puis release, qui dépend de test, construit le projet et publie via un script publish.sh recevant le secret NPM_TOKEN par env:. Commente les lignes clés.",
+    hints: [
+      "Le déclencheur se fait sur on: push: tags: [ 'v*' ].",
+      "release doit avoir needs: test pour ne publier qu'après des tests verts.",
+      "NPM_TOKEN vient de ${{ secrets.NPM_TOKEN }}, jamais en clair."
+    ],
+    solution: "name: Release\non:\n  push:\n    tags: [ 'v*' ]                     # se declenche sur un tag de version\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci && npm test          # tests avant toute publication\n  release:\n    needs: test                          # ne publie que si test est vert\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci && npm run build      # on construit la version\n      - name: Publier\n        env:\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # secret injecte, jamais en clair\n        run: ./publish.sh                # publication de la version taguee",
+    note: "Declencher sur tag = livraison continue : c'est un humain qui, en posant le tag v1.4.0, decide de publier CETTE version. needs: test garantit qu'aucune version non testee ne sort. Ce schema separe proprement l'integration (a chaque commit) de la livraison (au moment choisi), tout en gardant les identifiants dans des secrets." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

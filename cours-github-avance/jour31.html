@@ -1,0 +1,182 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : un pipeline CI/CD complet",
+  subtitle: "Tout assembler : lint, tests sur matrice, build, artefact et déploiement protégé.",
+  theory: `
+<h3>1. L'objectif du projet</h3>
+<p>Ce dernier jour rassemble tout le parcours en <strong>un seul pipeline professionnel</strong>. Un <strong>pipeline</strong> (« chaîne de traitement ») est la suite ordonnée de jobs qui transforme un commit en logiciel livré. Notre cible, dans l'ordre : <strong>lint → tests (sur matrice) → build → artefact → déploiement conditionnel vers un environnement protégé</strong>. Chaque étape a un rôle précis et ne s'exécute que si les précédentes réussissent.</p>
+<pre class="pseudo">commit -&gt; [lint] -&gt; [tests matrice] -&gt; [build+artefact] -&gt; [deploy protege] -&gt; PROD
+             |            |                  |                   |
+          qualite     correction         livrable         feu vert humain</pre>
+
+<h3>2. Étape 1 — Lint : la qualité avant tout</h3>
+<p>Le <strong>lint</strong> (analyse statique de style et d'erreurs) est le premier filtre : rapide et peu coûteux, il attrape les fautes évidentes avant de lancer des tests plus longs. On le place en tête pour <strong>échouer tôt</strong>.</p>
+<pre class="pseudo">jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }   # cache npm (jour 21)
+      - run: npm ci
+      - run: npm run lint                 # premier filtre, le moins couteux</pre>
+
+<h3>3. Étape 2 — Tests sur matrice</h3>
+<p>Les <strong>tests</strong> tournent sur une <strong>matrice</strong> (jour 18) pour couvrir plusieurs versions, et ne démarrent qu'après le lint (<code>needs</code>).</p>
+<pre class="pseudo">  test:
+    needs: lint                          # ne teste que si le lint passe
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false                   # on veut TOUS les resultats
+      matrix:
+        node: [18, 20, 22]               # 3 versions en parallele
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: \${{ matrix.node }}, cache: 'npm' }
+      - run: npm ci
+      - run: npm test</pre>
+
+<h3>4. Étape 3 — Build et artefact</h3>
+<p>Le <strong>build</strong> produit le livrable (le site, le binaire) et le range dans un <strong>artefact</strong> (jour 21) pour le transmettre au déploiement. Il ne se lance qu'après des tests verts.</p>
+<pre class="pseudo">  build:
+    needs: test                          # on ne construit qu'apres des tests verts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci &amp;&amp; npm run build      # produit ./dist
+      - uses: actions/upload-artifact@v4  # on conserve le livrable
+        with: { name: dist, path: dist/ }</pre>
+
+<h3>5. Étape 4 — Déploiement conditionnel vers un environnement protégé</h3>
+<p>Le <strong>déploiement</strong> récupère l'artefact et le met en production, mais <strong>uniquement</strong> : après le build (<code>needs</code>), sur la branche <code>main</code> (<code>if</code>), vers un <strong>environnement protégé</strong> par approbation (jour 27), avec un identifiant issu d'un <strong>secret</strong> (jour 17).</p>
+<pre class="pseudo">  deploy:
+    needs: build                         # apres build reussi
+    if: github.ref == 'refs/heads/main'  # seulement sur main
+    runs-on: ubuntu-latest
+    environment:
+      name: production                   # environnement PROTEGE (approbation reglee dans l'UI)
+      url: https://mon-app.example.com
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }   # on recupere le livrable
+      - run: ./deploy.sh dist/
+        env:
+          DEPLOY_TOKEN: \${{ secrets.DEPLOY_TOKEN }}   # secret, jamais en clair</pre>
+<div class="warn">Les quatre garde-fous du déploiement, à ne jamais oublier : (1) <code>needs</code> — jamais sans le reste du pipeline vert ; (2) <code>if</code> — seulement depuis <code>main</code> ; (3) <strong>environnement protégé</strong> — feu vert humain avant la prod ; (4) <strong>secret</strong> — aucun identifiant en clair. C'est la synthèse de tout le cours.</div>
+<div class="tip">Chaque brique a été vue isolément : maintenant elles s'enchaînent par <code>needs</code> en une chaîne où l'échec d'une étape arrête tout ce qui suit. C'est exactement ce que tu vas écrire dans les deux exercices d'écriture ci-dessous.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un pipeline CI/CD est…", opts: ["Un secret", "La suite ordonnée de jobs qui transforme un commit en logiciel livré", "Une branche", "Un runner"], a: 1, exp: "Chaîne : lint → tests → build → deploy." },
+    { type: "qcm", q: "L'ordre cible du pipeline est…", opts: ["deploy → build → tests → lint", "lint → tests → build → artefact → déploiement conditionnel", "tests → deploy → lint", "build → deploy → tests"], a: 1, exp: "Chaque étape dépend des précédentes." },
+    { type: "qcm", q: "Pourquoi placer le lint en premier ?", opts: ["Il est le plus lent", "Rapide et peu coûteux : il échoue tôt sur les fautes évidentes", "Il déploie", "Il chiffre les secrets"], a: 1, exp: "Échouer tôt, économiser les étapes coûteuses." },
+    { type: "input", q: "Quel mot-clé enchaîne les jobs (test après lint, build après test…) ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs crée la dépendance." },
+    { type: "input", q: "Sur quoi tournent les tests pour couvrir plusieurs versions ? (le mot)", a: ["matrice", "matrix", "une matrice"], ph: "un mot", exp: "strategy.matrix (jour 18)." },
+    { type: "qcm", q: "Le build produit un livrable qu'on transmet via…", opts: ["un cache", "un artefact (upload-artifact → download-artifact)", "un secret", "un tag"], a: 1, exp: "Artefact = résultat transmis entre jobs." },
+    { type: "input", q: "Quel mot-clé conditionne deploy à la branche main ? (le mot-clé seul)", a: ["if", "if:"], ph: "un mot-clé", exp: "if: github.ref == 'refs/heads/main'." },
+    { type: "input", q: "Quel mot-clé rattache le déploiement à un environnement protégé ? (le mot-clé seul)", a: ["environment", "environment:"], ph: "un mot-clé", exp: "environment: name: production." },
+    { type: "qcm", q: "L'identifiant de déploiement vient de…", opts: ["Du YAML en clair", "secrets.* injecté via env:", "Du README", "De l'URL"], a: 1, exp: "Jamais en clair (jour 17)." },
+    { type: "vf", q: "Si les tests échouent, le build et le deploy sont ignorés grâce à needs.", a: true, exp: "L'échec d'une étape arrête la suite." },
+    { type: "qcm", q: "fail-fast: false sur la matrice de tests permet…", opts: ["De déployer plus vite", "De voir le résultat de toutes les versions, pas seulement la première qui casse", "De chiffrer les logs", "De sauter le lint"], a: 1, exp: "Diagnostic complet (jour 18)." },
+    { type: "qcm", q: "L'environnement protégé apporte…", opts: ["Un cache", "Une approbation humaine avant la prod", "Une matrice", "Un lint"], a: 1, exp: "Feu vert manuel (jour 27)." },
+    { type: "qcm", q: "Les quatre garde-fous du déploiement sont…", opts: ["cache, artefact, matrice, lint", "needs, if (main), environnement protégé, secret", "GET, POST, PATCH, DELETE", "Read, Write, Triage, Admin"], a: 1, exp: "La synthèse du cours." },
+    { type: "input", q: "Quelle action récupère l'artefact dans le job deploy ? (nom sans version, actions/...)", a: ["actions/download-artifact", "download-artifact"], ph: "actions/...", exp: "download-artifact." },
+    { type: "vf", q: "Le cache npm (cache: 'npm') accélère chaque job qui installe les dépendances.", a: true, exp: "Optimisation transverse (jour 21)." }
+  ],
+  final: {
+    title: "Exercice final — Valider l'architecture du pipeline",
+    intro: `<p>Tu relis l'architecture complète : lint, tests sur matrice, build+artefact, déploiement protégé sur main.</p>`,
+    questions: [
+      { type: "input", q: "Quel mot-clé fait que test dépend de lint ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs: lint." },
+      { type: "input", q: "Quel mot-clé limite le déploiement à main ? (le mot-clé seul)", a: ["if", "if:"], ph: "un mot-clé", exp: "if: github.ref == 'refs/heads/main'." },
+      { type: "qcm", q: "Le livrable passe de build à deploy via…", opts: ["un cache", "un artefact (upload puis download)", "un secret", "une variable"], a: 1, exp: "Artefact = résultat transmis." },
+      { type: "input", q: "Quel mot-clé attache deploy à l'environnement production protégé ? (le mot-clé seul)", a: ["environment", "environment:"], ph: "un mot-clé", exp: "environment: name: production." },
+      { type: "vf", q: "L'identifiant de déploiement vient d'un secret, jamais du YAML en clair.", a: true, exp: "Sécurité de bout en bout." }
+    ],
+    solution: `<pre class="pseudo">name: CI-CD complet
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+permissions:
+  contents: read                         # moindre privilege par defaut
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci &amp;&amp; npm run lint       # 1. qualite : echouer tot
+  test:
+    needs: lint                          # 2. tests apres lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: { node: [18, 20, 22] }     # sur matrice de versions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: \${{ matrix.node }}, cache: 'npm' }
+      - run: npm ci &amp;&amp; npm test
+  build:
+    needs: test                          # 3. build apres tests verts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci &amp;&amp; npm run build
+      - uses: actions/upload-artifact@v4  # artefact = livrable
+        with: { name: dist, path: dist/ }
+  deploy:
+    needs: build                         # 4. deploiement conditionnel
+    if: github.ref == 'refs/heads/main'  #    seulement sur main
+    runs-on: ubuntu-latest
+    environment:
+      name: production                   #    environnement PROTEGE (approbation UI)
+      url: https://mon-app.example.com
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist/ }
+      - run: ./deploy.sh dist/
+        env:
+          DEPLOY_TOKEN: \${{ secrets.DEPLOY_TOKEN }}   # secret, jamais en clair</pre>
+<p>Un pipeline complet, chaque étape verrouillée par la précédente : lint → tests (matrice) → build → artefact → déploiement protégé. C'est l'aboutissement des 31 jours. Bravo !</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pipeline ici…",
+  items: [
+  { id: "ghadv-j31", title: "Le pipeline complet, jobs enchaînés", level: 3,
+    statement: "Écris le workflow complet ci-cd.yml : job lint (npm run lint), job test dépendant du lint sur une matrice Node 18/20/22 avec fail-fast désactivé, job build dépendant des tests qui produit dist/ et le téléverse en artefact. Utilise le cache npm partout. Déclenche sur push et pull_request vers main. Commente chaque étape. (Le job deploy fait l'objet du second exercice.)",
+    hints: [
+      "Chaîne les jobs avec needs: lint puis needs: test ; le lint n'a pas de needs.",
+      "La matrice se met sous strategy.matrix.node ; ajoute fail-fast: false.",
+      "Le build produit dist/ puis actions/upload-artifact@v4 avec name et path."
+    ],
+    solution: "name: CI-CD complet\non:\n  push:\n    branches: [ main ]\n  pull_request:\n    branches: [ main ]\npermissions:\n  contents: read                       # moindre privilege\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20, cache: 'npm' }   # cache npm\n      - run: npm ci\n      - run: npm run lint                # 1. qualite : premier filtre\n  test:\n    needs: lint                          # 2. tests apres lint\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false                   # voir TOUS les resultats\n      matrix:\n        node: [18, 20, 22]               # 3 versions en parallele\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: ${{ matrix.node }}, cache: 'npm' }\n      - run: npm ci\n      - run: npm test\n  build:\n    needs: test                          # 3. build apres tests verts\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20, cache: 'npm' }\n      - run: npm ci && npm run build      # produit ./dist\n      - uses: actions/upload-artifact@v4  # artefact = livrable transmis\n        with: { name: dist, path: dist/ }",
+    note: "L'ossature du pipeline repose entierement sur needs : lint -> test -> build forment une chaine ou l'echec d'un maillon arrete tout ce qui suit. La matrice (fail-fast: false) donne un diagnostic complet sur chaque version, le cache npm accelere chaque installation, et l'artefact prepare le passage vers le deploiement. Declencher aussi sur pull_request permet de tout valider AVANT le merge, pas seulement apres." },
+  { id: "ghadv-j31b", title: "Le job de déploiement protégé", level: 3,
+    statement: "Écris le job deploy qui complète le pipeline précédent : il dépend de build, ne s'exécute que sur main (if), vise l'environnement production (protégé par approbation dans l'UI, avec une URL), récupère l'artefact dist/ et lance ./deploy.sh dist/ en injectant le secret DEPLOY_TOKEN. Commente chaque garde-fou et rappelle-les en note.",
+    hints: [
+      "needs: build, puis if: github.ref == 'refs/heads/main' pour restreindre à main.",
+      "environment: name: production (l'approbation se règle dans Settings > Environments, pas dans le YAML).",
+      "actions/download-artifact@v4 récupère dist/, et DEPLOY_TOKEN vient de ${{ secrets.DEPLOY_TOKEN }}."
+    ],
+    solution: "  deploy:\n    needs: build                         # (1) apres tout le pipeline vert\n    if: github.ref == 'refs/heads/main'  # (2) seulement depuis main\n    runs-on: ubuntu-latest\n    environment:\n      name: production                   # (3) environnement PROTEGE (approbation reglee dans l'UI)\n      url: https://mon-app.example.com\n    steps:\n      - uses: actions/download-artifact@v4\n        with: { name: dist, path: dist/ }  # on recupere le livrable du job build\n      - run: ./deploy.sh dist/\n        env:\n          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}   # (4) secret, jamais en clair",
+    note: "Le job deploy concentre les quatre garde-fous du cours : (1) needs -> on ne deploie jamais sans un pipeline vert ; (2) if sur main -> aucune branche de travail ne part en prod ; (3) environnement protege -> un humain approuve avant la mise en production, regle inviolable car cote GitHub et non dans le YAML ; (4) secret -> l'identifiant est injecte via env:, jamais ecrit en clair. Assemble avec le premier exercice, c'est un pipeline CI/CD complet, sur et professionnel : l'aboutissement des 31 jours." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

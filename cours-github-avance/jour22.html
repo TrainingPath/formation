@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 22</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 22,
+  title: "Actions du marketplace et réutilisables",
+  subtitle: "Ne pas réinventer la roue : consommer des actions existantes et mutualiser ses workflows.",
+  theory: `
+<h3>1. Une action, rappel et vocabulaire</h3>
+<p>Une <strong>action</strong> est un <strong>composant réutilisable</strong> qu'un step invoque avec <code>uses:</code>. Elle encapsule une tâche (récupérer le code, installer Node, publier un artefact…) pour éviter de la réécrire. Tu en utilises depuis le jour 15 : <code>actions/checkout</code>, <code>actions/setup-node</code>. Aujourd'hui : d'où elles viennent, comment les épingler sûrement, et comment mutualiser des <strong>workflows entiers</strong>.</p>
+
+<h3>2. Le GitHub Marketplace</h3>
+<p>Le <strong>GitHub Marketplace</strong> est le catalogue public d'actions partagées par la communauté et les éditeurs. On y trouve de quoi déployer, notifier Slack, publier sur un cloud, etc. Une action s'invoque par <code>proprietaire/nom@version</code>.</p>
+<pre class="pseudo">steps:
+  - uses: actions/checkout@v4            # action officielle GitHub (organisation "actions")
+  - uses: docker/build-push-action@v6    # action de l'editeur Docker
+  - uses: peaceiris/actions-gh-pages@v4  # action communautaire (auteur peaceiris)</pre>
+
+<h3>3. Épingler une version : la sécurité d'abord</h3>
+<p>Le texte après <code>@</code> désigne la <strong>version</strong> utilisée. On peut viser une <strong>étiquette</strong> (<code>@v4</code>), une <strong>branche</strong> (<code>@main</code>) ou un <strong>SHA de commit</strong> (l'empreinte exacte d'un commit). Le choix a un impact de sécurité majeur : une action exécute du code <strong>tierce</strong> dans ton pipeline, avec accès à ton dépôt.</p>
+<pre class="pseudo">- uses: auteur/action@main               # DANGEREUX : suit la branche, le code peut changer sous toi
+- uses: auteur/action@v4                 # correct : etiquette de version majeure (mises a jour de securite)
+- uses: auteur/action@e3b0c44...         # LE PLUS SUR : SHA de commit fige, immuable</pre>
+<div class="warn">Épingler sur <code>@main</code> revient à exécuter, à chaque run, la <strong>dernière</strong> version du code d'un tiers — qui peut avoir été modifiée, voire compromise. Pour les actions sensibles, épingle un <strong>SHA de commit complet</strong> : il ne peut pas changer sous toi. Au minimum, épingle une étiquette de version, jamais une branche mouvante.</div>
+
+<h3>4. Passer des paramètres : with, entrées et sorties</h3>
+<p>On configure une action avec <code>with:</code> (ses <strong>entrées</strong>, en anglais <em>inputs</em>). Certaines actions produisent des <strong>sorties</strong> (<em>outputs</em>) réutilisables via le contexte <code>steps</code>, à condition d'avoir donné un <code>id</code> au step.</p>
+<pre class="pseudo">- id: build                              # on nomme le step pour lire ses sorties
+  uses: docker/build-push-action@v6
+  with:
+    push: true                           # entree : pousser l'image
+    tags: monimage:latest                # entree : le tag de l'image
+- run: echo "digest = \${{ steps.build.outputs.digest }}"   # on lit une SORTIE du step "build"</pre>
+
+<h3>5. Workflows réutilisables : mutualiser un pipeline entier</h3>
+<p>Au-delà des actions, on peut factoriser un <strong>workflow complet</strong>. Un <strong>workflow réutilisable</strong> (en anglais <em>reusable workflow</em>) est un fichier de workflow déclenché par <code>workflow_call</code>, qu'un autre workflow appelle avec <code>uses:</code> au niveau du <strong>job</strong>. On mutualise ainsi un pipeline standard entre plusieurs dépôts.</p>
+<pre class="pseudo"># .github/workflows/ci-reutilisable.yml (le workflow APPELE)
+on:
+  workflow_call:                         # ce workflow peut etre APPELE par un autre
+    inputs:
+      node:
+        required: true
+        type: string                     # une entree typee
+    secrets:
+      TOKEN:
+        required: true                   # un secret transmis par l'appelant
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ inputs.node }}
+      - run: npm ci &amp;&amp; npm test</pre>
+<pre class="pseudo"># .github/workflows/appelant.yml (le workflow APPELANT)
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-reutilisable.yml   # on APPELLE le workflow (au niveau du job)
+    with:
+      node: '20'                         # on passe l'entree
+    secrets:
+      TOKEN: \${{ secrets.NPM_TOKEN }}    # on transmet le secret</pre>
+<div class="tip">Distingue bien : une <strong>action</strong> s'invoque dans un <strong>step</strong> (<code>uses:</code> sous <code>steps:</code>) et fait UNE tâche ; un <strong>workflow réutilisable</strong> s'invoque comme un <strong>job entier</strong> (<code>uses:</code> directement sous le job) et enchaîne plusieurs steps. Ne pas confondre les deux niveaux.</p></div>`,
+  exercises: [
+    { type: "qcm", q: "Le GitHub Marketplace est…", opts: ["Une boutique payante obligatoire", "Le catalogue public d'actions partagées", "Un gestionnaire de branches", "Un service de secrets"], a: 1, exp: "On y trouve des actions à réutiliser." },
+    { type: "qcm", q: "On invoque une action avec…", opts: ["run:", "uses: proprietaire/nom@version", "needs:", "with: seul"], a: 1, exp: "uses: référence l'action et sa version." },
+    { type: "qcm", q: "Épingler une action sur @main est…", opts: ["Le plus sûr", "Dangereux : le code tiers peut changer sous toi", "Impossible", "Obligatoire"], a: 1, exp: "Une branche mouvante n'est pas figée." },
+    { type: "input", q: "Quel identifiant de commit (empreinte exacte) offre l'épinglage le plus sûr ? (le sigle)", a: ["SHA", "sha", "le SHA", "commit sha"], ph: "un sigle", exp: "Un SHA de commit complet est immuable." },
+    { type: "input", q: "Quel mot-clé passe les entrées (paramètres) à une action ? (le mot-clé seul)", a: ["with", "with:"], ph: "un mot-clé", exp: "with: fournit les inputs." },
+    { type: "qcm", q: "Les valeurs produites par une action réutilisables ensuite s'appellent…", opts: ["Des secrets", "Des sorties (outputs)", "Des branches", "Des runners"], a: 1, exp: "On les lit via steps.<id>.outputs." },
+    { type: "input", q: "Pour lire la sortie digest du step d'id build, on écrit ${{ steps.build.outputs.____ }}", a: ["digest"], ph: "un nom", exp: "steps.<id>.outputs.<nom>." },
+    { type: "vf", q: "Pour lire les sorties d'un step, il faut lui avoir donné un id.", a: true, exp: "Sans id, pas de référence steps.<id>." },
+    { type: "input", q: "Quel déclencheur rend un workflow appelable par un autre ? (le mot-clé)", a: ["workflow_call", "workflow_call:"], ph: "un mot-clé", exp: "on: workflow_call: le rend réutilisable." },
+    { type: "qcm", q: "Un workflow réutilisable s'invoque…", opts: ["Dans un step (sous steps:)", "Comme un job entier (uses: directement sous le job)", "Avec run:", "Dans le README"], a: 1, exp: "Niveau job, pas niveau step." },
+    { type: "qcm", q: "Différence action vs workflow réutilisable :", opts: ["Aucune", "Une action fait UNE tâche dans un step ; un workflow réutilisable enchaîne plusieurs steps comme un job", "L'action est plus lente", "Le workflow ne prend pas d'entrées"], a: 1, exp: "Deux niveaux distincts." },
+    { type: "input", q: "Comment l'appelant transmet-il un secret au workflow réutilisable ? (le mot-clé seul)", a: ["secrets", "secrets:"], ph: "un mot-clé", exp: "Le bloc secrets: passe les secrets." },
+    { type: "vf", q: "Une action tierce exécute du code d'autrui avec accès à ton dépôt : d'où l'importance de l'épinglage.", a: true, exp: "Question de sécurité de la chaîne d'approvisionnement." },
+    { type: "qcm", q: "Épingler @v4 plutôt que @main, c'est…", opts: ["Moins sûr", "Un bon compromis : version majeure stable, correctifs de sécurité", "Interdit", "Sans effet"], a: 1, exp: "Étiquette de version, pas branche mouvante." },
+    { type: "input", q: "Dans le workflow réutilisable, sous quel mot-clé déclare-t-on les entrées typées ? (le mot-clé seul)", a: ["inputs", "inputs:"], ph: "un mot-clé", exp: "inputs: sous workflow_call." }
+  ],
+  final: {
+    title: "Exercice final — Consommer et mutualiser",
+    intro: `<p>Tu veux réutiliser un workflow de test standard depuis plusieurs dépôts et consommer proprement une action tierce.</p>`,
+    questions: [
+      { type: "input", q: "Quel déclencheur mettre dans le workflow appelé pour qu'il soit réutilisable ? (le mot-clé)", a: ["workflow_call", "workflow_call:"], ph: "un mot-clé", exp: "on: workflow_call." },
+      { type: "qcm", q: "L'appelant invoque ce workflow…", opts: ["dans un step", "au niveau d'un job avec uses:", "avec run:", "via un secret"], a: 1, exp: "uses: sous le job." },
+      { type: "input", q: "Comment l'appelant passe-t-il l'entrée node ? (le mot-clé seul)", a: ["with", "with:"], ph: "un mot-clé", exp: "with: node: '20'." },
+      { type: "qcm", q: "Pour l'action tierce sensible, tu l'épingles sur…", opts: ["@main", "un SHA de commit complet", "@latest", "rien"], a: 1, exp: "Le plus sûr : SHA immuable." },
+      { type: "vf", q: "Un workflow réutilisable peut recevoir des inputs ET des secrets de l'appelant.", a: true, exp: "Blocs inputs: et secrets: sous workflow_call." }
+    ],
+    solution: `<pre class="pseudo"># ci-reutilisable.yml (appele)
+on:
+  workflow_call:
+    inputs:
+      node: { required: true, type: string }
+    secrets:
+      TOKEN: { required: true }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4        # action officielle, epinglee sur @v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ inputs.node }}
+      - run: npm ci &amp;&amp; npm test
+# ------------------------------------------
+# appelant.yml
+jobs:
+  ci:
+    uses: ./.github/workflows/ci-reutilisable.yml   # appel au NIVEAU du job
+    with:
+      node: '20'
+    secrets:
+      TOKEN: \${{ secrets.NPM_TOKEN }}</pre>
+<p>Un seul workflow de test, appelé partout : moins de duplication, une seule source à maintenir. Et chaque action tierce est épinglée sur une version fixe.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow ici…",
+  items: [
+  { id: "ghadv-j22", title: "Un workflow réutilisable de lint", level: 3,
+    statement: "Écris un workflow réutilisable ci-lint.yml déclenché par workflow_call, prenant une entrée node (string, requise), qui installe Node à cette version et lance npm run lint. Puis écris le workflow appelant qui l'invoque au niveau d'un job en passant node: '20'. Commente les lignes clés et rappelle la différence action/workflow réutilisable.",
+    hints: [
+      "Le workflow appelé commence par on: workflow_call: avec un bloc inputs: node.",
+      "L'entrée se lit ${{ inputs.node }} dans setup-node.",
+      "L'appelant met uses: ./.github/workflows/ci-lint.yml directement sous le job, pas dans un step."
+    ],
+    solution: "# .github/workflows/ci-lint.yml (APPELE)\non:\n  workflow_call:\n    inputs:\n      node:\n        required: true\n        type: string            # entree typee\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ inputs.node }}   # version recue de l'appelant\n      - run: npm ci && npm run lint\n# ---------------------------------------------\n# .github/workflows/appelant.yml (APPELANT)\njobs:\n  lint:\n    uses: ./.github/workflows/ci-lint.yml   # appel au NIVEAU du job\n    with:\n      node: '20'                # on passe l'entree",
+    note: "Le point a retenir : un workflow reutilisable s'invoque comme un JOB entier (uses: directement sous le job), alors qu'une action s'invoque dans un STEP (uses: sous steps:). Le premier enchaine plusieurs steps et se mutualise entre depots ; la seconde fait une seule tache. Factoriser le lint ainsi evite de recopier le meme pipeline dans dix projets." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

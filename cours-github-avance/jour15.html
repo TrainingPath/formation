@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Écrire un premier workflow CI",
+  subtitle: "Un vrai pipeline : récupérer le code, installer, tester, et devenir un status check.",
+  theory: `
+<h3>1. Qu'est-ce qu'un workflow de CI ?</h3>
+<p>La <strong>CI</strong> (Continuous Integration, « intégration continue ») consiste à <strong>vérifier automatiquement chaque changement</strong> dès qu'il arrive : on récupère le code, on installe les dépendances, on lance les tests. Si tout passe, la CI est <strong>verte</strong> ; sinon, <strong>rouge</strong>. C'est le <strong>contrôle qualité en bout de chaîne</strong> qui inspecte chaque pièce avant de l'accepter. Aujourd'hui, on écrit ce workflow en entier.</p>
+
+<h3>2. La structure d'un workflow de CI</h3>
+<pre class="pseudo">name: CI                          # nom du workflow
+on:                               # QUAND se déclencher
+  push:
+    branches: [main]              # sur les push vers main
+  pull_request:                   # ET sur toutes les pull requests (le cas clé pour la protection de branche)
+jobs:
+  build-and-test:                 # un seul job : construire et tester
+    runs-on: ubuntu-latest        # sur une machine Ubuntu fournie par GitHub
+    steps:
+      - uses: actions/checkout@v4 # 1) récupérer le code du dépôt sur le runner</pre>
+<div class="warn">Déclencher sur <code>pull_request</code> est indispensable : c'est ce déclencheur qui crée le <strong>status check</strong> exigé par la protection de branche (jour 12). Sans lui, le bouton « Merge » ne saurait jamais si les tests passent.</div>
+
+<h3>3. Installer l'environnement avec une action</h3>
+<pre class="pseudo">      - uses: actions/setup-node@v4   # action officielle qui installe Node.js sur le runner
+        with:
+          node-version: "20"          # préciser la version voulue (paramètre passé via "with")
+          cache: "npm"                # mettre en cache les dépendances pour accélérer les exécutions suivantes</pre>
+<p>Le mot-clé <code>with:</code> passe des <strong>paramètres</strong> à une action, comme les arguments d'une fonction. Il existe des actions équivalentes pour Python (<code>setup-python</code>), Java (<code>setup-java</code>), etc.</p>
+
+<h3>4. Installer, construire, tester</h3>
+<pre class="pseudo">      - run: npm ci        # installer les dépendances de façon reproductible (à partir du package-lock)
+      - run: npm run build # construire le projet (compilation, bundling...)
+      - run: npm test      # LANCER LES TESTS : c'est le geste central de la CI</pre>
+<p>Point capital : si une commande <code>run</code> échoue (code de sortie non nul), le <strong>step échoue</strong>, donc le <strong>job échoue</strong>, donc la <strong>CI est rouge</strong>. C'est exactement ainsi qu'un test cassé bloque la fusion. La logique des codes de sortie des hooks (jour 8) se retrouve ici, à l'échelle du serveur.</p>
+
+<h3>5. Le workflow complet</h3>
+<pre class="pseudo">name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4        # récupérer le code
+      - uses: actions/setup-node@v4      # installer Node
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci                      # installer les dépendances
+      - run: npm run build               # construire
+      - run: npm test                    # tester -> vert ou rouge</pre>
+
+<h3>6. Conditions, artefacts et variables</h3>
+<pre class="pseudo">      - run: npm run lint
+        if: \${{ github.event_name == 'pull_request' }}   # step CONDITIONNEL : seulement sur les PR
+      - uses: actions/upload-artifact@v4                  # conserver un fichier produit (rapport, build)
+        with:
+          name: rapport-tests
+          path: coverage/
+        env:
+          NODE_ENV: test                 # variable d'environnement fournie au step</pre>
+<p>Un <strong>artefact</strong> est un fichier produit par le job (rapport de tests, binaire compilé) que GitHub conserve et met à disposition au téléchargement. Les <strong>expressions</strong> <code>\${{ ... }}</code> permettent des <strong>conditions</strong> (<code>if:</code>) selon l'événement ou la branche.</p>
+<div class="tip">Pousse ce fichier dans <code>.github/workflows/ci.yml</code>, ouvre une PR : l'onglet « Actions » montre le workflow tourner, et la PR affiche « ✅ build-and-test ». Relie ce check à la protection de branche (jour 12) et le tour est joué : <strong>impossible de merger du code qui casse les tests</strong>. Demain : jobs multiples, steps et runners en détail.</p></div>`,
+  exercises: [
+    { type: "qcm", q: "La CI (intégration continue) consiste à :", opts: ["Déployer en prod à la main", "Vérifier automatiquement chaque changement (install + tests)", "Supprimer des branches", "Écrire des commits"], a: 1, exp: "Contrôle qualité automatique à chaque changement." },
+    { type: "input", q: "Sous quelle clé YAML déclare-t-on QUAND le workflow se déclenche ?", a: ["on", "on:"], ph: "...", exp: "on: push / pull_request." },
+    { type: "qcm", q: "Pourquoi déclencher sur pull_request est indispensable ?", opts: ["Pour supprimer la PR", "Car cela crée le status check exigé par la protection de branche", "Pour renommer main", "Ça ne sert à rien"], a: 1, exp: "Le check débloque (ou non) le merge." },
+    { type: "input", q: "Quelle action officielle installe Node.js sur le runner ?", a: ["actions/setup-node", "actions/setup-node@v4"], ph: "actions/...", exp: "setup-node." },
+    { type: "input", q: "Quel mot-clé YAML passe des paramètres à une action (comme des arguments) ?", a: ["with", "with:"], ph: "...", exp: "with: node-version..." },
+    { type: "qcm", q: "'npm ci' plutôt que 'npm install' en CI, car il :", opts: ["Est plus lent", "Installe de façon reproductible (à partir du lock)", "Supprime node_modules", "Lance les tests"], a: 1, exp: "Installation déterministe." },
+    { type: "qcm", q: "Le geste central de la CI est :", opts: ["npm run build", "npm test (lancer les tests)", "git push", "echo"], a: 1, exp: "Tester chaque changement." },
+    { type: "vf", q: "Si une commande run échoue, le step, le job, et donc la CI deviennent rouges.", a: true, exp: "Code de sortie non nul = échec propagé." },
+    { type: "qcm", q: "Un 'artefact' est :", opts: ["Un secret", "Un fichier produit par le job, conservé et téléchargeable", "Un runner", "Un event"], a: 1, exp: "Rapport, binaire, coverage..." },
+    { type: "input", q: "Quelle action conserve un fichier produit (rapport, build) ?", a: ["actions/upload-artifact", "actions/upload-artifact@v4"], ph: "actions/...", exp: "upload-artifact." },
+    { type: "input", q: "Quel mot-clé YAML rend un step conditionnel ?", a: ["if", "if:"], ph: "...", exp: "if: <expression>." },
+    { type: "qcm", q: "Où placer le fichier de workflow CI ?", opts: [".github/ci.yml", ".github/workflows/ci.yml", "racine du dépôt", "src/ci.yml"], a: 1, exp: ".github/workflows/." },
+    { type: "input", q: "Quel mot-clé YAML définit une variable d'environnement pour un step ?", a: ["env", "env:"], ph: "...", exp: "env: NODE_ENV: test." },
+    { type: "qcm", q: "'cache: npm' dans setup-node sert à :", opts: ["Supprimer les dépendances", "Accélérer les exécutions suivantes en réutilisant les dépendances", "Lancer les tests", "Ouvrir une PR"], a: 1, exp: "Le cache évite de tout retélécharger." },
+    { type: "vf", q: "Relié à la protection de branche, ce check empêche de merger du code qui casse les tests.", a: true, exp: "Le pont jour 12 + jour 15." }
+  ],
+  final: {
+    title: "Exercice final — Un pipeline CI complet",
+    intro: `<p>Tu écris ci.yml : déclenché sur push (main) et PR, il installe Node, installe les deps, construit et teste.</p>`,
+    questions: [
+      { type: "input", q: "Le dossier + fichier du workflow :", a: [".github/workflows/ci.yml"], ph: ".github/workflows/...", exp: "ci.yml." },
+      { type: "input", q: "L'action qui récupère le code :", a: ["actions/checkout", "actions/checkout@v4"], ph: "actions/...", exp: "checkout." },
+      { type: "input", q: "L'action qui installe Node :", a: ["actions/setup-node", "actions/setup-node@v4"], ph: "actions/...", exp: "setup-node." },
+      { type: "input", q: "La commande centrale qui lance les tests :", a: ["npm test"], ph: "npm ...", exp: "npm test." },
+      { type: "vf", q: "Un test cassé rendra la CI rouge et bloquera le merge (avec la protection).", a: true, exp: "Le code de sortie propage l'échec." }
+    ],
+    solution: `<pre class="pseudo"># .github/workflows/ci.yml
+name: CI
+on:
+  push:
+    branches: [main]        # push sur main
+  pull_request:             # ET toutes les PR (crée le status check)
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest  # runner Ubuntu
+    steps:
+      - uses: actions/checkout@v4       # récupérer le code
+      - uses: actions/setup-node@v4     # installer Node
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci                     # installer les dépendances (reproductible)
+      - run: npm run build              # construire
+      - run: npm test                   # tester -> vert / rouge</pre>
+<p>Un pipeline complet qui garde main sain. Demain : plusieurs jobs, steps et runners en profondeur.</p>`
+  }
+};
+</script>
+<script>
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta commande / ton workflow ici…",
+  items: [
+  { id: "ghadv-j15", title: "Le pipeline CI du projet", level: 3,
+    statement: "Écris le workflow <code>.github/workflows/ci.yml</code> complet d'un projet Node : déclenché sur push vers main ET sur les pull requests, un job 'build-and-test' sur ubuntu-latest qui récupère le code, installe Node 20 avec cache npm, installe les dépendances (npm ci), construit (npm run build) et teste (npm test). Ajoute un step de lint conditionnel aux PR. Commente chaque clé.",
+    hints: [
+      "Le déclencheur pull_request est ce qui produit le status check du jour 12.",
+      "with: passe node-version et cache à setup-node.",
+      "Un step conditionnel utilise if: avec une expression sur github.event_name."
+    ],
+    solution: "# Fichier : .github/workflows/ci.yml\nname: CI\n\non:                               # QUAND déclencher\n  push:\n    branches: [main]              # push sur main\n  pull_request:                   # ET toutes les PR -> crée le status check\n\njobs:\n  build-and-test:                 # un job unique : construire + tester\n    runs-on: ubuntu-latest        # runner fourni par GitHub\n    steps:\n      - uses: actions/checkout@v4          # 1) récupérer le code\n      - uses: actions/setup-node@v4        # 2) installer Node\n        with:\n          node-version: \"20\"               # version voulue\n          cache: \"npm\"                      # cache des dépendances\n      - run: npm ci                        # 3) installer (reproductible)\n      - run: npm run build                 # 4) construire\n      - run: npm test                      # 5) tester -> vert / rouge\n      - run: npm run lint                  # 6) lint, seulement sur les PR\n        if: ${{ github.event_name == 'pull_request' }}",
+    note: "Ce workflow est le coeur de la qualité automatique : chaque PR est installée et testée sur une machine neuve, indépendamment du poste du développeur. Le déclencheur pull_request est la clé de voûte : c'est lui qui alimente le status check 'build-and-test' que la protection de branche (jour 12) exige avant tout merge. La règle d'or des jours 3-5 reste vraie : ce filet automatique protège main sans jamais réécrire son historique." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

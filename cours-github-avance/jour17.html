@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Secrets et variables d'environnement",
+  subtitle: "Donner des valeurs à un workflow sans jamais écrire un mot de passe en clair.",
+  theory: `
+<h3>1. Le problème : un workflow a besoin de valeurs sensibles</h3>
+<p>Un workflow (le fichier YAML qui décrit une automatisation dans <code>.github/workflows/</code>) doit souvent se connecter à des services : pousser une image Docker, déployer sur un serveur, appeler une API payante. Pour cela il faut des <strong>identifiants</strong> : clé d'API, jeton (token), mot de passe. Le piège : si tu écris ces valeurs directement dans le YAML, elles sont <strong>versionnées dans Git</strong>, donc visibles par quiconque lit le dépôt, et conservées dans l'historique pour toujours.</p>
+<div class="warn">Un secret écrit en clair dans un fichier versionné est un secret <strong>compromis</strong>. Même si tu le supprimes ensuite, il reste dans l'historique Git. La seule vraie réponse est de le <strong>révoquer</strong> (le désactiver côté service) et d'en générer un nouveau.</div>
+
+<h3>2. Un secret, c'est quoi ?</h3>
+<p>Un <strong>secret</strong> (en anglais <em>secret</em>) est une valeur <strong>chiffrée</strong> stockée par GitHub, en dehors du code, que le workflow peut lire au moment de son exécution. GitHub la <strong>masque</strong> automatiquement dans les journaux (logs) : si la valeur apparaît dans une sortie, elle est remplacée par <code>***</code>. Tu la définis une fois dans les réglages, puis tu y fais référence par son nom, jamais par sa valeur.</p>
+
+<h3>3. Où définir un secret ?</h3>
+<pre class="pseudo">Depot &gt; Settings &gt; Secrets and variables &gt; Actions      # emplacement dans l'interface GitHub
+- Repository secrets  : valables pour CE depot                # ex. API_KEY, DEPLOY_TOKEN
+- Environment secrets : lies a un environnement (prod, staging) # vus au jour 27 : ajoutent des approbations
+- Organization secrets: partages entre plusieurs depots       # geres au niveau de l'organisation</pre>
+<p>On peut aussi les créer en ligne de commande avec le CLI <code>gh</code> (vu au jour 28) :</p>
+<pre class="pseudo">gh secret set API_KEY                    # demande la valeur de facon interactive (rien ne s'affiche)
+gh secret set API_KEY --body "valeur"    # a EVITER : la valeur peut rester dans l'historique du shell
+gh secret list                           # liste les noms des secrets (jamais les valeurs)</pre>
+
+<h3>4. Variable d'environnement : la boîte que lit le programme</h3>
+<p>Une <strong>variable d'environnement</strong> (en anglais <em>environment variable</em>) est une paire <strong>nom=valeur</strong> fournie à un processus par le système qui le lance. Ton code la lit avec <code>process.env.NOM</code> (Node), <code>os.environ["NOM"]</code> (Python), <code>$NOM</code> (shell). Dans Actions, on remplit ces variables avec le mot-clé <code>env:</code>, souvent à partir d'un secret.</p>
+<pre class="pseudo">jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:                                 # variables valables pour TOUT le job
+      NODE_ENV: production               # une valeur non sensible : ecrite en clair, sans probleme
+    steps:
+      - name: Deployer
+        env:                             # variables valables pour CE step uniquement
+          API_KEY: \${{ secrets.API_KEY }}   # on INJECTE le secret dans une variable d'env
+        run: node deploy.js              # deploy.js lira process.env.API_KEY</pre>
+<div class="tip">Distingue bien : une <strong>variable</strong> (mot-clé <code>vars</code>, contexte <code>\${{ vars.X }}</code>) sert aux valeurs <strong>non sensibles</strong> et modifiables (un nom de région, un numéro de version). Un <strong>secret</strong> (contexte <code>\${{ secrets.X }}</code>) sert aux valeurs <strong>sensibles</strong>, toujours masquées.</div>
+
+<h3>5. Le contexte secrets et le GITHUB_TOKEN</h3>
+<p>Un <strong>contexte</strong> est un objet que GitHub met à disposition dans les expressions <code>\${{ ... }}</code>. Le contexte <code>secrets</code> contient tes secrets ; <code>vars</code> tes variables ; <code>github</code> des infos sur l'événement. Parmi les secrets, <code>\${{ secrets.GITHUB_TOKEN }}</code> est <strong>fourni automatiquement</strong> à chaque exécution : c'est un jeton temporaire, limité à ton dépôt, qui expire à la fin du job. Il évite de créer un jeton personnel pour la plupart des tâches internes (commenter une PR, publier un package du dépôt).</p>
+<pre class="pseudo">permissions:                             # on RESTREINT ce que le GITHUB_TOKEN a le droit de faire
+  contents: read                         # lecture du code seulement...
+  pull-requests: write                   # ...et ecriture sur les pull requests
+steps:
+  - run: gh pr comment 42 --body "CI verte"
+    env:
+      GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}   # le CLI gh a besoin d'un jeton pour agir</pre>
+
+<h3>6. Règles d'or de sécurité</h3>
+<pre class="pseudo">1. JAMAIS de secret en clair dans le YAML ni dans le code       # sinon il est dans l'historique Git
+2. Toujours passer par secrets.* et le mot-cle env:             # une seule source de verite
+3. Principe du moindre privilege : permissions minimales        # le jeton ne peut que le strict necessaire
+4. Ne jamais faire "echo" d'un secret pour "verifier"           # meme masque, c'est une mauvaise habitude
+5. Un secret fuite ? On le REVOQUE et on en cree un nouveau     # supprimer le fichier ne suffit pas
+6. Attention aux forks : les secrets ne sont PAS exposes aux PR externes  # protection contre le vol</pre>
+<div class="warn">Les secrets ne sont <strong>pas</strong> transmis aux workflows déclenchés par une pull request venant d'un <em>fork</em> (une copie du dépôt par un contributeur externe). C'est volontaire : sinon, n'importe qui pourrait ouvrir une PR qui affiche tes secrets. Ne conçois jamais un déploiement qui se déclenche sur une PR de fork.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un secret dans GitHub Actions est…", opts: ["Une valeur écrite en clair dans le YAML", "Une valeur chiffrée stockée hors du code, référencée par son nom", "Un commentaire", "Une branche protégée"], a: 1, exp: "Chiffré, masqué dans les logs, jamais dans le code." },
+    { type: "qcm", q: "Pourquoi ne JAMAIS écrire un mot de passe en clair dans un workflow ?", opts: ["Ça ralentit le job", "Il est versionné dans Git et reste dans l'historique pour toujours", "GitHub l'interdit techniquement", "Ça change la couleur du badge"], a: 1, exp: "Versionné = compromis, même après suppression." },
+    { type: "vf", q: "Supprimer un secret écrit en clair d'un fichier suffit à le sécuriser.", a: false, exp: "Il reste dans l'historique Git : il faut le révoquer." },
+    { type: "input", q: "Quel mot-clé YAML définit des variables d'environnement pour un job ou un step ? (le mot-clé seul)", a: ["env", "env:"], ph: "un mot-clé", exp: "Le mot-clé env: remplit les variables d'environnement." },
+    { type: "input", q: "Complète l'expression pour injecter le secret API_KEY : ${{ secrets.___ }}", a: ["API_KEY"], ph: "un nom", exp: "On référence le secret par son nom via le contexte secrets." },
+    { type: "qcm", q: "Le contexte secrets sert à…", opts: ["Stocker des couleurs", "Accéder aux secrets définis dans les réglages", "Lister les branches", "Créer des tags"], a: 1, exp: "${{ secrets.NOM }} lit un secret." },
+    { type: "input", q: "Quel jeton GitHub fournit-il automatiquement à chaque exécution de workflow ? (son nom exact)", a: ["GITHUB_TOKEN", "secrets.GITHUB_TOKEN"], ph: "un nom de jeton", exp: "GITHUB_TOKEN : temporaire, limité au dépôt, expire à la fin du job." },
+    { type: "vf", q: "Le GITHUB_TOKEN expire à la fin du job.", a: true, exp: "Jeton éphémère, limité au dépôt." },
+    { type: "qcm", q: "Pour une valeur NON sensible et modifiable (ex. une région), on utilise plutôt…", opts: ["Un secret", "Une variable (vars)", "Un tag Git", "Un fichier .env versionné"], a: 1, exp: "vars pour le non-sensible, secrets pour le sensible." },
+    { type: "qcm", q: "Que fait GitHub si la valeur d'un secret apparaît dans un log ?", opts: ["Il l'affiche normalement", "Il la remplace par ***", "Il supprime le job", "Il envoie un email"], a: 1, exp: "Masquage automatique par ***." },
+    { type: "input", q: "Quelle commande gh crée/actualise un secret de dépôt nommé API_KEY de façon interactive ? (la commande, sans --body)", a: ["gh secret set API_KEY", "gh secret set api_key"], ph: "gh secret ...", exp: "gh secret set API_KEY demande la valeur sans l'afficher." },
+    { type: "qcm", q: "Les secrets sont-ils exposés aux workflows d'une PR venant d'un fork externe ?", opts: ["Oui, toujours", "Non, c'est volontairement bloqué", "Seulement le week-end", "Uniquement si la PR est mergée"], a: 1, exp: "Sinon n'importe qui pourrait voler tes secrets." },
+    { type: "vf", q: "Faire echo d'un secret pour vérifier sa valeur est une bonne pratique.", a: false, exp: "Mauvaise habitude : on ne fait jamais echo d'un secret." },
+    { type: "input", q: "Le mot-clé qui restreint les droits du GITHUB_TOKEN (ex. contents: read) s'appelle… (le mot-clé seul)", a: ["permissions", "permissions:"], ph: "un mot-clé", exp: "permissions applique le principe du moindre privilège." },
+    { type: "qcm", q: "Un secret a fuité. La bonne réaction est…", opts: ["Le supprimer du fichier et continuer", "Le révoquer côté service et en générer un nouveau", "Attendre qu'il expire", "Le renommer"], a: 1, exp: "Supprimer ne suffit pas : révoquer + régénérer." }
+  ],
+  final: {
+    title: "Exercice final — Injecter un secret proprement",
+    intro: `<p>Tu dois lancer un script <code>deploy.js</code> qui lit une clé d'API depuis <code>process.env.API_KEY</code>. La clé est stockée dans un secret de dépôt nommé <code>API_KEY</code>.</p>`,
+    questions: [
+      { type: "qcm", q: "Où stockes-tu la clé ?", opts: ["Dans le YAML en clair", "Dans un secret de dépôt (Settings > Secrets)", "Dans le README", "Dans un commentaire de code"], a: 1, exp: "Jamais en clair." },
+      { type: "input", q: "Sous quel mot-clé, au niveau du step, définis-tu la variable API_KEY ? (le mot-clé seul)", a: ["env", "env:"], ph: "un mot-clé", exp: "env: injecte le secret dans une variable d'environnement." },
+      { type: "input", q: "Écris la valeur à donner à API_KEY pour lire le secret. (l'expression ${{ ... }})", a: ["${{ secrets.API_KEY }}", "${{secrets.API_KEY}}"], ph: "${{ ... }}", exp: "On référence le secret par son nom." },
+      { type: "qcm", q: "Le code lit ensuite la clé via…", opts: ["process.env.API_KEY", "secrets.API_KEY dans le code", "un fichier .env commité", "l'URL du dépôt"], a: 0, exp: "La variable d'environnement, côté programme." },
+      { type: "vf", q: "Ce workflow ne doit pas se déclencher sur une PR venant d'un fork externe si le secret est requis.", a: true, exp: "Les secrets ne sont pas exposés aux forks." }
+    ],
+    solution: `<pre class="pseudo">name: Deploy
+on:
+  push:
+    branches: [ main ]                   # on evite les PR de forks pour ce job sensible
+permissions:
+  contents: read                         # moindre privilege : lecture seule
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4        # on recupere le code
+      - name: Deployer
+        env:
+          API_KEY: \${{ secrets.API_KEY }}   # le secret est INJECTE dans une variable d'env
+        run: node deploy.js              # deploy.js lit process.env.API_KEY (jamais en clair)</pre>
+<p>Aucune valeur sensible n'apparaît dans le fichier : seul le <strong>nom</strong> du secret est écrit. GitHub chiffre la valeur et la masque dans les logs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow ici…",
+  items: [
+  { id: "ghadv-j17", title: "Un déploiement qui consomme un secret", level: 3,
+    statement: "Écris un job de déploiement qui : (1) fixe une variable non sensible NODE_ENV=production au niveau du job, (2) exécute un step qui appelle un script upload.sh en lui fournissant, via env:, la variable DEPLOY_TOKEN alimentée par le secret DEPLOY_TOKEN, (3) restreint le GITHUB_TOKEN à contents: read. Commente chaque ligne sensible.",
+    hints: [
+      "env: peut exister au niveau du job (NODE_ENV) ET au niveau du step (DEPLOY_TOKEN).",
+      "La valeur du secret s'écrit ${{ secrets.DEPLOY_TOKEN }} — jamais la valeur réelle.",
+      "Ajoute un bloc permissions: avec contents: read."
+    ],
+    solution: "name: Deploy\non:\n  push:\n    branches: [ main ]\npermissions:\n  contents: read              # moindre privilege pour le GITHUB_TOKEN\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    env:\n      NODE_ENV: production      # valeur NON sensible : en clair, sans souci\n    steps:\n      - uses: actions/checkout@v4\n      - name: Envoyer\n        env:\n          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}   # secret injecte, jamais en clair\n        run: ./upload.sh        # le script lit $DEPLOY_TOKEN dans son environnement",
+    note: "L'idée clé : le fichier ne contient que des NOMS de secrets, jamais des valeurs. NODE_ENV illustre la distinction variable (non sensible, en clair) vs secret (sensible, référencé). Le bloc permissions applique le moindre privilège : le jeton automatique ne peut que lire le code, rien d'autre." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

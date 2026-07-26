@@ -1,0 +1,136 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 29</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 29,
+  title: "Automatiser avec le CLI et les scripts",
+  subtitle: "Enchaîner des commandes gh dans des scripts robustes et des workflows déclenchés.",
+  theory: `
+<h3>1. Du geste unique au script</h3>
+<p>Une commande <code>gh</code> isolée automatise un geste. Un <strong>script</strong> — une suite de commandes dans un fichier — automatise un <strong>processus entier</strong> : trier des issues, publier un rapport, nettoyer des branches. On l'écrit une fois, on le rejoue à volonté, en local ou dans un workflow. L'objectif : remplacer les tâches manuelles répétitives par du code relu et testé.</p>
+
+<h3>2. Un script shell robuste</h3>
+<p>Un script d'automatisation doit <strong>échouer proprement</strong> plutôt que continuer sur une erreur. En Bash, on ouvre par une ligne de robustesse.</p>
+<pre class="pseudo">#!/usr/bin/env bash
+set -euo pipefail                        # robustesse : -e stop au 1er echec ;
+                                         #   -u erreur si variable non definie ;
+                                         #   -o pipefail : un pipe echoue si un maillon echoue
+REPO="\${1:?usage: script.sh OWNER/REPO}"  # 1er argument requis, sinon message d'erreur clair
+
+# fermer les issues taguees "obsolete"
+for n in \$(gh issue list -R "\$REPO" --label obsolete --json number --jq '.[].number'); do
+  gh issue close "\$n" -R "\$REPO" --comment "Fermeture automatique (obsolete)."
+done</pre>
+<div class="tip"><code>set -euo pipefail</code> est le réflexe d'ouverture de tout script sérieux : sans lui, une commande qui échoue au milieu passe inaperçue et le script continue sur des données fausses. Il transforme une erreur silencieuse en arrêt net.</p></div>
+
+<h3>3. Lire du JSON proprement : --json et --jq</h3>
+<p>Ne parse jamais l'affichage « joli » d'une commande : il peut changer. Demande du <strong>JSON</strong> structuré avec <code>--json champs</code>, puis filtre avec <code>--jq</code>. C'est stable et scriptable.</p>
+<pre class="pseudo">gh pr list --json number,title,author --jq '.[] | "\\(.number) \\(.title)"'
+# --json : demande des champs precis en JSON
+# --jq   : filtre/formate la reponse (ici : numero + titre)</pre>
+<div class="warn">Automatiser sur la sortie texte destinée à l'affichage humain est fragile : un changement de format casse ton script. La sortie <strong>JSON</strong> (<code>--json</code>) est un contrat stable, faite pour les machines.</div>
+
+<h3>4. Déclencher un script au bon moment : les événements</h3>
+<p>Un workflow qui exécute un script peut se déclencher sur bien d'autres <strong>événements</strong> que <code>push</code>. Deux très utiles pour l'automatisation :</p>
+<pre class="pseudo">on:
+  schedule:
+    - cron: '0 8 * * 1'                  # cron : lundi 08h00 UTC (taches recurrentes)
+  workflow_dispatch:                      # bouton "Run workflow" : declenchement MANUEL a la demande
+    inputs:
+      cible:
+        description: 'depot a nettoyer'
+        required: true</pre>
+<p>Le <strong>cron</strong> est une syntaxe de planification en cinq champs (<code>minute heure jour-du-mois mois jour-de-semaine</code>) pour lancer une tâche à intervalles réguliers. <code>workflow_dispatch</code> ajoute un <strong>bouton</strong> dans l'interface pour lancer le workflow à la main, avec des paramètres.</p>
+
+<h3>5. Un workflow d'automatisation planifié</h3>
+<pre class="pseudo">name: Menage hebdo
+on:
+  schedule:
+    - cron: '0 8 * * 1'                  # chaque lundi matin
+  workflow_dispatch: {}                   # + declenchement manuel possible
+permissions:
+  issues: write                          # le script ferme des issues -&gt; droit d'ecriture
+jobs:
+  menage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/menage.sh \${{ github.repository }}
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}   # le CLI s'authentifie via le jeton</pre>
+<div class="tip">Le motif complet : un <strong>script robuste</strong> (<code>set -euo pipefail</code>, JSON + jq) + un <strong>déclencheur adapté</strong> (<code>schedule</code> pour le récurrent, <code>workflow_dispatch</code> pour le manuel) + les <strong>permissions minimales</strong> + un <strong>jeton par secret</strong>. C'est ainsi qu'on automatise la maintenance sans intervention et sans risque.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un script sert à…", opts: ["Chiffrer un secret", "Automatiser un processus entier (suite de commandes rejouable)", "Créer une branche", "Remplacer Git"], a: 1, exp: "Une fois écrit, rejoué à volonté." },
+    { type: "input", q: "Quelle ligne Bash rend un script robuste (arrêt au 1er échec, variables définies, pipefail) ?", a: ["set -euo pipefail", "set -e -u -o pipefail"], ph: "set ...", exp: "Le réflexe d'ouverture de tout script sérieux." },
+    { type: "qcm", q: "Que fait set -e ?", opts: ["Chiffre le script", "Arrête le script au premier échec de commande", "Active les logs", "Crée un secret"], a: 1, exp: "Erreur silencieuse → arrêt net." },
+    { type: "qcm", q: "set -u provoque une erreur si…", opts: ["Un fichier manque", "Une variable non définie est utilisée", "Un pipe réussit", "Une issue existe"], a: 1, exp: "Attrape les fautes de frappe de variables." },
+    { type: "input", q: "Quel drapeau de gh demande une sortie JSON structurée ? (le drapeau)", a: ["--json", "json"], ph: "un drapeau", exp: "--json champs : contrat stable pour les machines." },
+    { type: "input", q: "Quel drapeau filtre/formate le JSON de réponse ? (le drapeau)", a: ["--jq", "jq"], ph: "un drapeau", exp: "--jq applique une expression jq." },
+    { type: "vf", q: "Automatiser en parsant l'affichage humain d'une commande est fragile.", a: true, exp: "Le format peut changer : préférer --json." },
+    { type: "input", q: "Quel déclencheur programme un workflow à intervalles réguliers ? (le mot-clé)", a: ["schedule", "schedule:"], ph: "un mot-clé", exp: "on: schedule: avec un cron." },
+    { type: "input", q: "Quel déclencheur ajoute un bouton pour lancer le workflow manuellement ? (le mot-clé)", a: ["workflow_dispatch", "workflow_dispatch:"], ph: "un mot-clé", exp: "Déclenchement manuel à la demande." },
+    { type: "qcm", q: "La syntaxe cron '0 8 * * 1' signifie…", opts: ["Toutes les minutes", "Lundi à 08h00", "Le 8 de chaque mois", "Jamais"], a: 1, exp: "minute heure jour-mois mois jour-semaine." },
+    { type: "input", q: "Combien de champs compte une expression cron ? (un nombre)", a: ["5", "cinq"], ph: "un nombre", exp: "minute heure jour-du-mois mois jour-de-semaine." },
+    { type: "qcm", q: "Un workflow dont le script ferme des issues a besoin de…", opts: ["contents: read seulement", "issues: write", "packages: write", "aucune permission"], a: 1, exp: "Droit d'écriture sur les issues." },
+    { type: "qcm", q: "Le CLI gh dans le script s'authentifie via…", opts: ["Un mot de passe en clair", "GH_TOKEN alimenté par un secret", "L'URL du dépôt", "Rien"], a: 1, exp: "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}." },
+    { type: "vf", q: "workflow_dispatch peut aussi accepter des inputs (paramètres saisis au lancement).", a: true, exp: "On saisit des valeurs dans l'interface." },
+    { type: "qcm", q: "Le motif complet d'automatisation combine…", opts: ["Un secret en clair et un push", "Script robuste + déclencheur adapté + permissions minimales + jeton par secret", "Un cache et un artefact", "Une matrice seule"], a: 1, exp: "Maintenance sans intervention et sans risque." }
+  ],
+  final: {
+    title: "Exercice final — Un ménage automatisé et sûr",
+    intro: `<p>Tu écris un ménage hebdomadaire qui ferme les issues obsolètes, lançable aussi à la main, avec les bonnes permissions.</p>`,
+    questions: [
+      { type: "input", q: "Quelle ligne ouvre un script Bash robuste ?", a: ["set -euo pipefail", "set -e -u -o pipefail"], ph: "set ...", exp: "set -euo pipefail." },
+      { type: "input", q: "Quel déclencheur pour l'exécution hebdomadaire ? (le mot-clé)", a: ["schedule", "schedule:"], ph: "un mot-clé", exp: "schedule + cron." },
+      { type: "input", q: "Quel déclencheur pour le lancement manuel ? (le mot-clé)", a: ["workflow_dispatch", "workflow_dispatch:"], ph: "un mot-clé", exp: "workflow_dispatch." },
+      { type: "qcm", q: "Quelle permission pour fermer des issues ?", opts: ["contents: read", "issues: write", "pages: write", "packages: write"], a: 1, exp: "issues: write." },
+      { type: "vf", q: "Le script lit du JSON (--json) plutôt que la sortie humaine.", a: true, exp: "Contrat stable pour les machines." }
+    ],
+    solution: `<pre class="pseudo"># scripts/menage.sh
+#!/usr/bin/env bash
+set -euo pipefail                        # robustesse : arret au 1er echec
+REPO="\${1:?usage: menage.sh OWNER/REPO}"
+for n in \$(gh issue list -R "\$REPO" --label obsolete --json number --jq '.[].number'); do
+  gh issue close "\$n" -R "\$REPO" --comment "Fermeture automatique."
+done
+# ------------------------------------------
+# .github/workflows/menage.yml
+name: Menage hebdo
+on:
+  schedule:
+    - cron: '0 8 * * 1'                  # lundi 08h00
+  workflow_dispatch: {}                   # + bouton manuel
+permissions:
+  issues: write                          # le script ferme des issues
+jobs:
+  menage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/menage.sh \${{ github.repository }}
+        env:
+          GH_TOKEN: \${{ secrets.GITHUB_TOKEN }}   # jeton via secret</pre>
+<p>Script robuste + déclencheurs adaptés + permission minimale + jeton par secret : la maintenance tourne seule, chaque lundi, sans risque et sans clic.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton script ou workflow ici…",
+  items: [
+  { id: "ghadv-j29", title: "Un rapport d'activité automatisé", level: 3,
+    statement: "Écris un script Bash robuste rapport.sh qui prend OWNER/REPO en argument et écrit dans rapport.md le nombre de PR ouvertes et la liste (numéro + titre) des issues ouvertes, en lisant du JSON via --json et --jq. Puis écris le workflow qui le lance chaque lundi 9h ET à la demande, avec la permission de lecture appropriée et le jeton par secret. Commente les lignes clés.",
+    hints: [
+      "Ouvre le script par set -euo pipefail et exige l'argument avec ${1:?...}.",
+      "Utilise gh pr list --json number --jq 'length' pour compter, et gh issue list --json number,title --jq pour la liste.",
+      "Le workflow combine on: schedule (cron '0 9 * * 1') et workflow_dispatch, avec GH_TOKEN issu du GITHUB_TOKEN."
+    ],
+    solution: "# scripts/rapport.sh\n#!/usr/bin/env bash\nset -euo pipefail                          # robustesse\nREPO=\"${1:?usage: rapport.sh OWNER/REPO}\"\nNB_PR=$(gh pr list -R \"$REPO\" --state open --json number --jq 'length')\n{\n  echo \"# Rapport\"\n  echo \"PR ouvertes : $NB_PR\"\n  echo \"## Issues ouvertes\"\n  gh issue list -R \"$REPO\" --state open --json number,title \\\n    --jq '.[] | \"- #\\(.number) \\(.title)\"'   # JSON filtre, format stable\n} > rapport.md\n# ------------------------------------------\n# .github/workflows/rapport.yml\nname: Rapport\non:\n  schedule:\n    - cron: '0 9 * * 1'                    # lundi 09h00\n  workflow_dispatch: {}                     # + lancement manuel\npermissions:\n  contents: read\n  issues: read\n  pull-requests: read                       # lecture seule : moindre privilege\njobs:\n  rapport:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: ./scripts/rapport.sh ${{ github.repository }}\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+    note: "Ce script illustre les deux reflexes cles : set -euo pipefail (echouer proprement) et la lecture via --json/--jq (contrat stable, jamais la sortie humaine). Cote workflow, la combinaison schedule + workflow_dispatch couvre le recurrent ET le ponctuel. Les permissions sont en lecture seule car le script ne fait que LIRE : c'est le moindre privilege du jour 17 applique a l'automatisation. Le jeton, toujours, vient d'un secret." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

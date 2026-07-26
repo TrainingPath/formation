@@ -1,0 +1,128 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Artefacts et cache",
+  subtitle: "Transmettre des fichiers entre jobs, et éviter de tout retélécharger à chaque fois.",
+  theory: `
+<h3>1. Deux besoins bien distincts</h3>
+<p>Deux notions se ressemblent mais servent à des choses opposées. L'<strong>artefact</strong> transmet un <strong>résultat</strong> (le produit de ton build) : entre jobs, ou pour le télécharger après coup. Le <strong>cache</strong> réutilise des <strong>dépendances</strong> (des fichiers coûteux à obtenir) d'une exécution à l'autre, pour aller plus vite. Résumé : <strong>artefact = résultat à garder</strong>, <strong>cache = accélérateur jetable</strong>.</p>
+
+<h3>2. L'artefact : un résultat que l'on conserve</h3>
+<p>Un <strong>artefact</strong> (en anglais <em>artifact</em>) est un ensemble de fichiers produits par un job et <strong>stockés par GitHub</strong> à la fin de l'exécution. On l'utilise pour : passer un build compilé d'un job à un autre, garder un rapport de tests, ou télécharger un exécutable depuis l'interface. Chaque artefact a une <strong>durée de rétention</strong> (par défaut 90 jours, configurable).</p>
+<pre class="pseudo">- name: Construire
+  run: npm ci &amp;&amp; npm run build          # produit ./dist
+- uses: actions/upload-artifact@v4       # on TELEVERSE le resultat
+  with:
+    name: site-build                     # nom logique de l'artefact
+    path: dist/                          # ce qu'on conserve
+    retention-days: 7                    # duree de vie (par defaut 90 jours)</pre>
+<p>Un autre job le récupère avec l'action inverse :</p>
+<pre class="pseudo">deploy:
+  needs: build
+  steps:
+    - uses: actions/download-artifact@v4 # on TELECHARGE l'artefact...
+      with:
+        name: site-build                 # ...par son nom
+        path: dist/                      # ou le deposer</pre>
+<div class="tip">Chaque job tourne sur une machine <strong>neuve et isolée</strong> : les fichiers d'un job ne sont pas visibles par un autre. L'artefact est le pont officiel pour transmettre un résultat entre jobs.</div>
+
+<h3>3. Le cache : réutiliser des dépendances</h3>
+<p>Installer les dépendances (télécharger <code>node_modules</code>, les paquets Python, Maven…) prend du temps à chaque exécution. Le <strong>cache</strong> stocke ces fichiers et les <strong>restaure</strong> à l'exécution suivante, tant qu'ils n'ont pas changé. On l'identifie par une <strong>clé</strong> (<em>key</em>) : si la clé correspond à un cache existant, c'est un <strong>hit</strong> (on restaure) ; sinon un <strong>miss</strong> (on repart de zéro, puis on sauvegarde à la fin).</p>
+<pre class="pseudo">- uses: actions/cache@v4
+  with:
+    path: ~/.npm                         # le dossier a mettre en cache
+    key: npm-\${{ hashFiles('package-lock.json') }}   # clé calculee sur le lockfile
+    restore-keys: |
+      npm-                               # cle de repli si la cle exacte n'existe pas</pre>
+<p><code>hashFiles(...)</code> calcule une empreinte du fichier de verrouillage (<em>lockfile</em>). Tant que les dépendances ne changent pas, la clé reste identique → <strong>hit</strong>. Dès qu'on modifie <code>package-lock.json</code>, la clé change → <strong>miss</strong> → nouveau cache. C'est ce qui garantit qu'on ne restaure jamais des dépendances périmées.</p>
+
+<h3>4. Encore plus simple : le cache intégré à setup-*</h3>
+<pre class="pseudo">- uses: actions/setup-node@v4
+  with:
+    node-version: 20
+    cache: 'npm'                         # cache automatique base sur package-lock.json</pre>
+<p>Beaucoup d'actions <code>setup-*</code> (<code>setup-node</code>, <code>setup-python</code>, <code>setup-java</code>) intègrent un paramètre <code>cache:</code> qui gère la clé et le dossier pour toi. C'est la manière recommandée quand elle existe : moins de lignes, moins d'erreurs.</p>
+
+<h3>5. Les pièges à connaître</h3>
+<pre class="pseudo">1. On ne met JAMAIS de secret dans un artefact                  # il serait telechargeable par d'autres
+2. Cache != artefact : le cache peut disparaitre a tout moment   # ne jamais en DEPENDRE pour un resultat
+3. Une bonne cle de cache est basee sur le LOCKFILE             # sinon on restaure du perime
+4. Les caches ont un quota et une eviction (les vieux sont purges)  # espace limite par depot
+5. download-artifact ne marche qu'apres upload-artifact (needs)  # d'abord produire, puis consommer</pre>
+<div class="warn">Ne confonds jamais les deux : si tu ranges un résultat indispensable dans un <strong>cache</strong>, il peut être purgé et ton job cassera sans prévenir. Un résultat se met dans un <strong>artefact</strong>. Le cache n'est qu'une optimisation : le workflow doit fonctionner correctement même en cas de <em>miss</em>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un artefact sert à…", opts: ["Accélérer les installations", "Conserver/transmettre un résultat produit par un job", "Chiffrer des secrets", "Créer une branche"], a: 1, exp: "Artefact = résultat à garder." },
+    { type: "qcm", q: "Un cache sert à…", opts: ["Conserver un livrable définitif", "Réutiliser des dépendances d'une exécution à l'autre pour aller plus vite", "Déployer en prod", "Protéger une branche"], a: 1, exp: "Cache = accélérateur jetable." },
+    { type: "input", q: "Quelle action téléverse un artefact ? (nom sans version, actions/...)", a: ["actions/upload-artifact", "upload-artifact"], ph: "actions/...", exp: "upload-artifact stocke le résultat." },
+    { type: "input", q: "Quelle action télécharge un artefact dans un autre job ? (nom sans version, actions/...)", a: ["actions/download-artifact", "download-artifact"], ph: "actions/...", exp: "download-artifact récupère par son nom." },
+    { type: "qcm", q: "Pourquoi un job ne voit-il pas les fichiers d'un autre job directement ?", opts: ["Par sécurité GitHub uniquement", "Chaque job tourne sur une machine neuve et isolée", "À cause du cache", "Ce n'est pas vrai, ils partagent tout"], a: 1, exp: "Isolation : l'artefact est le pont." },
+    { type: "input", q: "Comment appelle-t-on l'identifiant qui distingue un cache ? (le mot, en anglais)", a: ["key", "clé", "cle", "la clé"], ph: "un mot", exp: "La key (clé) détermine hit ou miss." },
+    { type: "qcm", q: "Un cache hit signifie…", opts: ["Le cache est corrompu", "La clé correspond : on restaure le cache existant", "Le job échoue", "On crée un artefact"], a: 1, exp: "Hit = restauration ; miss = repartir de zéro." },
+    { type: "input", q: "Sur quel type de fichier calcule-t-on idéalement la clé de cache npm ? (le nom du fichier)", a: ["package-lock.json", "lockfile", "le lockfile"], ph: "un fichier", exp: "hashFiles('package-lock.json') : la clé suit les dépendances." },
+    { type: "qcm", q: "Que se passe-t-il si package-lock.json change ?", opts: ["Rien", "La clé change → miss → nouveau cache", "Le job est annulé", "Le secret fuite"], a: 1, exp: "On évite de restaurer des dépendances périmées." },
+    { type: "input", q: "Quel paramètre de actions/setup-node@v4 active un cache npm automatique ? Réponds cache: '___'", a: ["npm", "cache: 'npm'"], ph: "cache: '___'", exp: "setup-node gère la clé et le dossier pour toi." },
+    { type: "vf", q: "On peut ranger un secret dans un artefact sans risque.", a: false, exp: "Jamais : un artefact est téléchargeable." },
+    { type: "vf", q: "Un cache peut être purgé à tout moment ; le workflow doit marcher même en cas de miss.", a: true, exp: "Le cache n'est qu'une optimisation." },
+    { type: "qcm", q: "restore-keys sert à…", opts: ["Chiffrer le cache", "Fournir une clé de repli si la clé exacte n'existe pas", "Supprimer le cache", "Déployer"], a: 1, exp: "Repli partiel plutôt qu'un miss total." },
+    { type: "qcm", q: "download-artifact fonctionne…", opts: ["N'importe quand", "Seulement après un upload-artifact (dépendance needs)", "Sans job build", "Uniquement sur main"], a: 1, exp: "D'abord produire, puis consommer." },
+    { type: "vf", q: "retention-days règle la durée de vie d'un artefact (90 jours par défaut).", a: true, exp: "Configurable selon le besoin." }
+  ],
+  final: {
+    title: "Exercice final — Build, cache et passage d'artefact",
+    intro: `<p>Un job build installe les dépendances (avec cache npm), construit le site dans dist/, et transmet dist/ à un job deploy.</p>`,
+    questions: [
+      { type: "input", q: "Quelle action produit l'artefact dist/ ? (nom sans version, actions/...)", a: ["actions/upload-artifact", "upload-artifact"], ph: "actions/...", exp: "upload-artifact." },
+      { type: "input", q: "Quelle action récupère dist/ dans deploy ? (nom sans version, actions/...)", a: ["actions/download-artifact", "download-artifact"], ph: "actions/...", exp: "download-artifact." },
+      { type: "qcm", q: "Pour accélérer l'installation npm, le plus simple est…", opts: ["Un artefact de node_modules", "cache: 'npm' dans setup-node", "un secret", "rien"], a: 1, exp: "Cache intégré à setup-node." },
+      { type: "input", q: "Quel mot-clé garantit que deploy s'exécute après build ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs: build." },
+      { type: "vf", q: "dist/ doit passer par un artefact, pas par un cache.", a: true, exp: "dist/ est un résultat, pas une dépendance." }
+    ],
+    solution: `<pre class="pseudo">jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'                   # cache automatique base sur package-lock.json
+      - run: npm ci &amp;&amp; npm run build      # installe (vite grace au cache) puis construit
+      - uses: actions/upload-artifact@v4  # on conserve le RESULTAT
+        with:
+          name: site-build
+          path: dist/
+  deploy:
+    needs: build                          # deploy attend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4  # on recupere le resultat
+        with:
+          name: site-build
+          path: dist/
+      - run: ./deploy.sh dist/            # on met en ligne le contenu recu</pre>
+<p>Le <strong>cache</strong> accélère l'installation ; l'<strong>artefact</strong> transporte le résultat de <code>build</code> vers <code>deploy</code>. Deux rôles, deux outils.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton workflow ici…",
+  items: [
+  { id: "ghadv-j21", title: "Cache Python + artefact de rapport de tests", level: 3,
+    statement: "Écris un job test qui : installe Python, met en cache le dossier ~/.cache/pip avec une clé basée sur requirements.txt, installe les dépendances, lance pytest en produisant un rapport report.xml, et téléverse ce rapport en artefact (rétention 14 jours). Commente les lignes clés et explique la clé de cache.",
+    hints: [
+      "Utilise actions/cache@v4 avec path: ~/.cache/pip et key: pip-${{ hashFiles('requirements.txt') }}.",
+      "Le rapport report.xml se téléverse avec actions/upload-artifact@v4 (name + path).",
+      "retention-days: 14 fixe la durée de vie de l'artefact."
+    ],
+    solution: "jobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.12'\n      - uses: actions/cache@v4\n        with:\n          path: ~/.cache/pip                # dossier des paquets pip\n          key: pip-${{ hashFiles('requirements.txt') }}   # cle liee aux dependances\n          restore-keys: |\n            pip-                             # repli si la cle exacte manque\n      - run: pip install -r requirements.txt   # rapide si cache hit\n      - run: pytest --junitxml=report.xml      # produit le rapport de tests\n      - uses: actions/upload-artifact@v4       # on conserve le RESULTAT\n        with:\n          name: test-report\n          path: report.xml\n          retention-days: 14",
+    note: "La cle pip-${{ hashFiles('requirements.txt') }} lie le cache aux dependances : tant que requirements.txt ne bouge pas, on restaure (hit) ; des qu'il change, la cle change et on reconstruit un cache propre (pas de dependance perimee). Le rapport de tests, lui, est un RESULTAT : il va dans un artefact, telechargeable et conserve 14 jours, jamais dans le cache qui peut disparaitre." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

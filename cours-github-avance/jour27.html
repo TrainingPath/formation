@@ -1,0 +1,135 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 27</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 27,
+  title: "Environnements et approbations de déploiement",
+  subtitle: "Nommer ses cibles de déploiement et exiger un feu vert humain avant la production.",
+  theory: `
+<h3>1. Un environnement : une cible de déploiement nommée</h3>
+<p>Un <strong>environnement</strong> (en anglais <em>environment</em>) est une <strong>cible de déploiement nommée</strong> — par exemple <code>staging</code> (préproduction, pour tester) ou <code>production</code> (le vrai service utilisé par les clients). Dans GitHub, un environnement n'est pas qu'une étiquette : il porte ses <strong>propres secrets</strong>, ses <strong>propres variables</strong> et surtout des <strong>règles de protection</strong> qui conditionnent les déploiements vers lui.</p>
+<pre class="pseudo">staging     : preproduction, copie proche du reel, sans risque    # on y teste le deploiement
+production  : le service reel, utilise par les clients            # la moindre erreur est visible</pre>
+
+<h3>2. Déployer vers un environnement</h3>
+<p>Un job se rattache à un environnement avec le mot-clé <code>environment:</code>. Il peut lui associer une <strong>URL</strong> (affichée dans l'interface) et surtout hériter de ses secrets et de ses règles.</p>
+<pre class="pseudo">jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    environment:
+      name: production                   # ce job DEPLOIE vers l'environnement "production"
+      url: https://mon-app.example.com    # lien affiche dans l'onglet Deployments
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh
+        env:
+          TOKEN: \${{ secrets.DEPLOY_TOKEN }}   # ce secret peut etre PROPRE a "production"</pre>
+<div class="tip">Un <strong>secret d'environnement</strong> n'est visible que par les jobs déployant vers cet environnement. Ainsi le jeton de production n'est jamais accessible depuis un job de test ou de staging : cloisonnement par cible.</div>
+
+<h3>3. La règle reine : l'approbation manuelle (required reviewers)</h3>
+<p>La protection la plus utile est l'<strong>approbation manuelle</strong> : on désigne des <strong>relecteurs requis</strong> (<em>required reviewers</em>). Quand un job veut déployer vers cet environnement, GitHub <strong>met le job en pause</strong> et attend qu'une personne autorisée clique sur « Approve ». C'est le feu vert humain avant la mise en production.</p>
+<pre class="pseudo">Settings &gt; Environments &gt; production &gt; Protection rules :
+- Required reviewers   : Alice, Bob    # au moins un doit APPROUVER pour deployer
+- Wait timer           : 5 min         # delai d'attente avant le deploiement (fenetre d'annulation)
+- Deployment branches  : main only     # seule "main" peut deployer en production</pre>
+<div class="warn">Ces règles se configurent dans l'<strong>interface</strong> (Settings &gt; Environments), pas dans le YAML. Le workflow se contente de <em>viser</em> l'environnement (<code>environment: production</code>) ; c'est GitHub qui applique la pause et l'approbation. Un développeur ne peut donc pas contourner l'approbation en modifiant son propre workflow.</div>
+
+<h3>4. Restreindre qui, quoi et quand</h3>
+<pre class="pseudo">Deployment branches : main only        # QUOI : seuls les commits de main vont en prod
+Required reviewers  : l'equipe ops     # QUI : seule une personne habilitee approuve
+Wait timer          : 10 min           # QUAND : delai pour annuler en cas d'erreur</pre>
+<p>Ces trois leviers appliquent au déploiement le même esprit que la protection de branche (semaine 2) : on ne se repose pas sur la discipline, on <strong>mécanise</strong> la règle. Le <strong>wait timer</strong> (« minuteur d'attente ») laisse une fenêtre pour annuler avant que le déploiement ne parte réellement.</p>
+
+<h3>5. Un pipeline staging → production réaliste</h3>
+<pre class="pseudo">jobs:
+  deploy-staging:
+    environment:
+      name: staging                      # deploiement AUTOMATIQUE en preprod (sans approbation)
+      url: https://staging.example.com
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh staging
+  deploy-prod:
+    needs: deploy-staging                # la prod attend que la preprod soit OK
+    environment:
+      name: production                   # environnement PROTEGE : approbation requise (reglee dans l'UI)
+      url: https://mon-app.example.com
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh production</pre>
+<div class="tip">Schéma classique : on déploie d'abord en <strong>staging</strong> automatiquement, on vérifie, puis <strong>production</strong> (protégé par approbation) prend le relais via <code>needs</code>. C'est exactement le déploiement conditionnel du projet final (jour 31) : les tests et le staging valident, un humain approuve la prod.</div>`,
+  exercises: [
+    { type: "qcm", q: "Un environnement GitHub est…", opts: ["Une variable secrète", "Une cible de déploiement nommée (staging, production…)", "Une branche protégée", "Un runner"], a: 1, exp: "Cible nommée avec secrets et règles propres." },
+    { type: "input", q: "Quel mot-clé rattache un job à un environnement ? (le mot-clé seul)", a: ["environment", "environment:"], ph: "un mot-clé", exp: "environment: name: production." },
+    { type: "qcm", q: "staging désigne…", opts: ["La production réelle", "Une préproduction pour tester avant la prod", "Un secret", "Un tag"], a: 1, exp: "Copie proche du réel, sans risque." },
+    { type: "qcm", q: "Un secret d'environnement est visible…", opts: ["Par tous les jobs", "Seulement par les jobs déployant vers cet environnement", "Dans le README", "Nulle part"], a: 1, exp: "Cloisonnement par cible." },
+    { type: "input", q: "Comment appelle-t-on les personnes qui doivent approuver un déploiement ? (le terme en anglais)", a: ["required reviewers", "reviewers", "required-reviewers"], ph: "deux mots", exp: "Les required reviewers donnent le feu vert." },
+    { type: "vf", q: "Avec une approbation requise, GitHub met le job en pause jusqu'au clic d'un relecteur autorisé.", a: true, exp: "Feu vert humain avant la prod." },
+    { type: "qcm", q: "Les règles de protection d'environnement se configurent…", opts: ["Dans le YAML du workflow", "Dans l'interface (Settings > Environments)", "Dans un secret", "Dans le README"], a: 1, exp: "Le YAML vise l'environnement, l'UI applique les règles." },
+    { type: "vf", q: "Un développeur peut contourner l'approbation en modifiant son propre workflow.", a: false, exp: "Les règles sont côté GitHub, pas dans le YAML." },
+    { type: "input", q: "Quel réglage impose un délai d'attente avant le déploiement (fenêtre d'annulation) ? (le terme en anglais)", a: ["wait timer", "wait-timer"], ph: "deux mots", exp: "Le wait timer laisse annuler avant le départ." },
+    { type: "qcm", q: "Deployment branches: main only signifie…", opts: ["Toute branche peut déployer", "Seuls les commits de main peuvent déployer vers cet environnement", "Aucune branche", "Seulement les tags"], a: 1, exp: "Restreint le QUOI." },
+    { type: "input", q: "Quel mot-clé fait que deploy-prod attend deploy-staging ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs: deploy-staging." },
+    { type: "qcm", q: "L'URL d'un environnement…", opts: ["Est obligatoire pour déployer", "S'affiche dans l'onglet Deployments (lien pratique)", "Chiffre les secrets", "Crée une branche"], a: 1, exp: "Indication, pas obligation." },
+    { type: "vf", q: "On déploie souvent automatiquement en staging, puis en production après approbation.", a: true, exp: "Schéma staging → production." },
+    { type: "qcm", q: "Les environnements appliquent au déploiement le même esprit que…", opts: ["Le cache", "La protection de branche (mécaniser la règle)", "Les artefacts", "Les matrices"], a: 1, exp: "On mécanise, on ne compte pas sur la discipline." },
+    { type: "qcm", q: "Les trois leviers d'un environnement protégé sont…", opts: ["lint, test, build", "qui (reviewers), quoi (branches), quand (wait timer)", "cache, artefact, runner", "v1, v2, v3"], a: 1, exp: "Qui approuve, quelle branche, quel délai." }
+  ],
+  final: {
+    title: "Exercice final — Staging automatique puis prod approuvée",
+    intro: `<p>Tu déploies automatiquement en staging, puis en production seulement après approbation d'un relecteur, et uniquement depuis main.</p>`,
+    questions: [
+      { type: "input", q: "Quel mot-clé rattache chaque job à sa cible ? (le mot-clé seul)", a: ["environment", "environment:"], ph: "un mot-clé", exp: "environment: name: production." },
+      { type: "input", q: "Quel mot-clé fait que la prod attend le staging ? (le mot-clé seul)", a: ["needs", "needs:"], ph: "un mot-clé", exp: "needs: deploy-staging." },
+      { type: "qcm", q: "L'approbation requise se règle…", opts: ["dans le YAML", "dans Settings > Environments (required reviewers)", "dans un secret", "avec un tag"], a: 1, exp: "Interface, pas YAML." },
+      { type: "qcm", q: "Pour n'autoriser que main en prod, tu règles…", opts: ["un cache", "Deployment branches: main only", "un artefact", "un runner"], a: 1, exp: "Restreint la branche source." },
+      { type: "vf", q: "Le job de prod se met en pause jusqu'à l'approbation humaine.", a: true, exp: "Feu vert manuel avant déploiement." }
+    ],
+    solution: `<pre class="pseudo"># Cote interface : Settings &gt; Environments &gt; production
+#   Required reviewers : l'equipe ops
+#   Deployment branches : main only
+# ------------------------------------------
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment:
+      name: staging                      # deploiement automatique en preprod
+      url: https://staging.example.com
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh staging
+  deploy-prod:
+    needs: deploy-staging                # la prod attend la preprod
+    runs-on: ubuntu-latest
+    environment:
+      name: production                   # environnement PROTEGE : pause + approbation
+      url: https://mon-app.example.com
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./deploy.sh production
+        env:
+          TOKEN: \${{ secrets.DEPLOY_TOKEN }}   # secret propre a production</pre>
+<p>Le staging valide sans friction ; la production ne part qu'après un feu vert humain, depuis main uniquement. La règle est mécanisée, pas seulement souhaitée.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton pipeline ici…",
+  items: [
+  { id: "ghadv-j27", title: "Un déploiement en production protégé", level: 3,
+    statement: "Écris un job deploy-prod qui déploie vers l'environnement production (avec une URL), en supposant que cet environnement exige une approbation manuelle et n'autorise que main (réglés dans l'interface). Le job dépend d'un job test, utilise un secret d'environnement PROD_TOKEN, et lance ./deploy.sh production. Commente les lignes clés et rappelle en note ce qui se configure dans l'UI vs le YAML.",
+    hints: [
+      "Le job a needs: test, un bloc environment: avec name et url, et un step qui lit ${{ secrets.PROD_TOKEN }}.",
+      "Les required reviewers et Deployment branches se règlent dans Settings > Environments, PAS dans le YAML.",
+      "Le YAML se contente de viser l'environnement : GitHub applique la pause et l'approbation."
+    ],
+    solution: "# Interface : Settings > Environments > production\n#   Required reviewers : au moins une personne\n#   Deployment branches : main only\n# ----------------------------------------\njobs:\n  deploy-prod:\n    needs: test                    # ne deploie qu'apres des tests verts\n    runs-on: ubuntu-latest\n    environment:\n      name: production             # environnement PROTEGE (approbation reglee dans l'UI)\n      url: https://mon-app.example.com\n    steps:\n      - uses: actions/checkout@v4\n      - run: ./deploy.sh production\n        env:\n          PROD_TOKEN: ${{ secrets.PROD_TOKEN }}   # secret PROPRE a production",
+    note: "La separation est essentielle : le YAML declare l'INTENTION (deployer vers production), l'interface applique les CONTRAINTES (qui approuve, quelle branche, quel delai). C'est ce qui rend la protection inviolable : un developpeur ne peut pas retirer l'approbation en editant son workflow, car la regle vit cote GitHub. Le secret PROD_TOKEN, attache a l'environnement, reste invisible depuis les jobs de test ou de staging : cloisonnement par cible." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>
