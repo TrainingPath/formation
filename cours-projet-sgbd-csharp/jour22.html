@@ -1,0 +1,150 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 22</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 22,
+  title: "Repository et relations : plusieurs tables",
+  subtitle: "Des jointures dans le Repository pour afficher des libellés, pas des ID.",
+  theory: `
+<h3>1. Le problème des ID « nus »</h3>
+<p>Afficher <em>« Section : 1 »</em> n'a aucun sens pour l'utilisateur. On préfère <em>« Section : Informatique »</em>. Or le nom vit dans une <strong>autre table</strong> (<code>sections</code>), reliée à <code>livres</code> par la clé étrangère <code>section_id</code>. La solution : une <strong>jointure</strong> (<code>JOIN</code>) dans le Repository.</p>
+<div class="tip">C'est la force du Modèle : masquer la complexité SQL. La Vue appelle une méthode simple et reçoit un objet déjà « augmenté » des libellés.</div>
+
+<h3>2. Enrichir le modèle : propriétés de confort</h3>
+<p>On ajoute au modèle <code>Livre</code> des propriétés <code>string</code> pour stocker les noms récupérés par la jointure.</p>
+<pre class="pseudo">public class Livre {
+    public int Id { get; set; }
+    public string Titre { get; set; }
+    public decimal Prix { get; set; }
+    public int SectionId { get; set; }                  // la FK (technique)
+    public string NomSection { get; set; }              // propriété de confort (le libellé)
+    public string NomCollection { get; set; }           // idem pour la collection
+}</pre>
+
+<h3>3. La jointure dans le Repository : LEFT JOIN</h3>
+<p>Une <strong>jointure</strong> combine des lignes de plusieurs tables selon une condition. Deux variantes utiles :</p>
+<ul>
+<li><strong>INNER JOIN</strong> : n'affiche que les livres qui ont bien une section ET une collection valides (plus rigoureux).</li>
+<li><strong>LEFT JOIN</strong> : affiche <em>tous</em> les livres, même « orphelins » (section ou collection nulle). Plus permissif — on le privilégie ici.</li>
+</ul>
+<pre class="pseudo">public List&lt;Livre&gt; ListeLivreAvecDetails() {            // livres + libellés
+    string sql = "SELECT l.*, s.nom_section, c.nom_collection "
+               + "FROM livres l "
+               + "LEFT JOIN sections s ON l.section_id = s.section_id "        // relie la section
+               + "LEFT JOIN collections c ON l.collection_id = c.collection_id"; // relie la collection
+    List&lt;Livre&gt; liste = new List&lt;Livre&gt;();
+    try {
+        MySqlConnection cx = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand cmd = new MySqlCommand(sql, cx);
+        MySqlDataReader rs = cmd.ExecuteReader();
+        while (rs.Read()) {
+            Livre l = new Livre();
+            l.Id = rs.GetInt32("livre_id");
+            l.Titre = rs.GetString("titre");
+            l.NomSection = rs.GetString("nom_section");       // le libellé, pas l'ID
+            liste.Add(l);
+        }
+        rs.Close();
+    } catch (MySqlException) { }
+    return liste;
+}</pre>
+
+<h3>4. La relation N:M : la table de jointure</h3>
+<p>Un livre peut avoir plusieurs auteurs, et un auteur plusieurs livres : c'est une relation <strong>N:M</strong> (plusieurs-à-plusieurs). Elle est portée par la table <code>livre_auteur</code>, dont la <strong>clé primaire composée</strong> est le couple <code>(livre_id, auteur_id)</code>. Cette table porte aussi une donnée propre : <code>pourcentage_commission</code>.</p>
+<pre class="pseudo">public bool Lier(int livreId, int auteurId, decimal pct) {   // crée l'association
+    string sql = "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) "
+               + "VALUES (@livre, @auteur, @pct)";
+    // AddWithValue("@livre", livreId); AddWithValue("@auteur", auteurId); AddWithValue("@pct", pct);
+}</pre>
+<div class="warn">La commission n'appartient ni au livre seul ni à l'auteur seul, mais à leur <em>relation</em> : c'est pourquoi elle est stockée dans la table de jointure (un auteur peut toucher 10 % sur un livre et 15 % sur un autre).</div>
+
+<h3>5. Agréger les auteurs d'un livre</h3>
+<p>Pour lister les auteurs d'un livre sans dupliquer son titre, le Repository fait une deuxième lecture et regroupe les noms dans une <code>List&lt;string&gt;</code> à l'intérieur de l'objet <code>Livre</code>. La Vue appelle simplement <code>ListerLivresComplets()</code> : elle ignore qu'une requête supplémentaire a été exécutée.</p>
+<div class="tip">Intégrité : grâce à l'<code>INNER JOIN</code> sur les trois tables (livres, auteurs, livre_auteur), on n'affiche que des données cohérentes. Une FK invalide (livre inexistant) est rejetée par la contrainte <code>fk_la_livre</code>.</div>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi faire une jointure dans le Repository ?", opts: ["Pour aller plus vite", "Pour afficher des libellés au lieu d'ID", "Pour fermer la connexion", "Pour valider un prix"], a: 1, exp: "« Informatique » plutôt que « 1 »." },
+    { type: "qcm", q: "Quel JOIN affiche aussi les livres « orphelins » (section nulle) ?", opts: ["INNER JOIN", "LEFT JOIN", "CROSS JOIN", "aucun"], a: 1, exp: "LEFT JOIN est permissif." },
+    { type: "input", q: "Type de jointure exigeant des liens valides dans toutes les tables : _____ JOIN", a: ["INNER", "inner"], exp: "INNER JOIN, plus rigoureux." },
+    { type: "input", q: "Type de relation « plusieurs-à-plusieurs » (notation) : _____", a: ["N:M", "n:m", "NM", "N-M"], exp: "Portée par une table de jointure." },
+    { type: "input", q: "Table de jointure entre livres et auteurs dans library_db : livre_____", a: ["auteur", "livre_auteur"], exp: "La table livre_auteur." },
+    { type: "vf", q: "La commission est stockée dans la table de jointure car elle appartient à la relation.", a: true, exp: "Ni au livre ni à l'auteur seul." },
+    { type: "qcm", q: "La clé primaire de livre_auteur est…", opts: ["livre_id seul", "auteur_id seul", "le couple (livre_id, auteur_id)", "pourcentage_commission"], a: 2, exp: "Clé primaire composée." },
+    { type: "input", q: "Propriété string ajoutée au modèle Livre pour stocker le libellé de section : Nom_____", a: ["Section", "NomSection"], exp: "Propriété de confort." },
+    { type: "vf", q: "Avec un LEFT JOIN, un livre sans collection reste affiché.", a: true, exp: "La table principale est toujours incluse." },
+    { type: "qcm", q: "On ne peut pas lier deux fois le même auteur au même livre car…", opts: ["Le prix l'interdit", "La clé primaire composée l'empêche", "Le LEFT JOIN l'interdit", "La console bloque"], a: 1, exp: "Unicité du couple." },
+    { type: "input", q: "Pour regrouper les auteurs d'un livre sans dupliquer le titre, on les met dans une List&lt;_____&gt;", a: ["string", "String"], exp: "Une List&lt;string&gt; dans l'objet Livre." },
+    { type: "vf", q: "La Vue sait qu'une deuxième requête SQL récupère les auteurs.", a: false, exp: "Non : c'est encapsulé dans le Repository/Modèle." },
+    { type: "qcm", q: "Lier un livre_id inexistant est rejeté par…", opts: ["La Vue", "La contrainte FK fk_la_livre", "Le try-catch du Main", "La propriété"], a: 1, exp: "Intégrité référentielle." },
+    { type: "input", q: "Mot-clé qui exprime la condition d'une jointure (l.section_id = s.section_id) : _____", a: ["ON", "on"], exp: "La clause ON du JOIN." },
+    { type: "vf", q: "La jointure permet à la Vue de rester ignorante de la structure SQL.", a: true, exp: "Abstraction / séparation des préoccupations." }
+  ],
+  final: {
+    title: "Exercice final — Jointures dans le Repository",
+    intro: `<p>On enrichit LivreRepository d'une lecture jointe et LivreAuteurRepository d'une association N:M.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour afficher le nom de section, on écrit…", opts: ["Un SELECT simple", "un LEFT JOIN sections ON l.section_id = s.section_id", "un DELETE", "un CALL"], a: 1, exp: "Jointure sur la FK." },
+      { type: "qcm", q: "ListeLivreAvecDetails renvoie des Livre qui contiennent…", opts: ["Seulement des ID", "les libellés (NomSection, NomCollection)", "des MySqlDataReader", "des menus"], a: 1, exp: "Objets augmentés." },
+      { type: "qcm", q: "Lier(livreId, auteurId, pct) insère dans…", opts: ["livres", "auteurs", "livre_auteur", "sections"], a: 2, exp: "La table de jointure." },
+      { type: "vf", q: "Le pourcentage de commission est propre à chaque couple livre-auteur.", a: true, exp: "Donnée de la relation." },
+      { type: "vf", q: "Un LEFT JOIN affiche les livres même sans section renseignée.", a: true, exp: "Plus permissif que INNER." }
+    ],
+    solution: `<pre class="pseudo">// LivreRepository : lecture avec libellés (LEFT JOIN)
+public List&lt;Livre&gt; ListeLivreAvecDetails() {
+    string sql = "SELECT l.*, s.nom_section, c.nom_collection "
+               + "FROM livres l "
+               + "LEFT JOIN sections s ON l.section_id = s.section_id "
+               + "LEFT JOIN collections c ON l.collection_id = c.collection_id";
+    List&lt;Livre&gt; liste = new List&lt;Livre&gt;();
+    try {
+        MySqlConnection cx = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand cmd = new MySqlCommand(sql, cx);
+        MySqlDataReader rs = cmd.ExecuteReader();
+        while (rs.Read()) {
+            Livre l = new Livre();
+            l.Id = rs.GetInt32("livre_id");
+            l.Titre = rs.GetString("titre");
+            l.NomSection = rs.GetString("nom_section");
+            l.NomCollection = rs.GetString("nom_collection");
+            liste.Add(l);
+        }
+        rs.Close();
+    } catch (MySqlException) { }
+    return liste;
+}
+
+// LivreAuteurRepository : associer un auteur à un livre (N:M)
+public bool Lier(int livreId, int auteurId, decimal pct) {
+    string sql = "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) VALUES (@livre, @auteur, @pct)";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@livre", livreId);
+        p.Parameters.AddWithValue("@auteur", auteurId);
+        p.Parameters.AddWithValue("@pct", pct);
+        return p.ExecuteNonQuery() &gt; 0;
+    } catch (MySqlException) { return false; }
+}</pre>
+<p>Le Repository masque toute la complexité relationnelle. Demain : les transactions et la gestion des erreurs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta requête jointe ici…",
+  items: [
+  { id: "projsgbdcs-j22", title: "Lister les auteurs d'un livre (jointure N:M)", level: 3,
+    statement: "Écris une méthode AuteursDuLivre(int livreId) dans LivreAuteurRepository qui renvoie la liste des noms d'auteurs (avec leur pourcentage) d'un livre donné, en joignant livre_auteur et auteurs. Renvoie une List<string> du type « Asimov Isaac (12,00%) ».",
+    hints: [
+      "INNER JOIN entre livre_auteur la et auteurs a ON la.auteur_id = a.auteur_id, filtré par WHERE la.livre_id = @id.",
+      "SELECT a.nom, a.prenom, la.pourcentage_commission ; AddWithValue(\"@id\", livreId).",
+      "Pour chaque ligne, construis une string et ajoute-la à la List<string>."
+    ],
+    solution: "public List<string> AuteursDuLivre(int livreId) {       // auteurs d'un livre (relation N:M)\n    List<string> resultat = new List<string>();         // liste des libelles a renvoyer\n    string sql = \"SELECT a.nom, a.prenom, la.pourcentage_commission \"\n               + \"FROM livre_auteur la \"\n               + \"INNER JOIN auteurs a ON la.auteur_id = a.auteur_id \"  // jointure sur la FK\n               + \"WHERE la.livre_id = @id\";              // filtre : le livre demande\n    try {\n        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();\n        MySqlCommand p = new MySqlCommand(sql, c);\n        p.Parameters.AddWithValue(\"@id\", livreId);       // parametre du WHERE\n        MySqlDataReader rs = p.ExecuteReader();          // execute le SELECT joint\n        while (rs.Read()) {                             // pour chaque auteur\n            string ligne = rs.GetString(\"nom\") + \" \"      // nom\n                         + rs.GetString(\"prenom\")         // prenom\n                         + \" (\" + rs.GetDecimal(\"pourcentage_commission\") + \"%)\";  // commission\n            resultat.Add(ligne);                        // on agrege dans la liste\n        }\n        rs.Close();                                     // lecteur ferme\n    } catch (MySqlException) { }\n    return resultat;                                    // ex: [\"Asimov Isaac (12,00%)\"]\n}",
+    note: "L'INNER JOIN garantit que l'on ne récupère que des couples cohérents présents dans les trois tables. Le filtre WHERE la.livre_id = @id cible un livre précis, et l'on agrège les auteurs dans une List<string> plutôt que de dupliquer le titre du livre. La Vue appellera cette méthode sans jamais soupçonner la jointure sous-jacente : c'est tout l'intérêt du Repository." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

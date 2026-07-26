@@ -1,0 +1,155 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Écrire un Repository pour une table",
+  subtitle: "Les cinq méthodes qui couvrent tout le cycle de vie d'un livre (LivreRepository).",
+  theory: `
+<h3>1. L'interface d'un Repository complet</h3>
+<p>Un Repository de table expose en général cinq méthodes qui couvrent le CRUD plus la recherche par identifiant :</p>
+<pre class="pseudo">List&lt;Livre&gt; LireTout();                                 // READ : tous les livres
+Livre RechercheParId(int id);                          // READ : un livre précis (ou null)
+bool Creer(Livre l);                                   // CREATE : insère un livre
+bool Update(Livre l);                                  // UPDATE : modifie un livre
+bool Supprimer(int id);                                // DELETE : supprime par id</pre>
+<div class="tip">Remarque la signature : c'est le Repository qui reçoit l'objet modèle (<code>Creer(Livre l)</code>) ou l'id (<code>Supprimer(int id)</code>). Le modèle, lui, reste passif.</div>
+
+<h3>2. CREATE : insérer avec une commande paramétrée</h3>
+<p>Un <strong>MySqlCommand paramétré</strong> est une requête où les valeurs remplacent des <em>paramètres nommés</em> (<code>@titre</code>). Il protège contre les <strong>injections SQL</strong> et gère proprement les types (string, int, decimal).</p>
+<pre class="pseudo">public bool Creer(Livre l) {                            // insère le modèle reçu
+    string sql = "INSERT INTO livres (titre, annee, prix_unitaire, section_id, collection_id) "
+               + "VALUES (@titre, @annee, @prix, @sec, @col)";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@titre", l.Titre);   // @titre = titre
+        p.Parameters.AddWithValue("@annee", l.Annee);   // @annee = année
+        p.Parameters.AddWithValue("@prix", l.Prix);     // @prix = prix (decimal)
+        p.Parameters.AddWithValue("@sec", l.SectionId); // @sec = section_id (FK)
+        p.Parameters.AddWithValue("@col", l.CollectionId); // @col = collection_id (FK)
+        return p.ExecuteNonQuery() &gt; 0;                 // vrai si insertion réussie
+    } catch (MySqlException) { return false; }
+}</pre>
+
+<h3>3. READ par id : RechercheParId</h3>
+<p>Cette méthode renvoie <em>un seul</em> objet, ou <code>null</code> si l'id n'existe pas. Elle est indispensable avant une modification (afficher les valeurs actuelles).</p>
+<pre class="pseudo">public Livre RechercheParId(int id) {                   // cherche un livre précis
+    string sql = "SELECT * FROM livres WHERE livre_id = @id";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@id", id);           // paramètre du WHERE
+        MySqlDataReader rs = p.ExecuteReader();
+        if (rs.Read()) {                                // au plus une ligne
+            Livre l = new Livre();
+            l.Id = rs.GetInt32("livre_id");
+            l.Titre = rs.GetString("titre");
+            l.Prix = rs.GetDecimal("prix_unitaire");
+            rs.Close();
+            return l;                                   // le livre trouvé
+        }
+        rs.Close();
+    } catch (MySqlException) { }
+    return null;                                        // aucun livre : null
+}</pre>
+
+<h3>4. UPDATE et DELETE</h3>
+<pre class="pseudo">public bool Update(Livre l) {                           // modifie un livre existant
+    string sql = "UPDATE livres SET titre=@titre, annee=@annee, prix_unitaire=@prix WHERE livre_id=@id";
+    // AddWithValue("@titre", l.Titre); ... AddWithValue("@id", l.Id);
+    // return ExecuteNonQuery() &gt; 0;
+}
+public bool Supprimer(int id) {                         // supprime par id
+    string sql = "DELETE FROM livres WHERE livre_id = @id";
+    // AddWithValue("@id", id); return ExecuteNonQuery() &gt; 0;
+}</pre>
+<div class="warn">Le <code>WHERE livre_id = @id</code> est vital dans UPDATE et DELETE : sans lui, toute la table serait affectée. Le paramètre vient toujours du modèle (<code>l.Id</code>) ou de l'argument (<code>id</code>).</div>
+
+<h3>5. Les propriétés indispensables</h3>
+<p>Les propriétés du modèle ne sont pas décoratives : la Vue s'en sert pour afficher les valeurs actuelles avant modification (<code>livre.Titre</code>), le Contrôleur pour cibler la ligne (<code>l.Id</code> dans le <code>WHERE</code>), et le Repository pour extraire les données à réinsérer.</p>
+<div class="tip">Astuce validation : le Contrôleur peut vérifier le prix (par ex. <code>prix &gt; 0</code>) <em>avant</em> d'appeler le Repository. Et même s'il ne le fait pas, la contrainte <code>CHECK (prix_unitaire &gt;= 0)</code> de <code>library_db</code> protégera l'intégrité.</div>`,
+  exercises: [
+    { type: "qcm", q: "Combien de méthodes couvre typiquement un Repository de table (CRUD + recherche) ?", opts: ["2", "5", "10", "1"], a: 1, exp: "LireTout, RechercheParId, Creer, Update, Supprimer." },
+    { type: "qcm", q: "Creer(Livre l) reçoit…", opts: ["Un id", "Un objet modèle Livre", "Un MySqlDataReader", "Une string SQL"], a: 1, exp: "Le Repository reçoit l'objet à insérer." },
+    { type: "input", q: "Objet ADO.NET paramétré et sécurisé contre les injections : MySql_____", a: ["Command", "MySqlCommand"], exp: "Requête à paramètres nommés (@titre)." },
+    { type: "qcm", q: "RechercheParId renvoie quoi si l'id n'existe pas ?", opts: ["Une liste vide", "null", "false", "0"], a: 1, exp: "Un seul objet ou null." },
+    { type: "input", q: "Pour lire le résultat d'un SELECT paramétré : p.Execute_____()", a: ["Reader", "ExecuteReader"], exp: "ExecuteReader() renvoie un MySqlDataReader." },
+    { type: "input", q: "Pour injecter une valeur nommée : p.Parameters.Add_____(\"@id\", id)", a: ["WithValue", "AddWithValue"], exp: "AddWithValue(nom, valeur)." },
+    { type: "vf", q: "Supprimer(int id) doit contenir une clause WHERE livre_id = @id.", a: true, exp: "Sinon toute la table est supprimée." },
+    { type: "qcm", q: "Avant de modifier un livre, on appelle d'abord…", opts: ["Supprimer()", "RechercheParId() pour afficher les valeurs actuelles", "Creer()", "LireTout()"], a: 1, exp: "On montre l'existant puis on met à jour." },
+    { type: "input", q: "Méthode ADO.NET exécutée par Creer/Update/Supprimer : Execute_____()", a: ["NonQuery", "ExecuteNonQuery"], exp: "Renvoie le nombre de lignes affectées." },
+    { type: "input", q: "Le WHERE de l'UPDATE est ciblé par la propriété l._____", a: ["Id"], exp: "La clé primaire cible la ligne." },
+    { type: "vf", q: "La commande paramétrée gère automatiquement les types (string, int, decimal).", a: true, exp: "Via AddWithValue qui déduit le type." },
+    { type: "qcm", q: "if (rs.Read()) dans RechercheParId sert à…", opts: ["Boucler sur toutes les lignes", "Lire l'unique ligne éventuelle", "Fermer la connexion", "Insérer"], a: 1, exp: "Au plus une ligne pour un id." },
+    { type: "vf", q: "Le Contrôleur peut valider prix > 0 avant d'appeler le Repository.", a: true, exp: "Validation applicative en amont." },
+    { type: "qcm", q: "La contrainte CHECK (prix_unitaire >= 0) protège…", opts: ["La Vue", "L'intégrité même si le code C# est permissif", "Le DataReader", "Le connecteur"], a: 1, exp: "Dernière barrière côté base." },
+    { type: "input", q: "Nombre de paramètres dans l'INSERT (titre, annee, prix, section_id, collection_id) : _____", a: ["5", "cinq"], exp: "Cinq colonnes, cinq paramètres." }
+  ],
+  final: {
+    title: "Exercice final — LivreRepository au complet",
+    intro: `<p>On écrit les méthodes Creer, RechercheParId, Update et Supprimer d'un Repository de table.</p>`,
+    questions: [
+      { type: "qcm", q: "Creer(Livre l) utilise…", opts: ["Une concaténation", "Un MySqlCommand paramétré", "Console.ReadLine", "Un DataAdapter"], a: 1, exp: "Sécurité + typage." },
+      { type: "qcm", q: "RechercheParId(int id) renvoie…", opts: ["List&lt;Livre&gt;", "un Livre ou null", "bool", "void"], a: 1, exp: "Un seul objet." },
+      { type: "qcm", q: "Update(Livre l) cible la ligne avec…", opts: ["Rien", "WHERE livre_id = @id (l.Id)", "un LIKE", "un ORDER BY"], a: 1, exp: "La clé primaire." },
+      { type: "vf", q: "Supprimer(int id) exécute DELETE ... WHERE livre_id = @id.", a: true, exp: "Suppression ciblée." },
+      { type: "vf", q: "Un id inexistant fait renvoyer null à RechercheParId.", a: true, exp: "Le contrôleur teste ce null avant d'agir." }
+    ],
+    solution: `<pre class="pseudo">public bool Creer(Livre l) {                            // CREATE
+    string sql = "INSERT INTO livres (titre, annee, prix_unitaire, section_id, collection_id) "
+               + "VALUES (@titre, @annee, @prix, @sec, @col)";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@titre", l.Titre); p.Parameters.AddWithValue("@annee", l.Annee);
+        p.Parameters.AddWithValue("@prix", l.Prix);
+        p.Parameters.AddWithValue("@sec", l.SectionId); p.Parameters.AddWithValue("@col", l.CollectionId);
+        return p.ExecuteNonQuery() &gt; 0;
+    } catch (MySqlException) { return false; }
+}
+
+public bool Update(Livre l) {                           // UPDATE
+    string sql = "UPDATE livres SET titre=@titre, annee=@annee, prix_unitaire=@prix WHERE livre_id=@id";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@titre", l.Titre); p.Parameters.AddWithValue("@annee", l.Annee);
+        p.Parameters.AddWithValue("@prix", l.Prix); p.Parameters.AddWithValue("@id", l.Id);  // WHERE ciblé
+        return p.ExecuteNonQuery() &gt; 0;
+    } catch (MySqlException) { return false; }
+}
+
+public bool Supprimer(int id) {                         // DELETE
+    string sql = "DELETE FROM livres WHERE livre_id = @id";
+    try {
+        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand p = new MySqlCommand(sql, c);
+        p.Parameters.AddWithValue("@id", id);
+        return p.ExecuteNonQuery() &gt; 0;
+    } catch (MySqlException) { return false; }
+}</pre>
+<p>Un Repository de table complet et réutilisable. Demain : gérer plusieurs tables et les jointures.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris tes méthodes Repository ici…",
+  items: [
+  { id: "projsgbdcs-j21", title: "Creer() et RechercheParId() pour AuteurRepository", level: 3,
+    statement: "Complète AuteurRepository avec deux méthodes : Creer(Auteur a) qui insère un auteur (nom, prenom) via un MySqlCommand paramétré et renvoie true/false, et RechercheParId(int id) qui renvoie l'Auteur correspondant ou null.",
+    hints: [
+      "Creer : INSERT INTO auteurs (nom, prenom) VALUES (@nom, @prenom) ; AddWithValue(\"@nom\", a.Nom) ; AddWithValue(\"@prenom\", a.Prenom).",
+      "RechercheParId : SELECT * FROM auteurs WHERE auteur_id = @id ; AddWithValue(\"@id\", id) ; ExecuteReader().",
+      "Dans RechercheParId, if (rs.Read()) remplis un Auteur et renvoie-le, sinon renvoie null."
+    ],
+    solution: "public bool Creer(Auteur a) {                           // CREATE\n    string sql = \"INSERT INTO auteurs (nom, prenom) VALUES (@nom, @prenom)\";\n    try {\n        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();\n        MySqlCommand p = new MySqlCommand(sql, c);      // commande preparee\n        p.Parameters.AddWithValue(\"@nom\", a.Nom);       // @nom = nom\n        p.Parameters.AddWithValue(\"@prenom\", a.Prenom); // @prenom = prenom\n        return p.ExecuteNonQuery() > 0;                 // vrai si insertion reussie\n    } catch (MySqlException) { return false; }          // echec signale\n}\n\npublic Auteur RechercheParId(int id) {                  // READ par id\n    string sql = \"SELECT * FROM auteurs WHERE auteur_id = @id\";\n    try {\n        MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();\n        MySqlCommand p = new MySqlCommand(sql, c);\n        p.Parameters.AddWithValue(\"@id\", id);           // parametre du WHERE\n        MySqlDataReader rs = p.ExecuteReader();         // execute le SELECT\n        if (rs.Read()) {                                // au plus une ligne\n            Auteur a = new Auteur();\n            a.AuteurId = rs.GetInt32(\"auteur_id\");\n            a.Nom = rs.GetString(\"nom\");\n            a.Prenom = rs.GetString(\"prenom\");\n            rs.Close();\n            return a;                                   // l'auteur trouve\n        }\n        rs.Close();\n    } catch (MySqlException) { }\n    return null;                                        // aucun auteur : null\n}",
+    note: "Creer() reçoit l'objet et le transforme en INSERT paramétré ; RechercheParId() renvoie soit l'objet, soit null. Ce null est important : le contrôleur le testera (par ex. if (a != null)) avant de proposer une modification, évitant une NullReferenceException. Les deux méthodes utilisent des MySqlCommand paramétrés, comme partout ailleurs, pour la sécurité et le bon typage." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

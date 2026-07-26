@@ -1,0 +1,121 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 23</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 23,
+  title: "Transactions et gestion des erreurs",
+  subtitle: "Tout ou rien : garantir la cohérence quand plusieurs requêtes s'enchaînent.",
+  theory: `
+<h3>1. Le problème : une opération en deux étapes</h3>
+<p>Modifier les auteurs d'un livre se fait souvent en deux temps : <strong>supprimer</strong> les anciennes associations, puis <strong>insérer</strong> les nouvelles. Si le programme s'arrête <em>entre</em> les deux, le livre se retrouve <strong>sans aucun auteur</strong>. Il faut donc que les deux requêtes forment un bloc indivisible.</p>
+
+<h3>2. La transaction et l'ACID</h3>
+<p>Une <strong>transaction</strong> est un groupe d'opérations traitées comme une seule : soit toutes réussissent, soit aucune n'est appliquée. Elle respecte les propriétés <strong>ACID</strong> :</p>
+<ul>
+<li><strong>Atomicité</strong> : « tout ou rien ». On ne veut pas de suppression sans l'ajout qui suit.</li>
+<li><strong>Cohérence</strong> : la base passe d'un état valide à un autre, en respectant les contraintes (clés étrangères).</li>
+<li><strong>Isolation</strong> : les autres utilisateurs ne voient pas l'état intermédiaire.</li>
+<li><strong>Durabilité</strong> : une fois validé (<code>Commit</code>), les données sont sauvées définitivement.</li>
+</ul>
+
+<h3>3. En ADO.NET : la classe MySqlTransaction</h3>
+<p>En C#, on démarre une transaction avec <code>conn.BeginTransaction()</code>, qui renvoie un objet <strong>MySqlTransaction</strong>. On valide avec <code>tx.Commit()</code> ou on annule avec <code>tx.Rollback()</code>. Point crucial : chaque <code>MySqlCommand</code> participant doit être <strong>rattaché</strong> à la transaction via <code>cmd.Transaction = tx</code>.</p>
+<pre class="pseudo">MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+MySqlTransaction tx = c.BeginTransaction();            // début de transaction
+try {
+    SupprimerAnciensAuteurs(livreId, tx);              // étape 1 : DELETE (rattaché à tx)
+    AjouterNouvelAuteur(livreId, auteurId, pct, tx);   // étape 2 : INSERT (rattaché à tx)
+    tx.Commit();                                        // les DEUX étapes validées ENSEMBLE
+} catch (MySqlException) {
+    tx.Rollback();                                      // une erreur : on annule TOUT
+    throw;                                              // on propage vers le contrôleur
+}</pre>
+<div class="warn">Chaque <code>MySqlCommand</code> d'une transaction doit préciser <code>cmd.Transaction = tx</code> (en plus de sa connexion). Sinon la commande s'exécute <em>hors</em> transaction et ne sera pas annulée par un <code>Rollback</code>.</div>
+
+<h3>4. Commit et Rollback</h3>
+<ul>
+<li><code>tx.Commit()</code> : valide définitivement toutes les opérations depuis le début de la transaction.</li>
+<li><code>tx.Rollback()</code> : annule toutes les opérations et ramène la base à son état d'avant la transaction.</li>
+</ul>
+<div class="tip">Le <code>Rollback()</code> se place dans le <code>catch</code> : dès qu'une requête échoue, on annule le lot entier plutôt que de laisser la base à moitié modifiée. Contrairement au JDBC, il n'y a pas d'« auto-commit » à réactiver : une fois <code>Commit</code> ou <code>Rollback</code> appelé, la transaction est terminée et la connexion repart en mode normal.</div>
+
+<h3>5. Gérer les erreurs : laisser remonter l'exception</h3>
+<p>En vue d'une future interface graphique, le Repository ne doit <em>pas</em> avaler les erreurs en silence (pas de <code>catch</code> vide). On préfère qu'il <strong>propage</strong> l'exception avec <code>throw</code> : ainsi le Contrôleur peut décider comment l'afficher (message clair, boîte de dialogue…). En C#, aucune clause <code>throws</code> n'est nécessaire : les exceptions se propagent automatiquement si on ne les capture pas (ou si on les relance).</p>
+<pre class="pseudo">public void ModifierAuteurs(int livreId, int auteurId, decimal pct) {
+    // le Repository relance l'erreur (throw) : c'est le contrôleur qui décidera de l'affichage
+}</pre>
+<div class="tip">Une <code>MySqlException</code> fréquente : violer une contrainte (clé étrangère, CHECK). Bien gérée, elle devient un message utile pour l'utilisateur plutôt qu'un plantage.</div>`,
+  exercises: [
+    { type: "input", q: "Groupe d'opérations « tout ou rien » : une _____", a: ["transaction"], exp: "Elle garantit l'atomicité." },
+    { type: "input", q: "Acronyme des 4 propriétés d'une transaction : _____", a: ["ACID", "acid"], exp: "Atomicité, Cohérence, Isolation, Durabilité." },
+    { type: "input", q: "Méthode qui démarre une transaction en ADO.NET : conn.Begin_____()", a: ["Transaction", "BeginTransaction"], exp: "Elle renvoie un MySqlTransaction." },
+    { type: "input", q: "Méthode qui valide définitivement la transaction : tx._____()", a: ["Commit", "Commit()"], exp: "Commit() rend les changements permanents." },
+    { type: "input", q: "Méthode qui annule toute la transaction en cas d'erreur : tx._____()", a: ["Rollback", "Rollback()"], exp: "Rollback() ramène la base à l'état initial." },
+    { type: "qcm", q: "Le Rollback() se place typiquement dans le bloc…", opts: ["try", "catch", "finally", "Main"], a: 1, exp: "Dès qu'une requête échoue." },
+    { type: "vf", q: "En ADO.NET, chaque MySqlCommand d'une transaction doit être rattaché via cmd.Transaction = tx.", a: true, exp: "Sinon la commande s'exécute hors transaction." },
+    { type: "qcm", q: "L'Atomicité signifie…", opts: ["Les données sont chiffrées", "Tout ou rien", "La base est rapide", "Les index sont créés"], a: 1, exp: "Aucune étape partielle." },
+    { type: "qcm", q: "L'Isolation garantit que…", opts: ["Les autres ne voient pas l'état intermédiaire", "La base est sauvegardée", "Le prix est validé", "La Vue est rapide"], a: 0, exp: "Pas de fuite d'état transitoire." },
+    { type: "vf", q: "En vue d'une IHM, le Repository doit propager (throw) les exceptions plutôt que les avaler.", a: true, exp: "Le contrôleur décide de l'affichage." },
+    { type: "qcm", q: "Modifier les auteurs d'un livre (supprimer puis ajouter) doit être…", opts: ["Deux transactions", "Une seule transaction atomique", "Sans transaction", "Dans la Vue"], a: 1, exp: "Éviter un livre sans auteur." },
+    { type: "vf", q: "BeginTransaction démarre un groupe qui n'est validé qu'au Commit.", a: true, exp: "Rien n'est permanent avant Commit." },
+    { type: "qcm", q: "La Durabilité signifie qu'après Commit…", opts: ["On peut annuler", "Les données sont sauvées même en cas de coupure", "La connexion se ferme", "Le Rollback est automatique"], a: 1, exp: "Persistance garantie." },
+    { type: "input", q: "Type d'exception ADO.NET levée par une violation de contrainte SQL : MySql_____", a: ["Exception", "MySqlException"], exp: "MySqlException remonte au contrôleur." },
+    { type: "vf", q: "Un catch vide (qui avale l'exception) dans le Repository est déconseillé pour une future IHM.", a: true, exp: "L'utilisateur ne verrait rien à l'écran." }
+  ],
+  final: {
+    title: "Exercice final — Une transaction atomique",
+    intro: `<p>On sécurise la modification des auteurs d'un livre par une transaction Commit/Rollback.</p>`,
+    questions: [
+      { type: "qcm", q: "Avant les deux requêtes, on écrit…", opts: ["tx.Commit()", "MySqlTransaction tx = c.BeginTransaction()", "tx.Rollback()", "c.Close()"], a: 1, exp: "On ouvre la transaction." },
+      { type: "qcm", q: "Après les deux requêtes réussies…", opts: ["tx.Rollback()", "tx.Commit()", "rien", "c.Close()"], a: 1, exp: "On valide l'ensemble." },
+      { type: "qcm", q: "En cas d'exception…", opts: ["tx.Commit()", "tx.Rollback()", "on ignore", "on relance le Main"], a: 1, exp: "On annule tout." },
+      { type: "vf", q: "Chaque commande de la transaction précise cmd.Transaction = tx.", a: true, exp: "Indispensable pour être annulée par le Rollback." },
+      { type: "vf", q: "Sans transaction, un plantage entre DELETE et INSERT laisse le livre sans auteur.", a: true, exp: "C'est le risque évité." }
+    ],
+    solution: `<pre class="pseudo">public void ModifierAuteurs(int livreId, int nouvelAuteurId, decimal pct) {
+    MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+    MySqlTransaction tx = c.BeginTransaction();         // ouverture de la transaction
+    try {
+        // étape 1 : DELETE des anciennes associations
+        MySqlCommand d = new MySqlCommand("DELETE FROM livre_auteur WHERE livre_id = @id", c);
+        d.Transaction = tx;                             // rattachement à la transaction
+        d.Parameters.AddWithValue("@id", livreId);
+        d.ExecuteNonQuery();
+        // étape 2 : INSERT de la nouvelle association
+        MySqlCommand i = new MySqlCommand(
+            "INSERT INTO livre_auteur (livre_id, auteur_id, pourcentage_commission) VALUES (@l, @a, @p)", c);
+        i.Transaction = tx;                             // rattachement à la transaction
+        i.Parameters.AddWithValue("@l", livreId);
+        i.Parameters.AddWithValue("@a", nouvelAuteurId);
+        i.Parameters.AddWithValue("@p", pct);
+        i.ExecuteNonQuery();
+        tx.Commit();                                    // tout réussit → on valide le lot
+    } catch (MySqlException) {
+        tx.Rollback();                                  // une erreur → on annule tout
+        throw;                                          // on propage pour l'affichage
+    }
+}</pre>
+<p>Atomicité garantie : le livre n'est jamais laissé sans auteur. Demain : on quitte la console pour Windows Forms.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta transaction ici…",
+  items: [
+  { id: "projsgbdcs-j23", title: "Une vente avec transaction", level: 3,
+    statement: "Écris une méthode EnregistrerVente(int clientId, int livreId, decimal prixFinal) qui insère une vente dans une transaction : ouvre une MySqlTransaction avec BeginTransaction(), rattache la commande via cmd.Transaction, exécute l'INSERT dans ventes, fais Commit() en cas de succès et Rollback() en cas d'erreur, puis relance l'exception avec throw.",
+    hints: [
+      "Récupère la Connection du Singleton, puis MySqlTransaction tx = c.BeginTransaction();",
+      "MySqlCommand sur INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (@c, @l, @p) ; n'oublie pas cmd.Transaction = tx.",
+      "try { ... tx.Commit(); } catch(MySqlException){ tx.Rollback(); throw; }"
+    ],
+    solution: "public void EnregistrerVente(int clientId, int livreId, decimal prixFinal) {\n    MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();  // connexion unique\n    MySqlTransaction tx = c.BeginTransaction();         // debut de la transaction\n    try {\n        string sql = \"INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (@c, @l, @p)\";\n        MySqlCommand p = new MySqlCommand(sql, c);\n        p.Transaction = tx;                             // rattachement a la transaction\n        p.Parameters.AddWithValue(\"@c\", clientId);      // @c = client\n        p.Parameters.AddWithValue(\"@l\", livreId);       // @l = livre\n        p.Parameters.AddWithValue(\"@p\", prixFinal);     // @p = prix final\n        p.ExecuteNonQuery();                            // execute l'INSERT\n        tx.Commit();                                    // succes : on valide\n    } catch (MySqlException) {                           // une erreur SQL survient\n        tx.Rollback();                                  // on annule tout\n        throw;                                          // on propage vers le controleur\n    }\n}",
+    note: "Même pour une seule requête, encadrer par une transaction est une bonne habitude : le déclencheur trg_apres_vente_commission de library_db insère automatiquement les commissions APRES la vente. Si ce trigger échoue, le Rollback annule aussi la vente, garantissant que vente et commissions restent cohérentes. En ADO.NET, il faut penser à rattacher chaque MySqlCommand à la transaction via cmd.Transaction = tx, sinon la commande échapperait au Rollback." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

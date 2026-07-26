@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Ouvrir et fermer une connexion (using)",
+  subtitle: "Ouvrir un tunnel vers MySQL, le fermer proprement avec using, profiter du pooling.",
+  theory: `
+<h3>1. MySqlConnection : l'ouvreur de connexion</h3>
+<p><strong>MySqlConnection</strong> (fourni par le provider MySqlConnector) représente une <strong>connexion</strong> vers la base — le « tunnel » ouvert. On la construit avec la chaîne de connexion, puis on l'ouvre avec <code>Open()</code> :</p>
+<pre class="pseudo">using MySqlConnector;                                  // MySqlConnection, MySqlException
+var conn = new MySqlConnection(                        // on cree l'objet connexion
+    "Server=localhost;Port=3306;Database=library_db;Uid=root;Pwd=motdepasse;");
+conn.Open();                                           // on ouvre reellement la connexion
+Console.WriteLine("Connexion etablie !");             // si on arrive ici, tout va bien
+conn.Close();                                          // on referme (voir plus bas : using le fait pour nous)</pre>
+<div class="tip"><strong>MySqlConnection</strong> représente une session avec la base. Tout passe par elle : requêtes de lecture, d'écriture, transactions.</div>
+
+<h3>2. Utiliser la config plutôt que des valeurs en dur</h3>
+<p>On ne réécrit pas la chaîne partout : on interroge la classe <code>DatabaseConfig</code> d'hier.</p>
+<pre class="pseudo">var conn = new MySqlConnection(          // connexion sans identifiants "en dur"
+    DatabaseConfig.ConnectionString);    // chaine lue depuis appsettings.json</pre>
+
+<h3>3. Toujours fermer : le bloc using (MySqlException)</h3>
+<p>Une connexion non fermée est une ressource gaspillée. En C#, la fermeture automatique se fait avec <strong>using</strong> : à la fin du bloc, <code>Dispose()</code> est appelé (qui ferme la connexion), <strong>même en cas d'erreur</strong>. Comme une connexion peut échouer, on capture <strong>MySqlException</strong> (l'erreur propre au provider).</p>
+<pre class="pseudo">try {
+    // using : la connexion est fermee automatiquement a la fin du bloc
+    using var conn = new MySqlConnection(DatabaseConfig.ConnectionString);
+    conn.Open();                                       // ouverture
+    Console.WriteLine("Connecte a library_db.");       // travail avec la base ici
+}                                                      // ici, Dispose() ferme conn automatiquement
+catch (MySqlException e) {                             // en cas d'echec cote base
+    Console.WriteLine("Erreur : " + e.Message);        // message d'erreur du provider
+}
+// pas besoin de conn.Close() : le using s'en charge</pre>
+<div class="warn">Le <code>using</code> C# est l'équivalent du <em>try-with-resources</em> de Java : il garantit la libération de la ressource. Réflexe : toute connexion, commande ou lecteur ADO.NET se déclare avec <code>using</code>.</div>
+
+<h3>4. Le pooling : pas besoin de Singleton manuel</h3>
+<p>Ouvrir une vraie connexion réseau à chaque opération serait lent. ADO.NET résout cela tout seul grâce au <strong>pool de connexions</strong> (connection pooling) : un réservoir de connexions physiques déjà ouvertes.</p>
+<pre class="pseudo">// Open() ne cree pas forcement une connexion reseau :
+//   il EMPRUNTE une connexion libre au pool.
+// Dispose()/Close() ne detruit pas la connexion physique :
+//   il la REND au pool pour la prochaine operation.
+// -> ouvrir/fermer souvent est bon marche : on n'a PAS besoin
+//    d'un Singleton fait main (contrairement au cours Java).</pre>
+<p>On se contente donc d'une petite <strong>fabrique</strong> qui renvoie une nouvelle connexion configurée, à utiliser dans un <code>using</code> :</p>
+<pre class="pseudo">public static class DatabaseConnection {               // fabrique de connexions
+    public static MySqlConnection CreerConnexion() {   // renvoie une connexion prete (non ouverte)
+        return new MySqlConnection(DatabaseConfig.ConnectionString);
+    }
+}
+// Usage : using var conn = DatabaseConnection.CreerConnexion(); conn.Open();</pre>
+
+<h3>5. Ne pas garder une connexion ouverte inutilement</h3>
+<p>La bonne pratique ADO.NET est l'inverse de celle de Java : on ouvre la connexion <strong>au dernier moment</strong>, on l'utilise, et on la ferme <strong>vite</strong> (le <code>using</code> le fait). Le pool se charge de la réutiliser efficacement.</p>
+<div class="tip">Résumé : en C#, on n'entretient pas une connexion unique ouverte en permanence ; on ouvre/ferme par opération grâce au <code>using</code>, et le pooling rend l'opération rapide. C'est plus simple et plus robuste que le Singleton manuel.</div>`,
+  exercises: [
+    { type: "input", q: "Quelle classe du provider représente une connexion vers MySQL ?", a: ["mysqlconnection"], ph: "classe", exp: "MySqlConnection (provider MySqlConnector)." },
+    { type: "input", q: "Quelle méthode ouvre réellement la connexion ?", a: ["open", "open()", "conn.open()"], ph: "méthode", exp: "conn.Open() ouvre la connexion." },
+    { type: "qcm", q: "Que fait le bloc using sur une connexion ?", opts: ["Il la trie", "Il appelle Dispose() (ferme la connexion) à la fin, même en cas d'erreur", "Il la chiffre", "Il la compile"], a: 1, exp: "using garantit la fermeture automatique." },
+    { type: "input", q: "Quelle exception capture les erreurs de base côté provider MySQL ?", a: ["mysqlexception"], ph: "classe d'exception", exp: "MySqlException." },
+    { type: "vf", q: "Le using de C# joue le même rôle que le try-with-resources de Java.", a: true, exp: "Les deux libèrent automatiquement la ressource." },
+    { type: "qcm", q: "Le pooling de connexions signifie que…", opts: ["Chaque Open() crée une vraie connexion réseau", "Open() emprunte une connexion à un réservoir déjà ouvert", "On ne ferme jamais rien", "Le SGBD est plus lent"], a: 1, exp: "Le pool réutilise des connexions physiques." },
+    { type: "vf", q: "Grâce au pooling, ouvrir et fermer une connexion par opération est bon marché.", a: true, exp: "Le pool évite de recréer une connexion réseau à chaque fois." },
+    { type: "qcm", q: "En C#, faut-il un Singleton de connexion fait main comme en Java ?", opts: ["Oui, obligatoire", "Non : le pooling ADO.NET rend cela inutile", "Oui, pour aller plus lentement", "Seulement le lundi"], a: 1, exp: "Le pooling remplace avantageusement le Singleton manuel." },
+    { type: "input", q: "Quelle méthode ferme explicitement une connexion (si on n'utilise pas using) ?", a: ["close", "close()"], ph: "méthode", exp: "conn.Close()." },
+    { type: "vf", q: "On déclare la connexion avec using pour garantir sa fermeture même en cas d'erreur.", a: true, exp: "Dispose() est appelé à la sortie du bloc." },
+    { type: "qcm", q: "Pourquoi passer par DatabaseConfig.ConnectionString ?", opts: ["Pour aller plus lentement", "Pour éviter les valeurs en dur et centraliser la config", "Pour chiffrer la base", "Pour créer des tables"], a: 1, exp: "La chaîne vient de appsettings.json." },
+    { type: "qcm", q: "Que renvoie la fabrique DatabaseConnection.CreerConnexion() ?", opts: ["Une connexion déjà ouverte", "Une nouvelle MySqlConnection prête à ouvrir", "Un DataReader", "Une chaîne"], a: 1, exp: "Elle renvoie l'objet ; on appelle Open() ensuite." },
+    { type: "input", q: "Quel mot-clé C# garantit la libération d'une ressource en fin de bloc ?", a: ["using"], ph: "mot-clé", exp: "using (using var conn = ...)." },
+    { type: "vf", q: "La bonne pratique ADO.NET est d'ouvrir la connexion au dernier moment et de la fermer vite.", a: true, exp: "On minimise la durée d'ouverture ; le pool réutilise." },
+    { type: "qcm", q: "new MySqlConnection(chaine) puis conn.Open() : l'ordre correct est…", opts: ["Open() puis new", "new (construction) puis Open() (ouverture)", "les deux en même temps", "Open() seul"], a: 1, exp: "On construit l'objet, puis on l'ouvre." }
+  ],
+  final: {
+    title: "Exercice final — Connexion robuste",
+    intro: `<p>MySqlConnection, using et pooling.</p>`,
+    questions: [
+      { type: "input", q: "Classe qui représente la connexion :", a: ["mysqlconnection"], ph: "classe", exp: "MySqlConnection." },
+      { type: "input", q: "Exception à capturer :", a: ["mysqlexception"], ph: "classe", exp: "MySqlException." },
+      { type: "vf", q: "Le bloc using ferme la connexion automatiquement.", a: true, exp: "Fermeture garantie, même en cas d'erreur." },
+      { type: "qcm", q: "Le pooling ADO.NET :", opts: ["oblige à un Singleton", "réutilise des connexions physiques d'un réservoir", "empêche de fermer", "ralentit tout"], a: 1, exp: "Réservoir de connexions réutilisées." },
+      { type: "vf", q: "En C#, on n'a pas besoin d'entretenir une connexion unique ouverte en permanence.", a: true, exp: "On ouvre/ferme par opération ; le pool optimise." }
+    ],
+    solution: `<pre class="pseudo">using MySqlConnector;
+
+// Fabrique de connexions (pas de Singleton fait main)
+public static class DatabaseConnection {
+    public static MySqlConnection CreerConnexion() {
+        return new MySqlConnection(DatabaseConfig.ConnectionString);
+    }
+}
+
+// Usage typique : ouvrir tard, fermer vite (le using ferme pour nous)
+try {
+    using var conn = DatabaseConnection.CreerConnexion();
+    conn.Open();                                       // emprunte une connexion au pool
+    Console.WriteLine("Connecte a library_db.");
+}                                                      // Dispose() rend la connexion au pool
+catch (MySqlException e) {
+    Console.WriteLine("Erreur : " + e.Message);
+}</pre>
+<p>La connexion est prête et bon marché grâce au pooling. Demain : lire des données avec MySqlCommand et MySqlDataReader.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta méthode de connexion ici…",
+  items: [
+  { id: "projsgbdcs-j12", title: "Tester la connexion à library_db", level: 3,
+    statement: "Écris une méthode C# TesterConnexion() qui ouvre une connexion à library_db via la fabrique DatabaseConnection (qui lit DatabaseConfig.ConnectionString), affiche un message de succès, gère MySqlException, et ferme automatiquement la connexion grâce à using.",
+    hints: [
+      "Déclare la connexion avec using var conn = DatabaseConnection.CreerConnexion();",
+      "Appelle conn.Open() dans un bloc try.",
+      "Capture MySqlException et affiche e.Message."
+    ],
+    solution: "using System;\nusing MySqlConnector;                                      // MySqlConnection, MySqlException\n\npublic static void TesterConnexion() {                     // teste l'ouverture d'une connexion\n    try {\n        using var conn = DatabaseConnection.CreerConnexion();  // using : fermeture auto en fin de bloc\n        conn.Open();                                       // ouvre (emprunte au pool)\n        Console.WriteLine(\"Connexion a library_db reussie !\");   // succes\n    }\n    catch (MySqlException e) {                             // echec cote base\n        Console.WriteLine(\"Echec : \" + e.Message);         // message d'erreur du provider\n    }\n    // Aucune fermeture manuelle : le using appelle Dispose() (donc Close()) automatiquement.\n}\n// Resultat attendu si la base et le paquet NuGet sont OK :\n//   Connexion a library_db reussie !",
+    note: "Le using garantit la fermeture, même si Open() lève une exception. En C#, on ne conserve pas une connexion unique ouverte : on ouvre/ferme par opération et le pooling ADO.NET réutilise les connexions physiques. C'est plus simple et plus sûr que le Singleton manuel du cours Java." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body>
+</html>

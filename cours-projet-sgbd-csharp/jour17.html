@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Les classes entités (modèles) et le CRUD console",
+  subtitle: "Une classe C# qui connaît sa table et sait se sauvegarder elle-même.",
+  theory: `
+<h3>1. Rappel : l'architecture MVC</h3>
+<p>Le <strong>MVC</strong> (Modèle-Vue-Contrôleur) est une <em>architecture logicielle</em> : elle découpe l'application en trois responsabilités séparées, pour faciliter la maintenance et l'évolution.</p>
+<ul>
+<li><strong>M — Modèle</strong> : gère les données et la logique d'accès à la base (le SQL).</li>
+<li><strong>V — Vue</strong> : gère l'interface. En mode console, ce sont les <code>Console.WriteLine()</code> et les saisies <code>Console.ReadLine()</code>.</li>
+<li><strong>C — Contrôleur</strong> : fait le lien entre la Vue et le Modèle. Il reçoit les ordres de la Vue et pilote le Modèle.</li>
+</ul>
+<p>Aujourd'hui, nous commençons par le <strong>Modèle</strong>, appliqué à notre fil rouge : la base <code>library_db</code> (livres, auteurs, ventes, commissions), via <strong>ADO.NET</strong> et le connecteur <code>MySql.Data</code>.</p>
+
+<h3>2. La classe modèle (entité) « intelligente »</h3>
+<p>Une <strong>classe modèle</strong> (ou <em>entité</em>) est une classe C# ordinaire qui représente une <em>ligne d'une table</em> de la base : à chaque colonne correspond une <strong>propriété</strong>. Une propriété est un membre public exposant une donnée avec un accesseur de lecture <code>get</code> et d'écriture <code>set</code> : on écrit <code>public string Nom { get; set; }</code> et le compilateur génère le champ privé pour nous.</p>
+<p>Dans ce cours, notre entité est <strong>intelligente</strong> : contrairement à un simple sac de données, elle <em>connaît sa table SQL</em> et porte ses propres méthodes CRUD. Ce style s'appelle <strong>Active Record</strong> : l'objet sait se lire, se sauvegarder et se supprimer tout seul. La Vue et le Contrôleur n'écrivent jamais de SQL.</p>
+<div class="tip">CRUD = les quatre opérations de base sur des données : <strong>C</strong>reate (créer), <strong>R</strong>ead (lire), <strong>U</strong>pdate (mettre à jour), <strong>D</strong>elete (supprimer).</div>
+
+<h3>3. Propriétés et constructeur : le modèle Section</h3>
+<p>Commençons par la table la plus simple, <code>sections</code> (colonnes <code>section_id</code>, <code>nom_section</code>). Chaque colonne devient une propriété.</p>
+<pre class="pseudo">public class Section {                                  // modèle : représente la table sections
+    public int SectionId { get; set; }                  // colonne section_id (clé primaire)
+    public string NomSection { get; set; }              // colonne nom_section
+
+    public Section() { }                                // constructeur vide : utile pour la lecture
+    public Section(string nomSection) {                 // constructeur de création
+        this.NomSection = nomSection;                   // on mémorise le nom reçu
+    }
+}</pre>
+<div class="tip">En C#, on n'écrit pas de <code>getNom()</code>/<code>setNom()</code> : la <strong>propriété auto-implémentée</strong> <code>{ get; set; }</code> remplace le couple getter/setter du Java.</div>
+
+<h3>4. Les quatre méthodes CRUD</h3>
+<p>L'entité encapsule les requêtes SQL. Voici la création et la lecture. La connexion est obtenue par le <strong>Singleton</strong> <code>DatabaseConnection</code> (une instance unique, partagée par toute l'application). On utilise un <strong>MySqlCommand</strong> (commande SQL) avec des <strong>paramètres</strong> nommés (<code>@nom</code>) pour se protéger des injections SQL.</p>
+<pre class="pseudo">public bool Creer() {                                   // insère l'objet courant dans la base
+    string sql = "INSERT INTO sections (nom_section) VALUES (@nom)";  // requête paramétrée
+    try {
+        MySqlConnection conn = DatabaseConnection.GetInstance().GetConnection();  // connexion unique
+        MySqlCommand cmd = new MySqlCommand(sql, conn);        // commande liée à la connexion
+        cmd.Parameters.AddWithValue("@nom", this.NomSection);  // on injecte le nom à la place de @nom
+        int lignes = cmd.ExecuteNonQuery();             // exécute l'INSERT ; renvoie le nb de lignes
+        return lignes &gt; 0;                              // vrai si une ligne a bien été insérée
+    } catch (MySqlException) {                           // en cas d'erreur SQL
+        return false;                                   // on signale l'échec au contrôleur
+    }
+}
+
+public List&lt;Section&gt; LireTout() {                       // renvoie toutes les sections
+    List&lt;Section&gt; liste = new List&lt;Section&gt;();          // liste résultat (vide au départ)
+    string sql = "SELECT * FROM sections";              // on lit toute la table
+    try {
+        MySqlConnection conn = DatabaseConnection.GetInstance().GetConnection();
+        MySqlCommand cmd = new MySqlCommand(sql, conn);
+        MySqlDataReader rs = cmd.ExecuteReader();       // exécute le SELECT ; renvoie un lecteur de lignes
+        while (rs.Read()) {                             // pour chaque ligne du résultat
+            Section s = new Section();                  // on crée un objet vide
+            s.SectionId = rs.GetInt32("section_id");    // on remplit depuis la colonne
+            s.NomSection = rs.GetString("nom_section");
+            liste.Add(s);                               // on ajoute l'objet à la liste
+        }
+        rs.Close();                                     // on ferme le lecteur (PAS la connexion)
+    } catch (MySqlException) { }
+    return liste;                                       // on renvoie la liste d'objets C#
+}</pre>
+<p><code>MettreAJour()</code> (UPDATE … SET … WHERE section_id = @id) et <code>Supprimer()</code> (DELETE … WHERE section_id = @id) suivent le même schéma : un <code>MySqlCommand</code> paramétré, puis <code>ExecuteNonQuery()</code>.</p>
+
+<h3>5. Le Singleton : ne pas fermer la connexion</h3>
+<p>Puisque la connexion est un <strong>Singleton</strong> (instance unique), la « porte » de la base doit rester ouverte tant que l'application tourne. On ferme le <strong>MySqlDataReader</strong> (le lecteur de lignes) après chaque lecture, mais jamais la <code>MySqlConnection</code>.</p>
+<div class="warn">En ADO.NET, tant qu'un <code>MySqlDataReader</code> est ouvert, la connexion est occupée : impossible de lancer une autre commande. Il faut donc appeler <code>rs.Close()</code> (ou l'entourer d'un bloc <code>using</code>) avant l'opération suivante — mais on ne ferme pas la connexion partagée.</div>
+<div class="tip">Le grand avantage : la Vue et le Contrôleur ignorent totalement le SQL. Si demain on passe de la console à Windows Forms, seule la Vue change — le Modèle reste identique.</div>`,
+  exercises: [
+    { type: "qcm", q: "Dans MVC, qui contient le SQL ?", opts: ["La Vue", "Le Modèle", "Le Contrôleur", "La console"], a: 1, exp: "Le Modèle (l'entité) encapsule les requêtes SQL." },
+    { type: "qcm", q: "Une classe modèle (entité), c'est…", opts: ["Une classe C# simple dont les propriétés reflètent les colonnes d'une table", "Une requête SQL", "Un serveur", "Le connecteur MySql.Data"], a: 0, exp: "Chaque colonne devient une propriété { get; set; }." },
+    { type: "qcm", q: "Le style « Active Record » signifie que…", opts: ["La Vue écrit le SQL", "L'objet sait se lire et se sauvegarder lui-même", "On n'utilise pas de base", "Le contrôleur stocke les données"], a: 1, exp: "L'entité porte ses méthodes CRUD." },
+    { type: "input", q: "Le sigle des 4 opérations de base (Créer, Lire, Modifier, Supprimer) : _____", a: ["CRUD", "crud"], exp: "Create, Read, Update, Delete." },
+    { type: "input", q: "Méthode ADO.NET exécutée par un INSERT/UPDATE/DELETE : Execute_____()", a: ["NonQuery", "ExecuteNonQuery"], exp: "ExecuteNonQuery() renvoie le nombre de lignes affectées." },
+    { type: "input", q: "Méthode ADO.NET qui exécute un SELECT et renvoie les lignes : Execute_____()", a: ["Reader", "ExecuteReader"], exp: "ExecuteReader() renvoie un MySqlDataReader." },
+    { type: "vf", q: "Dans une méthode CRUD, il faut fermer la connexion du Singleton après usage.", a: false, exp: "Non : on ferme le MySqlDataReader, jamais la connexion partagée." },
+    { type: "qcm", q: "Que renvoie LireTout() ?", opts: ["Un MySqlDataReader", "Une List&lt;Section&gt; d'objets", "Un booléen", "Une string"], a: 1, exp: "Une List&lt;Section&gt; : les lignes converties en objets C#." },
+    { type: "qcm", q: "Pour insérer une valeur en sécurité, on utilise…", opts: ["Une concaténation de chaînes", "Un MySqlCommand paramétré + Parameters.AddWithValue", "Console.WriteLine", "Console.ReadLine"], a: 1, exp: "Commande paramétrée : protection contre les injections SQL." },
+    { type: "input", q: "Objet ADO.NET qui parcourt les lignes d'un SELECT : MySql_____", a: ["DataReader", "MySqlDataReader"], exp: "Le MySqlDataReader, parcouru avec rs.Read()." },
+    { type: "input", q: "Complète l'accesseur d'écriture d'une propriété : public string Nom { get; _____; }", a: ["set", "set;"], exp: "set expose l'écriture ; get la lecture." },
+    { type: "qcm", q: "rs.GetInt32(\"section_id\") sert à…", opts: ["Insérer un entier", "Lire la colonne section_id de la ligne courante", "Fermer le lecteur", "Ouvrir la connexion"], a: 1, exp: "On mappe la colonne vers la propriété." },
+    { type: "input", q: "Méthode du MySqlDataReader qui avance d'une ligne dans une boucle while : _____()", a: ["Read", "Read()"], exp: "while (rs.Read()) { ... }." },
+    { type: "vf", q: "Le Contrôleur et la Vue écrivent des requêtes SQL directement.", a: false, exp: "Non : seul le Modèle parle SQL." },
+    { type: "qcm", q: "Avantage principal de tout ce découpage :", opts: ["Le code est plus lent", "Changer d'interface n'impacte que la Vue", "On supprime la base", "On évite les propriétés"], a: 1, exp: "Séparation des responsabilités : Vue interchangeable." }
+  ],
+  final: {
+    title: "Exercice final — Le modèle Section",
+    intro: `<p>On construit l'entité Section de <code>library_db</code>, capable de se lire et de se créer en C#.</p>`,
+    questions: [
+      { type: "qcm", q: "Les propriétés de l'entité correspondent…", opts: ["Aux boutons", "Aux colonnes de la table", "Aux menus", "Aux fichiers"], a: 1, exp: "SectionId ↔ section_id, NomSection ↔ nom_section." },
+      { type: "qcm", q: "Creer() doit utiliser…", opts: ["Une concaténation de chaînes", "Un MySqlCommand paramétré", "Console.ReadLine", "Console.WriteLine"], a: 1, exp: "Sécurité + typage." },
+      { type: "qcm", q: "LireTout() renvoie…", opts: ["void", "une List&lt;Section&gt;", "un int", "un MySqlDataReader"], a: 1, exp: "Des objets C# prêts pour la Vue." },
+      { type: "vf", q: "On ferme le MySqlDataReader mais pas la connexion Singleton.", a: true, exp: "On garde la porte ouverte." },
+      { type: "vf", q: "Creer() renvoie false si l'INSERT échoue.", a: true, exp: "Le contrôleur pourra alors afficher un message d'erreur." }
+    ],
+    solution: `<pre class="pseudo">public class Section {                                  // modèle de la table sections
+    public int SectionId { get; set; }                  // colonne section_id
+    public string NomSection { get; set; }              // colonne nom_section
+
+    public Section() { }                                // constructeur vide (lecture)
+    public Section(string nom) { this.NomSection = nom; }  // constructeur de création
+
+    public bool Creer() {                               // CREATE
+        string sql = "INSERT INTO sections (nom_section) VALUES (@nom)";
+        try {
+            MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+            MySqlCommand cmd = new MySqlCommand(sql, c);
+            cmd.Parameters.AddWithValue("@nom", this.NomSection);  // injection sécurisée
+            int n = cmd.ExecuteNonQuery();              // exécute l'INSERT
+            return n &gt; 0;                               // vrai si insertion réussie
+        } catch (MySqlException) { return false; }      // échec signalé au contrôleur
+    }
+
+    public List&lt;Section&gt; LireTout() {                   // READ
+        List&lt;Section&gt; l = new List&lt;Section&gt;();
+        try {
+            MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();
+            MySqlCommand cmd = new MySqlCommand("SELECT * FROM sections", c);
+            MySqlDataReader rs = cmd.ExecuteReader();
+            while (rs.Read()) {                         // pour chaque ligne
+                Section x = new Section();
+                x.SectionId = rs.GetInt32("section_id");
+                x.NomSection = rs.GetString("nom_section");
+                l.Add(x);
+            }
+            rs.Close();                                 // lecteur fermé, connexion gardée
+        } catch (MySqlException) { }
+        return l;
+    }
+}</pre>
+<p>L'entité porte ses données ET son CRUD. Demain : le Contrôleur et la Vue console qui l'utilisent.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ton modèle C# ici…",
+  items: [
+  { id: "projsgbdcs-j17", title: "Le modèle Auteur (table auteurs)", level: 2,
+    statement: "Écris la classe modèle Auteur pour la table auteurs de library_db (colonnes auteur_id, nom, prenom). Ajoute les propriétés { get; set; }, un constructeur de création (nom, prenom), et la méthode Creer() qui insère l'auteur via un MySqlCommand paramétré (sans fermer la connexion Singleton).",
+    hints: [
+      "Trois propriétés : public int AuteurId { get; set; } ; public string Nom { get; set; } ; public string Prenom { get; set; }",
+      "Creer() : INSERT INTO auteurs (nom, prenom) VALUES (@nom, @prenom) puis AddWithValue(\"@nom\", ...) et AddWithValue(\"@prenom\", ...).",
+      "Ferme le MySqlDataReader s'il y en avait un, mais PAS la connexion ; renvoie ExecuteNonQuery() > 0."
+    ],
+    solution: "public class Auteur {                                   // modele de la table auteurs\n    public int AuteurId { get; set; }                   // colonne auteur_id\n    public string Nom { get; set; }                     // colonne nom\n    public string Prenom { get; set; }                  // colonne prenom\n\n    public Auteur() { }                                 // constructeur vide (lecture)\n    public Auteur(string nom, string prenom) {          // constructeur de creation\n        this.Nom = nom;                                 // on memorise le nom\n        this.Prenom = prenom;                           // on memorise le prenom\n    }\n\n    public bool Creer() {                               // CREATE\n        string sql = \"INSERT INTO auteurs (nom, prenom) VALUES (@nom, @prenom)\";\n        try {\n            MySqlConnection c = DatabaseConnection.GetInstance().GetConnection();  // connexion unique\n            MySqlCommand cmd = new MySqlCommand(sql, c);   // commande preparee\n            cmd.Parameters.AddWithValue(\"@nom\", this.Nom);       // 1er parametre = nom\n            cmd.Parameters.AddWithValue(\"@prenom\", this.Prenom); // 2e parametre = prenom\n            int n = cmd.ExecuteNonQuery();              // execute l'INSERT\n            return n > 0;                               // vrai si insertion reussie\n        } catch (MySqlException) { return false; }      // echec signale au controleur\n    }\n}",
+    note: "Le modèle Auteur suit exactement le même moule que Section : des propriétés qui reflètent les colonnes, un constructeur de création, et un CRUD paramétré par MySqlCommand. On ne ferme jamais la connexion Singleton, seulement le MySqlDataReader. C'est le patron que l'on répétera pour chaque table." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>
