@@ -277,3 +277,30 @@ C'est une différence de garantie assumée par rapport aux cours Python/JS/SQL/J
 `cours-projet-csharp-pro` avait ses distracteurs (Tâche B) faits mais **aucun `atoi`/checklist** (Tâche A),
 et que `cours-dotnet` était incomplet sur 4 leçons (15, 19, 20, 21) — complétés par deux agents ciblés,
 puis re-vérifiés item par item.
+
+---
+
+## Lot 5 — C / C++ (compilés et exécutés pour de vrai)
+
+Cours traités : `cours-c`, `cours-projet-c`, `cours-projet-c-pro`, `cours-cpp-bas`, `cours-cpp-moderne`
+(21 leçons chacun).
+
+### Vérification réelle des sorties (gcc / g++)
+Le sandbox a `gcc` et `g++` (Ubuntu 11.4, C++17). `_verify.js` gagne des modes **`c`** et **`cpp`** :
+il **compile** la solution de référence puis **l'exécute** et compare la sortie à `atoi.expected`
+(avec `stdin` simulé pour les programmes lisant au clavier). Contrairement au C# (non gaté),
+les sorties C/C++ sont donc **réellement contrôlées**, comme pour Java et Python.
+
+### Résultat vérifié
+- **105 leçons**, 0 parse-KO ; **1997 QCM**, tous avec un index de bonne réponse valide.
+- **67 programmes C/C++** effectivement **compilés + exécutés** et leur sortie vérifiée (`pass:1/1`) —
+  cours-c 19, cpp-bas 17, cpp-moderne 19, projet-c 6, projet-c-pro 6. **98 encadrés « À toi de jouer »**.
+- Fragments (fonction seule sans `main`), code lié à MySQL/Docker/CI, ou fonctionnalités C++20+ non
+  compilables en C++17 → `atoi` descriptif sans `lang` (ignorés par le gate, à dessein).
+- Distracteurs réécrits (~500 QCM), `balanceOpts` désactivé dans les 5 `engine.js`, mode examen + Tuteur IA
+  sur les 5 sommaires. Aucun artefact `.o`/`.out`/binaire ni fichier généré (`locations.txt`, etc.) commité.
+
+### Correction factuelle
+- **`cours-projet-c-pro/lecon20`** : un QCM « Le rollback est possible car… » avait une **incohérence
+  `a`/`exp`** (l'explication désignait l'option 0 « images versionnées conservées », mais `a` valait 1
+  « on recompile tout »). Corrigé `a: 1 → a: 0`. Aucune autre correction factuelle sur le lot.

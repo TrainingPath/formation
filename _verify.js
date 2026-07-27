@@ -30,6 +30,8 @@ let allOk = true;
   else if (lang === "js") res = verifyJs(x);
   else if (lang === "sql") res = verifySql(x);
   else if (lang === "java") res = verifyJava(x);
+  else if (lang === "c") res = verifyCompiled(x, "c");
+  else if (lang === "cpp") res = verifyCompiled(x, "cpp");
   else res = { ok: false, msg: "lang inconnu: " + lang };
   if (res.skip) { console.log(file, x.id, "END_VERIFY " + res.skip); return; }
   if (res.ok) console.log(file, x.id, "END_VERIFY pass:" + res.passed + "/" + res.total);
@@ -251,6 +253,31 @@ function verifyJava(x) {
   if (r.error) return { ok: false, msg: "java error: " + r.error.message };
   if (out === exp) return { ok: true, passed: 1, total: 1 };
   return { ok: false, msg: "got:\n" + out + "\n--- expected:\n" + exp + (r.stderr ? "\n--- stderr:\n" + r.stderr.trim() : "") };
+}
+
+/* ---------- C / C++ (compilation gcc/g++ puis exécution ; contrôle de la sortie attendue) ----------
+   Non exécutables dans le navigateur ; on vérifie seulement que x.atoi.expected correspond à la sortie
+   réelle de la solution de référence. input() simulé via x.stdin (lignes fournies au programme). */
+function verifyCompiled(x, lang) {
+  if (!x.atoi || x.atoi.expected === undefined) return { skip: "no-atoi" };
+  const os = require("os"), path = require("path"), fs2 = require("fs");
+  const dir = fs2.mkdtempSync(path.join(os.tmpdir(), lang));
+  const ext = lang === "c" ? "c" : "cpp";
+  const src = path.join(dir, "prog." + ext);
+  const bin = path.join(dir, "prog.out");
+  fs2.writeFileSync(src, x.solution || "");
+  const compiler = lang === "c" ? "gcc" : "g++";
+  const args = lang === "c" ? [src, "-o", bin, "-lm"] : ["-std=c++17", src, "-o", bin];
+  const c = spawnSync(compiler, args, { encoding: "utf8", timeout: 40000 });
+  if (c.status !== 0) { try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {} return { ok: false, msg: "compile error:\n" + (c.stderr || "").trim() }; }
+  const stdin = (x.stdin && x.stdin.length) ? (x.stdin.join("\n") + "\n") : "";
+  const r = spawnSync(bin, [], { encoding: "utf8", timeout: 15000, input: stdin });
+  try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  if (r.error) return { ok: false, msg: "run error: " + r.error.message };
+  const got = (r.stdout || "").replace(/\s+$/g, "");
+  const exp = String(x.atoi.expected).replace(/\s+$/g, "");
+  if (got === exp) return { ok: true, passed: 1, total: 1 };
+  return { ok: false, msg: "got:\n" + got + "\n--- expected:\n" + exp + (r.stderr ? "\n--- stderr:\n" + r.stderr.trim() : "") };
 }
 
 /* ---------- utilitaires ---------- */
