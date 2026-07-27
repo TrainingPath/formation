@@ -1,0 +1,115 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 14</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Zone directe et zone inverse",
+  subtitle: "Écrire un fichier de zone : l'enregistrement SOA, la zone directe et la résolution inverse PTR.",
+  theory: `
+<h3>1. Deux sens de traduction</h3>
+<p>Un serveur DNS répond à deux questions opposées. La <strong>zone directe</strong> traduit un <em>nom vers une adresse IP</em> (exemple.local → 192.168.1.10) : c'est le sens habituel. La <strong>zone inverse</strong> fait le contraire, une <em>adresse IP vers un nom</em> (192.168.1.10 → serveur.exemple.local) : c'est la résolution inverse, portée par des enregistrements <strong>PTR</strong>. Chaque sens a son propre fichier de zone.</p>
+<h3>2. L'en-tête obligatoire : le SOA</h3>
+<p>Tout fichier de zone commence par un enregistrement <strong>SOA</strong> (« Start Of Authority », début d'autorité). Il décrit la zone : quel est le serveur maître, l'adresse e-mail de l'administrateur (le @ y est remplacé par un point), et surtout des compteurs de temps. Le plus important est le <strong>numéro de série</strong> (serial) : il faut l'<strong>incrémenter à chaque modification</strong>, sinon les serveurs esclaves ne verront pas le changement.</p>
+<pre class="pseudo">$TTL 3600
+@   IN  SOA  ns1.exemple.local. admin.exemple.local. (
+        2024060101   ; Serial   (a incrementer a CHAQUE modif)
+        3600         ; Refresh  (l'esclave verifie toutes les 1 h)
+        900          ; Retry    (reessaie apres 15 min si echec)
+        604800       ; Expire   (abandonne apres 7 jours sans maitre)
+        86400 )      ; Minimum / TTL negatif</pre>
+<div class="tip">Convention pratique pour le serial : la date AAAAMMJJ suivie d'un numéro de révision du jour (ex : 2024060102 = deuxième modif du 1er juin 2024). Facile à lire et toujours croissant.</div>
+<h3>3. Le fichier de zone directe</h3>
+<p>Après le SOA, on liste les serveurs de noms (NS) puis les enregistrements de la zone : A, AAAA, MX, CNAME…</p>
+<pre class="pseudo">; /etc/bind/db.exemple.local  (zone directe)
+$TTL 3600
+@       IN  SOA  ns1.exemple.local. admin.exemple.local. ( ... )
+@       IN  NS   ns1.exemple.local.
+ns1     IN  A    192.168.1.1
+serveur IN  A    192.168.1.10
+www     IN  CNAME serveur.exemple.local.</pre>
+<p>Le symbole <strong>@</strong> désigne l'origine de la zone (ici exemple.local). Un nom qui ne finit PAS par un point est complété par cette origine ; un nom qui finit par un point est <em>absolu</em> et pris tel quel.</p>
+<h3>4. Le fichier de zone inverse et le PTR</h3>
+<p>Pour la résolution inverse, l'IP est écrite <strong>à l'envers</strong>, suivie de <em>.in-addr.arpa</em>. Pour le réseau 192.168.1.0/24, la zone s'appelle <strong>1.168.192.in-addr.arpa</strong>. Chaque enregistrement PTR associe le dernier octet au nom de la machine.</p>
+<pre class="pseudo">; /etc/bind/db.192.168.1  (zone inverse)
+$TTL 3600
+@   IN  SOA  ns1.exemple.local. admin.exemple.local. ( ... )
+@   IN  NS   ns1.exemple.local.
+10  IN  PTR  serveur.exemple.local.    ; 192.168.1.10 -> serveur
+1   IN  PTR  ns1.exemple.local.        ; 192.168.1.1  -> ns1</pre>
+<div class="warn">Oublier d'incrémenter le serial est l'erreur la plus fréquente : le maître garde la bonne info, mais les esclaves gardent l'ancienne. Toujours changer le serial après chaque modif.</div>
+<h3>5. Déclarer la zone inverse dans named.conf</h3>
+<pre class="pseudo">zone "1.168.192.in-addr.arpa" {
+    type master;
+    file "/etc/bind/db.192.168.1";
+};</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Zone DIRECTE  : nom -> IP   (A, AAAA, MX, CNAME)
+# Zone INVERSE  : IP -> nom   (enregistrements PTR)
+# Tout fichier de zone commence par un SOA (Start Of Authority)
+# Serial du SOA : A INCREMENTER a chaque modification
+# @ = origine de la zone ; nom sans point final = complete par l'origine
+# Zone inverse : IP a l'envers + .in-addr.arpa</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que traduit une zone directe ?", opts: ["Une IP vers un nom", "Un nom vers une IP", "Un port vers un service", "Un MAC vers une IP"], a: 1, exp: "La zone directe va du nom vers l'adresse IP (sens habituel)." },
+    { type: "qcm", q: "Quel enregistrement porte la résolution inverse ?", opts: ["A", "CNAME", "PTR", "MX"], a: 2, exp: "Le PTR associe une IP à un nom : c'est la résolution inverse." },
+    { type: "qcm", q: "Que signifie SOA ?", opts: ["Server Of Access", "Start Of Authority (début d'autorité)", "Standard Online Address", "Secure Object Area"], a: 1, exp: "SOA = Start Of Authority, l'en-tête obligatoire d'une zone." },
+    { type: "qcm", q: "Que faut-il faire au numéro de série (serial) après chaque modification ?", opts: ["Le remettre à zéro", "L'incrémenter", "Le supprimer", "Le diviser par deux"], a: 1, exp: "On incrémente le serial pour que les esclaves détectent le changement." },
+    { type: "qcm", q: "Quel suffixe termine une zone inverse IPv4 ?", opts: [".arpa.local", ".in-addr.arpa", ".reverse.net", ".ptr.com"], a: 1, exp: "Les zones inverses IPv4 se terminent par .in-addr.arpa." },
+    { type: "qcm", q: "Dans un fichier de zone, que représente le symbole @ ?", opts: ["Une adresse e-mail", "L'origine de la zone", "Un commentaire", "Le serveur racine"], a: 1, exp: "@ désigne l'origine de la zone (le domaine déclaré)." },
+    { type: "vf", q: "La zone inverse écrit l'adresse IP à l'envers, suivie de .in-addr.arpa.", a: true, exp: "Vrai : pour 192.168.1.0/24 → 1.168.192.in-addr.arpa." },
+    { type: "vf", q: "Un nom qui finit par un point dans un fichier de zone est absolu (pris tel quel).", a: true, exp: "Vrai : sans point final, il est complété par l'origine de la zone." },
+    { type: "vf", q: "Le SOA est facultatif dans un fichier de zone.", a: false, exp: "Faux : tout fichier de zone doit commencer par un SOA." },
+    { type: "vf", q: "Dans un SOA, le @ de l'e-mail administrateur est remplacé par un point.", a: true, exp: "Vrai : admin@exemple.local s'écrit admin.exemple.local." },
+    { type: "input", q: "Quel type d'enregistrement (sigle) commence tout fichier de zone ?", a: ["soa"], ph: "3 lettres", exp: "SOA = Start Of Authority." },
+    { type: "input", q: "Quel type d'enregistrement (sigle) fait la résolution inverse ?", a: ["ptr"], ph: "3 lettres", exp: "PTR (Pointer)." },
+    { type: "input", q: "Quel champ du SOA doit être incrémenté à chaque modification ? (un mot)", a: ["serial", "le serial", "numero de serie", "serie"], ph: "un mot", exp: "Le serial (numéro de série)." },
+    { type: "input", q: "Pour le réseau 192.168.1.0/24, écris le nom de la zone inverse.", a: ["1.168.192.in-addr.arpa", "1.168.192.in-addr.arpa."], ph: "x.x.x.in-addr.arpa", exp: "L'IP à l'envers : 1.168.192.in-addr.arpa." },
+    { type: "input", q: "Quel symbole désigne l'origine de la zone dans un fichier de zone ?", a: ["@", "arobase", "l'arobase"], ph: "un caractère", exp: "Le symbole @ représente l'origine." }
+  ],
+  final: {
+    title: "Exercice final — Écrire les deux zones d'un petit réseau",
+    intro: `<p>Réseau <code>192.168.10.0/24</code>, domaine <code>ferme.local</code>. Le serveur DNS est <code>ns1</code> en 192.168.10.1, la machine <code>data</code> en 192.168.10.20. Il faut écrire la zone directe et la zone inverse.</p>`,
+    questions: [
+      { type: "input", q: "Quel enregistrement doit ouvrir chaque fichier de zone ? (sigle)", a: ["soa"], ph: "3 lettres", exp: "Le SOA (Start Of Authority)." },
+      { type: "qcm", q: "Dans la zone directe, l'entrée pour data sera de type…", opts: ["A", "PTR", "MX", "SOA"], a: 0, exp: "Un A associe le nom data à 192.168.10.20." },
+      { type: "input", q: "Quel est le nom de la zone inverse pour 192.168.10.0/24 ?", a: ["10.168.192.in-addr.arpa", "10.168.192.in-addr.arpa."], ph: "x.x.x.in-addr.arpa", exp: "192.168.10 à l'envers : 10.168.192.in-addr.arpa." },
+      { type: "qcm", q: "Dans la zone inverse, l'entrée qui renvoie 192.168.10.20 vers data.ferme.local est un…", opts: ["A", "CNAME", "PTR", "NS"], a: 2, exp: "Un PTR : IP → nom." },
+      { type: "vf", q: "Si on ajoute plus tard une machine, il faudra incrémenter le serial du SOA.", a: true, exp: "Vrai : toute modification impose d'incrémenter le serial." }
+    ],
+    solution: `<pre class="pseudo">; Zone DIRECTE  /etc/bind/db.ferme.local
+$TTL 3600
+@    IN SOA ns1.ferme.local. admin.ferme.local. ( 2024060101 3600 900 604800 86400 )
+@    IN NS  ns1.ferme.local.
+ns1  IN A   192.168.10.1
+data IN A   192.168.10.20
+
+; Zone INVERSE  /etc/bind/db.192.168.10   (zone 10.168.192.in-addr.arpa)
+$TTL 3600
+@    IN SOA ns1.ferme.local. admin.ferme.local. ( 2024060101 3600 900 604800 86400 )
+@    IN NS  ns1.ferme.local.
+1    IN PTR ns1.ferme.local.
+20   IN PTR data.ferme.local.</pre>
+<p>Deux fichiers, deux sens, un même soin sur le SOA et le serial. Demain : comment répliquer tout cela sur un second serveur pour la redondance.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsvc-j14", title: "Rédiger une zone directe et sa zone inverse", level: 3,
+    statement: "Pour le domaine <code>bureau.local</code> sur le réseau <code>10.0.0.0/24</code>, avec <code>ns1</code> en 10.0.0.1 et <code>pc1</code> en 10.0.0.15, écris (a) le nom de la zone inverse, (b) l'entrée A de pc1 dans la zone directe, (c) l'entrée PTR de pc1 dans la zone inverse. Rappelle aussi ce qu'il faut faire au serial à chaque modif.",
+    hints: [
+      "Zone inverse : les trois premiers octets à l'envers + .in-addr.arpa.",
+      "L'entrée directe utilise un enregistrement A.",
+      "L'entrée inverse utilise un PTR avec le dernier octet."
+    ],
+    solution: "# (a) Zone inverse : 0.0.10.in-addr.arpa\n#\n# (b) Zone directe (db.bureau.local) :\npc1   IN  A    10.0.0.15\n#\n# (c) Zone inverse (db.10.0.0) :\n15    IN  PTR  pc1.bureau.local.\n#\n# A chaque modification : INCREMENTER le serial du SOA,\n# sinon les serveurs esclaves ne verront pas le changement.",
+    note: "Les noms terminés par un point sont absolus ; sans point final, ils sont complétés par l'origine de la zone (@)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Serveur maître et serveur esclave",
+  subtitle: "Ne jamais dépendre d'une seule machine : réplication de zone et redondance DNS.",
+  theory: `
+<h3>1. Pourquoi deux serveurs ?</h3>
+<p>Si un domaine n'avait qu'un seul serveur DNS et qu'il tombait en panne, plus personne ne pourrait joindre le site : ni le web, ni le courrier. C'est pourquoi la bonne pratique — et souvent l'obligation des registres — impose <strong>au moins deux serveurs autoritatifs</strong>. L'un est le <strong>maître</strong> (en anglais <em>master</em>, aussi appelé <em>primary</em>), l'autre est l'<strong>esclave</strong> (<em>slave</em>, aussi appelé <em>secondary</em>).</p>
+<h3>2. Qui fait quoi ?</h3>
+<p>Le <strong>maître</strong> détient la version <em>originale</em> des fichiers de zone : c'est là qu'on édite les enregistrements à la main. L'<strong>esclave</strong> ne s'édite jamais directement : il reçoit automatiquement une <strong>copie</strong> de la zone depuis le maître. Les deux répondent aux clients de façon identique et font tous deux autorité.</p>
+<div class="tip">Analogie : le maître est le cahier original de la secrétaire ; l'esclave est une photocopie tenue à jour. On n'écrit que sur l'original ; les photocopies se resynchronisent toutes seules.</div>
+<h3>3. Le transfert de zone (AXFR / IXFR)</h3>
+<p>La copie s'appelle un <strong>transfert de zone</strong>. Il en existe deux formes : <strong>AXFR</strong> (transfert complet de toute la zone) et <strong>IXFR</strong> (transfert incrémental, seulement les changements). Le transfert utilise le port <strong>53 en TCP</strong> (le TCP, plus fiable, convient aux gros volumes, contrairement aux requêtes ordinaires en UDP).</p>
+<h3>4. Le rôle du SOA dans la synchronisation</h3>
+<p>Comment l'esclave sait-il qu'il doit se resynchroniser ? Grâce au <strong>serial</strong> du SOA. Périodiquement (intervalle <em>Refresh</em>), l'esclave interroge le maître et compare les serials. Si celui du maître est <strong>plus grand</strong>, il lance un transfert. D'où la règle vue au jour précédent : <strong>incrémenter le serial à chaque modification</strong>, sinon l'esclave croit être à jour.</p>
+<pre class="pseudo"># Les compteurs du SOA pilotent l'esclave :
+Refresh  3600     ; frequence de verification du serial
+Retry    900      ; delai avant nouvel essai si le maitre ne repond pas
+Expire   604800   ; au bout de 7 jours sans contact, l'esclave cesse de repondre
+# => l'esclave se fie au SERIAL pour declencher un transfert</pre>
+<h3>5. Configurer maître et esclave dans Bind</h3>
+<pre class="pseudo">// Sur le MAITRE : /etc/bind/named.conf.local
+zone "exemple.local" {
+    type master;
+    file "/etc/bind/db.exemple.local";
+    allow-transfer { 192.168.1.2; };   // autorise l'esclave a copier
+};
+
+// Sur l'ESCLAVE : /etc/bind/named.conf.local
+zone "exemple.local" {
+    type slave;
+    masters { 192.168.1.1; };          // adresse du maitre
+    file "/var/cache/bind/db.exemple.local";  // copie recue
+};</pre>
+<div class="warn">Sur le maître, restreins <code>allow-transfer</code> aux seules IP des esclaves : laisser le transfert de zone ouvert à tous permettrait à n'importe qui de télécharger toute ta zone (fuite d'informations). Sur l'esclave, on ne modifie jamais le fichier à la main : il serait écrasé au prochain transfert.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Maitre (master/primary) : detient l'ORIGINAL des zones (on edite ici)
+# Esclave (slave/secondary): recoit une COPIE, ne s'edite pas
+# Redondance : au moins 2 serveurs autoritatifs par domaine
+# Transfert de zone : AXFR (complet) / IXFR (incremental), port 53 TCP
+# L'esclave compare le SERIAL du SOA -> transfert si maitre plus recent
+# Maitre : allow-transfer limite aux IP des esclaves (securite)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel serveur détient la version originale éditable des fichiers de zone ?", opts: ["L'esclave", "Le maître", "Le resolver", "Le serveur racine"], a: 1, exp: "Le maître (master/primary) contient l'original ; on édite là." },
+    { type: "qcm", q: "Comment l'esclave obtient-il les données de la zone ?", opts: ["On les tape à la main", "Par un transfert de zone depuis le maître", "Par le cache du client", "Par le serveur racine"], a: 1, exp: "L'esclave reçoit une copie via le transfert de zone." },
+    { type: "qcm", q: "Comment s'appelle un transfert de zone complet ?", opts: ["IXFR", "AXFR", "TXT", "PTR"], a: 1, exp: "AXFR = transfert complet ; IXFR = incrémental." },
+    { type: "qcm", q: "Quel protocole/port utilise le transfert de zone ?", opts: ["53 UDP", "53 TCP", "80 TCP", "22 UDP"], a: 1, exp: "Le transfert de zone passe par le port 53 en TCP (fiable pour gros volumes)." },
+    { type: "qcm", q: "Sur quoi l'esclave se base-t-il pour décider de se resynchroniser ?", opts: ["Le TTL du cache", "Le serial du SOA", "L'enregistrement MX", "L'heure locale"], a: 1, exp: "Il compare le serial du SOA : si le maître est plus grand, il transfère." },
+    { type: "qcm", q: "Pourquoi imposer au moins deux serveurs autoritatifs ?", opts: ["Pour la vitesse d'affichage", "Pour la redondance en cas de panne", "Pour chiffrer le trafic", "Pour économiser des IP"], a: 1, exp: "Si un serveur tombe, l'autre continue de répondre : redondance." },
+    { type: "vf", q: "On édite les enregistrements directement sur l'esclave.", a: false, exp: "Faux : on édite sur le maître ; le fichier de l'esclave serait écrasé au transfert." },
+    { type: "vf", q: "Le maître et l'esclave font tous deux autorité sur la zone.", a: true, exp: "Vrai : les deux répondent de façon autoritative aux clients." },
+    { type: "vf", q: "Il est prudent de limiter allow-transfer aux IP des esclaves.", a: true, exp: "Vrai : sinon n'importe qui pourrait télécharger toute la zone." },
+    { type: "vf", q: "Si on modifie la zone sans incrémenter le serial, l'esclave se met quand même à jour.", a: false, exp: "Faux : sans serial plus grand, l'esclave croit être à jour et ne transfère pas." },
+    { type: "input", q: "Comment appelle-t-on le serveur qui détient l'original de la zone ? (un mot)", a: ["maitre", "master", "primary", "primaire"], ph: "un mot", exp: "Le maître (master/primary)." },
+    { type: "input", q: "Comment appelle-t-on le serveur qui reçoit une copie ? (un mot)", a: ["esclave", "slave", "secondary", "secondaire"], ph: "un mot", exp: "L'esclave (slave/secondary)." },
+    { type: "input", q: "Quel sigle (4 lettres) désigne un transfert de zone complet ?", a: ["axfr"], ph: "4 lettres", exp: "AXFR = transfert complet." },
+    { type: "input", q: "Quel champ du SOA l'esclave compare-t-il pour se synchroniser ? (un mot)", a: ["serial", "le serial", "numero de serie", "serie"], ph: "un mot", exp: "Le serial." },
+    { type: "input", q: "Sur le maître, quelle directive autorise l'esclave à copier la zone ?", a: ["allow-transfer", "allow transfer"], ph: "allow-...", exp: "allow-transfer { IP_esclave; };" }
+  ],
+  final: {
+    title: "Exercice final — Ajouter un esclave pour la redondance",
+    intro: `<p>Le maître DNS de <code>club.local</code> (192.168.5.1) fonctionne bien, mais il est seul. On ajoute un esclave (192.168.5.2) pour survivre à une panne. Configurons les deux côtés.</p>`,
+    questions: [
+      { type: "qcm", q: "Sur le maître, quel type de zone est déjà déclaré ?", opts: ["type slave;", "type master;", "type forward;", "type hint;"], a: 1, exp: "Le maître utilise type master;." },
+      { type: "input", q: "Quelle directive ajouter sur le maître pour autoriser l'esclave 192.168.5.2 ? (nom de la directive)", a: ["allow-transfer", "allow transfer"], ph: "allow-...", exp: "allow-transfer { 192.168.5.2; };" },
+      { type: "qcm", q: "Sur l'esclave, quel type de zone déclarer ?", opts: ["type master;", "type slave;", "type cache;", "type root;"], a: 1, exp: "L'esclave utilise type slave;." },
+      { type: "input", q: "Sur l'esclave, quelle directive indique l'adresse du maître ? (un mot)", a: ["masters", "masters { 192.168.5.1; }"], ph: "un mot-clé", exp: "masters { 192.168.5.1; };" },
+      { type: "vf", q: "Après toute future modification sur le maître, il faudra incrémenter le serial pour que l'esclave se mette à jour.", a: true, exp: "Vrai : l'esclave se fie au serial du SOA." }
+    ],
+    solution: `<pre class="pseudo">// MAITRE (192.168.5.1) : named.conf.local
+zone "club.local" {
+    type master;
+    file "/etc/bind/db.club.local";
+    allow-transfer { 192.168.5.2; };
+};
+
+// ESCLAVE (192.168.5.2) : named.conf.local
+zone "club.local" {
+    type slave;
+    masters { 192.168.5.1; };
+    file "/var/cache/bind/db.club.local";
+};
+// Puis, a chaque modif du maitre : incrementer le serial du SOA.</pre>
+<p>Deux serveurs, une seule source de vérité (le maître) et une copie fidèle (l'esclave) : voilà un DNS robuste. Demain, dernier jour : tester et diagnostiquer tout cela avec dig et nslookup.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsvc-j15", title: "Configurer la réplication maître/esclave", level: 3,
+    statement: "Décris la configuration Bind pour répliquer la zone <code>demo.local</code> : le maître est en 10.1.1.1, l'esclave en 10.1.1.2. Donne la déclaration de zone côté maître (avec l'autorisation de transfert) et côté esclave. Rappelle enfin le rôle du serial.",
+    hints: [
+      "Côté maître : type master + allow-transfer vers l'IP de l'esclave.",
+      "Côté esclave : type slave + masters { IP_du_maitre; }.",
+      "L'esclave compare le serial du SOA pour se resynchroniser."
+    ],
+    solution: "// MAITRE (10.1.1.1) : named.conf.local\nzone \"demo.local\" {\n    type master;\n    file \"/etc/bind/db.demo.local\";\n    allow-transfer { 10.1.1.2; };\n};\n\n// ESCLAVE (10.1.1.2) : named.conf.local\nzone \"demo.local\" {\n    type slave;\n    masters { 10.1.1.1; };\n    file \"/var/cache/bind/db.demo.local\";\n};\n\n// Le serial du SOA doit etre incremente a chaque modif du maitre :\n// c'est ce que l'esclave compare pour declencher un transfert de zone.",
+    note: "On n'édite jamais le fichier de l'esclave à la main : il est écrasé à chaque transfert depuis le maître." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

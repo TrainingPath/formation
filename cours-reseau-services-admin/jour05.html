@@ -1,0 +1,117 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 05</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Mettre en place un serveur DHCP",
+  subtitle: "Installer isc-dhcp-server et écrire un dhcpd.conf qui tient la route.",
+  theory: `
+<h3>1. Le logiciel : isc-dhcp-server</h3>
+<p>Sous Linux, le serveur DHCP historique et très répandu s'appelle <strong>isc-dhcp-server</strong> (le démon se nomme <strong>dhcpd</strong>). On l'installe avec le gestionnaire de paquets, puis on le configure dans un seul fichier central : <strong>dhcpd.conf</strong>. Le principe général vaut pour tout serveur DHCP : déclarer une plage d'adresses, une passerelle, un ou plusieurs serveurs DNS et une durée de bail.</p>
+<pre class="pseudo"># Installation (Debian/Ubuntu)
+sudo apt update
+sudo apt install isc-dhcp-server
+# Le fichier de configuration principal :
+/etc/dhcp/dhcpd.conf</pre>
+<h3>2. Anatomie d'un dhcpd.conf minimal</h3>
+<p>Le cœur de la configuration est le bloc <strong>subnet</strong>, qui décrit un réseau à servir. Il contient la <strong>plage</strong> (directive <code>range</code>), la <strong>passerelle</strong> (<code>option routers</code>), le ou les <strong>serveurs DNS</strong> (<code>option domain-name-servers</code>) et la <strong>durée du bail</strong> (<code>default-lease-time</code> / <code>max-lease-time</code>, en secondes).</p>
+<pre class="pseudo"># /etc/dhcp/dhcpd.conf  (exemple minimal)
+default-lease-time 86400;      # bail par defaut : 24 h (en secondes)
+max-lease-time     172800;     # bail maximal : 48 h
+
+subnet 192.168.1.0 netmask 255.255.255.0 {
+  range 192.168.1.100 192.168.1.200;      # plage distribuee
+  option routers 192.168.1.1;             # passerelle par defaut
+  option domain-name-servers 192.168.1.1, 8.8.8.8;  # serveurs DNS
+  option domain-name \"pme.local\";         # suffixe de domaine
+}</pre>
+<div class="tip">Les durées sont en <strong>secondes</strong> : 86400 = 24 h, 3600 = 1 h. La plage <code>range</code> définit les adresses distribuables : ici de .100 à .200, soit 101 adresses. Laisse hors plage les adresses fixes (passerelle .1, serveurs, imprimantes).</div>
+<h3>3. Ajouter une réservation</h3>
+<p>Pour qu'un équipement reçoive toujours la même adresse, on ajoute un bloc <code>host</code> qui associe sa MAC à une IP fixe (vue au jour 4) :</p>
+<pre class="pseudo">host serveur-fichiers {
+  hardware ethernet 00:aa:bb:cc:dd:ee;
+  fixed-address 192.168.1.10;    # hors de la plage range !
+}</pre>
+<h3>4. Activer et démarrer le service</h3>
+<p>Une fois le fichier écrit, on démarre le démon et on l'active au boot. La commande <strong>systemctl</strong> pilote le service. On précise aussi sur quelle carte réseau le serveur doit écouter (fichier <code>/etc/default/isc-dhcp-server</code>).</p>
+<pre class="pseudo"># Verifier la syntaxe AVANT de demarrer :
+sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf
+# Demarrer et activer au boot :
+sudo systemctl restart isc-dhcp-server
+sudo systemctl enable  isc-dhcp-server
+sudo systemctl status  isc-dhcp-server   # verifier qu'il tourne</pre>
+<div class="warn">Ne lance JAMAIS un second serveur DHCP « pirate » sur un réseau qui en a déjà un (box, autre serveur) : les clients pourraient recevoir des offres contradictoires. C'est une cause classique de panne. Sur un réseau de production, coordonne-toi toujours avant d'activer un DHCP.</div>
+<h3>5. Vérifier après coup</h3>
+<p>Après démarrage, les baux attribués sont visibles dans le fichier <strong>/var/lib/dhcp/dhcpd.leases</strong>. Côté client, on force une demande pour tester (jour 6). Si le démon refuse de démarrer, la cause est presque toujours une <strong>erreur de syntaxe</strong> dans dhcpd.conf (point-virgule manquant, accolade non fermée) : d'où l'intérêt du test <code>dhcpd -t</code>.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Paquet : isc-dhcp-server   |  Demon : dhcpd  |  Config : /etc/dhcp/dhcpd.conf
+# Bloc subnet : range (plage) + option routers (passerelle)
+#               + option domain-name-servers (DNS) + lease-time (secondes)
+# host { hardware ethernet ...; fixed-address ...; }  -> reservation
+# dhcpd -t  : tester la syntaxe   |  systemctl : demarrer / activer
+# Un seul serveur DHCP par reseau !</pre>`,
+  exercises: [
+    { type: "input", q: "Quel est le nom du paquet du serveur DHCP le plus répandu sous Debian/Ubuntu ?", a: ["isc-dhcp-server", "isc dhcp server", "iscdhcpserver"], ph: "isc-…", exp: "Le paquet est isc-dhcp-server (le démon se nomme dhcpd)." },
+    { type: "input", q: "Quel est le chemin complet du fichier de configuration principal du serveur DHCP ?", a: ["/etc/dhcp/dhcpd.conf", "etc/dhcp/dhcpd.conf", "dhcpd.conf"], ph: "/etc/…", exp: "La configuration se fait dans /etc/dhcp/dhcpd.conf." },
+    { type: "qcm", q: "Quelle directive définit la PLAGE d'adresses distribuées dans un subnet ?", opts: ["option routers", "range", "fixed-address", "default-lease-time"], a: 1, exp: "range 192.168.1.100 192.168.1.200; définit les adresses distribuables." },
+    { type: "qcm", q: "Quelle directive indique la PASSERELLE par défaut aux clients ?", opts: ["option routers", "option domain-name-servers", "range", "max-lease-time"], a: 0, exp: "option routers 192.168.1.1; fournit la passerelle par défaut." },
+    { type: "input", q: "Quelle directive fournit aux clients l'adresse du/des serveur(s) DNS ?", a: ["option domain-name-servers", "domain-name-servers", "option domain name servers"], ph: "option domain-…", exp: "option domain-name-servers 192.168.1.1, 8.8.8.8; liste les DNS." },
+    { type: "qcm", q: "Dans quelle unité s'expriment default-lease-time et max-lease-time ?", opts: ["En minutes", "En secondes", "En heures", "En jours"], a: 1, exp: "Les durées de bail sont en secondes (86400 = 24 h)." },
+    { type: "vf", q: "86400 secondes correspondent à 24 heures.", a: true, exp: "Oui : 86400 s = 24 h (60 × 60 × 24)." },
+    { type: "qcm", q: "Quel bloc de dhcpd.conf sert à créer une réservation (MAC → IP fixe) ?", opts: ["subnet { }", "host { }", "range", "option"], a: 1, exp: "Le bloc host { hardware ethernet ...; fixed-address ...; } crée une réservation." },
+    { type: "vf", q: "L'adresse fixe d'une réservation (fixed-address) doit idéalement être HORS de la plage range.", a: true, exp: "Oui : pour éviter qu'elle soit aussi distribuée dynamiquement à un autre." },
+    { type: "input", q: "Quelle commande teste la SYNTAXE du fichier avant de démarrer le démon ?", a: ["dhcpd -t", "sudo dhcpd -t", "dhcpd -t -cf /etc/dhcp/dhcpd.conf", "dhcpd-t"], ph: "dhcpd …", exp: "dhcpd -t (option -cf pour préciser le fichier) vérifie la syntaxe." },
+    { type: "qcm", q: "Quelle commande démarre (ou redémarre) le service DHCP ?", opts: ["ping isc-dhcp-server", "systemctl restart isc-dhcp-server", "apt remove dhcpd", "cat dhcpd.conf"], a: 1, exp: "systemctl restart isc-dhcp-server (re)démarre le service." },
+    { type: "qcm", q: "Quelle commande active le démarrage automatique du service au boot ?", opts: ["systemctl enable isc-dhcp-server", "systemctl stop isc-dhcp-server", "dhcpd -t", "rm dhcpd.leases"], a: 0, exp: "systemctl enable isc-dhcp-server active le service au démarrage." },
+    { type: "vf", q: "Lancer un second serveur DHCP non coordonné sur un réseau déjà pourvu peut provoquer des pannes.", a: true, exp: "Oui : offres contradictoires = « DHCP pirate », cause classique de dysfonctionnement." },
+    { type: "input", q: "Dans quel fichier retrouve-t-on la liste des baux attribués par isc-dhcp-server ?", a: ["/var/lib/dhcp/dhcpd.leases", "var/lib/dhcp/dhcpd.leases", "dhcpd.leases"], ph: "/var/lib/…", exp: "Les baux attribués sont dans /var/lib/dhcp/dhcpd.leases." },
+    { type: "qcm", q: "Le démon dhcpd refuse de démarrer : quelle cause faut-il d'abord soupçonner ?", opts: ["Le clavier est débranché", "Une erreur de syntaxe dans dhcpd.conf (point-virgule/accolade)", "L'écran est éteint", "Le DNS est trop lent"], a: 1, exp: "Une faute de syntaxe empêche le démarrage : tester avec dhcpd -t." }
+  ],
+  final: {
+    title: "Exercice final — Écrire le dhcpd.conf d'un petit bureau",
+    intro: `<p>Réseau 192.168.10.0/24. Passerelle = 192.168.10.1. DNS interne = 192.168.10.1, DNS public = 1.1.1.1. On veut distribuer de .50 à .150, bail par défaut 12 h, et réserver 192.168.10.5 pour une imprimante de MAC 00:11:22:33:44:55. Complète mentalement la config, puis réponds.</p>`,
+    questions: [
+      { type: "input", q: "Quelle directive écris-tu pour la plage de .50 à .150 (donne le mot-clé) ?", a: ["range", "range 192.168.10.50 192.168.10.150", "la directive range"], ph: "mot-clé", exp: "range 192.168.10.50 192.168.10.150; définit la plage." },
+      { type: "qcm", q: "Comment déclares-tu la passerelle 192.168.10.1 ?", opts: ["range 192.168.10.1", "option routers 192.168.10.1;", "fixed-address 192.168.10.1;", "gateway = 192.168.10.1"], a: 1, exp: "option routers 192.168.10.1; fournit la passerelle." },
+      { type: "input", q: "Combien de secondes pour un bail par défaut de 12 heures ?", a: ["43200", "43200 secondes", "43 200"], ph: "un nombre", exp: "12 h = 12 × 3600 = 43200 secondes." },
+      { type: "qcm", q: "Le bloc host de l'imprimante doit contenir…", opts: ["range et option routers", "hardware ethernet 00:11:22:33:44:55; et fixed-address 192.168.10.5;", "seulement un mot de passe", "default-lease-time"], a: 1, exp: "Une réservation associe la MAC (hardware ethernet) à fixed-address." },
+      { type: "vf", q: "Avant de faire systemctl restart, il est prudent de lancer dhcpd -t pour valider la syntaxe.", a: true, exp: "Oui : dhcpd -t détecte les erreurs avant qu'elles n'empêchent le démarrage." }
+    ],
+    solution: `<pre class="pseudo"># /etc/dhcp/dhcpd.conf
+default-lease-time 43200;      # 12 h
+max-lease-time     86400;      # 24 h
+
+subnet 192.168.10.0 netmask 255.255.255.0 {
+  range 192.168.10.50 192.168.10.150;
+  option routers 192.168.10.1;
+  option domain-name-servers 192.168.10.1, 1.1.1.1;
+}
+host imprimante {
+  hardware ethernet 00:11:22:33:44:55;
+  fixed-address 192.168.10.5;     # hors de la plage 50-150
+}
+# Puis : dhcpd -t   ->   systemctl restart isc-dhcp-server</pre>
+<p>Ton serveur est prêt. Demain : le tester côté client et dépanner quand ça coince.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsvc-j05", title: "Un dhcpd.conf de A à Z", level: 3,
+    statement: "Écris (en texte brut) un bloc <code>subnet</code> pour le réseau <strong>10.0.0.0/24</strong> : plage de <strong>10.0.0.20</strong> à <strong>10.0.0.100</strong>, passerelle <strong>10.0.0.1</strong>, DNS <strong>10.0.0.1</strong> et <strong>9.9.9.9</strong>, bail par défaut <strong>1 heure</strong>. Indique aussi la commande qui teste la syntaxe.",
+    hints: [
+      "Le masque /24 s'écrit netmask 255.255.255.0.",
+      "1 heure = 3600 secondes.",
+      "Test de syntaxe : dhcpd -t."
+    ],
+    solution: "default-lease-time 3600;      # 1 heure\nmax-lease-time     7200;\n\nsubnet 10.0.0.0 netmask 255.255.255.0 {\n  range 10.0.0.20 10.0.0.100;\n  option routers 10.0.0.1;\n  option domain-name-servers 10.0.0.1, 9.9.9.9;\n}\n\n# Tester la syntaxe avant de demarrer :\n# sudo dhcpd -t -cf /etc/dhcp/dhcpd.conf\n# Puis : sudo systemctl restart isc-dhcp-server",
+    note: "Chaque directive se termine par un point-virgule ; chaque bloc par une accolade fermante." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

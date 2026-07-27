@@ -1,0 +1,95 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 27</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 27,
+  title: "Conteneurs et réseau (Docker, Kubernetes)",
+  subtitle: "Comment des conteneurs éphémères se parlent et sont exposés au monde.",
+  theory: `
+<h3>1. Le réseau vu par un conteneur</h3>
+<p>Un conteneur est un processus isolé qui croit disposer de sa propre machine, y compris de sa propre pile réseau : sa carte virtuelle, ses adresses, ses ports. Sur un même hôte, plusieurs conteneurs doivent pouvoir se parler et, parfois, être joignables de l'extérieur. Docker et Kubernetes automatisent tout ce câblage virtuel, mais les principes restent ceux d'un vrai réseau : adresses IP, ports, routage, NAT.</p>
+<h3>2. Le réseau par défaut de Docker : bridge</h3>
+<p>Quand tu installes Docker, il crée un réseau par défaut de type <strong>bridge</strong> (« pont »), souvent nommé <code>docker0</code>. C'est un commutateur virtuel : chaque conteneur reçoit une adresse IP privée sur ce pont (par exemple 172.17.0.0/16) et peut parler aux autres conteneurs du même pont. Pour joindre l'extérieur, Docker fait du <strong>NAT</strong> : les paquets sortants prennent l'adresse IP de l'hôte.</p>
+<pre class="pseudo"># Publier un port : rendre un conteneur joignable depuis l'hote
+docker run -d -p 8080:80 nginx
+#            hote:8080  --&gt;  conteneur:80
+# Un navigateur sur http://hote:8080 atteint le nginx du conteneur.</pre>
+<div class="tip">Docker propose plusieurs pilotes réseau : <strong>bridge</strong> (défaut, isolé sur un hôte), <strong>host</strong> (le conteneur partage directement la pile de l'hôte, sans isolation), et <strong>overlay</strong> (relie des conteneurs sur plusieurs hôtes, façon VXLAN).</div>
+<h3>3. Kubernetes : un modèle réseau plus ambitieux</h3>
+<p>Kubernetes orchestre des conteneurs regroupés en <strong>pods</strong> (la plus petite unité déployable). Sa règle fondamentale : <strong>chaque pod a sa propre adresse IP</strong> et tous les pods peuvent se joindre entre eux sans NAT, même s'ils sont sur des nœuds différents. Le problème : les pods sont éphémères, leurs adresses changent à chaque redéploiement. On ne peut donc pas s'y connecter directement de façon stable.</p>
+<h3>4. Le Service, adresse stable pour des pods instables</h3>
+<p>La réponse est l'objet <strong>Service</strong>. Un Service fournit une adresse IP <em>stable</em> (et un nom DNS interne) qui répartit le trafic vers un ensemble de pods sélectionnés par étiquettes. Trois types courants : <strong>ClusterIP</strong> (accessible seulement à l'intérieur du cluster, valeur par défaut), <strong>NodePort</strong> (ouvre un port sur chaque nœud), <strong>LoadBalancer</strong> (demande un répartiteur externe au cloud pour exposer le service sur Internet).</p>
+<pre class="pseudo"># Un Service ClusterIP devant 3 pods identiques
+Service "web" (ClusterIP 10.96.0.15, DNS: web)
+   -> pod web-a (10.244.1.4)
+   -> pod web-b (10.244.2.7)
+   -> pod web-c (10.244.1.9)
+# Les clients internes appellent "web" ; peu importe quels pods vivent.</pre>
+<h3>5. Qui branche tout cela ? Le CNI</h3>
+<p>Kubernetes ne code pas lui-même le réseau : il délègue à un <strong>plugin CNI</strong> (Container Network Interface). Le CNI est une norme d'interface ; des implémentations comme <strong>Calico</strong>, <strong>Flannel</strong> ou <strong>Cilium</strong> attribuent les IP aux pods et assurent le routage entre nœuds. Changer de CNI, c'est changer la « façon de câbler » le cluster sans toucher aux applications.</p>
+<div class="warn">Un conteneur n'est pas une VM : sans configuration de ports publiés (Docker) ou de Service (Kubernetes), l'application reste injoignable depuis l'extérieur, même si elle écoute bien à l'intérieur.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Docker : reseau par defaut = bridge (docker0), IP privees + NAT
+#          -p hote:conteneur pour publier un port
+# Kubernetes : 1 pod = 1 IP, tous les pods se joignent sans NAT
+#   pods ephemeres -> Service = IP stable + DNS interne
+#   ClusterIP (interne) | NodePort | LoadBalancer (externe)
+# CNI : plugin qui cable le reseau des pods (Calico, Flannel, Cilium)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel est le type de réseau par défaut créé par Docker ?", opts: ["host", "overlay", "bridge (pont)", "macvlan"], a: 2, exp: "Docker crée par défaut un réseau bridge, souvent nommé docker0." },
+    { type: "qcm", q: "Que fait l'option -p 8080:80 dans « docker run -p 8080:80 nginx » ?", opts: ["Elle limite la mémoire", "Elle publie le port 80 du conteneur sur le port 8080 de l'hôte", "Elle change l'adresse IP du conteneur", "Elle désactive le réseau"], a: 1, exp: "Elle mappe hôte:8080 vers conteneur:80 pour rendre nginx joignable." },
+    { type: "input", q: "Dans Kubernetes, quelle est la plus petite unité déployable qui possède sa propre adresse IP ? (un mot)", a: ["pod", "un pod", "le pod"], ph: "un mot", exp: "Le pod : chaque pod reçoit sa propre IP dans le cluster." },
+    { type: "qcm", q: "Pourquoi ne se connecte-t-on pas directement à l'IP d'un pod ?", opts: ["Parce que c'est interdit", "Parce que les pods sont éphémères et leurs IP changent", "Parce que les pods n'ont pas d'IP", "Parce que c'est trop rapide"], a: 1, exp: "Les pods sont éphémères ; on passe par un Service à l'IP stable." },
+    { type: "vf", q: "Un Service Kubernetes fournit une adresse IP stable et un nom DNS interne.", a: true, exp: "Oui : le Service abstrait des pods instables derrière une IP et un nom stables." },
+    { type: "input", q: "Quel type de Service Kubernetes est accessible uniquement à l'intérieur du cluster (valeur par défaut) ?", a: ["clusterip", "cluster ip"], ph: "un type", exp: "ClusterIP : accessible seulement en interne, c'est le type par défaut." },
+    { type: "qcm", q: "À quoi sert le NAT dans le réseau bridge de Docker ?", opts: ["À chiffrer le trafic", "À permettre aux conteneurs de sortir vers l'extérieur via l'IP de l'hôte", "À supprimer les conteneurs", "À créer des pods"], a: 1, exp: "Le NAT masque les IP privées des conteneurs derrière l'IP de l'hôte." },
+    { type: "qcm", q: "Que signifie CNI ?", opts: ["Cloud Network Instance", "Container Network Interface", "Central Node Identifier", "Container Naming Index"], a: 1, exp: "CNI = Container Network Interface, la norme des plugins réseau des pods." },
+    { type: "vf", q: "Dans Kubernetes, deux pods sur deux nœuds différents peuvent en principe se joindre sans NAT.", a: true, exp: "Oui : le modèle réseau impose que tous les pods se joignent directement." },
+    { type: "input", q: "Cite un plugin CNI répandu (un nom).", a: ["calico", "flannel", "cilium"], ph: "un nom", exp: "Calico, Flannel ou Cilium sont des implémentations CNI courantes." },
+    { type: "qcm", q: "Quel type de Service demande un répartiteur externe pour exposer l'application sur Internet ?", opts: ["ClusterIP", "NodePort", "LoadBalancer", "Headless"], a: 2, exp: "LoadBalancer provisionne un répartiteur externe (souvent chez le cloud)." },
+    { type: "vf", q: "Avec le pilote réseau « host », le conteneur partage directement la pile réseau de l'hôte, sans isolation.", a: true, exp: "Oui : en mode host, pas d'isolation réseau ni de NAT ; il utilise l'hôte tel quel." },
+    { type: "qcm", q: "Le rôle d'un Service qui pointe vers 3 pods identiques est de…", opts: ["Supprimer deux pods", "Répartir le trafic entre les pods derrière une IP/nom stables", "Chiffrer les pods", "Créer un nouveau cluster"], a: 1, exp: "Le Service répartit (load-balance) vers les pods sélectionnés par étiquettes." },
+    { type: "input", q: "Comment appelle-t-on l'action de rendre un port de conteneur joignable depuis l'hôte (verbe/expression courante) ?", a: ["publier un port", "publier le port", "publier", "publication de port", "port publié"], ph: "une expression", exp: "On « publie » un port avec -p hôte:conteneur." },
+    { type: "vf", q: "Sans Service (K8s) ni port publié (Docker), une application en conteneur reste injoignable de l'extérieur même si elle écoute.", a: true, exp: "Oui : l'isolation réseau exige une exposition explicite." }
+  ],
+  final: {
+    title: "Exercice final — Exposer une API en conteneurs",
+    intro: `<p>Une équipe déploie une API en trois répliques dans Kubernetes. En local, elle teste d'abord la même image avec Docker. Elle veut comprendre comment rendre l'API joignable dans les deux cas.</p>`,
+    questions: [
+      { type: "qcm", q: "En local avec Docker, comment rendre l'API (port 3000) joignable sur le port 80 de la machine ?", opts: ["docker run api", "docker run -p 80:3000 api", "docker run --no-net api", "docker stop api"], a: 1, exp: "-p 80:3000 publie le port 3000 du conteneur sur le port 80 de l'hôte." },
+      { type: "input", q: "Dans Kubernetes, quel objet donne une IP stable devant les 3 pods de l'API ? (un mot)", a: ["service", "un service", "le service"], ph: "un mot", exp: "Le Service fournit une IP et un nom DNS stables devant les pods." },
+      { type: "qcm", q: "Pour un accès uniquement interne au cluster, quel type de Service choisir ?", opts: ["ClusterIP", "LoadBalancer", "NodePort", "Aucun"], a: 0, exp: "ClusterIP suffit pour un usage interne au cluster." },
+      { type: "qcm", q: "Pour exposer l'API sur Internet via un répartiteur du cloud, quel type de Service ?", opts: ["ClusterIP", "LoadBalancer", "Headless", "None"], a: 1, exp: "LoadBalancer provisionne un répartiteur externe pour l'accès public." },
+      { type: "vf", q: "Le plugin CNI attribue les IP aux pods et assure le routage entre les nœuds.", a: true, exp: "Oui : le CNI (Calico, Flannel, Cilium...) câble le réseau des pods." }
+    ],
+    solution: `<pre class="pseudo"># Docker (test local) :
+docker run -d -p 80:3000 api      # hote:80 -> conteneur:3000
+# Kubernetes (production) :
+Deployment api (3 replicas)  ->  3 pods, IP ephemeres
+Service "api"  (ClusterIP)    ->  IP + DNS stables, interne
+Service "api"  (LoadBalancer) ->  IP publique via le cloud, pour Internet
+# Le CNI (ex Calico) attribue les IP aux pods et route entre noeuds.</pre>
+<p>Docker et Kubernetes réutilisent les fondamentaux du réseau (IP, ports, NAT, DNS) tout en automatisant le câblage des conteneurs éphémères.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netadv-j27", title: "Du conteneur à l'exposition", level: 2,
+    statement: "Explique en quelques lignes : (1) le rôle du réseau <strong>bridge</strong> par défaut de Docker et de la publication de port <code>-p</code>, puis (2) pourquoi Kubernetes a besoin d'un <strong>Service</strong> devant des pods, et ce qu'apporte le <strong>CNI</strong>.",
+    hints: [
+      "Le bridge donne une IP privée au conteneur ; le NAT et -p gèrent l'accès extérieur.",
+      "Les pods sont éphémères : le Service offre une IP/nom stables.",
+      "Le CNI est le plugin qui attribue les IP et route entre nœuds."
+    ],
+    solution: "# Docker :\n# - Reseau bridge par defaut (docker0) : chaque conteneur recoit une IP privee\n#   et sort vers l'exterieur via NAT (IP de l'hote).\n# - L'option -p hote:conteneur PUBLIE un port pour rendre le service joignable.\n#   Ex : docker run -p 8080:80 nginx  ->  hote:8080 -> conteneur:80\n#\n# Kubernetes :\n# - Chaque pod a sa propre IP, mais les pods sont ephemeres (IP changeantes).\n# - Le SERVICE fournit une IP stable + un nom DNS interne devant un groupe de pods\n#   (ClusterIP interne, NodePort, LoadBalancer pour l'exterieur).\n# - Le CNI (Calico, Flannel, Cilium) attribue les IP aux pods et route entre noeuds.",
+    note: "Sans port publié (Docker) ni Service (K8s), l'application reste injoignable de l'extérieur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

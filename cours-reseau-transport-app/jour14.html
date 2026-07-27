@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 14</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 14,
+  title: "Capturer et lire une connexion TCP (repérer SYN/SYN-ACK/ACK dans une capture)",
+  subtitle: "Passer de la théorie à la preuve : voir le handshake, en vrai, dans Wireshark.",
+  theory: `
+<h3>1. Objectif du jour</h3>
+<p>Hier, tu as appris à capturer et filtrer. Aujourd'hui, on met en pratique le jour 9 : <strong>repérer le 3-way handshake</strong> (SYN, SYN-ACK, ACK) dans une vraie capture, puis suivre la connexion. Voir de ses propres yeux les drapeaux TCP défiler ancre définitivement la théorie.</p>
+<h3>2. Isoler la conversation</h3>
+<p>Ouvre une page web pendant la capture, puis arrête. Pour ne garder que cette connexion, filtre par port et/ou IP :</p>
+<pre class="pseudo"># Ne garder que le trafic web de ma machine :
+tcp.port == 80 &amp;&amp; ip.addr == 192.168.1.20
+# Astuce Wireshark : clic droit sur un paquet -> \"Follow &gt; TCP Stream\"
+# isole automatiquement TOUTE la connexion (meme couple IP:port).</pre>
+<p>La commande <strong>Follow TCP Stream</strong> (« suivre le flux TCP ») construit pour toi un filtre du type <strong>tcp.stream == 0</strong> qui n'affiche qu'une seule conversation, du premier SYN au dernier FIN.</p>
+<h3>3. Reconnaître les trois premiers segments</h3>
+<p>Dans la colonne <strong>Info</strong>, Wireshark écrit les drapeaux entre crochets. Les trois premières lignes d'une connexion se lisent ainsi :</p>
+<pre class="pseudo"># Colonne Info d'une capture (handshake) :
+No.  Source           Destination      Proto  Info
+ 1   192.168.1.20     93.184.216.34    TCP    [SYN]       Seq=0
+ 2   93.184.216.34    192.168.1.20     TCP    [SYN, ACK]  Seq=0 Ack=1
+ 3   192.168.1.20     93.184.216.34    TCP    [ACK]       Seq=1 Ack=1
+ 4   192.168.1.20     93.184.216.34    HTTP   GET / HTTP/1.1</pre>
+<p>Le premier <strong>[SYN]</strong> part du client. Le <strong>[SYN, ACK]</strong> revient du serveur. Le <strong>[ACK]</strong> conclut, et dès la ligne suivante la requête <strong>HTTP GET</strong> circule : la connexion est établie.</p>
+<div class="tip">Wireshark affiche par défaut des numéros de séquence <strong>relatifs</strong> (Seq=0, 1, 2…) pour la lisibilité. Les vrais ISN sont aléatoires ; tu peux désactiver l'option « relative sequence numbers » pour voir les valeurs brutes.</div>
+<h3>4. Filtrer directement les drapeaux</h3>
+<p>Pour ne montrer que certaines phases, filtre sur les drapeaux eux-mêmes :</p>
+<pre class="pseudo"># Isoler des phases precises :
+tcp.flags.syn == 1 &amp;&amp; tcp.flags.ack == 0   # les SYN d'ouverture (1er segment)
+tcp.flags.syn == 1 &amp;&amp; tcp.flags.ack == 1   # les SYN-ACK (reponses serveur)
+tcp.flags.fin == 1                          # les FIN (fermeture)
+tcp.flags.reset == 1                        # les RST (coupures brutales)</pre>
+<h3>5. Lire les temps et détecter un souci</h3>
+<p>La colonne <strong>Time</strong> donne l'instant de chaque trame. Un grand écart entre le SYN et le SYN-ACK trahit une <strong>latence</strong> élevée. Des lignes marquées <strong>[TCP Retransmission]</strong> (souvent en noir/rouge) révèlent des pertes ; un <strong>[RST]</strong> inattendu signale un refus ou une coupure. Wireshark fait ainsi le lien entre les symptômes ressentis (lenteur, coupure) et leur cause au niveau des paquets.</p>
+<div class="warn">Si tu ne vois jamais de SYN-ACK après tes SYN, c'est souvent un <strong>pare-feu</strong> ou un port fermé. Un flot de <strong>retransmissions</strong> pointe une perte réseau. Lis toujours la colonne Info avant de conclure.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Isoler une connexion : clic droit -> Follow &gt; TCP Stream (tcp.stream == N)
+# Handshake dans la colonne Info :
+#   [SYN]        du client   (ouverture)
+#   [SYN, ACK]   du serveur  (acceptation)
+#   [ACK]        du client   -> ETABLIE, puis GET HTTP
+# Filtrer les drapeaux : tcp.flags.syn == 1 , tcp.flags.fin == 1 ...
+# Retransmissions / RST = symptomes de perte ou de coupure.</pre>`,
+  exercises: [
+    { type: "qcm", q: "Dans une capture, quel segment ouvre la connexion TCP ?", opts: ["[FIN]", "[SYN]", "[RST]", "[ACK] seul"], a: 1, exp: "Le premier segment [SYN] part du client pour ouvrir." },
+    { type: "qcm", q: "Que lit-on dans la colonne Info pour la réponse du serveur au handshake ?", opts: ["[SYN]", "[ACK]", "[SYN, ACK]", "[FIN]"], a: 2, exp: "Le serveur répond [SYN, ACK] : il accepte et accuse réception." },
+    { type: "vf", q: "La commande « Follow > TCP Stream » isole toute une conversation TCP.", a: true, exp: "Oui : elle crée un filtre tcp.stream == N pour une seule connexion." },
+    { type: "input", q: "Quel filtre combine port 80 et l'IP 192.168.1.20 ? (écris-le en entier)", a: ["tcp.port == 80 && ip.addr == 192.168.1.20", "tcp.port==80 && ip.addr==192.168.1.20", "tcp.port == 80 && ip.addr == 192.168.1.20 "], ph: "un filtre", exp: "tcp.port == 80 && ip.addr == 192.168.1.20 isole la connexion." },
+    { type: "qcm", q: "Quel segment conclut le handshake juste avant le GET HTTP ?", opts: ["[SYN]", "[ACK] (du client)", "[FIN]", "[RST]"], a: 1, exp: "Le [ACK] du client établit la connexion, puis le GET part." },
+    { type: "qcm", q: "Pourquoi Wireshark affiche-t-il souvent Seq=0, 1, 2… ?", opts: ["Ce sont les vrais ISN", "Il utilise des numéros de séquence relatifs pour la lisibilité", "C'est une erreur", "Les numéros sont toujours nuls"], a: 1, exp: "Par défaut les numéros sont relatifs ; les vrais ISN sont aléatoires." },
+    { type: "vf", q: "Un grand écart de temps entre SYN et SYN-ACK peut indiquer une latence élevée.", a: true, exp: "Oui : la colonne Time révèle les délais entre segments." },
+    { type: "input", q: "Quel filtre isole les segments d'ouverture (SYN sans ACK) ? (écris-le)", a: ["tcp.flags.syn == 1 && tcp.flags.ack == 0", "tcp.flags.syn==1 && tcp.flags.ack==0"], ph: "un filtre", exp: "tcp.flags.syn == 1 && tcp.flags.ack == 0 : les SYN purs." },
+    { type: "qcm", q: "Des lignes [TCP Retransmission] signalent…", opts: ["Une connexion parfaite", "Des pertes de paquets (segments renvoyés)", "Une ouverture réussie", "Un chiffrement"], a: 1, exp: "Les retransmissions trahissent des pertes réseau." },
+    { type: "qcm", q: "Si aucun SYN-ACK ne revient après tes SYN, la cause probable est…", opts: ["Un débit trop élevé", "Un pare-feu ou un port fermé", "Un bon fonctionnement", "Trop de RAM"], a: 1, exp: "Pas de réponse au SYN = filtrage ou service absent." },
+    { type: "vf", q: "Le filtre tcp.flags.fin == 1 montre les segments de fermeture.", a: true, exp: "Oui : FIN marque la fin d'émission d'un côté." },
+    { type: "input", q: "Quel drapeau, filtré par tcp.flags.reset == 1, révèle une coupure brutale ? (3 lettres)", a: ["rst", "reset"], ph: "3 lettres", exp: "RST : coupure ou refus brutal." },
+    { type: "qcm", q: "Dans le handshake capturé, qui envoie le premier segment ?", opts: ["Le serveur", "Le client", "Le routeur", "Le DNS"], a: 1, exp: "Le client émet le premier [SYN]." },
+    { type: "qcm", q: "Après le [ACK] final, quelle trame voit-on typiquement pour une page web ?", opts: ["Un autre SYN", "La requête HTTP GET", "Un FIN immédiat", "Rien"], a: 1, exp: "La connexion établie, le client envoie GET / HTTP/1.1." },
+    { type: "vf", q: "Filtrer sur les drapeaux permet d'isoler des phases précises (ouverture, fermeture).", a: true, exp: "Oui : tcp.flags.syn, tcp.flags.fin, etc. ciblent chaque phase." }
+  ],
+  final: {
+    title: "Exercice final — Lire un handshake capturé",
+    intro: `<p>Voici les premières lignes d'une capture entre ton PC (192.168.1.20) et un serveur web (93.184.216.34). Lis-les et réponds. Info : ligne 1 [SYN], ligne 2 [SYN, ACK], ligne 3 [ACK], ligne 4 GET / HTTP/1.1.</p>`,
+    questions: [
+      { type: "qcm", q: "Quel rôle joue 192.168.1.20 dans cette capture ?", opts: ["Le serveur", "Le client (il envoie le premier SYN)", "Le routeur", "Le DNS"], a: 1, exp: "L'émetteur du premier SYN est le client." },
+      { type: "input", q: "Pour n'afficher que cette conversation, quel menu/clic droit utilises-tu ? (deux ou trois mots)", a: ["follow tcp stream", "follow > tcp stream", "tcp stream", "follow tcp", "suivre le flux tcp"], ph: "action Wireshark", exp: "Clic droit > Follow > TCP Stream isole la conversation." },
+      { type: "qcm", q: "La ligne 2 [SYN, ACK] vient de…", opts: ["Ton PC", "Le serveur 93.184.216.34", "Un pare-feu", "Le DNS"], a: 1, exp: "Le serveur répond SYN-ACK pour accepter." },
+      { type: "vf", q: "La ligne 4 (GET) prouve que la connexion est établie après le ACK de la ligne 3.", a: true, exp: "Oui : le handshake terminé, la requête HTTP circule." },
+      { type: "input", q: "Quel filtre ne garderait que les SYN-ACK (réponses serveur) ? (écris-le)", a: ["tcp.flags.syn == 1 && tcp.flags.ack == 1", "tcp.flags.syn==1 && tcp.flags.ack==1"], ph: "un filtre", exp: "tcp.flags.syn == 1 && tcp.flags.ack == 1 : les SYN-ACK." }
+    ],
+    solution: `<pre class="pseudo"># Lecture de la capture :
+No 1 : 192.168.1.20 -> 93.184.216.34  [SYN]        (client ouvre)
+No 2 : 93.184.216.34 -> 192.168.1.20  [SYN, ACK]   (serveur accepte)
+No 3 : 192.168.1.20 -> 93.184.216.34  [ACK]        (etablie)
+No 4 : 192.168.1.20 -> 93.184.216.34  GET / HTTP/1.1
+# Isoler : clic droit -> Follow &gt; TCP Stream  (tcp.stream == 0)
+# SYN-ACK seuls : tcp.flags.syn == 1 &amp;&amp; tcp.flags.ack == 1</pre>
+<p>Tu sais désormais reconnaître un handshake dans une capture réelle. Demain, on observe plusieurs connexions simultanées sur une même machine.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "nettr-j14", title: "Annoter un handshake", level: 2,
+    statement: "On te donne une capture dont les trois premières lignes TCP portent, dans la colonne Info : <code>[SYN]</code>, <code>[SYN, ACK]</code>, <code>[ACK]</code>. Explique <strong>qui envoie quoi</strong> (client/serveur) pour chaque ligne, indique <strong>quand la connexion est établie</strong>, et donne <strong>un filtre</strong> pour isoler toute la conversation.",
+    hints: [
+      "Le premier SYN vient toujours du client.",
+      "La connexion est établie juste après le ACK du client.",
+      "Follow TCP Stream, ou un filtre tcp.port == 80 && ip.addr == ..."
+    ],
+    solution: "# Annotation du handshake :\n# Ligne 1  [SYN]       : le CLIENT demande l'ouverture\n# Ligne 2  [SYN, ACK]  : le SERVEUR accepte et accuse reception\n# Ligne 3  [ACK]       : le CLIENT confirme -> connexion ETABLIE\n#\n# La connexion est etablie des la fin de la ligne 3 :\n# la requete applicative (ex : GET HTTP) part ensuite.\n#\n# Isoler toute la conversation :\n#   clic droit sur un paquet -> Follow > TCP Stream\n#   (ou filtre : tcp.port == 80 && ip.addr == 192.168.1.20)",
+    note: "Souviens-toi que les Seq affichés (0, 1, 2...) sont relatifs : Wireshark les simplifie pour la lecture." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

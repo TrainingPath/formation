@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 08</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Configurer un pare-feu (iptables / nftables)",
+  subtitle: "Traduire la théorie en commandes : chaînes, cibles et politique par défaut.",
+  theory: `
+<h3>1. Le cadre : Netfilter, iptables et nftables</h3>
+<p>Sous Linux, le filtrage réseau est assuré par <strong>Netfilter</strong>, intégré au noyau. On le configure avec des outils en ligne de commande. Le plus connu, historique, est <strong>iptables</strong> ; son successeur moderne est <strong>nftables</strong> (commande <code>nft</code>). Les concepts sont les mêmes ; nous les apprenons d'abord avec iptables, plus répandu dans les cours, puis nous montrons l'équivalent nftables. Toutes ces commandes se lancent en <strong>administrateur</strong> (root) et, dans ce cours, uniquement en <strong>laboratoire isolé</strong>.</p>
+<div class="warn">Danger réel : une mauvaise règle appliquée à distance peut vous <strong>couper l'accès</strong> à la machine (par exemple bloquer SSH avant d'avoir autorisé votre propre adresse). Testez toujours en labo, gardez un accès physique ou une console de secours, et autorisez votre accès d'administration AVANT de passer la politique par défaut à DROP.</div>
+<h3>2. Tables et chaînes</h3>
+<p>iptables organise les règles en <strong>tables</strong> (chacune pour un usage) et en <strong>chaînes</strong> (chacune pour un moment du parcours du paquet). La table par défaut, celle du filtrage, s'appelle <strong>filter</strong>. Elle contient trois chaînes principales :</p>
+<pre class="pseudo"># Table : filter (le filtrage de base)
+# Chaine INPUT   : paquets destines A la machine locale (entrants)
+# Chaine OUTPUT  : paquets emis PAR la machine locale (sortants)
+# Chaine FORWARD : paquets qui TRAVERSENT la machine (routes vers un autre hote)</pre>
+<p>Sur un serveur qui se protège lui-même, on travaille surtout dans <strong>INPUT</strong>. Sur une machine qui route le trafic entre réseaux (passerelle, routeur), la chaîne <strong>FORWARD</strong> devient centrale.</p>
+<h3>3. Les cibles : ACCEPT, DROP, REJECT</h3>
+<p>Chaque règle se termine par une <strong>cible</strong> (en anglais <em>target</em>), indiquée par <code>-j</code> (pour <em>jump</em>). Les principales :</p>
+<pre class="pseudo"># -j ACCEPT  : laisser passer le paquet
+# -j DROP    : jeter le paquet silencieusement
+# -j REJECT  : refuser en renvoyant un message d'erreur</pre>
+<p>La <strong>politique par défaut</strong> d'une chaîne se fixe avec <code>-P</code>. La posture sûre est <strong>DROP</strong> : <code>iptables -P INPUT DROP</code> bloque tout ce qui n'est pas explicitement autorisé.</p>
+<h3>4. Un exemple complet et commenté</h3>
+<p>Voici un jeu de règles typique pour un serveur web qui doit rester joignable en HTTPS et administrable en SSH. On lit du début vers la fin :</p>
+<pre class="pseudo"># 1. Autoriser la boucle locale (services internes de la machine)
+iptables -A INPUT -i lo -j ACCEPT
+# 2. Autoriser les reponses aux connexions deja etablies (stateful)
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+# 3. Autoriser les NOUVELLES connexions web HTTPS (port 443)
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+# 4. Autoriser SSH (port 22) uniquement depuis l'admin
+iptables -A INPUT -p tcp -s 10.0.0.5 --dport 22 -j ACCEPT
+# 5. Politique par defaut : tout le reste est bloque
+iptables -P INPUT DROP</pre>
+<p>Décodons : <code>-A INPUT</code> ajoute (<em>append</em>) une règle à la chaîne INPUT ; <code>-p tcp</code> précise le protocole ; <code>--dport 443</code> le port de destination ; <code>-s 10.0.0.5</code> l'adresse source ; <code>-i lo</code> l'interface (ici la boucle locale) ; <code>-m state --state ...</code> active le suivi d'état. L'ordre reste essentiel : les autorisations d'abord, la politique DROP encadre le reste.</p>
+<div class="tip">Autoriser la <strong>boucle locale</strong> (<code>lo</code>) et les paquets <strong>ESTABLISHED,RELATED</strong> tout en haut est un réflexe : sans cela, on casse les communications internes de la machine et les réponses aux connexions légitimes.</div>
+<h3>5. L'équivalent en nftables</h3>
+<p>nftables fait la même chose avec une syntaxe unifiée. On crée une table, une chaîne rattachée à un <em>hook</em> (point d'accroche) avec sa politique, puis on ajoute des règles :</p>
+<pre class="pseudo"># Creer une table et une chaine input en politique drop
+nft add table inet filter
+nft add chain inet filter input { type filter hook input priority 0 ; policy drop ; }
+# Autoriser les connexions etablies puis HTTPS
+nft add rule inet filter input ct state established,related accept
+nft add rule inet filter input tcp dport 443 accept
+# Ici ct state remplace -m state ; dport remplace --dport</pre>
+<p>Retenez surtout les <strong>concepts</strong> : chaînes INPUT/OUTPUT/FORWARD, cibles ACCEPT/DROP/REJECT, suivi d'état, politique par défaut DROP. La syntaxe exacte (iptables ou nftables) est secondaire une fois le raisonnement acquis.</p>
+<h3>6. Ce qu'il faut retenir aujourd'hui</h3>
+<pre class="pseudo"># Netfilter (noyau) configure via iptables (ancien) ou nftables (nft, moderne).
+# Table filter, chaines : INPUT (entrant), OUTPUT (sortant), FORWARD (traversant).
+# Cibles : -j ACCEPT / DROP / REJECT ; politique par defaut : -P INPUT DROP.
+# Reflexes en tete de chaine : ACCEPT lo + ACCEPT ESTABLISHED,RELATED.
+# Ordre : autorisations d'abord, DROP par defaut encadre le reste.
+# Toujours en LABO ISOLE ; autoriser son acces admin AVANT le DROP par defaut.</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel sous-système du noyau Linux assure le filtrage réseau ?", opts: ["Netfilter", "Photoshop", "Apache", "Bluetooth"], a: 0, exp: "Netfilter, intégré au noyau, est configuré par iptables ou nftables." },
+    { type: "input", q: "Quelle est la commande moderne, successeur d'iptables ? (le nom de la commande)", a: ["nft", "nftables"], ph: "un mot", exp: "nftables (commande nft) est le successeur moderne d'iptables." },
+    { type: "qcm", q: "Quelle chaîne concerne les paquets destinés à la machine locale ?", opts: ["OUTPUT", "FORWARD", "INPUT", "LOOPBACK"], a: 2, exp: "INPUT traite les paquets entrants destinés à la machine elle-même." },
+    { type: "qcm", q: "Quelle chaîne concerne les paquets qui traversent la machine vers un autre hôte ?", opts: ["INPUT", "OUTPUT", "FORWARD", "ACCEPT"], a: 2, exp: "FORWARD gère les paquets routés à travers la machine (passerelle/routeur)." },
+    { type: "input", q: "Dans la table filter, quelle chaîne concerne les paquets émis PAR la machine ?", a: ["output", "la chaîne output", "chaine output"], ph: "un mot", exp: "OUTPUT traite les paquets sortants émis par la machine locale." },
+    { type: "qcm", q: "Quelle cible jette un paquet silencieusement ?", opts: ["ACCEPT", "DROP", "REJECT", "FORWARD"], a: 1, exp: "DROP jette le paquet sans réponse. REJECT renverrait un message." },
+    { type: "input", q: "Quelle option d'iptables fixe la politique par défaut d'une chaîne ? (un seul caractère avec le tiret)", a: ["-P", "p", "-p majuscule"], ph: "-X", exp: "-P (majuscule) fixe la politique par défaut, ex : iptables -P INPUT DROP." },
+    { type: "vf", q: "La table par défaut pour le filtrage s'appelle « filter ».", a: true, exp: "Oui : la table filter contient les chaînes INPUT, OUTPUT et FORWARD." },
+    { type: "qcm", q: "Que fait « iptables -A INPUT ... » ?", opts: ["Supprime une règle", "Ajoute (append) une règle à la chaîne INPUT", "Efface toutes les règles", "Redémarre la machine"], a: 1, exp: "-A INPUT ajoute (append) une règle à la fin de la chaîne INPUT." },
+    { type: "input", q: "Quel mot-clé (avec ses deux tirets) précise le port de destination dans iptables ?", a: ["--dport", "dport"], ph: "--xxxx", exp: "--dport indique le port de destination (ex : --dport 443)." },
+    { type: "qcm", q: "Quelle règle autorise les réponses aux connexions déjà établies (stateful) ?", opts: ["-m state --state NEW -j DROP", "-m state --state ESTABLISHED,RELATED -j ACCEPT", "-P OUTPUT ACCEPT", "-A FORWARD -j REJECT"], a: 1, exp: "-m state --state ESTABLISHED,RELATED -j ACCEPT laisse passer réponses et suites légitimes." },
+    { type: "vf", q: "Il est prudent d'autoriser son propre accès SSH AVANT de passer la politique INPUT à DROP.", a: true, exp: "Oui : sinon, en appliquant DROP, on risque de se couper l'accès à la machine distante." },
+    { type: "qcm", q: "Pourquoi autorise-t-on l'interface de boucle locale (lo) en tête de chaîne ?", opts: ["Pour la décoration", "Pour ne pas casser les communications internes de la machine", "Pour ouvrir Internet", "Pour désactiver le pare-feu"], a: 1, exp: "De nombreux services internes passent par lo ; la bloquer casse le fonctionnement de la machine." },
+    { type: "input", q: "En nftables, quel mot-clé remplace « -m state --state » pour le suivi d'état ? (deux mots)", a: ["ct state", "conntrack state", "ct"], ph: "deux mots", exp: "En nftables : ct state established,related accept (ct = connection tracking)." },
+    { type: "qcm", q: "Sur une machine qui route le trafic entre deux réseaux, quelle chaîne devient centrale ?", opts: ["INPUT", "OUTPUT", "FORWARD", "Aucune"], a: 2, exp: "FORWARD traite le trafic traversant : c'est la chaîne clé d'une passerelle/routeur." }
+  ],
+  final: {
+    title: "Exercice final — Poser les règles d'un serveur web en labo",
+    intro: `<p>En laboratoire isolé, vous configurez un serveur Linux qui doit : rester joignable en HTTPS (443) pour tous, être administrable en SSH (22) uniquement depuis 10.0.0.5, et bloquer tout le reste en entrée, sans casser ses communications internes ni les réponses aux connexions qu'il initie. Vous utilisez iptables.</p>`,
+    questions: [
+      { type: "qcm", q: "Dans quelle chaîne écrivez-vous ces règles de protection du serveur lui-même ?", opts: ["OUTPUT", "FORWARD", "INPUT", "NAT"], a: 2, exp: "Le serveur se protège lui-même : les paquets entrants passent par la chaîne INPUT." },
+      { type: "input", q: "Quelle commande fixe la politique par défaut de INPUT à DROP ? (écris-la)", a: ["iptables -P INPUT DROP", "-P INPUT DROP", "iptables -p input drop"], ph: "iptables -P ...", exp: "iptables -P INPUT DROP bloque tout ce qui n'est pas explicitement autorisé." },
+      { type: "qcm", q: "Quelle règle faut-il mettre pour ne pas bloquer les réponses aux connexions initiées par le serveur ?", opts: ["-A INPUT -p tcp --dport 22 -j DROP", "-A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT", "-P INPUT ACCEPT", "-A FORWARD -j ACCEPT"], a: 1, exp: "Autoriser ESTABLISHED,RELATED laisse passer réponses et suites légitimes (suivi d'état)." },
+      { type: "input", q: "Quelle option ajouter pour restreindre SSH à la source 10.0.0.5 ? (l'option et sa valeur)", a: ["-s 10.0.0.5", "-s 10.0.0.5/32", "source 10.0.0.5"], ph: "-s ...", exp: "-s 10.0.0.5 limite la règle SSH à cette adresse source." },
+      { type: "vf", q: "Il faut placer « iptables -P INPUT DROP » AVANT d'avoir écrit la règle qui autorise votre SSH.", a: false, exp: "Faux : on autorise d'abord son propre accès (SSH depuis 10.0.0.5), sinon on risque de se couper de la machine." }
+    ],
+    solution: `<pre class="pseudo"># Serveur web en labo isole (table filter, chaine INPUT) :
+iptables -A INPUT -i lo -j ACCEPT                                  # 1. boucle locale
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT   # 2. reponses (stateful)
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT                     # 3. HTTPS pour tous
+iptables -A INPUT -p tcp -s 10.0.0.5 --dport 22 -j ACCEPT          # 4. SSH admin only
+iptables -P INPUT DROP                                             # 5. tout le reste : bloque
+#
+# Ordre : autorisations d'abord (lo, etabli, 443, SSH admin),
+# puis politique par defaut DROP. On autorise SON acces AVANT le DROP.
+# Concepts : chaine INPUT, cibles ACCEPT/DROP, suivi d'etat, default DROP.</pre>
+<p>Vous savez désormais traduire une politique de sécurité en règles concrètes, avec les bons réflexes de prudence. Vous avez parcouru tout le chemin : des enjeux (jour 1) au triangle CIA, aux menaces, à la défense en profondeur, jusqu'au pare-feu et à sa configuration. Bravo, et n'oubliez jamais : comprendre pour mieux défendre, toujours en laboratoire isolé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsec-j08", title: "Traduire une politique en règles iptables", level: 3,
+    statement: "En <strong>laboratoire isolé</strong>, un serveur doit : accepter le web HTTPS (443) pour tous, accepter SSH (22) seulement depuis 203.0.113.10, ne pas casser ses communications internes ni les réponses aux connexions qu'il initie, et bloquer tout le reste en entrée. Écris les règles <strong>iptables</strong> dans le <strong>bon ordre</strong> (chaîne INPUT), avec la <strong>politique par défaut</strong>. Explique en une phrase pourquoi on autorise son accès d'administration avant de passer la politique à DROP.",
+    hints: [
+      "Commence par autoriser lo, puis ESTABLISHED,RELATED (suivi d'état).",
+      "Puis les nouvelles connexions voulues : HTTPS 443 pour tous, SSH 22 depuis l'IP admin.",
+      "Termine par iptables -P INPUT DROP. L'ordre des règles compte."
+    ],
+    solution: "# Chaine INPUT, table filter (labo isole) :\n# 1. Autoriser la boucle locale\niptables -A INPUT -i lo -j ACCEPT\n# 2. Autoriser les reponses aux connexions etablies (stateful)\niptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n# 3. Autoriser HTTPS pour tous\niptables -A INPUT -p tcp --dport 443 -j ACCEPT\n# 4. Autoriser SSH seulement depuis l'admin\niptables -A INPUT -p tcp -s 203.0.113.10 --dport 22 -j ACCEPT\n# 5. Politique par defaut : bloquer tout le reste\niptables -P INPUT DROP\n#\n# Pourquoi autoriser son SSH AVANT le DROP :\n#   Si on passe la politique a DROP avant d'avoir autorise son\n#   propre acces, on se coupe de la machine (verrou hors de la porte).",
+    note: "Même raisonnement en nftables : ct state established,related accept, tcp dport 443 accept, et policy drop sur la chaîne input." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

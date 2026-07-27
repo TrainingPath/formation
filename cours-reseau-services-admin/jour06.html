@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 06</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 6,
+  title: "Tester et dépanner le DHCP",
+  subtitle: "Quand « pas d'Internet » veut souvent dire « pas d'adresse ».",
+  theory: `
+<h3>1. Le premier réflexe : lire son adresse</h3>
+<p>Avant tout, il faut savoir ce que la machine a reçu. Sous Windows, la commande est <strong>ipconfig</strong> (avec <code>/all</code> pour le détail) ; sous Linux, <strong>ip a</strong> (ou l'ancien <code>ifconfig</code>). On y lit l'adresse IP, le masque, la passerelle et le serveur DHCP qui a répondu.</p>
+<pre class="pseudo"># Windows : voir la config complete
+ipconfig /all
+# Linux : voir les interfaces et adresses
+ip a
+# On cherche : une IP du bon reseau + une passerelle + un serveur DHCP</pre>
+<h3>2. Le signe qui ne trompe pas : l'adresse APIPA</h3>
+<p>Si un poste Windows affiche une adresse en <strong>169.254.x.x</strong>, c'est un signal d'alarme : c'est une adresse <strong>APIPA</strong> (Automatic Private IP Addressing), que la machine se donne <em>toute seule</em> quand elle n'a trouvé <strong>aucun serveur DHCP</strong>. Traduction : le DORA a échoué. La cause est presque toujours en amont (serveur arrêté, câble, VLAN, relais absent), pas sur le poste.</p>
+<div class="warn">Une adresse 169.254.x.x = « je n'ai pas eu de réponse DHCP ». Inutile de bricoler le poste : vérifie d'abord que le serveur DHCP tourne et qu'il est joignable sur ce segment.</div>
+<h3>3. Forcer une nouvelle demande</h3>
+<p>Pour re-tenter un bail, on libère puis on renouvelle. Sous Windows : <strong>ipconfig /release</strong> (envoie un DHCPRELEASE) puis <strong>ipconfig /renew</strong> (relance un DORA). Sous Linux, selon l'outil : <code>dhclient -r</code> puis <code>dhclient</code>. C'est le test le plus direct : si <code>/renew</code> obtient une adresse correcte, le DHCP fonctionne.</p>
+<pre class="pseudo"># Windows : liberer puis renouveler le bail
+ipconfig /release
+ipconfig /renew
+# Linux (client isc-dhcp) :
+sudo dhclient -r      # libere
+sudo dhclient         # redemande (relance DORA)</pre>
+<h3>4. Lire les journaux côté serveur</h3>
+<p>Le serveur trace chaque étape DORA dans ses <strong>journaux</strong> (en anglais <em>logs</em>). Sous Linux, on les consulte avec <code>journalctl -u isc-dhcp-server</code> ou dans <code>/var/log/syslog</code>. On y voit défiler DHCPDISCOVER, DHCPOFFER, DHCPREQUEST, DHCPACK. Si tu vois le Discover arriver mais pas d'Offer partir, le serveur a un souci (plage pleine, subnet non déclaré). Si tu ne vois même pas le Discover, la demande n'atteint pas le serveur (câble, VLAN, relais manquant).</p>
+<pre class="pseudo"># Suivre les logs du serveur en direct
+sudo journalctl -u isc-dhcp-server -f
+# On doit voir la sequence :
+DHCPDISCOVER from 00:1a:2b:...
+DHCPOFFER on 192.168.1.120 to 00:1a:2b:...
+DHCPREQUEST for 192.168.1.120 ...
+DHCPACK on 192.168.1.120 ...</pre>
+<h3>5. Le conflit d'adresse et la plage épuisée</h3>
+<p>Deux pannes fréquentes. Le <strong>conflit d'adresse</strong> : deux machines utilisent la même IP (souvent parce qu'une IP statique a été posée dans la plage dynamique) ; Windows affiche parfois un avertissement explicite. La <strong>plage épuisée</strong> : toutes les adresses de la <code>range</code> sont attribuées ; les nouveaux clients tombent en APIPA. Solutions : sortir les IP fixes de la plage, agrandir la plage, ou raccourcir les baux pour recycler plus vite.</p>
+<div class="tip">Méthode de dépannage descendante : (1) le poste a-t-il une IP valide ou 169.254 ? (2) /renew donne-t-il une adresse ? (3) le serveur voit-il le Discover dans ses logs ? (4) la plage est-elle pleine ou en conflit ? Chaque réponse oriente vers la cause.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># ipconfig /all (Win) | ip a (Linux)   -> lire l'adresse recue
+# 169.254.x.x = APIPA = AUCUN serveur DHCP trouve (DORA echoue)
+# ipconfig /release puis /renew        -> refaire un bail (test direct)
+# journalctl -u isc-dhcp-server        -> voir DORA cote serveur
+# Pannes : conflit d'adresse | plage epuisee | relais manquant</pre>`,
+  exercises: [
+    { type: "input", q: "Quelle commande Windows affiche la configuration IP complète (avec le serveur DHCP) ?", a: ["ipconfig /all", "ipconfig/all", "ipconfig -all"], ph: "ipconfig …", exp: "ipconfig /all montre l'IP, le masque, la passerelle et le serveur DHCP." },
+    { type: "qcm", q: "Quelle commande Linux affiche les interfaces et leurs adresses ?", opts: ["ip a", "cd /home", "ls -l", "ping google"], a: 0, exp: "ip a (ou l'ancien ifconfig) liste les interfaces et adresses." },
+    { type: "qcm", q: "Un poste affiche 169.254.10.7. Que s'est-il passé ?", opts: ["Il a reçu une adresse du DHCP", "Il n'a trouvé aucun serveur DHCP (adresse APIPA auto-attribuée)", "Il est sur Internet", "Il a un virus"], a: 1, exp: "169.254.x.x = APIPA : la machine s'auto-attribue une adresse faute de DHCP." },
+    { type: "input", q: "Comment appelle-t-on le mécanisme qui donne une adresse 169.254.x.x quand aucun DHCP ne répond ?", a: ["apipa", "l'apipa", "automatic private ip addressing"], ph: "sigle", exp: "APIPA (Automatic Private IP Addressing)." },
+    { type: "input", q: "Quelle commande Windows relance une demande DHCP (relance un DORA) ?", a: ["ipconfig /renew", "ipconfig/renew", "ipconfig -renew"], ph: "ipconfig …", exp: "ipconfig /renew relance la procédure et redemande un bail." },
+    { type: "qcm", q: "Que fait « ipconfig /release » ?", opts: ["Il éteint le PC", "Il libère l'adresse actuelle (envoie un DHCPRELEASE)", "Il installe un serveur DHCP", "Il change la MAC"], a: 1, exp: "ipconfig /release libère le bail courant (DHCPRELEASE)." },
+    { type: "vf", q: "Si « ipconfig /renew » obtient aussitôt une adresse correcte, c'est bon signe : le DHCP fonctionne.", a: true, exp: "Oui : un renew réussi prouve que le serveur répond et attribue une adresse." },
+    { type: "qcm", q: "Quelle commande suit en direct les journaux du serveur isc-dhcp-server sous Linux ?", opts: ["ping isc-dhcp-server", "journalctl -u isc-dhcp-server -f", "ls /etc/dhcp", "ipconfig /all"], a: 1, exp: "journalctl -u isc-dhcp-server -f affiche les logs du service en temps réel." },
+    { type: "vf", q: "Dans les logs serveur, on doit voir défiler DISCOVER, OFFER, REQUEST puis ACK.", a: true, exp: "Oui : c'est la séquence DORA, visible dans les journaux du serveur." },
+    { type: "qcm", q: "Le serveur voit bien le DHCPDISCOVER mais n'envoie AUCUN Offer. Cause probable ?", opts: ["Le câble est débranché du poste", "Plage épuisée ou subnet mal déclaré côté serveur", "Le poste est éteint", "Le DNS est lent"], a: 1, exp: "Discover reçu mais pas d'Offer = problème serveur : plage pleine ou subnet absent." },
+    { type: "qcm", q: "Le serveur ne voit MÊME PAS le DHCPDISCOVER. Que suspecter en priorité ?", opts: ["Un problème d'affichage", "Que la demande n'atteint pas le serveur : câble, VLAN, relais manquant", "Que le bail est trop long", "Que le DNS est en panne"], a: 1, exp: "Pas de Discover reçu = la demande n'arrive pas : câble/VLAN/relais DHCP." },
+    { type: "input", q: "Comment appelle-t-on la situation où deux machines utilisent la même adresse IP ?", a: ["conflit d'adresse", "conflit d'adresses", "conflit ip", "conflit d'adresse ip", "un conflit d'adresse"], ph: "conflit de…", exp: "Un conflit d'adresse : souvent une IP statique posée dans la plage dynamique." },
+    { type: "vf", q: "Poser une adresse IP statique à l'intérieur de la plage dynamique peut provoquer un conflit d'adresse.", a: true, exp: "Oui : le DHCP pourrait distribuer la même adresse à un autre poste." },
+    { type: "input", q: "Comment appelle-t-on l'état où toutes les adresses de la plage sont déjà attribuées ?", a: ["plage épuisée", "plage epuisee", "épuisement de la plage", "epuisement de la plage", "plage pleine", "pool épuisé", "pool epuise"], ph: "plage…", exp: "Plage épuisée : plus d'adresse libre ; les nouveaux clients tombent en APIPA." },
+    { type: "qcm", q: "Quelle solution aide contre une plage épuisée ?", opts: ["Débrancher le serveur", "Agrandir la plage ou raccourcir les baux pour recycler plus vite", "Supprimer le DNS", "Rallonger tous les baux à l'infini"], a: 1, exp: "Élargir la range ou raccourcir les baux libère des adresses plus vite." }
+  ],
+  final: {
+    title: "Exercice final — Diagnostiquer un poste sans réseau",
+    intro: `<p>Un utilisateur appelle : « je n'ai plus Internet ». Tu prends la main sur son poste Windows et tu lances ipconfig. Il affiche l'adresse 169.254.42.13. Mène le diagnostic.</p>`,
+    questions: [
+      { type: "qcm", q: "Que t'apprend immédiatement l'adresse 169.254.42.13 ?", opts: ["Le poste a une IP valide", "Le poste n'a trouvé aucun serveur DHCP (APIPA)", "Le DNS est en panne", "Le disque est plein"], a: 1, exp: "C'est une adresse APIPA : le DORA n'a pas abouti, aucun DHCP n'a répondu." },
+      { type: "input", q: "Quelle commande lances-tu d'abord pour re-tenter d'obtenir une adresse ?", a: ["ipconfig /renew", "ipconfig/renew", "renew", "ipconfig -renew"], ph: "ipconfig …", exp: "ipconfig /renew relance un DORA pour re-tenter d'obtenir un bail." },
+      { type: "qcm", q: "Le renew échoue toujours (toujours 169.254). Où regardes-tu ensuite ?", opts: ["La météo", "Les journaux du serveur DHCP (voit-il le Discover ?)", "La corbeille", "Le fond d'écran"], a: 1, exp: "On vérifie côté serveur : le Discover arrive-t-il ? Cela localise la panne." },
+      { type: "vf", q: "Si le serveur ne voit AUCUN Discover de ce poste, la panne est probablement entre le poste et le serveur (câble, VLAN, relais).", a: true, exp: "Oui : pas de Discover reçu = la demande n'atteint pas le serveur." },
+      { type: "qcm", q: "Le serveur voit le Discover mais répond « no free leases ». C'est…", opts: ["Un conflit de DNS", "Une plage épuisée : plus d'adresse libre", "Un mot de passe erroné", "Une carte son défaillante"], a: 1, exp: "« no free leases » = plage épuisée ; il faut l'élargir ou raccourcir les baux." }
+    ],
+    solution: `<pre class="pseudo"># Demarche descendante :
+1) ipconfig -> 169.254.x.x  => APIPA => aucun DHCP trouve
+2) ipconfig /release puis /renew  => re-tenter un DORA
+3) Cote serveur : journalctl -u isc-dhcp-server -f
+     - Discover NON vu  -> cable / VLAN / relais DHCP manquant
+     - Discover vu, pas d'Offer / 'no free leases' -> plage epuisee
+4) Corriger : sortir les IP fixes de la plage, elargir la range,
+   ou raccourcir les baux pour recycler les adresses.</pre>
+<p>Tu sais dépanner le DHCP de bout en bout. Demain : on change de service et on attaque le DNS — pourquoi il existe.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsvc-j06", title: "Procédure de dépannage DHCP", level: 3,
+    statement: "Rédige une <strong>procédure en 4 étapes</strong> (texte brut) pour dépanner un poste Windows qui affiche une adresse <code>169.254.x.x</code>. Nomme les commandes utiles et dis ce que tu vérifies côté serveur.",
+    hints: [
+      "169.254 = APIPA = pas de DHCP trouvé.",
+      "Commandes : ipconfig /all, ipconfig /release, ipconfig /renew.",
+      "Côté serveur : journalctl, voir si le Discover arrive."
+    ],
+    solution: "# Procedure de depannage (poste en 169.254.x.x = APIPA) :\n# 1) Constater : ipconfig /all  -> confirme l'adresse APIPA (aucun DHCP).\n# 2) Re-tenter : ipconfig /release  puis  ipconfig /renew (relance DORA).\n# 3) Cote serveur : journalctl -u isc-dhcp-server -f\n#      - le Discover n'arrive pas -> cable / VLAN / relais DHCP manquant.\n#      - Discover vu mais pas d'Offer -> plage epuisee ou subnet mal declare.\n# 4) Corriger : elargir la plage, sortir les IP fixes de la range,\n#    ou raccourcir les baux ; puis /renew a nouveau pour verifier.",
+    note: "Une adresse APIPA pointe presque toujours vers un problème en amont, pas sur le poste." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

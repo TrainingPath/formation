@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 25</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 25,
+  title: "Virtualisation réseau et overlay (VXLAN)",
+  subtitle: "Créer des réseaux logiques par-dessus le réseau physique du datacenter.",
+  theory: `
+<h3>1. Pourquoi virtualiser le réseau ?</h3>
+<p>Dans un datacenter moderne, des milliers de machines virtuelles (en anglais <em>VM</em>) et de conteneurs apparaissent et disparaissent en permanence. Les faire cohabiter avec de simples VLAN pose deux problèmes. D'abord une limite de nombre : le champ VLAN ne fait que <strong>12 bits</strong>, soit 4094 réseaux utilisables — trop peu pour un hébergeur multi-clients. Ensuite une limite de mobilité : un VLAN reste attaché à un segment physique, alors qu'une VM doit pouvoir migrer d'un serveur à l'autre sans changer d'adresse. La <strong>virtualisation réseau</strong> répond à cela en découplant le réseau <em>logique</em> vu par les VM du réseau <em>physique</em> qui transporte les paquets.</p>
+<h3>2. Underlay et overlay</h3>
+<p>On distingue deux couches. L'<strong>underlay</strong> (« sous-couche ») est le réseau physique réel : les commutateurs, les routeurs, le câblage IP du datacenter. L'<strong>overlay</strong> (« sur-couche ») est un réseau virtuel construit <em>par-dessus</em>, au moyen de <strong>tunnels</strong>. Un tunnel encapsule les trames du réseau virtuel dans des paquets de l'underlay : la trame d'origine devient une simple charge utile transportée d'un point à un autre, comme une lettre glissée dans une nouvelle enveloppe.</p>
+<div class="tip">Analogie : l'underlay est le réseau routier public ; l'overlay est un service de navettes privées qui emprunte ces routes mais relie directement vos sites, sans que les autres usagers voient vos passagers.</div>
+<h3>3. VXLAN, le standard de l'overlay</h3>
+<p><strong>VXLAN</strong> (Virtual eXtensible LAN) est la technologie d'overlay la plus répandue. Elle encapsule une trame Ethernet complète dans un paquet <strong>UDP</strong> transporté par l'IP de l'underlay. Le port UDP officiel de destination est le <strong>4789</strong>. Chaque réseau virtuel est identifié par un <strong>VNI</strong> (VXLAN Network Identifier) codé sur <strong>24 bits</strong>, ce qui autorise environ <strong>16 millions</strong> de réseaux (2^24) — de quoi tenir des années. On parle d'encapsulation « MAC-in-UDP ».</p>
+<pre class="pseudo"># Empilement des en-tetes d'un paquet VXLAN (de l'exterieur vers l'interieur)
+Ethernet underlay | IP underlay | UDP (dport 4789) | VXLAN (VNI 24 bits) | Trame Ethernet d'origine
+#  &lt;--------- ajoute par le VTEP ----------------------------&gt;   &lt;-- charge utile --&gt;</pre>
+<h3>4. Le VTEP, porte d'entrée et de sortie</h3>
+<p>Le point qui encapsule et désencapsule s'appelle le <strong>VTEP</strong> (VXLAN Tunnel EndPoint). C'est souvent un commutateur virtuel dans l'hyperviseur, ou un commutateur physique compatible. Quand une VM envoie une trame, le VTEP local ajoute les en-têtes VXLAN + UDP + IP, choisit l'adresse IP du VTEP distant qui héberge la VM destinataire, et envoie le paquet dans l'underlay. À l'arrivée, le VTEP distant retire les en-têtes et livre la trame d'origine. Les VM ne voient jamais rien de ce mécanisme : pour elles, tout se passe comme si elles étaient sur le même LAN.</p>
+<div class="warn">L'encapsulation ajoute environ 50 octets d'en-têtes. Si le réseau physique garde un MTU de 1500, les gros paquets seront fragmentés ou rejetés. On configure donc un <strong>MTU élargi</strong> (jumbo frames, souvent 1600 ou 9000) sur l'underlay.</p>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># VLAN  : 12 bits -> 4094 reseaux, attache au physique
+# VXLAN : overlay MAC-in-UDP, port UDP 4789
+#         VNI sur 24 bits -> ~16 millions de reseaux
+# Underlay = reseau physique | Overlay = reseau virtuel en tunnels
+# VTEP = point qui encapsule / desencapsule (souvent dans l'hyperviseur)
+# Prevoir un MTU elargi (env. +50 octets d'en-tetes)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie « overlay » dans le contexte réseau ?", opts: ["Le câblage physique du datacenter", "Un réseau virtuel construit par-dessus le réseau physique", "Un protocole de routage", "Un type de pare-feu"], a: 1, exp: "L'overlay est la sur-couche virtuelle ; l'underlay est le réseau physique." },
+    { type: "qcm", q: "Sur combien de bits est codé un VNI (identifiant de réseau VXLAN) ?", opts: ["12 bits", "16 bits", "24 bits", "32 bits"], a: 2, exp: "Le VNI fait 24 bits, soit environ 16 millions de réseaux." },
+    { type: "input", q: "Quel est le port UDP officiel de destination utilisé par VXLAN ?", a: ["4789", "udp 4789"], ph: "un nombre", exp: "VXLAN utilise le port UDP 4789." },
+    { type: "qcm", q: "VXLAN encapsule la trame d'origine dans quel protocole de transport ?", opts: ["TCP", "UDP", "ICMP", "GRE"], a: 1, exp: "VXLAN fait du MAC-in-UDP : la trame Ethernet voyage dans UDP/IP." },
+    { type: "vf", q: "Un VLAN classique peut adresser plus de réseaux qu'un VXLAN.", a: false, exp: "Non : VLAN = 12 bits (4094), VXLAN = 24 bits (~16 millions)." },
+    { type: "input", q: "Comment appelle-t-on (sigle) le point qui encapsule et désencapsule les trames VXLAN ?", a: ["vtep"], ph: "un sigle", exp: "Le VTEP (VXLAN Tunnel EndPoint) réalise l'encapsulation/désencapsulation." },
+    { type: "qcm", q: "Le réseau physique réel (commutateurs, câblage IP) s'appelle…", opts: ["l'overlay", "l'underlay", "le VNI", "le VTEP"], a: 1, exp: "L'underlay est la sous-couche physique qui transporte les tunnels." },
+    { type: "vf", q: "Les machines virtuelles doivent être configurées manuellement pour connaître les tunnels VXLAN.", a: false, exp: "Non : les VM ignorent le mécanisme ; ce sont les VTEP qui gèrent les tunnels." },
+    { type: "qcm", q: "Pourquoi les VLAN sont-ils insuffisants dans un grand datacenter multi-clients ?", opts: ["Ils sont trop rapides", "Leur champ de 12 bits limite à 4094 réseaux et ils restent attachés au physique", "Ils chiffrent trop", "Ils n'existent plus"], a: 1, exp: "12 bits = 4094 réseaux et un rattachement au segment physique, d'où VXLAN." },
+    { type: "input", q: "Combien de bits comporte un identifiant de VLAN classique ? (donne le nombre)", a: ["12", "12 bits"], ph: "un nombre", exp: "Le VLAN ID fait 12 bits." },
+    { type: "vf", q: "L'encapsulation VXLAN ajoute des en-têtes, ce qui justifie d'augmenter le MTU de l'underlay.", a: true, exp: "Oui : environ 50 octets d'en-têtes supplémentaires, d'où un MTU élargi." },
+    { type: "qcm", q: "Que fait un VTEP quand il reçoit un paquet VXLAN destiné à l'une de ses VM ?", opts: ["Il le rejette", "Il retire les en-têtes VXLAN/UDP/IP et livre la trame d'origine", "Il le renvoie à l'expéditeur", "Il chiffre la trame"], a: 1, exp: "Le VTEP de sortie désencapsule et remet la trame Ethernet d'origine." },
+    { type: "qcm", q: "Environ combien de réseaux logiques VXLAN permet-il de créer ?", opts: ["4094", "65 536", "16 millions", "4 milliards"], a: 2, exp: "2^24 ≈ 16 millions grâce au VNI de 24 bits." },
+    { type: "input", q: "Terme désignant le réseau virtuel construit au-dessus du réseau physique (un mot).", a: ["overlay", "l'overlay"], ph: "un mot", exp: "L'overlay : réseau virtuel en tunnels au-dessus de l'underlay." },
+    { type: "vf", q: "VXLAN transporte une trame Ethernet complète (encapsulation MAC-in-UDP).", a: true, exp: "Oui : la trame Ethernet d'origine devient la charge utile d'un paquet UDP/IP." }
+  ],
+  final: {
+    title: "Exercice final — Relier deux VM sur des serveurs différents",
+    intro: `<p>Deux VM d'un même client, « web-01 » et « db-01 », tournent sur deux serveurs physiques distincts du datacenter. On veut qu'elles se croient sur le même LAN, sans dépendre des VLAN. L'équipe déploie VXLAN avec le VNI 10200.</p>`,
+    questions: [
+      { type: "qcm", q: "Quel composant, sur chaque serveur, va encapsuler les trames des VM ?", opts: ["Le routeur de coeur", "Le VTEP (dans l'hyperviseur)", "Le pare-feu périmétrique", "Le serveur DNS"], a: 1, exp: "Le VTEP local encapsule/désencapsule pour le compte des VM." },
+      { type: "input", q: "Quel port UDP de destination verra-t-on dans les paquets échangés entre les deux serveurs ?", a: ["4789", "udp 4789"], ph: "un nombre", exp: "Port UDP 4789, le port standard de VXLAN." },
+      { type: "qcm", q: "Le nombre 10200 correspond ici à…", opts: ["une adresse IP", "un VNI (identifiant du réseau virtuel)", "un numéro de port", "un MTU"], a: 1, exp: "10200 est le VNI qui isole ce réseau logique." },
+      { type: "vf", q: "Les paquets VXLAN circulent sur l'underlay IP entre les IP des deux VTEP.", a: true, exp: "Oui : l'underlay route les paquets d'un VTEP à l'autre par leurs adresses IP." },
+      { type: "qcm", q: "Pourquoi augmenter le MTU de l'underlay à 1600 ou plus ?", opts: ["Pour chiffrer les données", "Pour absorber les ~50 octets d'en-têtes ajoutés par l'encapsulation", "Pour accélérer le DNS", "Pour réduire le nombre de VNI"], a: 1, exp: "L'encapsulation ajoute des en-têtes ; un MTU élargi évite fragmentation et rejets." }
+    ],
+    solution: `<pre class="pseudo"># Chaine de bout en bout :
+web-01 (VM)  -->  VTEP serveur A : encapsule
+   [ Eth | IP underlay | UDP 4789 | VNI 10200 | trame d'origine ]
+   --> underlay IP --> VTEP serveur B : desencapsule --> db-01 (VM)
+# Les deux VM se croient sur le meme LAN ; l'underlay ne voit que de l'UDP/IP.</pre>
+<p>VXLAN découple le réseau logique du réseau physique : mobilité des VM, isolation à grande échelle et indépendance vis-à-vis des VLAN.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netadv-j25", title: "Expliquer l'overlay VXLAN", level: 2,
+    statement: "En quelques lignes, explique à un collègue la différence entre <strong>underlay</strong> et <strong>overlay</strong>, puis liste les trois faits clés de VXLAN : le protocole de transport et son <code>port</code>, la taille du <strong>VNI</strong> en bits, et le rôle du <strong>VTEP</strong>.",
+    hints: [
+      "Underlay = physique, overlay = virtuel construit par-dessus en tunnels.",
+      "VXLAN encapsule dans UDP ; retiens le numéro de port officiel.",
+      "Le VNI fait 24 bits ; le VTEP encapsule et désencapsule."
+    ],
+    solution: "# Underlay vs overlay :\n# - Underlay = reseau physique reel (commutateurs, IP du datacenter).\n# - Overlay  = reseau virtuel construit PAR-DESSUS, au moyen de tunnels.\n#\n# Faits cles VXLAN :\n# - Encapsulation MAC-in-UDP, port UDP de destination 4789.\n# - VNI sur 24 bits -> environ 16 millions de reseaux logiques.\n# - VTEP = point qui encapsule (entree) et desencapsule (sortie) les trames.",
+    note: "Prévois un MTU élargi sur l'underlay pour absorber les ~50 octets d'en-têtes ajoutés." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

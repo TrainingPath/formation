@@ -1,0 +1,100 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Redistribution et métriques",
+  subtitle: "Faire cohabiter plusieurs protocoles de routage sans créer de boucles.",
+  theory: `
+<h3>1. Pourquoi plusieurs protocoles cohabitent</h3>
+<p>Un réseau réel n'utilise pas toujours un seul protocole de routage. Après une fusion d'entreprises, on peut avoir OSPF d'un côté et un autre protocole de l'autre. Certaines zones sont en <strong>routes statiques</strong>, d'autres apprennent dynamiquement. Pour que tout ce monde partage ses destinations, il faut un pont : la <strong>redistribution</strong>, l'action d'injecter les routes apprises par un protocole <em>dans</em> un autre protocole.</p>
+<p>Imagine deux services qui tiennent chacun leur propre annuaire, dans un format différent. La redistribution, c'est recopier les entrées d'un annuaire vers l'autre, en les traduisant au bon format pour qu'elles soient utilisables des deux côtés.</p>
+<h3>2. La métrique : chaque protocole compte à sa façon</h3>
+<p>Une <strong>métrique</strong> mesure « combien coûte » une route ; le routeur préfère la métrique la plus basse. Le problème est que <strong>chaque protocole a sa propre unité</strong>, incomparable avec les autres :</p>
+<pre class="pseudo"># Metriques selon le protocole (unites differentes !)
+RIP    : nombre de sauts (hops), max 15
+OSPF   : cout (base sur la bande passante)
+EIGRP  : metrique composite (bande passante + delai...)
+Statique : distance administrative fixe, pas de "cout" calcule
+# Un "cout OSPF" ne veut rien dire pour RIP, et inversement.</pre>
+<p>Quand on redistribue, on passe d'une unité à une autre : il faut donc <strong>attribuer une nouvelle métrique</strong> aux routes importées, appelée <em>seed metric</em> (métrique de départ). Sans elle, certaines redistributions échouent car le protocole cible ne sait pas quel coût donner aux routes venues d'ailleurs.</p>
+<h3>3. La distance administrative : à qui faire confiance ?</h3>
+<p>Quand deux protocoles proposent une route vers <strong>la même destination</strong>, lequel le routeur choisit-il ? Il ne compare pas les métriques (incomparables), mais la <strong>distance administrative</strong> (en anglais <em>administrative distance</em>, AD) : un indice de <strong>confiance</strong> par protocole. Plus l'AD est basse, plus la source est jugée fiable. Une route directement connectée est la plus fiable (AD très basse), une route statique très fiable aussi, tandis que les protocoles dynamiques ont des AD plus élevées.</p>
+<div class="tip">Deux niveaux de décision : d'abord la <strong>distance administrative</strong> choisit le protocole (à qui je fais confiance), ensuite la <strong>métrique</strong> choisit le meilleur chemin <em>au sein</em> de ce protocole.</div>
+<h3>4. Une redistribution en pratique (Cisco simplifiée)</h3>
+<pre class="pseudo"># Injecter les routes OSPF dans RIP, avec une metrique de depart
+router rip
+ redistribute ospf 1 metric 3      # 3 sauts attribues aux routes importees
+# Injecter des routes statiques dans OSPF
+router ospf 1
+ redistribute static metric 100 subnets
+# Verifier
+show ip route          # code O = OSPF, R = RIP, S = statique</pre>
+<h3>5. Le piège des boucles de redistribution</h3>
+<p>Rediriger des routes dans les deux sens entre deux protocoles peut créer des <strong>boucles de routage</strong> : une route sort d'OSPF vers RIP, revient dans OSPF avec une métrique recalculée, et le routeur se met à préférer un chemin fantôme. Pour éviter cela, on <strong>filtre</strong> les routes redistribuées (avec des <em>route-maps</em> ou des listes) et on <strong>étiquette</strong> (tag) les routes pour reconnaître et bloquer celles qui reviennent.</p>
+<div class="warn">La redistribution mutuelle (dans les deux sens) est puissante mais dangereuse : sans filtrage ni tags, elle est une cause classique de boucles. Redistribue avec parcimonie et contrôle.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Redistribution = injecter les routes d'un protocole dans un autre
+# Metrique = cout, unite PROPRE a chaque protocole (hops, cout OSPF...)
+# Seed metric = metrique de depart donnee aux routes importees
+# Distance administrative (AD) = confiance ; basse = prioritaire
+# AD choisit le protocole, la metrique choisit le chemin
+# Filtrer + tagger pour eviter les boucles de redistribution</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie « redistribuer » des routes ?", opts: ["Supprimer des routes", "Injecter les routes d'un protocole dans un autre", "Chiffrer les routes", "Renommer les interfaces"], a: 1, exp: "La redistribution injecte les routes apprises par un protocole dans un autre." },
+    { type: "qcm", q: "Une métrique de routage désigne…", opts: ["le prix en euros", "le coût d'une route ; on préfère la plus basse", "l'adresse MAC", "le numéro d'AS"], a: 1, exp: "La métrique mesure le coût ; la plus basse est préférée." },
+    { type: "vf", q: "La métrique d'OSPF et celle de RIP se comparent directement, elles ont la même unité.", a: false, exp: "Non : chaque protocole a sa propre unité (coût OSPF vs sauts RIP), incomparables." },
+    { type: "input", q: "Comment appelle-t-on la métrique de départ attribuée aux routes importées lors d'une redistribution ? (deux mots anglais)", a: ["seed metric", "seedmetric"], ph: "deux mots", exp: "La seed metric est la métrique initiale donnée aux routes redistribuées." },
+    { type: "qcm", q: "Quelle est la métrique principale de RIP ?", opts: ["Le coût de bande passante", "Le nombre de sauts (hops)", "Le délai en ms", "Le numéro de VLAN"], a: 1, exp: "RIP compte le nombre de sauts (max 15)." },
+    { type: "qcm", q: "Quand deux protocoles proposent une route vers la même destination, le routeur départage avec…", opts: ["la métrique brute", "la distance administrative (confiance)", "le hasard", "l'adresse IP la plus haute"], a: 1, exp: "La distance administrative (AD) départage entre protocoles." },
+    { type: "vf", q: "Une distance administrative plus BASSE indique une source jugée plus fiable.", a: true, exp: "Oui : AD basse = plus de confiance, route préférée." },
+    { type: "qcm", q: "Entre une route connectée directement et une route apprise par un protocole dynamique, laquelle a l'AD la plus basse ?", opts: ["La route dynamique", "La route directement connectée", "Elles sont égales", "Aucune n'a d'AD"], a: 1, exp: "Une route connectée a une AD très basse (la plus fiable)." },
+    { type: "vf", q: "La distance administrative choisit le protocole, la métrique choisit le chemin au sein de ce protocole.", a: true, exp: "Exact : deux niveaux de décision successifs." },
+    { type: "input", q: "Quel sigle (2 lettres) désigne la distance administrative ?", a: ["ad"], ph: "2 lettres", exp: "AD = Administrative Distance." },
+    { type: "qcm", q: "Pourquoi doit-on souvent préciser une métrique lors d'une redistribution ?", opts: ["Pour chiffrer les routes", "Parce que le protocole cible ne sait pas traduire l'unité d'origine", "Pour changer l'adresse IP", "Ce n'est jamais nécessaire"], a: 1, exp: "Les unités diffèrent : sans seed metric, la redistribution peut échouer." },
+    { type: "qcm", q: "Quel risque principal la redistribution mutuelle (dans les deux sens) fait-elle courir ?", opts: ["Un ralentissement du CPU seulement", "Des boucles de routage", "La perte d'adresse MAC", "Rien du tout"], a: 1, exp: "Sans précaution, la redistribution mutuelle cause des boucles." },
+    { type: "input", q: "Quelle technique permet d'étiqueter les routes redistribuées pour reconnaître et bloquer celles qui reviennent ? (un mot)", a: ["tag", "tags", "route-map", "route map", "filtrage"], ph: "un mot", exp: "On utilise des tags (et des route-maps/filtres) pour éviter les boucles." },
+    { type: "vf", q: "Une route statique a généralement une distance administrative très élevée, donc peu fiable.", a: false, exp: "Non : une route statique a une AD très BASSE, donc très fiable." },
+    { type: "qcm", q: "Dans la table de routage Cisco, quel code indique une route apprise par OSPF ?", opts: ["R", "S", "O", "C"], a: 2, exp: "O = OSPF, R = RIP, S = statique, C = connectée." }
+  ],
+  final: {
+    title: "Exercice final — Fusionner deux domaines de routage",
+    intro: `<p>Après le rachat d'une filiale, le siège tourne en OSPF et la filiale en RIP. On veut que les deux se voient. Un routeur frontière fait le pont. Mais après redistribution mutuelle, des destinations deviennent instables. Diagnostiquons.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour que RIP connaisse les réseaux OSPF, il faut…", opts: ["supprimer OSPF", "redistribuer OSPF dans RIP avec une métrique", "changer les câbles", "désactiver le routage"], a: 1, exp: "On redistribue OSPF dans RIP en fournissant une seed metric." },
+      { type: "input", q: "Quelle unité de métrique attribuer aux routes injectées dans RIP ? (le type d'unité)", a: ["sauts", "hops", "nombre de sauts", "saut"], ph: "un mot", exp: "RIP compte en sauts (hops) : la seed metric est un nombre de sauts." },
+      { type: "vf", q: "L'instabilité peut venir de routes qui reviennent dans leur protocole d'origine après un aller-retour de redistribution.", a: true, exp: "Oui : c'est le mécanisme classique de la boucle de redistribution." },
+      { type: "qcm", q: "Quelle mesure évite ces boucles ?", opts: ["Augmenter la bande passante", "Filtrer et tagger les routes redistribuées", "Supprimer la table de routage", "Mettre toutes les AD à 0"], a: 1, exp: "Filtrage et tags empêchent les routes de reboucler." },
+      { type: "qcm", q: "Si une même destination est apprise par OSPF et RIP, laquelle le routeur retient-il d'abord ?", opts: ["Celle à la métrique brute la plus grande", "Celle dont le protocole a la distance administrative la plus basse", "Toujours RIP", "Au hasard"], a: 1, exp: "L'AD la plus basse gagne, avant même de comparer les métriques." }
+    ],
+    solution: `<pre class="pseudo"># Sur le routeur frontiere
+router rip
+ redistribute ospf 1 metric 3       # seed metric en sauts pour RIP
+router ospf 1
+ redistribute rip metric 100 subnets  # seed metric (cout) pour OSPF
+# Anti-boucle : tagger les routes et filtrer au retour
+# Rappel : AD choisit le protocole, la metrique choisit le chemin.</pre>
+<p>La cause : redistribution mutuelle sans filtre. On ajoute des tags et des filtres pour bloquer les routes qui reviennent, et l'on donne une seed metric correcte de chaque côté. Le réseau se stabilise.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netadv-j12", title: "Distance administrative vs métrique", level: 3,
+    statement: "En texte, explique la différence entre la <strong>distance administrative</strong> et la <strong>métrique</strong>, et l'ordre dans lequel un routeur les utilise pour choisir une route. Donne un exemple avec OSPF et RIP.",
+    hints: [
+      "La distance administrative = confiance dans le protocole (basse = fiable).",
+      "La métrique = coût du chemin, propre à chaque protocole.",
+      "AD d'abord (choisir le protocole), métrique ensuite (choisir le chemin)."
+    ],
+    solution: "La DISTANCE ADMINISTRATIVE (AD) mesure la confiance accordee a un protocole :\nplus elle est basse, plus la source est jugee fiable.\nLa METRIQUE mesure le cout d'un chemin, dans l'unite propre au protocole\n(sauts pour RIP, cout de bande passante pour OSPF) : la plus basse est preferee.\n\nORDRE : le routeur compare d'abord l'AD pour choisir QUEL protocole croire ;\nune fois le protocole choisi, il compare les METRIQUES pour retenir le meilleur chemin.\n\nEXEMPLE : si une destination est connue par OSPF et par RIP, le routeur retient\nd'abord celle dont l'AD est la plus basse (OSPF a une AD plus basse que RIP),\npuis, au sein d'OSPF, choisit le chemin de plus faible cout.",
+    note: "On ne compare jamais directement une métrique OSPF et une métrique RIP : leurs unités sont incomparables." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

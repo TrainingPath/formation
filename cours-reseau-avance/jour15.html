@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 15,
+  title: "L'agrégation de liens (LACP)",
+  subtitle: "Regrouper plusieurs câbles en un seul lien logique plus large et plus résistant.",
+  theory: `
+<h3>1. Le besoin : plus de débit, plus de résilience</h3>
+<p>Un seul câble entre deux switchs peut devenir un goulet d'étranglement. On aimerait additionner plusieurs câbles pour obtenir plus de débit — mais on a vu au jour précédent que des liens parallèles créent une boucle que STP va bloquer, gâchant la bande passante. La solution est l'<strong>agrégation de liens</strong> (en anglais <em>link aggregation</em>) : présenter plusieurs liens physiques comme <strong>un seul lien logique</strong>, que STP considère alors comme un unique chemin.</p>
+<p>Vois cela comme élargir une autoroute : au lieu d'une file, tu en ouvres quatre en parallèle. Les voitures se répartissent, le débit total grimpe, et si une file se ferme pour travaux, les autres continuent de rouler.</p>
+<h3>2. LACP : négocier l'agrégat automatiquement</h3>
+<p>Le <strong>LACP</strong> (en anglais <em>Link Aggregation Control Protocol</em>) est le protocole standard qui permet à deux équipements de se mettre d'accord pour regrouper leurs liens. Il est défini par la norme <strong>IEEE 802.3ad</strong> (intégrée depuis dans 802.1AX). LACP échange des messages pour vérifier que les deux extrémités sont bien d'accord, détecter les câbles mal branchés, et n'agréger que les liens réellement compatibles. C'est plus sûr qu'une agrégation statique où l'on force les choses sans vérification.</p>
+<div class="tip">LACP est le protocole ; le résultat (le lien logique regroupé) porte différents noms selon le monde : <strong>EtherChannel</strong> ou <strong>Port-Channel</strong> chez Cisco, <strong>bonding</strong> (ou team) côté Linux/serveurs.</div>
+<h3>3. Répartir le trafic sur les liens membres</h3>
+<p>Un point clé : l'agrégat <strong>ne coupe pas une même conversation en morceaux</strong> répartis sur tous les câbles. Il calcule pour chaque flux une valeur de hachage (à partir des adresses MAC ou IP, parfois des ports) et envoie tout ce flux sur le <strong>même</strong> lien membre. Ainsi les paquets d'une conversation restent dans l'ordre. La conséquence : avec quatre liens de 1 Gbit/s, une seule conversation reste limitée à 1 Gbit/s, mais plusieurs conversations simultanées se répartissent et exploitent les 4 Gbit/s cumulés.</p>
+<pre class="pseudo"># Repartition (load balancing) sur un agregat de 4 liens
+Flux A (PC1 -&gt; SRV1) --hash--&gt; lien 2
+Flux B (PC2 -&gt; SRV2) --hash--&gt; lien 4
+Flux C (PC3 -&gt; SRV3) --hash--&gt; lien 1
+# Chaque flux reste entier sur UN lien ; les flux se repartissent sur l'ensemble.</pre>
+<h3>4. Résilience : la panne d'un câble n'arrête pas tout</h3>
+<p>Autre avantage majeur : si l'un des câbles membres tombe, LACP le retire de l'agrégat et redistribue le trafic sur les liens restants. La connexion logique survit, avec un débit réduit mais sans coupure de service. On combine donc dans un seul mécanisme <strong>plus de débit</strong> et <strong>plus de tolérance aux pannes</strong>.</p>
+<h3>5. Configuration type (Cisco simplifiée)</h3>
+<pre class="pseudo"># Regrouper deux interfaces en un Port-Channel avec LACP
+interface range gi0/1 - 2
+ channel-group 1 mode active     # "active" = participe activement a LACP
+interface port-channel 1
+ switchport mode trunk           # l'agregat peut porter des VLAN
+# Verifier
+show etherchannel summary        # etat de l'agregat et de ses membres</pre>
+<div class="warn">Les deux côtés doivent être cohérents : mêmes réglages (vitesse, duplex, VLAN autorisés) et un mode LACP compatible. Un côté en LACP « active » et l'autre mal configuré, et l'agrégat ne se forme pas — ou pire, crée une boucle.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Agregation = plusieurs liens physiques vus comme UN lien logique
+# STP voit un seul chemin -&gt; pas de blocage, bande passante exploitee
+# LACP = protocole standard de negociation (IEEE 802.3ad / 802.1AX)
+# Noms : EtherChannel/Port-Channel (Cisco), bonding (Linux)
+# Repartition par flux (hash) : un flux = un lien ; N flux = N liens
+# Panne d'un membre : trafic redistribue, service maintenu</pre>`,
+  exercises: [
+    { type: "qcm", q: "À quoi sert l'agrégation de liens ?", opts: ["À chiffrer le trafic", "À regrouper plusieurs liens physiques en un seul lien logique", "À attribuer des IP", "À créer des VLAN"], a: 1, exp: "L'agrégation présente plusieurs câbles comme un seul lien logique." },
+    { type: "input", q: "Quel protocole standard négocie l'agrégation de liens ? (sigle)", a: ["lacp"], ph: "un sigle", exp: "LACP = Link Aggregation Control Protocol." },
+    { type: "input", q: "Quelle norme IEEE a défini à l'origine l'agrégation de liens (LACP) ?", a: ["802.3ad", "ieee 802.3ad", "8023ad"], ph: "802.3…", exp: "IEEE 802.3ad (intégrée ensuite dans 802.1AX)." },
+    { type: "qcm", q: "Pourquoi l'agrégation évite-t-elle que STP bloque les liens parallèles ?", opts: ["Parce que STP est désactivé", "Parce que les liens agrégés apparaissent comme un seul chemin logique", "Parce qu'il n'y a plus de trames", "Parce que les VLAN disparaissent"], a: 1, exp: "STP voit un seul lien logique, donc pas de boucle à bloquer." },
+    { type: "qcm", q: "Comment Cisco appelle-t-il l'agrégat de liens ?", opts: ["VLAN Channel", "EtherChannel / Port-Channel", "Trunk Group", "Root Channel"], a: 1, exp: "Chez Cisco : EtherChannel (Port-Channel)." },
+    { type: "input", q: "Comment appelle-t-on l'agrégation de liens côté Linux/serveurs ? (un mot)", a: ["bonding", "le bonding", "bond", "teaming"], ph: "un mot", exp: "On parle de bonding (ou teaming) côté Linux." },
+    { type: "vf", q: "Une même conversation est découpée et répartie simultanément sur tous les liens membres.", a: false, exp: "Non : un flux donné reste entier sur un seul lien (hachage), pour garder l'ordre." },
+    { type: "qcm", q: "Avec 4 liens de 1 Gbit/s agrégés, une seule conversation atteint au plus…", opts: ["4 Gbit/s", "1 Gbit/s (limitée à un lien)", "0,25 Gbit/s", "aucune limite"], a: 1, exp: "Un flux reste sur un lien : donc 1 Gbit/s pour une conversation unique." },
+    { type: "vf", q: "Plusieurs conversations simultanées peuvent exploiter le débit cumulé des liens.", a: true, exp: "Oui : le hachage répartit les flux, exploitant la somme des liens." },
+    { type: "qcm", q: "Que se passe-t-il si un câble membre de l'agrégat tombe ?", opts: ["Tout l'agrégat s'arrête", "LACP retire ce lien et redistribue le trafic sur les autres", "Les adresses IP changent", "STP bloque l'agrégat"], a: 1, exp: "Le lien défaillant est retiré, le service continue à débit réduit." },
+    { type: "vf", q: "L'agrégation apporte à la fois plus de débit et une tolérance aux pannes.", a: true, exp: "Oui : plus de bande passante ET résilience en cas de panne d'un lien." },
+    { type: "qcm", q: "Sur quelle base l'agrégat choisit-il le lien membre pour un flux ?", opts: ["Le hasard pur", "Un hachage d'adresses (MAC/IP), parfois de ports", "Le numéro de VLAN uniquement", "La couleur du câble"], a: 1, exp: "Un hachage d'adresses (et parfois de ports) dirige chaque flux vers un lien." },
+    { type: "input", q: "Quel mode place-t-on sur une interface Cisco pour qu'elle participe activement à LACP ? (un mot)", a: ["active", "mode active"], ph: "un mot", exp: "Le mode « active » fait participer activement l'interface à LACP." },
+    { type: "qcm", q: "Pourquoi LACP est-il préférable à une agrégation statique ?", opts: ["Il est plus rapide à taper", "Il négocie et vérifie la compatibilité, évitant les erreurs de câblage", "Il chiffre les données", "Il supprime les VLAN"], a: 1, exp: "LACP vérifie l'accord des deux bouts et détecte les erreurs." },
+    { type: "vf", q: "Les deux extrémités d'un agrégat doivent avoir des réglages cohérents (vitesse, duplex, VLAN).", a: true, exp: "Oui : sinon l'agrégat ne se forme pas ou crée des problèmes." }
+  ],
+  final: {
+    title: "Exercice final — Élargir le lien entre deux switchs",
+    intro: `<p>Le lien unique entre SW1 et SW2 sature aux heures de pointe. On ajoute un second câble identique et l'on veut cumuler les débits sans créer de boucle. On configure LACP. Analysons le résultat.</p>`,
+    questions: [
+      { type: "qcm", q: "Sans agrégation, que ferait STP des deux câbles parallèles ?", opts: ["Les cumulerait", "En bloquerait un pour éviter la boucle", "Les chiffrerait", "Rien"], a: 1, exp: "STP bloquerait l'un des liens : bande passante gâchée." },
+      { type: "input", q: "Quel protocole permet de regrouper les deux câbles en un lien logique ? (sigle)", a: ["lacp"], ph: "un sigle", exp: "LACP regroupe les liens en un agrégat négocié." },
+      { type: "vf", q: "Une même sauvegarde volumineuse (un seul flux) profitera du débit cumulé des deux liens.", a: false, exp: "Non : un flux unique reste sur un seul lien membre ; c'est la multiplicité des flux qui exploite le cumul." },
+      { type: "qcm", q: "Si un des deux câbles est débranché, que se passe-t-il ?", opts: ["Le lien logique tombe entièrement", "Le trafic continue sur le câble restant, à débit réduit", "Les VLAN sont perdus", "STP se désactive"], a: 1, exp: "LACP bascule tout sur le lien restant : service maintenu." },
+      { type: "input", q: "Quelle commande Cisco vérifie l'état de l'agrégat et de ses membres ?", a: ["show etherchannel summary", "show etherchannel"], ph: "show ...", exp: "show etherchannel summary affiche l'état de l'agrégat." }
+    ],
+    solution: `<pre class="pseudo"># Sur SW1 (symetrique sur SW2)
+interface range gi0/1 - 2
+ channel-group 1 mode active
+interface port-channel 1
+ switchport mode trunk
+# Verif
+show etherchannel summary
+# Resultat : un lien logique qui exploite les 2 cables pour plusieurs flux,
+# et qui survit (a debit reduit) a la perte d'un cable.</pre>
+<p>Les deux câbles forment un seul lien logique : STP ne bloque plus rien, les flux se répartissent, et la panne d'un câble ne coupe pas le service.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netadv-j15", title: "Expliquer l'agrégation LACP", level: 2,
+    statement: "En texte, explique ce qu'apporte l'<strong>agrégation de liens</strong> (débit et résilience), le rôle de <strong>LACP</strong> (IEEE 802.3ad), et pourquoi un <strong>seul</strong> flux ne dépasse pas le débit d'un lien membre. Cite un nom vendeur de l'agrégat.",
+    hints: [
+      "Agrégation = plusieurs liens vus comme un seul lien logique.",
+      "Un flux reste sur un lien (hachage) : d'où la limite à un lien par conversation.",
+      "Noms : EtherChannel/Port-Channel (Cisco) ou bonding (Linux)."
+    ],
+    solution: "AGREGATION DE LIENS : elle regroupe plusieurs liens physiques en un seul lien logique.\nAvantages : plus de DEBIT (les flux se repartissent sur l'ensemble des cables)\net plus de RESILIENCE (si un cable tombe, le trafic continue sur les autres).\nComme STP voit un seul chemin logique, il ne bloque plus les liens paralleles.\n\nLACP (IEEE 802.3ad) : protocole standard qui negocie l'agregat entre les deux equipements,\nverifie la compatibilite des liens et detecte les erreurs de cablage.\n\nLIMITE D'UN FLUX : l'agregat calcule un hachage par flux et envoie toute une conversation\nsur UN SEUL lien membre, pour garder les paquets dans l'ordre.\nDonc un flux unique est plafonne au debit d'un lien ; ce sont plusieurs flux simultanes\nqui exploitent le debit cumule.\n\nNom vendeur de l'agregat : EtherChannel / Port-Channel (Cisco), ou bonding (Linux).",
+    note: "Les deux extrémités doivent avoir des réglages cohérents et un mode LACP compatible, sinon l'agrégat ne se forme pas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

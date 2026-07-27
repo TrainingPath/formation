@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : analyser une capture réseau",
+  subtitle: "Devenir enquêteur : lire une capture et reconnaître handshake, DNS, HTTP et ports.",
+  theory: `
+<h3>1. Qu'est-ce qu'une capture réseau</h3>
+<p>Une <strong>capture réseau</strong> est l'enregistrement, paquet par paquet, de tout ce qui circule sur une interface. L'outil de référence s'appelle <strong>Wireshark</strong> (en ligne de commande : <strong>tcpdump</strong>). Chaque ligne de la capture est un paquet, avec son <strong>horodatage</strong>, l'<strong>IP source</strong>, l'<strong>IP destination</strong>, le <strong>protocole</strong> repéré et un résumé. Analyser une capture, c'est comme relire l'enregistrement d'une conversation : on y reconnaît qui a parlé, quand, et de quoi. Ce projet mobilise tout le cours.</p>
+<h3>2. Reconnaître la poignée de main TCP</h3>
+<p>Au début de toute connexion TCP, on repère la <strong>poignée de main en trois temps</strong> (<em>three-way handshake</em>). Trois paquets se suivent, avec leurs <strong>drapeaux</strong> (flags) caractéristiques :</p>
+<pre class="pseudo"># Ouverture d'une connexion TCP (les 3 premiers paquets) :
+1  10.0.0.5 -> 203.0.113.10  TCP  [SYN]      port dest 443
+2  203.0.113.10 -> 10.0.0.5  TCP  [SYN, ACK]
+3  10.0.0.5 -> 203.0.113.10  TCP  [ACK]
+# À partir d'ici, la connexion est établie : les données peuvent circuler.</pre>
+<p>Voir <code>SYN</code> puis <code>SYN, ACK</code> puis <code>ACK</code> vers un même port, c'est la signature d'une nouvelle connexion. Le port de destination (80, 443, 25...) trahit le service visé.</p>
+<h3>3. Repérer une résolution DNS</h3>
+<p>Avant de contacter un serveur par son nom, la machine interroge le <strong>DNS</strong>. Dans la capture, ces paquets sont marqués du protocole <strong>DNS</strong>, sur le <strong>port 53</strong>, en <strong>UDP</strong> le plus souvent. On y lit une <strong>question</strong> (« quelle est l'adresse de www.exemple.fr ? ») puis une <strong>réponse</strong> (« c'est 203.0.113.10 »).</p>
+<pre class="pseudo"># Résolution DNS dans la capture :
+7  10.0.0.5 -> 192.168.1.1  DNS  Standard query  A www.exemple.fr
+8  192.168.1.1 -> 10.0.0.5  DNS  Standard query response A 203.0.113.10</pre>
+<h3>4. Identifier une requête HTTP</h3>
+<p>Une fois la connexion établie, la requête <strong>HTTP</strong> apparaît (si le trafic est en clair, port 80). On y lit directement la <strong>méthode</strong> et le chemin, puis la réponse avec son <strong>code de statut</strong> :</p>
+<pre class="pseudo"># Échange HTTP dans la capture :
+12  10.0.0.5 -> 203.0.113.10  HTTP  GET / HTTP/1.1   Host: www.exemple.fr
+15  203.0.113.10 -> 10.0.0.5  HTTP  HTTP/1.1 200 OK  (text/html)</pre>
+<div class="warn">En <strong>HTTPS</strong> (port 443), le contenu est chiffré par TLS : la capture montre bien la connexion et le handshake TLS, mais le détail de la requête HTTP (GET, en-têtes) reste illisible. On voit QUE ça communique, pas QUOI. C'est tout l'intérêt du chiffrement.</div>
+<h3>5. Méthode d'analyse</h3>
+<p>Pour analyser une capture, procède dans l'ordre : (1) repère les <strong>ports</strong> pour identifier les services (53 DNS, 80 HTTP, 443 HTTPS, 25/587 SMTP, 993 IMAP...) ; (2) trouve les <strong>poignées de main TCP</strong> (SYN/SYN-ACK/ACK) qui ouvrent chaque connexion ; (3) associe chaque échange à un protocole ; (4) reconstitue le <strong>scénario</strong> : d'abord le DNS, puis la connexion, puis la requête, puis la réponse.</p>
+<div class="tip">Un filtre Wireshark cible vite l'essentiel : <code>dns</code> pour les résolutions, <code>http</code> pour les requêtes web, <code>tcp.port == 443</code> pour un service précis. En tcpdump : <code>tcpdump port 53</code> pour ne voir que le DNS.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Analyser une capture, la méthode :
+1. PORTS  : 53=DNS, 80=HTTP, 443=HTTPS, 25/587=SMTP, 143/993=IMAP...
+2. TCP    : SYN -> SYN,ACK -> ACK = ouverture d'une connexion
+3. DNS    : query (question) puis response (réponse) sur le port 53
+4. HTTP   : GET/POST + statut 200/404... (illisible si HTTPS/TLS)
+5. SCÉNARIO : DNS -> handshake TCP -> requête -> réponse</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel outil graphique est la référence pour capturer et analyser le trafic réseau ?", opts: ["Photoshop", "Wireshark", "Excel", "Notepad"], a: 1, exp: "Wireshark est l'analyseur de référence ; en ligne de commande on utilise tcpdump." },
+    { type: "input", q: "Quelle suite de trois drapeaux TCP signe l'ouverture d'une connexion ?", a: ["syn syn-ack ack", "syn, syn-ack, ack", "syn synack ack", "syn syn ack ack"], ph: "trois drapeaux", exp: "La poignée de main en trois temps : SYN, puis SYN-ACK, puis ACK." },
+    { type: "qcm", q: "Sur quel port repère-t-on le trafic DNS dans une capture ?", opts: ["25", "53", "80", "443"], a: 1, exp: "Le DNS utilise le port 53 (le plus souvent en UDP)." },
+    { type: "qcm", q: "Dans une capture, quel port indique du trafic HTTP en clair ?", opts: ["53", "80", "443", "993"], a: 1, exp: "HTTP en clair utilise le port 80 ; le 443 est HTTPS (chiffré)." },
+    { type: "vf", q: "En HTTPS (port 443), on peut lire le détail de la requête GET dans la capture.", a: false, exp: "Faux : TLS chiffre le contenu ; on voit la connexion mais pas le détail HTTP." },
+    { type: "input", q: "Quel numéro de port trahit une connexion HTTPS dans la capture ?", a: ["443", "port 443"], ph: "un numéro", exp: "Le port 443 est celui de HTTPS." },
+    { type: "qcm", q: "Dans un échange DNS, que contient le paquet « response » ?", opts: ["Le mot de passe", "L'adresse IP correspondant au nom demandé", "Le code HTTP 200", "La clé TLS"], a: 1, exp: "La réponse DNS fournit l'adresse IP associée au nom (ex. 203.0.113.10)." },
+    { type: "qcm", q: "Dans la capture, une ligne « HTTP/1.1 200 OK » est…", opts: ["Une requête du client", "La réponse du serveur indiquant un succès", "Un paquet DNS", "Une poignée de main TCP"], a: 1, exp: "200 OK est la réponse du serveur : la requête a réussi." },
+    { type: "vf", q: "Le port de destination d'une poignée de main TCP révèle le service visé (80, 443, 25...).", a: true, exp: "Vrai : le port destination identifie le service auquel on se connecte." },
+    { type: "input", q: "Quel outil en ligne de commande capture le trafic, en alternative à Wireshark ?", a: ["tcpdump", "le tcpdump"], ph: "un nom", exp: "tcpdump capture le trafic depuis le terminal." },
+    { type: "qcm", q: "Quel filtre Wireshark n'affiche que les résolutions de noms ?", opts: ["http", "dns", "tcp.port == 443", "arp"], a: 1, exp: "Le filtre « dns » isole les paquets de résolution de noms." },
+    { type: "qcm", q: "Dans quel ordre logique se déroule un scénario typique de consultation web ?", opts: ["HTTP puis DNS puis TCP", "DNS puis poignée de main TCP puis requête HTTP", "TCP puis DNS puis HTTPS", "HTTP puis TCP puis DNS"], a: 1, exp: "On résout d'abord le nom (DNS), on ouvre la connexion (TCP), puis on envoie la requête (HTTP)." },
+    { type: "input", q: "Quel port, vu dans une capture, indiquerait un envoi de courriel par soumission client (SMTP) ?", a: ["587", "port 587"], ph: "un numéro", exp: "Le port 587 correspond à la soumission SMTP par un client." },
+    { type: "vf", q: "Un paquet marqué [SYN, ACK] est envoyé par le serveur en réponse au SYN du client.", a: true, exp: "Vrai : le serveur répond au SYN par un SYN-ACK, deuxième temps de la poignée de main." },
+    { type: "qcm", q: "Pour analyser efficacement une capture, par quoi commencer ?", opts: ["Supprimer les paquets", "Repérer les ports pour identifier les services", "Redémarrer Wireshark", "Ignorer les IP"], a: 1, exp: "Identifier les ports permet de reconnaître d'emblée les services en présence." }
+  ],
+  final: {
+    title: "Exercice final — Enquête sur une capture",
+    intro: `<p>Voici un extrait de capture (client 10.0.0.8, box 192.168.1.1). Analyse-le pour reconstituer ce que fait l'utilisateur.</p><pre class="pseudo">No  Source          Destination     Proto  Info
+1   10.0.0.8        192.168.1.1     DNS    query A www.site.fr
+2   192.168.1.1     10.0.0.8        DNS    response A 198.51.100.7
+3   10.0.0.8        198.51.100.7    TCP    [SYN]  -> port 80
+4   198.51.100.7    10.0.0.8        TCP    [SYN, ACK]
+5   10.0.0.8        198.51.100.7    TCP    [ACK]
+6   10.0.0.8        198.51.100.7    HTTP   GET /accueil HTTP/1.1
+7   198.51.100.7    10.0.0.8        HTTP   HTTP/1.1 200 OK</pre>`,
+    questions: [
+      { type: "qcm", q: "Que se passe-t-il aux paquets 1 et 2 ?", opts: ["Une poignée de main TCP", "Une résolution DNS du nom www.site.fr", "Une requête HTTP", "Un transfert FTP"], a: 1, exp: "Paquets 1-2 : question puis réponse DNS, qui donne l'IP 198.51.100.7." },
+      { type: "input", q: "Quelle adresse IP le DNS a-t-il renvoyée pour www.site.fr ?", a: ["198.51.100.7"], ph: "une IP", exp: "La réponse DNS (paquet 2) donne 198.51.100.7." },
+      { type: "qcm", q: "Que représentent les paquets 3, 4 et 5 ?", opts: ["Une résolution DNS", "La poignée de main TCP (SYN / SYN-ACK / ACK)", "Trois requêtes HTTP", "Un handshake TLS"], a: 1, exp: "SYN, SYN-ACK, ACK : c'est l'ouverture de la connexion TCP." },
+      { type: "input", q: "Sur quel port de destination la connexion s'ouvre-t-elle (paquet 3) ?", a: ["80", "port 80"], ph: "un numéro", exp: "Le SYN vise le port 80 : trafic HTTP en clair." },
+      { type: "vf", q: "Comme le port est 80 (HTTP en clair), on peut lire « GET /accueil » et le statut « 200 OK » dans la capture.", a: true, exp: "Vrai : en HTTP non chiffré, la requête et la réponse sont lisibles. En 443, elles seraient chiffrées." }
+    ],
+    solution: `<pre class="pseudo"># Reconstitution du scénario :
+1-2  DNS   : www.site.fr  ->  198.51.100.7   (port 53)
+3-5  TCP   : SYN / SYN,ACK / ACK  vers le port 80  (connexion ouverte)
+6    HTTP  : GET /accueil HTTP/1.1             (requête du client)
+7    HTTP  : HTTP/1.1 200 OK                   (réponse : succès)
+# Conclusion : l'utilisateur consulte http://www.site.fr/accueil,
+# en HTTP CLAIR (port 80) -> tout est lisible dans la capture.</pre>
+<p>Tu as identifié le DNS, la poignée de main TCP, le port, la requête HTTP et son statut : l'enquête est bouclée. Si le port avait été 443, la partie HTTP serait restée chiffrée. Félicitations, tu sais lire une capture réseau.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "nettr-j31", title: "Décoder trois paquets", level: 2,
+    statement: "On te donne trois lignes de capture : <br><code>1  10.0.0.2 -&gt; 8.8.8.8  DNS  query A boutique.fr</code><br><code>2  10.0.0.2 -&gt; 93.184.6.1  TCP  [SYN] port 443</code><br><code>3  93.184.6.1 -&gt; 10.0.0.2  TCP  [SYN, ACK]</code><br>Explique ce que fait chaque ligne et indique quel service est visé (avec le port).",
+    hints: [
+      "La ligne 1 est marquée DNS : c'est une résolution de nom.",
+      "Les lignes 2 et 3 sont le début d'une poignée de main TCP.",
+      "Le port 443 identifie le service : HTTPS."
+    ],
+    solution: "# Ligne 1 : requête DNS -> on demande l'adresse IP de boutique.fr (port 53).\n# Ligne 2 : SYN vers le port 443 -> début de la poignée de main TCP.\n# Ligne 3 : SYN, ACK du serveur -> deuxième temps de la poignée de main.\n# Il manquerait le ACK final (ligne 4) pour établir la connexion.\n# Service visé : le port 443 = HTTPS (web chiffré par TLS).",
+    note: "En HTTPS, on verrait la connexion et le handshake, mais le contenu HTTP resterait chiffré." },
+  { id: "nettr-j31b", title: "Mini-rapport d'analyse", level: 3,
+    statement: "Rédige un court <strong>rapport d'analyse</strong> (5 à 7 lignes) d'une capture où un utilisateur consulte <code>http://www.exemple.fr/produits</code>. Décris dans l'ordre : la résolution <strong>DNS</strong>, la <strong>poignée de main TCP</strong> (et son port), la <strong>requête HTTP</strong> et son <strong>code de statut</strong>. Conclus en indiquant pourquoi le contenu est ici lisible.",
+    hints: [
+      "Commence par la question/réponse DNS qui donne l'IP.",
+      "Puis SYN / SYN-ACK / ACK vers le port 80.",
+      "Termine par GET /produits, le statut 200 OK, et le fait que le port 80 (HTTP clair) rend tout lisible."
+    ],
+    solution: "# RAPPORT D'ANALYSE DE CAPTURE\n# 1. DNS : query A www.exemple.fr, response -> adresse IP du serveur (port 53).\n# 2. TCP : poignée de main SYN / SYN-ACK / ACK vers le port 80 : connexion ouverte.\n# 3. HTTP : le client envoie GET /produits HTTP/1.1 (en-tête Host: www.exemple.fr).\n# 4. HTTP : le serveur répond HTTP/1.1 200 OK avec la page (text/html).\n# 5. Scénario : DNS -> connexion TCP -> requête -> réponse réussie.\n# CONCLUSION : le port 80 = HTTP EN CLAIR (non chiffré),\n# donc la requête et la réponse sont entièrement lisibles dans la capture.\n# En HTTPS (port 443), TLS aurait chiffré ce contenu.",
+    note: "Un vrai analyste ajoute aussi les horodatages pour mesurer les temps de réponse." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 30</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 30,
+  title: "Pratique : chaîner DHCP + DNS + web",
+  subtitle: "Trois services qui se passent le relais pour qu'un poste tape un nom et voie une page.",
+  theory: `
+<h3>1. Le voyage d'une requête, du branchement à la page</h3>
+<p>Aujourd'hui, on assemble ce qu'on a appris. Un nouveau poste se branche et, sans rien configurer à la main, il obtient une adresse, retrouve un serveur par son nom, et affiche une page web. Trois services coopèrent : <strong>DHCP</strong> (l'adresse), <strong>DNS</strong> (le nom → l'IP), <strong>web</strong> (la page). Chacun fait un maillon d'une chaîne bien ordonnée.</p>
+<pre class="pseudo"># La chaine complete, dans l'ordre :
+1. Le poste se branche  -> DHCP lui donne : IP, masque, passerelle, DNS
+2. L'utilisateur tape "http://intranet.pme.local"
+3. Le poste demande au DNS : "intranet.pme.local = quelle IP ?" -> 192.168.1.20
+4. Le poste se connecte a 192.168.1.20 sur le port 80 -> Apache renvoie la page</pre>
+<h3>2. Maillon 1 : DHCP fournit tout le nécessaire</h3>
+<p>Le serveur <strong>DHCP</strong> ne donne pas qu'une adresse : dans son bail (en anglais <em>lease</em>), il transmet aussi le <strong>masque</strong>, la <strong>passerelle</strong> (option 3) et surtout l'adresse du <strong>serveur DNS</strong> (option 6). C'est ce dernier point qui relie DHCP et DNS : sans une bonne adresse de DNS distribuée par le DHCP, le poste saurait « où aller » mais pas « traduire les noms ».</p>
+<pre class="pseudo"># Extrait de config DHCP (isc-dhcp-server) :
+subnet 192.168.1.0 netmask 255.255.255.0 {
+  range 192.168.1.100 192.168.1.200;
+  option routers 192.168.1.1;              # passerelle
+  option domain-name-servers 192.168.1.10; # LE serveur DNS (option 6)
+  option domain-name "pme.local";
+}</pre>
+<h3>3. Maillon 2 : DNS traduit le nom en IP</h3>
+<p>Le serveur <strong>DNS</strong> (par exemple BIND) contient une <strong>zone</strong> pour <code>pme.local</code>. Dedans, un <strong>enregistrement A</strong> associe le nom <code>intranet</code> à l'adresse du serveur web. Quand le poste demande <code>intranet.pme.local</code>, le DNS répond <code>192.168.1.20</code>. C'est l'annuaire du réseau interne.</p>
+<pre class="pseudo"># Extrait de zone DNS (pme.local) :
+$ORIGIN pme.local.
+@        IN  SOA  ns1.pme.local. admin.pme.local. ( ... )
+@        IN  NS   ns1.pme.local.
+ns1      IN  A    192.168.1.10
+intranet IN  A    192.168.1.20   # le nom du site -> IP du serveur web
+# Test : dig intranet.pme.local  ->  doit renvoyer 192.168.1.20</pre>
+<h3>4. Maillon 3 : le web répond, et on teste la chaîne</h3>
+<p>Enfin, <strong>Apache</strong> écoute sur <code>192.168.1.20:80</code> et sert la page. Pour vérifier que toute la chaîne fonctionne, on teste maillon par maillon : d'abord l'adresse reçue, puis la résolution du nom, puis l'accès web. Si un maillon casse, on sait exactement lequel.</p>
+<pre class="pseudo"># Tester la chaine, dans l'ordre du diagnostic :
+ip a                       # 1. le poste a-t-il recu une IP (DHCP) ?
+cat /etc/resolv.conf       #    quel DNS a-t-il recu ? -> 192.168.1.10
+dig intranet.pme.local     # 2. le DNS traduit-il le nom ? -> 192.168.1.20
+curl http://intranet.pme.local/   # 3. le web repond-il ?
+ping 192.168.1.20          # (secours) l'IP est-elle joignable ?</pre>
+<div class="tip">Diagnostique toujours <em>dans l'ordre de la chaîne</em> : IP (DHCP) → nom (DNS) → page (web). Si <code>ping 192.168.1.20</code> marche mais que le nom échoue, le problème est le DNS, pas le web.</div>
+<div class="warn">Piège fréquent : le poste reçoit une IP mais pas le bon DNS (option 6 oubliée ou fausse dans le DHCP). Résultat : <code>ping IP</code> fonctionne, mais taper le nom échoue. Toujours vérifier <code>/etc/resolv.conf</code>.</div>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># CHAINE : DHCP -> DNS -> WEB
+# DHCP distribue IP + masque + passerelle + adresse du DNS (option 6)
+# DNS (zone + enregistrement A) traduit intranet.pme.local -> 192.168.1.20
+# Apache sert la page sur 192.168.1.20:80
+# Diagnostic dans l'ordre : ip a  ->  dig NOM  ->  curl http://NOM/</pre>`,
+  exercises: [
+    { type: "qcm", q: "Dans la chaîne, quel service donne au poste son adresse IP ?", opts: ["DNS", "DHCP", "Apache", "SNMP"], a: 1, exp: "Le DHCP attribue l'IP (et le masque, la passerelle, le DNS)." },
+    { type: "qcm", q: "Quel service traduit un nom (intranet.pme.local) en adresse IP ?", opts: ["DHCP", "DNS", "RAID", "syslog"], a: 1, exp: "Le DNS résout les noms en adresses IP." },
+    { type: "vf", q: "Le DHCP transmet aussi l'adresse du serveur DNS à utiliser.", a: true, exp: "Oui : c'est l'option 6 (domain-name-servers) qui relie DHCP et DNS." },
+    { type: "input", q: "Quel numéro d'option DHCP fournit l'adresse du serveur DNS ?", a: ["6", "option 6"], ph: "un nombre", exp: "L'option 6 (domain-name-servers) distribue l'adresse du DNS." },
+    { type: "qcm", q: "Quel type d'enregistrement DNS associe un nom à une adresse IPv4 ?", opts: ["Enregistrement MX", "Enregistrement A", "Enregistrement TXT", "Enregistrement PTR"], a: 1, exp: "L'enregistrement A fait correspondre un nom à une adresse IPv4." },
+    { type: "qcm", q: "Dans l'ordre, comment se déroule l'accès à http://intranet.pme.local ?", opts: ["Web puis DNS puis DHCP", "DHCP (IP) puis DNS (nom->IP) puis Web (page)", "DNS puis DHCP puis Web", "Web puis DHCP puis DNS"], a: 1, exp: "D'abord une IP (DHCP), puis la résolution du nom (DNS), puis la page (web)." },
+    { type: "input", q: "Quelle commande affiche l'adresse IP reçue par le poste (Linux) ?", a: ["ip a", "ip addr", "ip address"], ph: "ip ...", exp: "ip a montre les adresses des interfaces, dont l'IP reçue par DHCP." },
+    { type: "qcm", q: "Quel fichier indique quel serveur DNS le poste utilise ?", opts: ["/etc/hosts", "/etc/resolv.conf", "/var/log/syslog", "/etc/fstab"], a: 1, exp: "/etc/resolv.conf liste le(s) serveur(s) DNS utilisés." },
+    { type: "input", q: "Quelle commande interroge le DNS pour un nom (ex. intranet.pme.local) ?", a: ["dig", "nslookup", "host"], ph: "une commande", exp: "dig (ou nslookup, host) interroge le DNS et affiche la réponse." },
+    { type: "qcm", q: "Sur quel port Apache sert-il la page une fois le nom résolu ?", opts: ["22", "53", "80", "67"], a: 2, exp: "Le web HTTP répond sur le port 80." },
+    { type: "vf", q: "Si ping 192.168.1.20 marche mais que le nom échoue, le problème vient du DNS.", a: true, exp: "Oui : l'IP est joignable, donc c'est la traduction du nom (DNS) qui pèche." },
+    { type: "qcm", q: "Le poste reçoit une IP mais taper un nom échoue. Cause probable ?", opts: ["Apache est en panne", "Le DHCP n'a pas distribué le bon DNS (option 6)", "Le câble est trop long", "Le RAID est plein"], a: 1, exp: "Sans bon DNS distribué, l'IP marche mais la résolution de noms échoue." },
+    { type: "input", q: "Dans une zone DNS, quel enregistrement associe « intranet » à 192.168.1.20 ? (une lettre)", a: ["a", "enregistrement a", "a record"], ph: "une lettre", exp: "L'enregistrement A : intranet IN A 192.168.1.20." },
+    { type: "vf", q: "On diagnostique la chaîne dans l'ordre : IP (DHCP), puis nom (DNS), puis page (web).", a: true, exp: "Oui : suivre l'ordre de la chaîne isole immédiatement le maillon défaillant." },
+    { type: "qcm", q: "Quelle commande teste l'accès web par le nom, en une ligne ?", opts: ["curl http://intranet.pme.local/", "chmod 777 intranet", "rm intranet", "tar intranet"], a: 0, exp: "curl http://intranet.pme.local/ vérifie le dernier maillon (le web)." }
+  ],
+  final: {
+    title: "Exercice final — Un poste neuf dans la PME",
+    intro: `<p>Chez « PME.local », un stagiaire branche un poste neuf. Serveur DHCP en 192.168.1.5, serveur DNS en 192.168.1.10, serveur web en 192.168.1.20 (nom <code>intranet.pme.local</code>). Le poste doit, sans configuration manuelle, afficher l'intranet. Suis la chaîne.</p>`,
+    questions: [
+      { type: "qcm", q: "Que reçoit d'abord le poste en se branchant ?", opts: ["La page web", "Un bail DHCP : IP, masque, passerelle, DNS", "Un enregistrement A", "Rien du tout"], a: 1, exp: "Le DHCP fournit le bail complet, dont l'adresse du DNS." },
+      { type: "input", q: "Quelle adresse de serveur DNS le DHCP doit-il distribuer (option 6) ?", a: ["192.168.1.10"], ph: "une IP", exp: "Le DNS est en 192.168.1.10 : c'est ce que doit transmettre l'option 6." },
+      { type: "qcm", q: "Le poste tape intranet.pme.local. À qui pose-t-il la question ?", opts: ["Au serveur web", "Au serveur DNS (192.168.1.10)", "Au DHCP", "À la passerelle uniquement"], a: 1, exp: "La traduction nom->IP est demandée au DNS." },
+      { type: "input", q: "Quelle IP le DNS renvoie-t-il pour intranet.pme.local ?", a: ["192.168.1.20"], ph: "une IP", exp: "L'enregistrement A pointe vers le serveur web : 192.168.1.20." },
+      { type: "vf", q: "Le poste reçoit bien une IP mais l'intranet ne s'ouvre pas par son nom ; ping 192.168.1.20 fonctionne. Le maillon fautif est le DNS.", a: true, exp: "Oui : l'IP est joignable, donc la panne est dans la résolution de nom (DNS ou option 6 du DHCP)." }
+    ],
+    solution: `<pre class="pseudo"># La chaine, servie et testee dans l'ordre :
+DHCP (192.168.1.5)  -> bail : IP + masque + passerelle + DNS=192.168.1.10 (opt.6)
+DNS  (192.168.1.10) -> zone pme.local : intranet IN A 192.168.1.20
+WEB  (192.168.1.20) -> Apache sert la page sur le port 80
+# Diagnostic :
+ip a  ->  cat /etc/resolv.conf  ->  dig intranet.pme.local  ->  curl http://intranet.pme.local/
+# ping IP OK mais nom KO  =  probleme DNS (ou option 6 du DHCP).</pre>
+<p>Trois services, un seul geste pour l'utilisateur : brancher et naviguer. Demain, le projet final : concevoir l'infrastructure complète d'une PME.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "netsvc-j30", title: "Décrire la chaîne DHCP-DNS-web", level: 2,
+    statement: "Un poste neuf doit afficher <code>http://intranet.pme.local</code> sans réglage manuel. Décris en texte les <strong>trois maillons</strong> (qui fait quoi, dans l'ordre), en précisant l'<strong>option DHCP</strong> qui relie DHCP et DNS, l'<strong>enregistrement DNS</strong> utilisé, et <strong>deux commandes</strong> de test.",
+    hints: [
+      "Ordre : DHCP donne l'IP + le DNS, le DNS traduit le nom, le web sert la page.",
+      "L'option 6 du DHCP distribue l'adresse du DNS.",
+      "dig teste le DNS ; curl teste le web."
+    ],
+    solution: "# Chaine DHCP -> DNS -> WEB\n#\n# 1) DHCP : le poste branche recoit un bail complet\n#    -> IP, masque, passerelle, et l'adresse du DNS via l'OPTION 6.\n#    C'est l'option 6 qui relie DHCP et DNS.\n#\n# 2) DNS : le poste demande \"intranet.pme.local = quelle IP ?\"\n#    -> un ENREGISTREMENT A dans la zone pme.local repond :\n#       intranet IN A 192.168.1.20\n#\n# 3) WEB : le poste se connecte a 192.168.1.20 sur le port 80\n#    -> Apache renvoie la page de l'intranet.\n#\n# Commandes de test :\n#   dig intranet.pme.local            (teste le DNS)\n#   curl http://intranet.pme.local/   (teste le web)\n#   (bonus : ip a et cat /etc/resolv.conf pour verifier DHCP)",
+    note: "Toujours diagnostiquer dans l'ordre de la chaîne : IP -> nom -> page. Cela pointe immédiatement le maillon fautif." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,106 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "NAT en pratique : observer les translations",
+  subtitle: "De la box grand public à iptables : voir de ses yeux comment les adresses sont traduites.",
+  theory: `
+<h3>1. Trouver sa vraie adresse publique</h3>
+<p>Chez toi, tes appareils ont une adresse privée (<code>192.168.1.x</code>). Mais quelle est l'adresse publique que le monde voit ? Ta machine ne la connaît pas directement : c'est la box qui la porte. Pour la découvrir, on demande à un service extérieur, qui te renvoie l'adresse d'où vient ta connexion — c'est-à-dire l'adresse publique de la box.</p>
+<pre class="pseudo"># Voir son adresse PRIVEE (locale) :
+ip addr            # Linux
+ipconfig           # Windows
+# -> montre quelque chose comme 192.168.1.20
+
+# Voir son adresse PUBLIQUE (celle de la box, vue d'Internet) :
+curl ifconfig.me   # renvoie par ex. 82.65.10.7
+# La difference entre les deux = la preuve que du NAT a lieu.</pre>
+<div class="tip">Si ton adresse locale commence par 192.168, 10. ou 172.16-31, tu es derrière du NAT : le classique d'un réseau domestique ou d'entreprise.</div>
+<h3>2. Observer la table NAT de la box</h3>
+<p>Dans l'interface d'administration de ta <strong>box internet</strong> (souvent <code>192.168.1.1</code>), une section montre les connexions en cours et les règles NAT / redirections. On y voit les correspondances entre appareils internes et connexions sortantes, ainsi que les règles de port forwarding que tu as créées. C'est la <strong>table NAT</strong> vue côté grand public.</p>
+<h3>3. Le NAT sous Linux : iptables et nftables</h3>
+<p>Sous Linux, le NAT est géré par le pare-feu du noyau. L'outil historique s'appelle <strong>iptables</strong> (aujourd'hui remplacé progressivement par <strong>nftables</strong>, mais iptables reste la référence pédagogique). Les règles de NAT vivent dans une table spéciale appelée <strong>nat</strong>, qu'on désigne par l'option <code>-t nat</code>.</p>
+<pre class="pseudo"># Afficher les regles de la table NAT (avec compteurs) :
+sudo iptables -t nat -L -n -v
+
+# Faire de la PAT (partager l'IP publique de l'interface eth0) :
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+# MASQUERADE = la version "surcharge" du NAT sous Linux (= PAT / masquerading).</pre>
+<p>La cible <strong>MASQUERADE</strong> est exactement la <strong>PAT</strong> vue précédemment : elle remplace l'adresse source des paquets sortants par l'adresse de l'interface publique, et suit les ports pour renvoyer les réponses. On la place dans la chaîne <strong>POSTROUTING</strong> (« après le routage »), car la traduction se fait juste avant que le paquet quitte la machine.</p>
+<div class="warn">Différence utile : <code>SNAT</code> (source NAT) fixe une adresse publique précise (adresse statique connue à l'avance), tandis que <code>MASQUERADE</code> prend automatiquement l'adresse de l'interface (pratique quand l'IP publique change, comme sur une box). MASQUERADE = le choix des connexions à IP dynamique.</p></div>
+<h3>4. Faire du port forwarding avec iptables</h3>
+<p>Pour rediriger un port entrant vers une machine interne (l'équivalent du port forwarding de la box), on utilise la cible <strong>DNAT</strong> (« destination NAT ») dans la chaîne <strong>PREROUTING</strong> (« avant le routage »).</p>
+<pre class="pseudo"># Rediriger le port public 80 vers un serveur interne :
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 \\
+     -j DNAT --to-destination 192.168.1.50:80
+# DNAT en PREROUTING = "port forwarding" version Linux.
+# On modifie la DESTINATION des que le paquet entre.</pre>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Adresse privee : ip addr / ipconfig   |  publique : curl ifconfig.me
+# Box internet : interface 192.168.1.1 -> voir la table NAT / redirections
+# Linux : le NAT vit dans  iptables -t nat  (table "nat")
+#   MASQUERADE (POSTROUTING) = PAT / surcharge, IP publique de l'interface
+#   SNAT (POSTROUTING)       = source NAT vers une IP publique fixe
+#   DNAT (PREROUTING)        = port forwarding (redirection entrante)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle commande révèle ton adresse PUBLIQUE (celle vue d'Internet) ?", opts: ["ip addr", "ipconfig", "curl ifconfig.me", "ls -l"], a: 2, exp: "curl ifconfig.me interroge un service externe qui renvoie l'IP publique de la box." },
+    { type: "input", q: "Sous Linux, quel outil historique gère le NAT et le pare-feu du noyau ?", a: ["iptables"], ph: "un nom", exp: "iptables (progressivement remplacé par nftables) gère le NAT sous Linux." },
+    { type: "qcm", q: "Quelle option d'iptables sélectionne la table dédiée au NAT ?", opts: ["-L nat", "-t nat", "--nat", "-p nat"], a: 1, exp: "L'option -t nat cible la table 'nat'." },
+    { type: "vf", q: "La cible MASQUERADE correspond à la PAT (surcharge / masquerading) sous Linux.", a: true, exp: "Oui : MASQUERADE partage l'IP de l'interface via les ports, exactement comme la PAT." },
+    { type: "qcm", q: "Dans quelle chaîne place-t-on la règle MASQUERADE ?", opts: ["PREROUTING", "POSTROUTING", "INPUT", "FORWARD"], a: 1, exp: "MASQUERADE va dans POSTROUTING, juste avant que le paquet quitte la machine." },
+    { type: "input", q: "Écris la cible iptables (un mot en majuscules) qui réalise le port forwarding entrant.", a: ["dnat"], ph: "un mot", exp: "DNAT (destination NAT) redirige les connexions entrantes." },
+    { type: "qcm", q: "Dans quelle chaîne place-t-on une règle DNAT (port forwarding) ?", opts: ["POSTROUTING", "OUTPUT", "PREROUTING", "INPUT"], a: 2, exp: "DNAT va dans PREROUTING : on modifie la destination dès l'entrée du paquet." },
+    { type: "vf", q: "Si ton IP locale commence par 192.168, tu es derrière du NAT.", a: true, exp: "Oui : 192.168.x est une plage privée, signe d'un réseau derrière du NAT." },
+    { type: "qcm", q: "Différence entre MASQUERADE et SNAT ?", opts: ["Aucune", "MASQUERADE prend l'IP de l'interface (dynamique) ; SNAT fixe une IP publique connue", "SNAT est pour l'entrant", "MASQUERADE chiffre les paquets"], a: 1, exp: "MASQUERADE s'adapte à l'IP de l'interface ; SNAT vise une IP publique fixe." },
+    { type: "input", q: "Quelle commande Windows affiche l'adresse IP locale ?", a: ["ipconfig"], ph: "une commande", exp: "ipconfig affiche la configuration IP locale sous Windows." },
+    { type: "qcm", q: "À quoi sert la commande sudo iptables -t nat -L -n -v ?", opts: ["Supprimer les règles NAT", "Afficher les règles de la table NAT avec compteurs", "Redémarrer le réseau", "Changer l'IP publique"], a: 1, exp: "-L liste les règles ; -n -v ajoutent format numérique et compteurs." },
+    { type: "vf", q: "Sur une box dont l'IP publique change régulièrement, MASQUERADE est plus adapté que SNAT.", a: true, exp: "Oui : MASQUERADE prend automatiquement l'IP courante de l'interface." },
+    { type: "qcm", q: "Que signifie POSTROUTING ?", opts: ["Avant le routage", "Après le routage (juste avant la sortie)", "Sans routage", "Routage interdit"], a: 1, exp: "POSTROUTING = après la décision de routage, au moment de sortir." },
+    { type: "input", q: "Dans une box grand public, à quelle adresse accède-t-on souvent pour voir la table NAT et les redirections ?", a: ["192.168.1.1", "192.168.0.1", "192.168.1.254"], ph: "une IP", exp: "L'interface d'admin de la box est souvent en 192.168.1.1." },
+    { type: "qcm", q: "Pourquoi ta machine ne connaît-elle pas directement son adresse publique ?", opts: ["Elle est cachée par un mot de passe", "L'adresse publique est portée par la box, pas par la machine (qui a une IP privée)", "Windows l'interdit", "Il n'y a pas d'adresse publique"], a: 1, exp: "La machine a une IP privée ; c'est la box qui porte l'IP publique et fait le NAT." }
+  ],
+  final: {
+    title: "Exercice final — Transformer un Linux en routeur NAT",
+    intro: `<p>Léna configure un petit serveur Linux comme routeur pour son réseau local. Son interface vers Internet est <code>eth0</code>, son réseau interne est <code>192.168.10.0/24</code>. Elle veut que le réseau sorte sur Internet et exposer un serveur web interne.</p>`,
+    questions: [
+      { type: "input", q: "Quelle table iptables regroupe les règles de traduction d'adresse ?", a: ["nat", "la table nat", "-t nat"], ph: "un mot", exp: "La table 'nat' (option -t nat) contient les règles de translation." },
+      { type: "qcm", q: "Quelle règle permet à tout le réseau interne de sortir en partageant l'IP publique de eth0 ?", opts: ["iptables -t nat -A PREROUTING -j DNAT", "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE", "iptables -L", "iptables -F"], a: 1, exp: "MASQUERADE en POSTROUTING sur eth0 réalise la PAT pour tout le réseau." },
+      { type: "vf", q: "MASQUERADE ici joue le rôle de PAT : plusieurs machines internes partagent l'IP publique de eth0.", a: true, exp: "Oui : MASQUERADE = PAT/surcharge sous Linux." },
+      { type: "qcm", q: "Pour exposer son serveur web interne (192.168.10.50:80), quelle cible et quelle chaîne ?", opts: ["MASQUERADE en POSTROUTING", "DNAT en PREROUTING", "SNAT en INPUT", "DROP en OUTPUT"], a: 1, exp: "DNAT en PREROUTING redirige le port entrant vers la machine interne." },
+      { type: "input", q: "Quelle commande affiche les règles NAT avec leurs compteurs pour vérifier son travail ?", a: ["iptables -t nat -l -n -v", "sudo iptables -t nat -l -n -v", "iptables -t nat -l", "iptables -t nat -l -n"], ph: "une commande", exp: "iptables -t nat -L -n -v liste les règles NAT avec compteurs." }
+    ],
+    solution: `<pre class="pseudo"># 1) Sortie du reseau interne (PAT) :
+sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+
+# 2) Exposer le serveur web interne (port forwarding) :
+sudo iptables -t nat -A PREROUTING -p tcp --dport 80 \\
+     -j DNAT --to-destination 192.168.10.50:80
+
+# 3) Verifier :
+sudo iptables -t nat -L -n -v
+# MASQUERADE (POSTROUTING) = PAT | DNAT (PREROUTING) = port forwarding</pre>
+<p>Tu sais maintenant observer et configurer le NAT dans le monde réel. On tourne la page : demain, la couche application et son rôle.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "nettr-j21", title: "Deux commandes clés du NAT Linux", level: 3,
+    statement: "Sur un routeur Linux (interface Internet <code>eth0</code>, réseau interne derrière), écris <strong>la</strong> commande iptables qui réalise la <strong>PAT</strong> (partage de l'IP publique), puis explique en une phrase pourquoi on utilise <code>MASQUERADE</code> plutôt que <code>SNAT</code> ici. Indique aussi la commande pour <strong>afficher</strong> les règles NAT.",
+    hints: [
+      "La PAT se fait dans la chaîne POSTROUTING avec la cible MASQUERADE.",
+      "MASQUERADE prend automatiquement l'IP courante de l'interface.",
+      "Pour lister : iptables -t nat -L avec quelques options."
+    ],
+    solution: "# Realiser la PAT (partage de l'IP publique de eth0) :\nsudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE\n\n# Pourquoi MASQUERADE et pas SNAT :\n# MASQUERADE prend AUTOMATIQUEMENT l'adresse de l'interface eth0,\n# ideal quand l'IP publique change (box a IP dynamique) ;\n# SNAT exigerait de connaitre et fixer l'IP publique a l'avance.\n\n# Afficher les regles NAT (avec compteurs) :\nsudo iptables -t nat -L -n -v",
+    note: "MASQUERADE = PAT / masquerading. Pour le port forwarding entrant, on utiliserait DNAT en PREROUTING." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>
