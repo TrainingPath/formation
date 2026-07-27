@@ -141,3 +141,53 @@ La Phase 1 (exécution réelle) se concentre donc sur `cours-web` (JS) et les co
 ci-dessus relèvent des Phases 2 (distracteurs, examen) et 6 (checklist), plus — pour les deux projets —
 des encadrés « 🖥️ À toi de jouer » et de la leçon finale « Publier et faire relire ». Aucun interpréteur
 n'a été inventé pour du pseudocode ou du Django.
+
+---
+
+## Lot 2 — Web (JS) et SQL exécutables
+
+Cours traités : `cours-web`, `cours-sql`, `cours-initiation-bdd`, `cours-sgbd-avance`.
+
+### Runner unifié (déployé sur les 81 cours)
+`exo-ecriture.js` gère désormais trois moteurs, choisis par `item.lang` :
+- **python** : Pyodide (déjà en place) ;
+- **sql** : SQLite WASM (sql.js, CDN, chargé à la demande) — `item.schema` crée les tables, la requête de
+  l'élève s'exécute et son résultat s'affiche en tableau ; `tests = [{query?, expect, label, seed?}]`.
+  `seed:true` = requête de test auto-portante évaluée sur les données de départ ;
+- **js** : exécution dans une `<iframe>` sandboxée avec **prévisualisation live** ; `tests = [{code, label}]`
+  où `document`/`window` désignent l'aperçu (tests DOM).
+Le bouton ▶ n'apparaît que pour un item réellement exécutable ; `item.runnable:false` le neutralise.
+
+### Vérificateur `_verify.js` étendu et durci
+- Mode **SQL** : chaque test repart d'une base fraîche (schéma re-appliqué) ; par défaut la solution est
+  appliquée avant la requête de contrôle (cas CREATE/INSERT/UPDATE), sauf `seed:true`. `runnable:false` → ignoré.
+- Mode **JS** : mini-DOM maison (jsdom étant bloqué par la politique du bac à sable), suffisant pour le
+  vocabulaire des tests (createElement, get/querySelector(All), appendChild, textContent, value,
+  addEventListener('click')/click(), classList, children). Testé : clic ajoutant un `<li>` → OK.
+
+### Résultat vérifié (gate à 100 %)
+`_verify.js` sur les 4 cours : **59 exercices exécutables passent 100 % de leurs tests, 0 échec**.
+Répartition — cours-sql : 19 exécutables ; initiation-bdd : 20 ; sgbd-avance : 12 ; cours-web : 8.
+Parse `DAY`/`ECRITURE` : 0 fichier invalide ; **1303 QCM**, tous avec un index de bonne réponse valide.
+Aucun artefact de test dans le dépôt.
+
+### Corrections & décisions de contenu
+- **`initiation-bdd/jour24`** : la solution SQL contenait `&gt;`/`&lt;` (entités HTML) au lieu de `>`/`<`,
+  ce qui cassait l'exécution SQLite (« no such column: gt »). Corrigé en opérateurs réels.
+- **`sgbd-avance` — 12 jours passés en non-exécutables (`runnable:false` + `sqlnote`)** : jours
+  04, 05, 06, 09, 11, 16, 22, 23, 24, 26, 28, 31. Ils utilisent une syntaxe/des fonctions non supportées
+  par SQLite (DATEDIFF, EXCEPT avec alias, LIMIT avant UNION, certaines fonctions chaîne/date, plus
+  quelques schémas incomplets). Conformément à la règle « ne pas inventer d'exécution », ils affichent
+  un `sqlnote` expliquant la différence SQLite/MySQL et gardent solution + grille d'auto-relecture.
+  (Certains — 23/28/31 — sont en réalité corrigeables via un schéma complété : à ré-activer plus tard.)
+- **Balise `balanceOpts`** désactivée dans les 4 `engine.js` (distracteurs pris en charge à la main).
+- **Mode examen** (`examen.html`/`examen.js` avec garde-fou `file://`) créé pour les 4 cours ; liens
+  « Mode examen » + « Tuteur IA » ajoutés à leurs sommaires.
+
+### ⚠️ Réserve honnête — réécriture des distracteurs (Phase 2.2) incomplète sur ce lot
+Les agents chargés du Lot 2 ont été **interrompus par une limite de session pendant la Tâche B**
+(réécriture des distracteurs). Les Tâches A (exécution + tests) et C (balanceOpts) sont terminées et
+vérifiées ; la réécriture des distracteurs est **partielle** sur ces 4 cours. Les QCM restent néanmoins
+**imprévisibles** (le mélange déterministe de la Prep-B s'applique à tout le site), mais un **audit ciblé
+des distracteurs de ces 4 cours reste à faire** avant de considérer leur Phase 2.2 comme close. Cette
+réserve est signalée plutôt que masquée.

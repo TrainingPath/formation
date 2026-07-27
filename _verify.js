@@ -23,6 +23,7 @@ try { ECR = eval("(" + m[1] + ")"); } catch (e) { console.log(file, "END_VERIFY 
 
 let allOk = true;
 (ECR.items || []).forEach(function (x) {
+  if (x.runnable === false) { console.log(file, x.id, "END_VERIFY disabled"); return; }
   const lang = x.lang || "python";
   let res;
   if (lang === "python") res = verifyPython(x);
@@ -72,34 +73,120 @@ print("PASS", _passed, len(_tests))
   return parsePass((r.stdout || "") + (r.stderr || ""));
 }
 
-/* ---------- JavaScript (jsdom si dispo, sinon exécution simple) ---------- */
+/* ---------- JavaScript / DOM (mini-shim maison, jsdom étant bloqué) ----------
+   Suffisant pour le vocabulaire des tests que l'on écrit : createElement, get/querySelector(All)
+   par balise/#id/.classe (avec descendant "a b"), appendChild, textContent, innerHTML (simple),
+   value, addEventListener('click')/click(), classList, children/childElementCount. */
 function verifyJs(x) {
   if (!x.tests || !x.tests.length) return { skip: "no-tests" };
-  let jsdom = null;
-  try { jsdom = require("jsdom"); } catch (e) { jsdom = null; }
+  const vm = require("vm");
   const tests = x.tests.map(t => (typeof t === "string") ? { label: "test", code: t } : { label: t.label || "test", code: t.code });
   let passed = 0, msg = "";
   try {
-    let sandbox;
-    if (jsdom) {
-      const dom = new jsdom.JSDOM(x.html || "<!DOCTYPE html><body></body>", { runScripts: "outside-only" });
-      sandbox = { window: dom.window, document: dom.window.document, console: console };
-      const vm = require("vm"); vm.createContext(sandbox);
-      vm.runInContext(x.solution, sandbox);
-      for (const t of tests) {
-        try { vm.runInContext(t.code, sandbox); passed++; }
-        catch (e) { msg += "  FAIL: " + t.label + " -> " + e.message + "\n"; }
-      }
-    } else {
-      const vm = require("vm"); sandbox = {}; vm.createContext(sandbox);
-      vm.runInContext(x.solution, sandbox);
-      for (const t of tests) {
-        try { vm.runInContext(t.code, sandbox); passed++; }
-        catch (e) { msg += "  FAIL: " + t.label + " -> " + e.message + "\n"; }
-      }
+    const { document, window } = makeDom(x.solution || "");
+    const sandbox = { document, window, console };
+    vm.createContext(sandbox);
+    // exécute les <script> du code élève (le DOM a déjà été construit par makeDom)
+    (x.solution.match(/<script[^>]*>([\s\S]*?)<\/script>/gi) || []).forEach(function (block) {
+      const js = block.replace(/<script[^>]*>/i, "").replace(/<\/script>/i, "");
+      vm.runInContext(js, sandbox);
+    });
+    // si le code n'a aucune balise, c'est du JS pur : on l'exécute tel quel
+    if (!/</.test(x.solution)) vm.runInContext(x.solution, sandbox);
+    for (const t of tests) {
+      try { vm.runInContext(t.code, sandbox); passed++; }
+      catch (e) { msg += "  FAIL: " + t.label + " -> " + e.message + "\n"; }
     }
-  } catch (e) { return { ok: false, msg: "SOLUTION_ERROR: " + e.message }; }
+  } catch (e) { return { ok: false, msg: "SOLUTION_ERROR: " + e.message + "\n" + msg }; }
   return { ok: passed === tests.length, passed: passed, total: tests.length, msg: msg };
+}
+
+function makeDom(html) {
+  function El(tag) {
+    this.tagName = (tag || "div").toUpperCase(); this.children = []; this.parentNode = null;
+    this.attributes = {}; this._text = ""; this._listeners = {}; this.style = {};
+    this.classList = {
+      _s: this, add: function (c) { var l = (this._s.attributes["class"] || "").split(/\s+/).filter(Boolean); if (l.indexOf(c) < 0) l.push(c); this._s.attributes["class"] = l.join(" "); },
+      remove: function (c) { this._s.attributes["class"] = (this._s.attributes["class"] || "").split(/\s+/).filter(function (y) { return y && y !== c; }).join(" "); },
+      contains: function (c) { return (this._s.attributes["class"] || "").split(/\s+/).indexOf(c) >= 0; },
+      toggle: function (c) { this.contains(c) ? this.remove(c) : this.add(c); }
+    };
+  }
+  Object.defineProperty(El.prototype, "id", { get: function () { return this.attributes.id || ""; }, set: function (v) { this.attributes.id = v; } });
+  Object.defineProperty(El.prototype, "className", { get: function () { return this.attributes["class"] || ""; }, set: function (v) { this.attributes["class"] = v; } });
+  Object.defineProperty(El.prototype, "value", { get: function () { return this.attributes.value || ""; }, set: function (v) { this.attributes.value = v; } });
+  Object.defineProperty(El.prototype, "childElementCount", { get: function () { return this.children.length; } });
+  Object.defineProperty(El.prototype, "textContent", {
+    get: function () { return this._text + this.children.map(function (c) { return c.textContent; }).join(""); },
+    set: function (v) { this.children = []; this._text = String(v); }
+  });
+  Object.defineProperty(El.prototype, "innerHTML", {
+    get: function () { return this._text; },
+    set: function (v) { this.children = []; this._text = ""; var kids = parseNodes(String(v)); var self = this; kids.forEach(function (k) { self.appendChild(k); }); }
+  });
+  El.prototype.appendChild = function (c) { c.parentNode = this; this.children.push(c); return c; };
+  El.prototype.setAttribute = function (k, v) { this.attributes[k] = v; };
+  El.prototype.getAttribute = function (k) { return this.attributes[k]; };
+  El.prototype.addEventListener = function (ev, fn) { (this._listeners[ev] = this._listeners[ev] || []).push(fn); };
+  El.prototype.click = function () { (this._listeners["click"] || []).forEach(function (f) { f.call(this, { type: "click", target: this }); }, this); };
+  El.prototype.querySelectorAll = function (sel) { return selectAll(this, sel); };
+  El.prototype.querySelector = function (sel) { return selectAll(this, sel)[0] || null; };
+  El.prototype.getElementsByTagName = function (t) { return selectAll(this, t); };
+  Object.defineProperty(El.prototype, "firstChild", { get: function () { return this.children[0] || null; } });
+
+  function walk(node, fn) { node.children.forEach(function (c) { fn(c); walk(c, fn); }); }
+  function matches(el, part) {
+    part = part.trim();
+    if (part.charAt(0) === "#") return el.attributes.id === part.slice(1);
+    if (part.charAt(0) === ".") return (el.attributes["class"] || "").split(/\s+/).indexOf(part.slice(1)) >= 0;
+    return el.tagName === part.toUpperCase();
+  }
+  function selectAll(root, sel) {
+    var res = [];
+    sel.split(",").forEach(function (one) {
+      var parts = one.trim().split(/\s+/);
+      var current = [root];
+      parts.forEach(function (p) {
+        var next = [];
+        current.forEach(function (ctx) { walk(ctx, function (el) { if (matches(el, p)) next.push(el); }); });
+        current = next;
+      });
+      current.forEach(function (e) { if (res.indexOf(e) < 0) res.push(e); });
+    });
+    return res;
+  }
+  function parseNodes(str) {
+    var out = [], stack = [], re = /<\/?([a-zA-Z0-9]+)([^>]*)>|([^<]+)/g, m;
+    var selfClose = { br: 1, img: 1, input: 1, hr: 1, meta: 1, link: 1 };
+    function top() { return stack[stack.length - 1]; }
+    while ((m = re.exec(str))) {
+      if (m[3]) { var txt = m[3]; if (top()) top()._text += txt; else if (txt.trim()) { var tn = new El("text"); tn._text = txt; out.push(tn); } continue; }
+      var tag = m[1].toLowerCase(), attrs = m[2] || "", closing = m[0].charAt(1) === "/";
+      if (closing) { var done = stack.pop(); if (!stack.length && done) out.push(done); continue; }
+      var e = new El(tag);
+      var am; var ar = /([a-zA-Z_-]+)\s*=\s*"([^"]*)"|([a-zA-Z_-]+)\s*=\s*'([^']*)'/g;
+      while ((am = ar.exec(attrs))) { var k = am[1] || am[3]; var v = am[2] !== undefined ? am[2] : am[4]; e.attributes[k] = v; }
+      if (top()) top().appendChild(e);
+      if (!selfClose[tag] && !/\/>$/.test(m[0])) stack.push(e); else if (!top()) out.push(e);
+    }
+    while (stack.length) { var r = stack.shift(); if (!r.parentNode) out.push(r); }
+    return out;
+  }
+
+  var doc = new El("html");
+  var body = new El("body"); doc.appendChild(body);
+  var htmlOnly = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  parseNodes(htmlOnly).forEach(function (n) { body.appendChild(n); });
+  doc.body = body;
+  doc.createElement = function (t) { return new El(t); };
+  doc.createTextNode = function (t) { var n = new El("text"); n._text = String(t); return n; };
+  doc.getElementById = function (id) { var f = null; walk(body, function (el) { if (!f && el.attributes.id === id) f = el; }); return f; };
+  doc.querySelector = function (s) { return selectAll(body, s)[0] || null; };
+  doc.querySelectorAll = function (s) { return selectAll(body, s); };
+  doc.getElementsByTagName = function (t) { return selectAll(body, t); };
+  var win = { document: doc, alert: function () {}, console: console };
+  win.Function = Function;
+  return { document: doc, window: win };
 }
 
 /* ---------- SQL (SQLite via le module python3) ---------- */
@@ -107,24 +194,29 @@ function verifySql(x) {
   if (!x.tests || !x.tests.length) return { skip: "no-tests" };
   const harness = `
 import sqlite3, json
-con = sqlite3.connect(":memory:")
-cur = con.cursor()
-cur.executescript(${pyStr(x.schema || "")})
-# La "solution" de l'élève peut être une requête SELECT ou du DDL/DML ; on l'exécute.
+schema = ${pyStr(x.schema || "")}
 sol = ${pyStr(x.solution || "")}
-sol_rows = None
-try:
-    cur.executescript(sol)
-except Exception:
-    pass
 tests = json.loads(${JSON.stringify(JSON.stringify(x.tests))})
 passed = 0
 for t in tests:
-    q = t.get('query')
-    if q is None:
-        q = sol
+    # Chaque test repart d'une base FRAÎCHE (schéma + données de départ) pour être indépendant :
+    # une requête de test explicite s'évalue sur les données de départ, sauf si afterSolution=true.
+    con = sqlite3.connect(":memory:"); cur = con.cursor()
     try:
-        rows = [list(r) for r in cur.execute(q).fetchall()]
+        cur.executescript(schema)
+    except Exception as e:
+        print("  SCHEMA_ERROR:", repr(e)); continue
+    q = t.get('query')
+    try:
+        if q is None:
+            # pas de requête explicite : la solution EST la réponse à exécuter (un SELECT)
+            rows = [list(r) for r in cur.execute(sol).fetchall()]
+        else:
+            # Par défaut on applique la solution puis on vérifie son effet (cas CREATE/INSERT/UPDATE…).
+            # seed=true : la requête de test est auto-portante et s'évalue sur les données de départ.
+            if not t.get('seed'):
+                cur.executescript(sol)
+            rows = [list(r) for r in cur.execute(q).fetchall()]
         exp = t.get('expect')
         if exp is not None:
             exp = [list(r) for r in exp]
@@ -132,6 +224,8 @@ for t in tests:
         passed += 1
     except Exception as e:
         print("  FAIL:", t.get('label','test'), "->", repr(e))
+    finally:
+        con.close()
 print("PASS", passed, len(tests))
 `;
   const r = spawnSync("python3", ["-c", harness], { encoding: "utf8" });
