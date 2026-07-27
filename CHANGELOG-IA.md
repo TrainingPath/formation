@@ -184,10 +184,29 @@ Aucun artefact de test dans le dépôt.
 - **Mode examen** (`examen.html`/`examen.js` avec garde-fou `file://`) créé pour les 4 cours ; liens
   « Mode examen » + « Tuteur IA » ajoutés à leurs sommaires.
 
-### ⚠️ Réserve honnête — réécriture des distracteurs (Phase 2.2) incomplète sur ce lot
-Les agents chargés du Lot 2 ont été **interrompus par une limite de session pendant la Tâche B**
-(réécriture des distracteurs). Les Tâches A (exécution + tests) et C (balanceOpts) sont terminées et
-vérifiées ; la réécriture des distracteurs est **partielle** sur ces 4 cours. Les QCM restent néanmoins
-**imprévisibles** (le mélange déterministe de la Prep-B s'applique à tout le site), mais un **audit ciblé
-des distracteurs de ces 4 cours reste à faire** avant de considérer leur Phase 2.2 comme close. Cette
-réserve est signalée plutôt que masquée.
+### Audit des distracteurs (Phase 2.2) — terminé sur ce lot
+La réécriture des distracteurs, interrompue lors du premier passage, a été **reprise et achevée** par un
+audit dédié (un agent par cours, Tâche B seule, sans toucher aux tests/checklists). Sur les 104 leçons :
+les distracteurs déjà plausibles ont été conservés ; seuls les distracteurs absurdes/vides ont été réécrits
+en erreurs de compréhension crédibles (cours-sql : 6 QCM ; initiation-bdd : 19 ; sgbd-avance : 4 + jour31 ;
+cours-web : 5). Contrôle final : **1303 QCM, tous avec un index de bonne réponse valide**, 0 fichier invalide,
+`_verify.js` toujours à 0 échec.
+
+### Corrections factuelles (Lot 2)
+- **`cours-sql/lecon04`** : un QCM avait **deux bonnes réponses** — le distracteur `prixLocation tarif`
+  (alias implicite sans `AS`) est en réalité valide, ce que la leçon enseigne. Remplacé par une option
+  sans ambiguïté fausse ; l'index `a` et l'option correcte inchangés.
+- **`cours-sgbd-avance/jour05`** : **erreur factuelle sur `CONCAT` et `NULL`**. La leçon affirmait que
+  « CONCAT ignore les NULL » y compris en MySQL — c'est **faux** : en MySQL, `CONCAT` renvoie `NULL` dès
+  qu'un argument est `NULL`. Seuls PostgreSQL et SQL Server (2012+) l'ignorent. Corrigé de façon cohérente :
+  théorie (ligne MySQL → `NULL`), encadré de règle (le comportement dépend du SGBD ; `CONCAT_WS` ignore
+  toujours les NULL), et l'exercice EX#3 « en MySQL » dont la bonne réponse passe de `'Jean '` à `NULL`
+  (avec explication corrigée).
+- **`cours-sgbd-avance/jour31`** : un second exercice d'écriture (`sgbd-j31b`) référençait une table absente
+  de son schéma → passé en non-exécutable (`runnable:false` + `sqlnote`), comme les 12 autres jours avancés.
+  Total sgbd-avance : **12 exécutables verts, 13 en `sqlnote`, 7 checklist**.
+
+### Bug d'outillage corrigé
+Ma première boucle de vérification pouvait **masquer** un item en échec quand un autre item du même fichier
+était `disabled`. Boucle refaite pour compter **chaque item** séparément — c'est ainsi que le `sgbd-j31b`
+caché a été retrouvé et corrigé.
