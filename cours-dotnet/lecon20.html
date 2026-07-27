@@ -147,7 +147,17 @@ var ECRITURE = {
       "N'oublie ni [Authorize] ni le SaveChangesAsync."
     ],
     solution: "[Authorize]\n[HttpPost(\"{id:int}/terminer\")]\npublic async Task<IActionResult> Terminer(int id)\n{\n    // 1. Existence\n    var tache = await _context.Taches.FindAsync(id);          // charge la tâche visée\n    if (tache == null)\n        return NotFound();                                    // 404\n\n    // 2. Droit : propriétaire ou admin, identité depuis le JETON\n    int userId   = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);  // l'appelant\n    bool estAdmin = User.IsInRole(\"admin\");                   // rôle admin ?\n    if (tache.MembreId != userId && !estAdmin)\n        return Forbid();                                      // 403\n\n    // 3. Règle métier\n    if (tache.EstTerminee)                                    // déjà terminée ?\n        return Problem(title: \"Tâche déjà terminée\",\n                       statusCode: 400);                      // 400 ProblemDetails\n\n    // 4. Action\n    tache.EstTerminee = true;                                 // on la termine\n    await _context.SaveChangesAsync();                        // on sauvegarde\n    return NoContent();                                       // 204\n}",
-    note: "404 → 403 → 400 → 204 : quatre codes, quatre questions dans le bon ordre. Cet endpoint résume à lui seul les semaines 2 et 3." },
+    note: "404 → 403 → 400 → 204 : quatre codes, quatre questions dans le bon ordre. Cet endpoint résume à lui seul les semaines 2 et 3.",
+    atoi: {
+      cmd: "dotnet run\ncurl -i -X POST http://localhost:5080/api/taches/999/terminer",
+      expected: "HTTP/1.1 401 Unauthorized\n\n(scénario déterministe : sans jeton, [Authorize] rejette avant tout le reste. Avec un jeton valide sur un id inexistant → 404 ; sur la tâche d'un autre → 403 ; sur une tâche déjà terminée → 400 avec un corps ProblemDetails ; sinon 204 No Content.)"
+    },
+    checklist: [
+      "L'action porte [Authorize] et [HttpPost(\"{id:int}/terminer\")].",
+      "L'ordre des vérifications est respecté : 404 (existence) → 403 (droit) → 400 (déjà terminée) → 204.",
+      "L'identité vient des claims (User.FindFirstValue(ClaimTypes.NameIdentifier)) et le droit combine propriétaire OU User.IsInRole(\"admin\").",
+      "Le cas nominal fait EstTerminee = true, await _context.SaveChangesAsync() puis return NoContent()."
+    ] },
   { id: "dotnet-projet-test-securite", title: "Le test de sécurité du projet", level: 3,
     statement: "Écris le test d'intégration <code>Un_membre_ne_peut_pas_terminer_la_tache_d_un_autre</code> avec WebApplicationFactory : prépare deux membres (Marc et Aurélia) et une tâche appartenant à Aurélia ; obtiens un jeton pour Marc (POST login) ; appelle POST /api/taches/{id}/terminer avec ce jeton ; vérifie le 403 ET que la tâche n'est pas terminée en base. Structure Arrange/Act/Assert commentée.",
     hints: [
@@ -156,7 +166,17 @@ var ECRITURE = {
       "L'assertion d'état : relire la tâche (via un scope du DbContext de test ou un GET admin) et vérifier EstTerminee == false."
     ],
     solution: "[Fact]\npublic async Task Un_membre_ne_peut_pas_terminer_la_tache_d_un_autre()\n{\n    // ---- Arrange : deux membres, une tâche à Aurélia ----\n    var (marc, aurelia, tache) = await PreparerDonneesDeTest();       // jeu de données\n    string token = await ObtenirJeton(\"marc@mail.com\", \"mdpMarc123!\");  // jeton de Marc\n    _client.DefaultRequestHeaders.Authorization =\n        new AuthenticationHeaderValue(\"Bearer\", token);              // on présente le jeton\n\n    // ---- Act : Marc tente de terminer la tâche d'Aurélia ----\n    var reponse = await _client.PostAsync(\n        $\"/api/taches/{tache.Id}/terminer\", null);                   // l'appel interdit\n\n    // ---- Assert : refus + état intact ----\n    Assert.Equal(HttpStatusCode.Forbidden, reponse.StatusCode);   // 403\n\n    using var scope = _factory.Services.CreateScope();               // on relit la base\n    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();\n    var enBase = await db.Taches.FindAsync(tache.Id);\n    Assert.False(enBase!.EstTerminee);            // rien n'a changé\n}",
-    note: "Le duo d'assertions est essentiel : le 403 prouve la réponse, le re-chargement prouve l'ÉTAT. Une API peut mentir dans son statut — la base, jamais." }
+    note: "Le duo d'assertions est essentiel : le 403 prouve la réponse, le re-chargement prouve l'ÉTAT. Une API peut mentir dans son statut — la base, jamais.",
+    atoi: {
+      cmd: "dotnet test",
+      expected: "Le test passe. Le résumé se termine par une ligne de la forme :\nPassed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: <variable>\n(si le 403 n'est pas renvoyé ou si la tâche a été terminée en base, la ligne devient « Failed! » avec Failed: 1.)"
+    },
+    checklist: [
+      "Le test est un [Fact] async qui utilise WebApplicationFactory et suit Arrange / Act / Assert.",
+      "Arrange prépare deux membres (Marc, Aurélia) + une tâche appartenant à Aurélia, et obtient un jeton pour Marc via POST /api/auth/login.",
+      "Le jeton de Marc est présenté en en-tête Authorization: Bearer <token> avant l'appel POST …/terminer.",
+      "Double assertion : Assert.Equal(HttpStatusCode.Forbidden, …) ET relecture en base prouvant EstTerminee == false."
+    ] }
   ]
 };
 </script>

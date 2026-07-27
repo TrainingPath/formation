@@ -245,3 +245,35 @@ Ce n'est pas une exécution navigateur : c'est un **contrôle que la sortie anno
 Les cours du parcours « fil rouge » (Java/Spring…) regroupent `var DAY` et `var ECRITURE` dans un **même
 bloc `<script>`** (+ scripts `fil-rouge`). Le vérificateur et les contrôles d'intégrité ont été ajustés
 pour gérer les deux structures ; `_verify.js` (qui ne lit que `ECRITURE`) n'était pas affecté.
+
+---
+
+## Lot 4 — C# / .NET (non exécutables, sans compilateur disponible)
+
+Cours traités : `cours-csharp` (31 leçons), `cours-projet-csharp`, `cours-projet-csharp-pro`,
+`cours-dotnet`, `cours-efcore` (21 chacun).
+
+### Traitement
+Même dispositif que les langages non navigateur : encadré « 🖥️ À toi de jouer » (`atoi: {cmd, expected}`)
+avec la commande locale réelle (`dotnet run`, `dotnet test`, `dotnet ef …`, `docker compose up`, `curl -i …`)
+et la sortie/le comportement attendu, plus une `checklist`. Distracteurs réécrits, `balanceOpts` désactivé,
+mode examen + lien Tuteur IA sur les 5 sommaires.
+
+### Résultat vérifié
+- **115 leçons**, 0 parse-KO ; **1867 QCM**, tous avec un index de bonne réponse valide.
+- **76 encadrés « À toi de jouer »**, **113 checklists** ; `_verify.js` : 0 FAIL ; aucun champ `lang` parasite ;
+  aucun artefact `.cs`/`.dll`. `balanceOpts` off dans les 5 `engine.js`.
+- Distracteurs : ~600 QCM retouchés d'après les rapports ; **aucune correction factuelle** signalée.
+
+### ⚠️ Limite honnête — sorties C# NON vérifiées par machine
+Contrairement au Java (où `java Fichier.java` permet de contrôler la sortie réelle), le sandbox **n'a pas de
+compilateur C#** (`dotnet`/`mono`/`csc` absents). Les `atoi.expected` de ces cours **n'ont donc pas pu être
+exécutés/gates** : leur exactitude repose sur le raisonnement des rédacteurs, qui ont privilégié des sorties
+sûres (lignes `Console.WriteLine` littérales, codes HTTP, DDL généré par `dotnet ef`, résumés `dotnet test`).
+C'est une différence de garantie assumée par rapport aux cours Python/JS/SQL/Java — signalée, pas masquée.
+
+### Reprise après coupures de session
+4 des 5 agents de ce lot ont été **coupés par la limite de session**. En reprenant, j'ai constaté que
+`cours-projet-csharp-pro` avait ses distracteurs (Tâche B) faits mais **aucun `atoi`/checklist** (Tâche A),
+et que `cours-dotnet` était incomplet sur 4 leçons (15, 19, 20, 21) — complétés par deux agents ciblés,
+puis re-vérifiés item par item.
