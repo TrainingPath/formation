@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 15,
+  title: "IPv6 avancé et transition",
+  subtitle: "Router en IPv6, cohabiter en dual-stack, tunneliser et traduire avec NAT64/DNS64.",
+  theory: `
+<h3>1. Rappel express : l'adressage IPv6</h3>
+<p>IPv6 utilise des adresses de <strong>128 bits</strong>, notées en 8 groupes hexadécimaux. Types clés : <strong>Global Unicast</strong> (2000::/3, routable Internet), <strong>Link-Local</strong> (fe80::/10, obligatoire, portée du lien, base de bien des protocoles), <strong>Unique Local</strong> (fc00::/7, l'équivalent des adresses privées), et le <strong>multicast</strong> (ff00::/8, IPv6 n'a pas de broadcast). L'autoconfiguration repose sur <strong>SLAAC</strong> et le protocole <strong>NDP</strong> (Neighbor Discovery, qui remplace ARP via les messages NS/NA et RS/RA).</p>
+<h3>2. Routage IPv6</h3>
+<p>Les IGP existent en version IPv6. <strong>OSPFv3</strong> tourne sur IPv6 (et peut porter IPv4 avec les address-families) ; il s'appuie sur les adresses link-local pour les voisinages. <strong>EIGRP for IPv6</strong> et <strong>IS-IS</strong> (nativement multiprotocole) sont également courants. En BGP, on utilise <strong>MP-BGP</strong> avec la famille <strong>IPv6 unicast</strong>. Point important : il faut activer le routage IPv6 explicitement.</p>
+<pre class="pseudo"># Activer IPv6 et OSPFv3 (IOS)
+router(config)# ipv6 unicast-routing
+router(config)# interface Gi0/1
+router(config-if)# ipv6 address 2001:db8:1::1/64
+router(config-if)# ospfv3 1 ipv6 area 0
+! BGP IPv6
+router(config)# router bgp 65000
+router(config-router)# address-family ipv6 unicast
+router(config-router-af)# neighbor 2001:db8::2 activate</pre>
+<div class="tip">En IPv6, l'adresse link-local (fe80::) est indispensable : NDP, les next-hop des IGP et RA s'en servent. Une interface IPv6 en a toujours une, même sans adresse globale.</div>
+<h3>3. Dual-stack : la cohabitation de référence</h3>
+<p>La stratégie de transition la plus propre est le <strong>dual-stack</strong> : chaque équipement fait tourner <em>en parallèle</em> une pile IPv4 et une pile IPv6, avec adresses des deux familles. L'hôte choisit la version selon la disponibilité (souvent IPv6 d'abord grâce à « Happy Eyeballs »). Avantage : aucune traduction, chaque protocole natif. Inconvénient : il faut de l'IPv4 partout où l'on veut du dual-stack — or c'est justement ce qui manque. D'où le besoin de tunnels et de traduction.</p>
+<h3>4. Tunnels : transporter IPv6 sur IPv4 (et l'inverse)</h3>
+<p>Quand des îlots IPv6 sont séparés par un cœur IPv4 (ou l'inverse), on <strong>encapsule</strong>. Techniques à connaître :</p>
+<pre class="pseudo"># Tunnels IPv6-sur-IPv4 :
+#   Manuel (configured) : point-a-point, on fixe source/destination. Simple, sur.
+#   GRE                 : generique, transporte IPv6 (et plus) sur IPv4.
+#   6to4 (2002::/16)    : automatique, derive le prefixe IPv6 de l'IPv4 publique.
+#   ISATAP              : intra-site, host-to-router au sein d'un domaine IPv4.
+#   6RD                 : variante 6to4 controlee par l'operateur (prefixe SP).
+# Tunnel IPv4-sur-IPv6 :
+#   MAP / DS-Lite       : transporter l'IPv4 residuel sur un coeur IPv6.
+! Exemple tunnel manuel (IOS)
+router(config)# interface Tunnel0
+router(config-if)# ipv6 address 2001:db8:ff::1/64
+router(config-if)# tunnel source Gi0/0
+router(config-if)# tunnel destination 203.0.113.2
+router(config-if)# tunnel mode ipv6ip</pre>
+<div class="warn">Les tunnels ajoutent de l'en-tête : surveillez le MTU et la fragmentation (path MTU discovery). 6to4 dépend d'IPv4 publique et de relais publics : à éviter en production moderne au profit du dual-stack ou de 6RD/NAT64.</div>
+<h3>5. NAT64 et DNS64 : quand un hôte IPv6-only doit joindre l'IPv4</h3>
+<p>Le vrai défi : un client <strong>IPv6-only</strong> doit atteindre un serveur qui n'a que de l'IPv4. On combine deux mécanismes complémentaires :</p>
+<pre class="pseudo"># NAT64 : traduit les paquets IPv6 &lt;-&gt; IPv4 (stateful le plus souvent).
+#   Prefixe bien connu (Well-Known Prefix) : 64:ff9b::/96 (RFC 6052).
+#   L'IPv4 destination est encodee DANS l'adresse IPv6 (64:ff9b::&lt;IPv4&gt;).
+# DNS64 : synthetise un enregistrement AAAA quand il n'existe qu'un A.
+#   Le resolveur prend l'A (IPv4) et fabrique un AAAA en le placant derriere
+#   le prefixe NAT64 (64:ff9b::/96). L'hote IPv6-only croit joindre de l'IPv6 ;
+#   le paquet arrive au NAT64 qui traduit vers l'IPv4 reelle.</pre>
+<p>La chaîne : l'hôte IPv6-only demande <code>www.exemple.com</code> ; le serveur <strong>DNS64</strong> ne trouve qu'un A (IPv4) et synthétise un AAAA <code>64:ff9b::&lt;IPv4&gt;</code> ; l'hôte envoie vers cette adresse ; le routeur <strong>NAT64</strong> reçoit, extrait l'IPv4 encodée et traduit le flux. IPv6 d'un côté, IPv4 de l'autre, de façon transparente.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># IPv6 = 128 bits ; types : Global (2000::/3), Link-local (fe80::/10), ULA (fc00::/7), multicast (ff00::/8)
+# NDP remplace ARP (NS/NA, RS/RA) ; SLAAC pour l'autoconfig ; activer ipv6 unicast-routing
+# Routage : OSPFv3, EIGRP v6, IS-IS, MP-BGP famille IPv6 unicast
+# Transition : DUAL-STACK (natif, reference) ; TUNNELS (manuel, GRE, 6to4, ISATAP, 6RD)
+# IPv6-only vers IPv4 : NAT64 (traduit, WKP 64:ff9b::/96) + DNS64 (synthetise l'AAAA)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la taille d'une adresse IPv6 ?", opts: ["32 bits", "64 bits", "128 bits", "256 bits"], a: 2, exp: "IPv6 = 128 bits (contre 32 bits en IPv4)." },
+    { type: "qcm", q: "Quel préfixe désigne les adresses Link-Local IPv6 ?", opts: ["2000::/3", "fe80::/10", "fc00::/7", "ff00::/8"], a: 1, exp: "fe80::/10 = link-local (portée du lien, obligatoire sur toute interface IPv6)." },
+    { type: "qcm", q: "Quel protocole remplace ARP en IPv6 ?", opts: ["ICMPv4", "NDP (Neighbor Discovery)", "IGMP", "DHCP"], a: 1, exp: "NDP utilise NS/NA et RS/RA à la place d'ARP." },
+    { type: "qcm", q: "Quelle stratégie de transition fait tourner IPv4 et IPv6 en parallèle nativement ?", opts: ["6to4", "Dual-stack", "NAT64", "DS-Lite"], a: 1, exp: "Le dual-stack exécute les deux piles simultanément, sans traduction." },
+    { type: "qcm", q: "Quel préfixe 'Well-Known' est utilisé par NAT64 (RFC 6052) ?", opts: ["2002::/16", "64:ff9b::/96", "fc00::/7", "2001:db8::/32"], a: 1, exp: "64:ff9b::/96 est le Well-Known Prefix de NAT64." },
+    { type: "qcm", q: "Que fait DNS64 ?", opts: ["Il chiffre les requêtes DNS", "Il synthétise un AAAA à partir d'un A quand seul l'IPv4 existe", "Il bloque l'IPv4", "Il route en multicast"], a: 1, exp: "DNS64 fabrique un AAAA en plaçant l'IPv4 derrière le préfixe NAT64." },
+    { type: "vf", q: "IPv6 ne possède pas d'adresse de broadcast ; il utilise le multicast à la place.", a: true, exp: "Vrai : IPv6 remplace le broadcast par des groupes multicast (ff00::/8)." },
+    { type: "vf", q: "Le dual-stack nécessite tout de même des adresses IPv4 disponibles.", a: true, exp: "Vrai : chaque nœud dual-stack a besoin d'IPv4 ET d'IPv6, ce qui n'aide pas la pénurie d'IPv4." },
+    { type: "vf", q: "NAT64 et DNS64 se combinent pour permettre à un hôte IPv6-only de joindre un serveur IPv4-only.", a: true, exp: "Vrai : DNS64 synthétise l'AAAA, NAT64 traduit le flux." },
+    { type: "vf", q: "OSPFv3 s'appuie notamment sur les adresses link-local pour ses adjacences.", a: true, exp: "Vrai : les voisinages OSPFv3 utilisent les adresses fe80::." },
+    { type: "input", q: "Quelle commande IOS active le routage IPv6 globalement ?", a: ["ipv6 unicast-routing", "ipv6 unicast routing"], ph: "ipv6 ...", exp: "ipv6 unicast-routing active le routage IPv6." },
+    { type: "input", q: "Quel préfixe (avec longueur) correspond aux adresses Unique Local (privées) IPv6 ?", a: ["fc00::/7", "fc00::/7 ", "fc00/7"], ph: "prefixe/longueur", exp: "fc00::/7 = Unique Local Addresses (ULA)." },
+    { type: "input", q: "Quel mécanisme d'autoconfiguration sans état permet à un hôte de se donner une adresse via les RA ?", a: ["SLAAC", "slaac"], ph: "un sigle", exp: "SLAAC = StateLess Address AutoConfiguration." },
+    { type: "input", q: "Quel préfixe automatique dérive l'IPv6 de l'IPv4 publique (technique de tunnel) ?", a: ["6to4", "2002::/16", "6 to 4"], ph: "une technique", exp: "6to4 utilise 2002::/16 et dérive le préfixe de l'IPv4 publique." },
+    { type: "input", q: "Quelle famille MP-BGP transporte les préfixes IPv6 ?", a: ["ipv6 unicast", "ipv6", "address-family ipv6 unicast"], ph: "une famille", exp: "address-family ipv6 unicast en MP-BGP." }
+  ],
+  final: {
+    title: "Exercice final — Migrer un site vers IPv6-only",
+    intro: `<p>Une entreprise veut passer ses postes en <strong>IPv6-only</strong> pour se libérer de la pénurie d'IPv4, tout en continuant d'accéder à des services externes qui n'ont encore que de l'<strong>IPv4</strong>. Vous concevez la solution de transition et d'accès.</p>`,
+    questions: [
+      { type: "qcm", q: "Quelle solution la plus simple si l'IPv4 est encore disponible partout, pour éviter toute traduction ?", opts: ["NAT64 seul", "Dual-stack", "6to4", "Désactiver IPv6"], a: 1, exp: "Le dual-stack évite toute traduction, mais suppose de l'IPv4 disponible." },
+      { type: "qcm", q: "Pour des postes réellement IPv6-only accédant à un serveur IPv4-only, quel duo employer ?", opts: ["DNS64 + NAT64", "GRE + OSPFv3", "6to4 + ISATAP", "MSDP + PIM"], a: 0, exp: "DNS64 synthétise l'AAAA, NAT64 traduit vers l'IPv4 réelle." },
+      { type: "qcm", q: "Dans 64:ff9b::203.0.113.10, que représente la fin de l'adresse ?", opts: ["Un port", "L'IPv4 de destination encodée", "Un VNI", "Un checksum"], a: 1, exp: "L'IPv4 destination est encodée dans les derniers bits, derrière le WKP 64:ff9b::/96." },
+      { type: "vf", q: "Sans DNS64, un hôte IPv6-only ne recevrait qu'un enregistrement A (IPv4) qu'il ne peut pas utiliser directement.", a: true, exp: "Vrai : DNS64 est ce qui fournit l'AAAA synthétique pointant vers le NAT64." },
+      { type: "qcm", q: "Quel IGP IPv6 s'appuie sur les adresses link-local pour ses adjacences ?", opts: ["RIPng seulement", "OSPFv3", "EIGRP IPv4", "BGP IPv4"], a: 1, exp: "OSPFv3 forme ses voisinages via les adresses fe80::." }
+    ],
+    solution: `<pre class="pseudo"># Scenario IPv6-only accedant a de l'IPv4-only
+# 1) Interne : postes IPv6-only, IGP IPv6 (OSPFv3 sur link-local), ipv6 unicast-routing.
+# 2) Resolution : DNS64 synthetise un AAAA quand seul un A existe
+#      A = 203.0.113.10  -&gt;  AAAA = 64:ff9b::203.0.113.10  (WKP 64:ff9b::/96)
+# 3) Traduction : le flux part vers 64:ff9b::203.0.113.10 ; le NAT64 extrait l'IPv4
+#      encodee et traduit IPv6 &lt;-&gt; IPv4 (stateful).
+# Alternative si IPv4 dispo partout : DUAL-STACK (natif, aucune traduction).
+# Pour relier des ilots : tunnels (manuel/GRE) ; attention au MTU.</pre>
+<p>Dual-stack quand on peut, NAT64/DNS64 quand on n'a plus d'IPv4 : voilà la boîte à outils de transition. Demain, dernière étape : la QoS de bout en bout, du campus au WAN.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j15", title: "Transition IPv6 : dual-stack, tunnels, NAT64/DNS64", level: 3,
+    statement: "Compare les trois grandes familles de transition IPv6 : <strong>dual-stack</strong>, <strong>tunnels</strong> et <strong>traduction NAT64/DNS64</strong>. Pour NAT64/DNS64, explique précisément le rôle de chacun et le préfixe Well-Known utilisé. Indique quand choisir quoi.",
+    hints: [
+      "Dual-stack = les deux piles natives en parallèle (pas de traduction, mais IPv4 requis).",
+      "Tunnels (manuel, GRE, 6to4, ISATAP, 6RD) = encapsuler IPv6 sur un cœur IPv4.",
+      "NAT64 traduit les paquets, DNS64 synthétise l'AAAA ; WKP 64:ff9b::/96."
+    ],
+    solution: "# 1) DUAL-STACK\n#    - IPv4 et IPv6 tournent en parallele, natifs, sur chaque noeud.\n#    - Avantage : aucune traduction. Inconvenient : exige de l'IPv4 disponible partout.\n#    - A choisir tant qu'on dispose encore d'IPv4 : c'est la reference la plus propre.\n#\n# 2) TUNNELS (encapsulation IPv6-sur-IPv4)\n#    - Manuel/configured (point-a-point), GRE (generique), 6to4 (2002::/16, auto),\n#      ISATAP (intra-site), 6RD (variante SP).\n#    - A choisir pour relier des ilots IPv6 a travers un coeur IPv4. Surveiller le MTU.\n#\n# 3) TRADUCTION NAT64 + DNS64 (hote IPv6-only vers serveur IPv4-only)\n#    - DNS64 : synthetise un enregistrement AAAA a partir d'un A (IPv4), en placant\n#      l'IPv4 derriere le prefixe NAT64.\n#    - NAT64 : traduit les paquets IPv6 &lt;-&gt; IPv4 (stateful), extrait l'IPv4 encodee.\n#    - Prefixe Well-Known (RFC 6052) : 64:ff9b::/96 -> ex : 64:ff9b::203.0.113.10\n#    - A choisir quand les hotes sont IPv6-only mais doivent joindre de l'IPv4.",
+    note: "Ordre de préférence usuel : dual-stack si IPv4 disponible, sinon NAT64/DNS64 pour l'IPv6-only ; tunnels pour interconnecter des îlots." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

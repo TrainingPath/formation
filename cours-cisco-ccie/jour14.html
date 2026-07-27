@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 14</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 14,
+  title: "La multidiffusion (multicast) expert",
+  subtitle: "PIM-SM, SSM, BIDIR, RP redondants, MSDP et le contrôle RPF : distribuer sans dupliquer.",
+  theory: `
+<h3>1. Le principe : un flux, plusieurs récepteurs</h3>
+<p>En <strong>unicast</strong>, une source qui alimente 1000 récepteurs envoie 1000 copies. En <strong>multicast</strong> (multidiffusion), la source n'envoie <strong>qu'une</strong> copie ; le réseau la duplique uniquement là où les chemins divergent. C'est indispensable pour la vidéo, la bourse, l'IPTV. Les destinataires sont désignés par une adresse de groupe dans la plage <strong>224.0.0.0/4</strong> (classe D). Les hôtes signalent leur intérêt via <strong>IGMP</strong> (IGMPv2/v3 en IPv4, MLD en IPv6) ; les routeurs construisent l'arbre de distribution avec <strong>PIM</strong>.</p>
+<h3>2. Le contrôle RPF : la clé anti-boucle</h3>
+<p>Le multicast raisonne à l'envers de l'unicast : il ne regarde pas <em>où va</em> le paquet, mais <em>d'où il vient</em>. Le contrôle <strong>RPF</strong> (<em>Reverse Path Forwarding</em>) vérifie qu'un paquet multicast arrive bien par l'interface que la table de routage unicast utiliserait pour <em>joindre la source</em>. Si oui, on le duplique vers les branches de l'arbre ; si non (RPF fail), on le <strong>jette</strong>. C'est ce qui empêche les boucles et les duplications.</p>
+<pre class="pseudo"># Verifier le RPF vers une source
+router# show ip rpf 10.1.1.1
+! RPF interface = interface vers la source selon la table unicast
+router# show ip mroute
+! (S,G) = arbre par source ; (*,G) = arbre partage via le RP</pre>
+<div class="warn">Un RPF fail silencieux est la cause n°1 des pannes multicast : trafic présent mais jeté. Vérifiez toujours que le chemin unicast vers la source est cohérent (attention aux chemins asymétriques et aux redistributions).</div>
+<h3>3. PIM Sparse Mode et le Rendezvous Point</h3>
+<p><strong>PIM-SM</strong> (<em>Sparse Mode</em>) est le mode dominant : « explicit join », on ne construit l'arbre que là où il y a des récepteurs. Il s'appuie sur un point de rencontre, le <strong>RP</strong> (<em>Rendezvous Point</em>) : les sources s'y enregistrent (via un message Register encapsulé au premier routeur, le DR) et les récepteurs y « joignent » l'arbre partagé <strong>(*,G)</strong> enraciné au RP. Puis, pour optimiser, les routeurs basculent vers l'arbre par source <strong>(S,G)</strong>, le plus court chemin (SPT switchover). Cet arbre par source est aussi appelé arbre du plus court chemin (Shortest Path Tree).</p>
+<pre class="pseudo"># Notations d'arbres :
+# (*,G)  arbre PARTAGE, enracine au RP        -&gt; PIM-SM au demarrage
+# (S,G)  arbre PAR SOURCE, plus court chemin  -&gt; apres SPT switchover, et SSM
+! Config PIM-SM + RP statique (IOS)
+router(config)# ip multicast-routing
+router(config)# interface Gi0/1
+router(config-if)# ip pim sparse-mode
+router(config)# ip pim rp-address 10.0.0.1</pre>
+<h3>4. SSM et BIDIR : deux variantes clés</h3>
+<p><strong>PIM-SSM</strong> (<em>Source-Specific Multicast</em>) supprime le RP : le récepteur indique explicitement la source qui l'intéresse (via IGMPv3), on construit directement l'arbre <strong>(S,G)</strong>. Plage réservée : <strong>232.0.0.0/8</strong>. C'est simple, sûr (pas d'usurpation de source) et idéal pour la diffusion « one-to-many » (IPTV). <strong>PIM-BIDIR</strong> (<em>Bidirectional</em>) est l'opposé : conçu pour le « many-to-many » (bourses, conférences), il n'utilise QUE des arbres partagés <strong>(*,G)</strong> bidirectionnels, sans état par source (S,G) — donc très scalable quand il y a énormément de sources, au prix de chemins non optimaux.</p>
+<pre class="pseudo"># Comparatif
+# PIM-SM   : (*,G) puis (S,G) ; RP requis ; usage general
+# PIM-SSM  : (S,G) direct ; PAS de RP ; plage 232.0.0.0/8 ; one-to-many (IPTV)
+# PIM-BIDIR: (*,G) seulement ; RP requis ; many-to-many ; scalable (pas d'etat S,G)</pre>
+<h3>5. Rendre le RP redondant</h3>
+<p>Le RP est un point unique : il faut le rendre redondant. Trois approches à connaître :</p>
+<pre class="pseudo"># Anycast RP + MSDP :
+#   Plusieurs RP partagent la MEME adresse (anycast). Chaque source joint le RP
+#   le plus proche. MSDP (Multicast Source Discovery Protocol) relie les RP entre
+#   eux : ils s'echangent des SA (Source-Active) pour connaitre les sources actives
+#   des autres RP. -&gt; redondance + repartition de charge.
+# Auto-RP (Cisco) :
+#   Un mapping-agent annonce dynamiquement les RP (groupes 224.0.1.39 / 224.0.1.40).
+# BSR (Bootstrap Router, standard PIMv2) :
+#   Election et diffusion dynamique des candidats RP (standard, multi-vendeur).</pre>
+<div class="tip">Le combo <strong>Anycast RP + MSDP</strong> est la solution de référence pour la haute dispo du RP : même adresse partagée par plusieurs RP, MSDP synchronise les sources actives (messages SA). MSDP sert aussi à l'interconnexion multicast entre domaines (inter-AS).</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Multicast : 1 copie a la source, le reseau duplique aux embranchements (224.0.0.0/4)
+# IGMP/MLD = interet des recepteurs ; PIM = construction de l'arbre
+# RPF = accepter le paquet SEULEMENT s'il vient de l'interface vers la source (anti-boucle)
+# PIM-SM : RP + (*,G) puis (S,G) ; SSM : (S,G) direct, sans RP, 232.0.0.0/8, IGMPv3
+# PIM-BIDIR : (*,G) seul, many-to-many, scalable (pas d'etat S,G)
+# RP redondant : Anycast RP + MSDP (SA), Auto-RP (Cisco), BSR (standard)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle plage d'adresses est réservée au multicast IPv4 ?", opts: ["10.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4"], a: 2, exp: "224.0.0.0/4 (ex-classe D) est la plage multicast IPv4." },
+    { type: "qcm", q: "Que vérifie le contrôle RPF ?", opts: ["Que le paquet va vers la bonne destination", "Que le paquet arrive par l'interface vers la source (table unicast)", "Que le TTL est correct", "Que l'IGMP est activé"], a: 1, exp: "RPF accepte le paquet uniquement s'il arrive par l'interface utilisée pour joindre la source." },
+    { type: "qcm", q: "Dans PIM-SM, à quoi sert le Rendezvous Point (RP) ?", opts: ["À filtrer l'IGMP", "À servir de point de rencontre entre sources et récepteurs (arbre (*,G))", "À accélérer OSPF", "À chiffrer le flux"], a: 1, exp: "Le RP est la racine de l'arbre partagé (*,G) ; sources et récepteurs s'y retrouvent." },
+    { type: "qcm", q: "Quelle plage est réservée à PIM-SSM ?", opts: ["224.0.0.0/24", "232.0.0.0/8", "239.0.0.0/8", "233.0.0.0/8"], a: 1, exp: "232.0.0.0/8 est réservée à SSM (Source-Specific Multicast)." },
+    { type: "qcm", q: "Quelle version d'IGMP est requise pour PIM-SSM (indication de la source) ?", opts: ["IGMPv1", "IGMPv2", "IGMPv3", "Aucune"], a: 2, exp: "IGMPv3 permet au récepteur de préciser la source (S,G), indispensable à SSM." },
+    { type: "qcm", q: "Quel protocole relie des RP anycast pour échanger les sources actives ?", opts: ["LDP", "MSDP", "BGP", "OSPF"], a: 1, exp: "MSDP (Multicast Source Discovery Protocol) échange des messages SA entre RP." },
+    { type: "vf", q: "En multicast, la source envoie une seule copie et le réseau duplique aux embranchements.", a: true, exp: "Vrai : c'est tout l'intérêt face à l'unicast qui envoie N copies." },
+    { type: "vf", q: "PIM-SSM n'a pas besoin de Rendezvous Point.", a: true, exp: "Vrai : le récepteur indique la source (IGMPv3), on bâtit directement l'arbre (S,G)." },
+    { type: "vf", q: "PIM-BIDIR maintient un état (S,G) par source, ce qui limite sa scalabilité.", a: false, exp: "Faux : BIDIR n'utilise QUE (*,G), sans état par source, d'où sa grande scalabilité en many-to-many." },
+    { type: "vf", q: "Un échec RPF entraîne l'abandon (drop) du paquet multicast.", a: true, exp: "Vrai : un paquet qui n'arrive pas par l'interface RPF est jeté (anti-boucle)." },
+    { type: "input", q: "Sigle (3 lettres) du contrôle qui vérifie la provenance d'un paquet multicast ?", a: ["RPF", "rpf"], ph: "3 lettres", exp: "RPF = Reverse Path Forwarding." },
+    { type: "input", q: "Comment note-t-on un arbre par source (source S, groupe G) ?", a: ["(S,G)", "s,g", "(s,g)", "s g"], ph: "notation", exp: "(S,G) = arbre par source (shortest path tree)." },
+    { type: "input", q: "Comment note-t-on l'arbre partagé enraciné au RP ?", a: ["(*,G)", "*,g", "(*,g)", "star g"], ph: "notation", exp: "(*,G) = arbre partagé (shared tree) via le RP." },
+    { type: "input", q: "Quels messages MSDP annoncent les sources actives entre RP (2 lettres) ?", a: ["SA", "sa", "source-active", "source active"], ph: "2 lettres", exp: "Les messages SA (Source-Active) portent les sources actives entre RP." },
+    { type: "input", q: "Quelle commande IOS active le routage multicast globalement ?", a: ["ip multicast-routing", "ip multicast routing"], ph: "ip multicast...", exp: "ip multicast-routing active le routage multicast." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir un déploiement multicast robuste",
+    intro: `<p>Une entreprise diffuse deux services : de l'<strong>IPTV</strong> (un flux vidéo, un émetteur unique, des milliers de récepteurs) et de la <strong>visioconférence</strong> many-to-many entre salles. Le RP doit être hautement disponible. Concevez la solution.</p>`,
+    questions: [
+      { type: "qcm", q: "Quel mode PIM convient le mieux à l'IPTV one-to-many (source unique connue) ?", opts: ["PIM-BIDIR", "PIM-SSM", "PIM Dense Mode", "RIP"], a: 1, exp: "SSM est idéal pour du one-to-many : (S,G) direct, sans RP, plage 232.0.0.0/8." },
+      { type: "qcm", q: "Quelle version d'IGMP les décodeurs IPTV doivent-ils utiliser pour SSM ?", opts: ["IGMPv1", "IGMPv2", "IGMPv3", "MLDv1"], a: 2, exp: "IGMPv3 permet d'indiquer la source, requis par SSM." },
+      { type: "qcm", q: "Quel mode PIM convient au many-to-many de la visioconférence, sans exploser les états ?", opts: ["PIM-SSM", "PIM-BIDIR", "PIM Dense Mode", "Unicast"], a: 1, exp: "BIDIR utilise seulement (*,G), sans état par source : scalable pour du many-to-many." },
+      { type: "qcm", q: "Comment rendre le RP hautement disponible et réparti ?", opts: ["Un seul RP surdimensionné", "Anycast RP + MSDP", "Désactiver le RPF", "HSRP sur le RP"], a: 1, exp: "Anycast RP (même adresse sur plusieurs RP) + MSDP pour synchroniser les sources actives." },
+      { type: "vf", q: "Le contrôle RPF reste actif et doit être cohérent avec le routage unicast pour éviter des drops.", a: true, exp: "Vrai : un chemin unicast incohérent vers la source provoque des RPF fail." }
+    ],
+    solution: `<pre class="pseudo"># IPTV (one-to-many, source unique) :
+#   PIM-SSM, plage 232.0.0.0/8, recepteurs en IGMPv3 -&gt; arbre (S,G) direct, pas de RP.
+# Visioconference (many-to-many) :
+#   PIM-BIDIR -&gt; arbres (*,G) seulement, pas d'etat (S,G), scalable.
+# Haute dispo du RP (pour la partie BIDIR/SM) :
+#   Anycast RP : plusieurs RP avec la MEME adresse ; chaque routeur joint le plus proche.
+#   MSDP : relie les RP, echange les messages SA (Source-Active) -&gt; sources connues de tous.
+# Transverse :
+#   RPF coherent avec l'unicast (sinon drops silencieux) ; ip multicast-routing + ip pim sparse-mode.</pre>
+<p>Bon mode PIM pour le bon usage, RP redondant via Anycast+MSDP, et RPF sous surveillance : une base multicast solide. Demain : IPv6 avancé et les techniques de transition.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j14", title: "Choisir le bon PIM et sécuriser le RP", level: 3,
+    statement: "Explique le rôle du contrôle <strong>RPF</strong>, puis compare <strong>PIM-SM</strong>, <strong>PIM-SSM</strong> et <strong>PIM-BIDIR</strong> (arbres utilisés, RP requis ou non, usage type, plage SSM). Termine en décrivant comment rendre le RP redondant avec <strong>Anycast RP + MSDP</strong>.",
+    hints: [
+      "RPF = accepter le paquet seulement s'il vient de l'interface vers la source.",
+      "SM = (*,G) puis (S,G) avec RP ; SSM = (S,G) direct sans RP (232.0.0.0/8) ; BIDIR = (*,G) seul.",
+      "Anycast RP = même adresse sur plusieurs RP ; MSDP échange des messages SA."
+    ],
+    solution: "# RPF (Reverse Path Forwarding) :\n#   Accepte un paquet multicast SEULEMENT s'il arrive par l'interface que la table\n#   unicast utiliserait pour joindre la SOURCE. Sinon : drop (anti-boucle/duplication).\n#\n# Comparatif PIM :\n#   PIM-SM    : arbre (*,G) via le RP, puis bascule (S,G) (SPT). RP REQUIS. Usage general.\n#   PIM-SSM   : arbre (S,G) DIRECT, PAS de RP. Recepteur indique la source (IGMPv3).\n#               Plage 232.0.0.0/8. Ideal one-to-many (IPTV).\n#   PIM-BIDIR : arbres (*,G) SEULEMENT, pas d'etat (S,G). RP requis. Many-to-many, scalable.\n#\n# RP redondant : Anycast RP + MSDP\n#   - Plusieurs RP partagent la MEME adresse (anycast) ; chaque source/recepteur joint le plus proche.\n#   - MSDP (Multicast Source Discovery Protocol) relie les RP : ils s'echangent des messages\n#     SA (Source-Active) pour connaitre les sources actives des autres RP.\n#   -> redondance + repartition de charge (et interconnexion inter-domaines).",
+    note: "Un RPF incohérent avec le routage unicast est la cause n°1 de pannes multicast : flux présent mais jeté." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

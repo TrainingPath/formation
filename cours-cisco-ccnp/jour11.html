@@ -1,0 +1,86 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 11</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 11,
+  title: "La redondance de premier saut (HSRP, VRRP, GLBP)",
+  subtitle: "Une passerelle qui ne tombe jamais, vue comme une seule adresse par les PC.",
+  theory: `
+<h3>1. Le problème de la passerelle unique</h3>
+<p>Chaque PC est configuré avec une <strong>passerelle par défaut</strong> (« default gateway ») unique. Si ce routeur tombe, tout le sous-réseau perd l'accès à l'extérieur, même si un second routeur existe : les PC ne savent pas changer d'adresse tout seuls. Les protocoles <strong>FHRP</strong> (« First Hop Redundancy Protocol ») résolvent cela en présentant une <strong>passerelle virtuelle</strong> — une IP et une MAC virtuelles — partagée par plusieurs routeurs. Les PC ne voient qu'une adresse ; en coulisse, un routeur actif répond, un autre attend.</p>
+<h3>2. HSRP (Cisco)</h3>
+<p>Le <strong>HSRP</strong> (« Hot Standby Router Protocol ») est propriétaire Cisco. Dans un groupe HSRP, un routeur est <strong>actif</strong> (« active », il achemine le trafic) et un autre est <strong>standby</strong> (en veille, prêt à prendre le relais) ; les éventuels autres sont en « listen ». Le choix se fait sur la <strong>priorité</strong> (0-255, <strong>100 par défaut</strong>) : la plus haute gagne, et à égalité la plus grande IP l'emporte.</p>
+<pre class="pseudo">Router(config)# interface gi0/0
+Router(config-if)# ip address 10.0.0.2 255.255.255.0
+Router(config-if)# standby 1 ip 10.0.0.1        ! IP virtuelle (passerelle des PC)
+Router(config-if)# standby 1 priority 110       ! defaut = 100
+Router(config-if)# standby 1 preempt            ! reprend le role actif s'il revient
+Router(config-if)# standby 1 version 2</pre>
+<div class="tip">HSRP v1 utilise la MAC virtuelle <strong>0000.0c07.acXX</strong> (XX = numéro de groupe) et des groupes 0-255. HSRP v2 étend les groupes à 0-4095, change la MAC en 0000.0c9f.fXXX et permet IPv6.</div>
+<h3>3. La préemption</h3>
+<p>Par défaut, si le routeur prioritaire redémarre, il ne <em>reprend pas</em> automatiquement le rôle actif : celui qui a pris le relais le garde. La <strong>préemption</strong> (« preempt ») force le routeur de plus haute priorité à reprendre la main dès qu'il revient. C'est utile pour garder un routeur « maître » précis, mais peut provoquer une micro-coupure au retour.</p>
+<div class="warn">Sans <strong>standby preempt</strong>, configurer une priorité de 200 ne sert à rien si ce routeur a démarré en second : il restera standby. La préemption est indispensable pour que la priorité s'applique après une panne.</div>
+<h3>4. VRRP (standard)</h3>
+<p>Le <strong>VRRP</strong> (« Virtual Router Redundancy Protocol », RFC, <strong>standard ouvert</strong>) fait la même chose que HSRP mais fonctionne entre équipements de constructeurs différents. Le routeur actif s'appelle <strong>maître</strong> (« master ») et les autres <strong>backup</strong>. La préemption y est <strong>activée par défaut</strong>. La priorité va aussi de 1 à 254 (255 réservé au propriétaire de l'IP).</p>
+<pre class="pseudo">Router(config-if)# vrrp 1 ip 10.0.0.1      ! IP virtuelle
+Router(config-if)# vrrp 1 priority 120</pre>
+<h3>5. GLBP (Cisco) : la répartition de charge</h3>
+<p>HSRP et VRRP n'utilisent qu'un seul routeur actif à la fois : le second ne sert qu'en secours. Le <strong>GLBP</strong> (« Gateway Load Balancing Protocol », propriétaire Cisco) va plus loin : il répartit réellement la charge entre plusieurs routeurs. Un routeur est élu <strong>AVG</strong> (« Active Virtual Gateway ») ; il distribue plusieurs <strong>MAC virtuelles</strong> aux PC (jusqu'à 4 <strong>AVF</strong>, « Active Virtual Forwarders »). Ainsi, différents PC utilisent différents routeurs comme premier saut, tout en partageant la même IP virtuelle.</p>
+<div class="tip">Résumé du choix : besoin d'un standard multi-constructeur → <strong>VRRP</strong>. Environnement Cisco simple → <strong>HSRP</strong>. Vouloir utiliser TOUS les routeurs en parallèle → <strong>GLBP</strong>.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># FHRP = passerelle VIRTUELLE (IP + MAC) partagee -> les PC ne voient qu'une adresse
+# HSRP (Cisco) : actif / standby, priorite 100 par defaut, la plus haute gagne
+# VRRP (standard) : master / backup, preemption ACTIVE par defaut
+# GLBP (Cisco) : repartition de charge, un AVG distribue plusieurs MAC (AVF)
+# Preemption : force le routeur prioritaire a reprendre le role actif a son retour</pre>`,
+  exercises: [
+    { type: "qcm", q: "À quoi sert un protocole FHRP comme HSRP ?", opts: ["À router entre VLAN", "À présenter une passerelle virtuelle redondante aux PC", "À chiffrer le trafic", "À attribuer des adresses IP"], a: 1, exp: "Un FHRP offre une IP/MAC virtuelle de passerelle partagée par plusieurs routeurs." },
+    { type: "qcm", q: "Quelle est la priorité HSRP par défaut ?", opts: ["1", "50", "100", "255"], a: 2, exp: "La priorité HSRP par défaut est 100 ; la plus haute devient active." },
+    { type: "qcm", q: "Dans HSRP, comment s'appellent les deux rôles principaux ?", opts: ["master / backup", "active / standby", "primary / secondary", "avg / avf"], a: 1, exp: "HSRP utilise active (achemine) et standby (en veille)." },
+    { type: "qcm", q: "Quel protocole FHRP est un standard ouvert multi-constructeur ?", opts: ["HSRP", "GLBP", "VRRP", "CDP"], a: 2, exp: "VRRP est standardisé (RFC) et interopère entre constructeurs." },
+    { type: "qcm", q: "Quel FHRP répartit réellement la charge entre plusieurs routeurs actifs ?", opts: ["HSRP", "VRRP", "GLBP", "STP"], a: 2, exp: "GLBP (Cisco) distribue plusieurs MAC virtuelles pour utiliser plusieurs routeurs." },
+    { type: "qcm", q: "Dans GLBP, quel rôle distribue les MAC virtuelles aux clients ?", opts: ["Le master", "L'AVG (Active Virtual Gateway)", "Le standby", "Le root bridge"], a: 1, exp: "L'AVG répond aux ARP en distribuant les MAC des AVF." },
+    { type: "vf", q: "HSRP est un protocole propriétaire Cisco.", a: true, exp: "HSRP est propre à Cisco ; VRRP est l'équivalent standard." },
+    { type: "vf", q: "Sans préemption, un routeur de priorité 200 reprend toujours automatiquement le rôle actif à son retour.", a: false, exp: "Sans preempt, celui qui a pris le relais le conserve, quelle que soit la priorité." },
+    { type: "vf", q: "Dans VRRP, la préemption est désactivée par défaut.", a: false, exp: "Contrairement à HSRP, VRRP active la préemption par défaut." },
+    { type: "vf", q: "Avec HSRP et VRRP, un seul routeur achemine le trafic à un instant donné.", a: true, exp: "Ces deux protocoles ont un seul actif/master ; le reste est en secours." },
+    { type: "input", q: "Comment appelle-t-on (un mot) le routeur actif dans VRRP ?", a: ["master", "maitre", "le master"], ph: "un mot", exp: "Dans VRRP le routeur actif est le master (maître)." },
+    { type: "input", q: "Quelle option HSRP force le routeur prioritaire à reprendre la main à son retour ?", a: ["preempt", "standby preempt", "la preemption", "preemption"], ph: "un mot", exp: "standby preempt active la préemption." },
+    { type: "input", q: "Quel sigle Cisco désigne le protocole FHRP qui équilibre la charge ?", a: ["glbp"], ph: "4 lettres", exp: "GLBP = Gateway Load Balancing Protocol." },
+    { type: "input", q: "Dans HSRP, quel élément (IP + MAC) les PC utilisent-ils comme passerelle ?", a: ["l'adresse virtuelle", "adresse virtuelle", "ip virtuelle", "la passerelle virtuelle", "passerelle virtuelle"], ph: "quelque chose de virtuel", exp: "Les PC pointent vers l'IP virtuelle du groupe HSRP." },
+    { type: "input", q: "Quelle commande définit l'IP virtuelle du groupe 1 en HSRP ? (forme : standby 1 ip ...)", a: ["standby 1 ip 10.0.0.1", "standby 1 ip", "standby ip"], ph: "standby 1 ip ...", exp: "standby 1 ip <adresse> fixe l'IP virtuelle partagée." }
+  ],
+  final: {
+    title: "Exercice final — Choisir et configurer la redondance de passerelle",
+    intro: "<p>Un sous-réseau 10.0.0.0/24 possède deux routeurs (R1 et R2). Les PC ont pour passerelle 10.0.0.1. Tu veux que R1 soit prioritaire mais reprenne toujours la main après une panne, et tu réfléchis au protocole adapté.</p>",
+    questions: [
+      { type: "qcm", q: "Les deux routeurs sont Cisco et un seul actif suffit. Quel protocole simple choisis-tu ?", opts: ["GLBP", "HSRP", "OSPF", "STP"], a: 1, exp: "HSRP suffit pour un actif/standby en environnement Cisco." },
+      { type: "input", q: "Pour rendre R1 prioritaire, tu lui mets une priorité supérieure à la valeur par défaut. Quelle est cette valeur par défaut ?", a: ["100"], ph: "un nombre", exp: "La priorité HSRP par défaut est 100 ; on met par exemple 110 sur R1." },
+      { type: "qcm", q: "Que faut-il ajouter pour que R1 reprenne le rôle actif après un redémarrage ?", opts: ["standby preempt", "no shutdown", "spanning-tree portfast", "vrrp master"], a: 0, exp: "La préemption (standby preempt) est nécessaire pour reprendre la main." },
+      { type: "vf", q: "Si un des routeurs était d'un autre constructeur, VRRP serait un meilleur choix que HSRP.", a: true, exp: "VRRP est un standard ouvert, interopérable entre constructeurs." },
+      { type: "qcm", q: "Si tu voulais que R1 ET R2 acheminent du trafic en parallèle, tu choisirais…", opts: ["HSRP", "VRRP", "GLBP", "802.1Q"], a: 2, exp: "GLBP répartit la charge sur plusieurs routeurs actifs simultanément." }
+    ],
+    solution: "<pre class=\"pseudo\">! R1 (prioritaire)\ninterface gi0/0\n ip address 10.0.0.2 255.255.255.0\n standby 1 ip 10.0.0.1\n standby 1 priority 110\n standby 1 preempt\n!\n! R2 (secours, priorite par defaut 100)\ninterface gi0/0\n ip address 10.0.0.3 255.255.255.0\n standby 1 ip 10.0.0.1\n standby 1 preempt</pre><p>R1, avec priorité 110 et préemption, devient et reste le routeur actif ; R2 prend le relais en cas de panne. Les PC gardent 10.0.0.1 comme passerelle sans rien changer.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j11", title: "Un HSRP prioritaire avec préemption", level: 2,
+    statement: "Sur l'interface <code>Gi0/0</code> (IP réelle 10.0.0.2/24) d'un routeur Cisco, configure le groupe HSRP <strong>1</strong> : IP virtuelle <code>10.0.0.1</code>, priorité <code>110</code>, préemption activée et version 2. Explique en une phrase pourquoi la préemption est nécessaire.",
+    hints: [
+      "L'IP virtuelle se définit avec standby 1 ip 10.0.0.1.",
+      "La priorité et la préemption ont chacune leur commande standby 1 ...",
+      "Sans préemption, un routeur ne reprend pas le rôle actif malgré une priorité plus haute."
+    ],
+    solution: "interface Gi0/0\n ip address 10.0.0.2 255.255.255.0\n standby 1 ip 10.0.0.1\n standby 1 priority 110\n standby 1 preempt\n standby 1 version 2\n!\n# La preemption est necessaire car, sans elle, un routeur qui redemarre\n# ne reprend pas le role actif meme si sa priorite (110) est la plus haute :\n# celui qui a pris le relais le conserverait.",
+    note: "Priorité par défaut = 100 ; la plus haute gagne, à égalité c'est la plus grande IP." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

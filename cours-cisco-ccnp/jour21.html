@@ -1,0 +1,100 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "Les ACL avancées et le contrôle d'accès",
+  subtitle: "Filtrer selon l'heure, la conversation ou le VLAN, pas seulement selon l'adresse.",
+  theory: `
+<h3>1. Rappel : ce que fait une ACL</h3>
+<p>Une <strong>ACL</strong> (Access Control List) est une liste ordonnée de règles <em>permit</em> / <em>deny</em> évaluée de haut en bas ; la première règle qui correspond décide, et une règle implicite <code>deny any</code> termine toujours la liste. Les ACL <em>standard</em> filtrent sur l'adresse source seule ; les ACL <em>étendues</em> filtrent sur source, destination, protocole et ports. Ce chapitre présente les ACL <strong>avancées</strong>, qui ajoutent une dimension : le temps, la conversation ou le VLAN.</p>
+<h3>2. Les ACL temporelles (time-based)</h3>
+<p>Une <strong>ACL temporelle</strong> n'est active que pendant certaines plages horaires, définies par un objet <strong>time-range</strong>. Exemple typique : autoriser l'accès à Internet aux stagiaires seulement pendant les heures ouvrables. On crée un time-range (périodique ou absolu), puis on le rattache à une entrée d'ACL par le mot-clé <code>time-range</code>.</p>
+<pre class="pseudo"># ACL temporelle : ouvrir un accès uniquement en semaine, 8h-18h
+time-range HEURES-BUREAU
+ periodic weekdays 08:00 to 18:00
+!
+ip access-list extended STAGIAIRES
+ permit tcp 10.1.0.0 0.0.255.255 any eq 80 time-range HEURES-BUREAU
+ deny   ip any any</pre>
+<h3>3. Les ACL réflexives (reflexive)</h3>
+<p>Une <strong>ACL réflexive</strong> autorise le trafic de retour d'une conversation initiée depuis l'intérieur, sans ouvrir la porte au trafic entrant non sollicité. Concrètement, quand un poste interne ouvre une session sortante, une entrée temporaire est créée <em>en miroir</em> (les adresses et ports sources/destinations sont inversés) pour laisser revenir uniquement les réponses. C'est un embryon de pare-feu à états (stateful) réalisé avec des ACL. On les construit avec le mot-clé <code>reflect</code> (côté sortie) et <code>evaluate</code> (côté entrée).</p>
+<pre class="pseudo"># ACL réflexive : ne laisser rentrer que les réponses aux sessions internes
+ip access-list extended SORTIE
+ permit tcp any any reflect TRAFIC-RETOUR
+ip access-list extended ENTREE
+ evaluate TRAFIC-RETOUR
+ deny ip any any</pre>
+<div class="tip">Différence clé : une ACL étendue ordinaire est statique (elle ne « connaît » pas les sessions) ; une ACL réflexive crée dynamiquement des entrées miroir pour le retour. Elle rend le filtrage sensible à l'état de la conversation.</div>
+<h3>4. Les VACL (VLAN Access-Maps)</h3>
+<p>Les ACL classiques filtrent le trafic <em>routé</em> qui traverse une interface. Mais que faire du trafic <strong>à l'intérieur d'un même VLAN</strong>, qui est commuté et ne passe par aucune interface routée ? On utilise une <strong>VACL</strong> (VLAN Access Control List), configurée via une <code>vlan access-map</code> : elle filtre tout le trafic du VLAN, y compris les échanges entre deux machines du même sous-réseau. Une VACL associe une ACL de correspondance à une action <code>forward</code> ou <code>drop</code>, puis on l'applique au VLAN avec <code>vlan filter</code>.</p>
+<pre class="pseudo"># VACL : bloquer un protocole même à l'intérieur du VLAN 10
+vlan access-map BLOQUE-TELNET 10
+ match ip address ACL-TELNET
+ action drop
+vlan access-map BLOQUE-TELNET 20
+ action forward
+!
+vlan filter BLOQUE-TELNET vlan-list 10</pre>
+<h3>5. Le contrôle des accès d'infrastructure (iACL)</h3>
+<p>Pour protéger les équipements du réseau eux-mêmes, on déploie des <strong>ACL d'infrastructure</strong> (iACL, Infrastructure ACL) placées en bordure : elles n'autorisent le trafic vers les <em>adresses des routeurs et liens internes</em> que depuis des sources légitimes, et bloquent le reste. On complète par des ACL <strong>anti-usurpation</strong> (anti-spoofing) qui rejettent en entrée les paquets prétendant venir de plages privées ou internes. Ces ACL de contrôle d'infrastructure travaillent main dans la main avec le CoPP (jour 20) : l'iACL filtre au plus loin, le CoPP protège le CPU au plus près.</p>
+<div class="warn">N'oublie jamais le <code>deny any</code> implicite en fin d'ACL : si tu ajoutes uniquement des permit pour le trafic d'infrastructure, tout le reste tombe. Pense à laisser passer le trafic transit légitime, sinon tu coupes le réseau. Et ordonne bien tes entrées : la première qui correspond gagne.</p></div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># ACL avancées :
+#  - temporelle  : active selon un time-range (periodic / absolute)
+#  - réflexive   : autorise le RETOUR des sessions internes (reflect/evaluate)
+#  - VACL        : filtre le trafic DANS un VLAN (vlan access-map + vlan filter)
+#  - iACL        : protège les adresses d'infrastructure (bordure)
+#  - anti-spoofing : rejette les sources usurpées en entrée
+# Toujours : évaluation top-down, deny any implicite en fin de liste.</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel type d'ACL n'est actif que pendant certaines plages horaires ?", opts: ["ACL réflexive", "ACL temporelle (time-based)", "VACL", "ACL standard"], a: 1, exp: "L'ACL temporelle s'appuie sur un time-range pour n'être active qu'à certaines heures." },
+    { type: "qcm", q: "Quel objet définit les plages horaires d'une ACL temporelle ?", opts: ["time-range", "schedule", "clock-map", "cron"], a: 0, exp: "On crée un time-range (periodic ou absolute) puis on le rattache à l'entrée d'ACL." },
+    { type: "vf", q: "Une ACL réflexive laisse revenir le trafic de retour des sessions initiées depuis l'intérieur.", a: true, exp: "Vrai : elle crée des entrées miroir dynamiques pour les réponses, façon pare-feu à états." },
+    { type: "input", q: "Quel mot-clé, côté ACL de sortie, crée l'entrée réflexive de retour ? (un mot)", a: ["reflect"], ph: "un mot IOS", exp: "reflect (sortie) crée l'entrée miroir ; evaluate (entrée) l'exploite." },
+    { type: "qcm", q: "Quel type d'ACL filtre le trafic échangé À L'INTÉRIEUR d'un même VLAN ?", opts: ["ACL standard", "VACL (VLAN access-map)", "ACL réflexive", "iACL"], a: 1, exp: "La VACL filtre le trafic commuté du VLAN, y compris entre machines du même sous-réseau." },
+    { type: "qcm", q: "Comment applique-t-on une vlan access-map à un VLAN ?", opts: ["ip access-group", "vlan filter", "service-policy", "switchport access"], a: 1, exp: "vlan filter NOM vlan-list N applique la VACL au(x) VLAN(s) concerné(s)." },
+    { type: "vf", q: "Une ACL étendue ordinaire connaît l'état des conversations en cours.", a: false, exp: "Non : elle est statique. C'est l'ACL réflexive qui rend le filtrage sensible à l'état." },
+    { type: "input", q: "Quel mot-clé, côté ACL d'entrée, exploite les entrées réflexives créées à la sortie ? (un mot)", a: ["evaluate"], ph: "un mot IOS", exp: "evaluate NOM active le retour des sessions référencées par reflect." },
+    { type: "qcm", q: "À quoi sert une ACL d'infrastructure (iACL) ?", opts: ["à accélérer le routage", "à n'autoriser le trafic vers les adresses des équipements que depuis des sources légitimes", "à créer des VLAN", "à chiffrer les mots de passe"], a: 1, exp: "L'iACL, placée en bordure, protège les adresses d'infrastructure du trafic illégitime." },
+    { type: "vf", q: "Toute ACL se termine par un deny any implicite.", a: true, exp: "Vrai : ce qui n'est pas explicitement autorisé est rejeté en fin de liste." },
+    { type: "input", q: "Comment appelle-t-on les ACL qui rejettent en entrée les paquets prétendant venir d'adresses internes ou privées ? Réponds : anti-…", a: ["spoofing", "usurpation", "anti-spoofing", "anti-usurpation"], ph: "un mot", exp: "Les ACL anti-spoofing (anti-usurpation) bloquent les sources falsifiées." },
+    { type: "qcm", q: "Dans une ACL, quelle règle décide du sort d'un paquet ?", opts: ["la dernière qui correspond", "la première qui correspond (top-down)", "celle avec le plus petit numéro de port", "une au hasard"], a: 1, exp: "L'évaluation est descendante : la première entrée correspondante s'applique, puis on arrête." },
+    { type: "qcm", q: "Dans une vlan access-map, quelles sont les deux actions possibles ?", opts: ["permit / deny", "forward / drop", "allow / block", "in / out"], a: 1, exp: "Une VACL fait forward (laisser passer) ou drop (jeter) selon la correspondance." },
+    { type: "input", q: "Quel mot-clé de time-range définit une plage répétée chaque semaine (ex. weekdays 08:00-18:00) ?", a: ["periodic"], ph: "un mot IOS", exp: "periodic définit des plages récurrentes ; absolute définit une plage unique datée." },
+    { type: "qcm", q: "iACL et CoPP sont complémentaires car…", opts: ["ils font exactement la même chose", "l'iACL filtre au plus loin (bordure), le CoPP protège le CPU au plus près", "l'un remplace l'autre", "ils s'appliquent tous deux aux VLAN"], a: 1, exp: "Défense en profondeur : filtrage en bordure (iACL) + protection du plan de contrôle (CoPP)." }
+  ],
+  final: {
+    title: "Exercice final — Choisir la bonne ACL",
+    intro: "<p>Pour chaque besoin d'une PME, tu dois choisir le type d'ACL avancée adapté et savoir le configurer dans les grandes lignes.</p>",
+    questions: [
+      { type: "qcm", q: "« Les stagiaires n'accèdent au web que de 8h à 18h. » On utilise…", opts: ["une VACL", "une ACL temporelle (time-range)", "une ACL réflexive", "une iACL"], a: 1, exp: "La contrainte horaire appelle un time-range rattaché à l'ACL." },
+      { type: "qcm", q: "« Bloquer Telnet entre deux PC du même VLAN 10. » On utilise…", opts: ["une ACL standard sur Gi0/0", "une VACL (vlan access-map + vlan filter)", "une ACL temporelle", "un CoPP"], a: 1, exp: "Le trafic intra-VLAN n'est pas routé : seule une VACL peut le filtrer." },
+      { type: "input", q: "« Ne laisser revenir que les réponses aux sessions ouvertes de l'intérieur. » Quel type d'ACL ? (un mot)", a: ["reflexive", "réflexive", "reflexive acl"], ph: "type d'ACL", exp: "Une ACL réflexive (reflect/evaluate) autorise le trafic de retour." },
+      { type: "vf", q: "Une iACL placée en bordure aide à protéger les adresses des routeurs eux-mêmes.", a: true, exp: "Oui : l'iACL n'autorise le trafic vers l'infrastructure que depuis des sources légitimes." },
+      { type: "qcm", q: "Dans toutes ces ACL, que ne faut-il jamais oublier ?", opts: ["le deny any implicite en fin de liste", "de désactiver le routage", "de retirer les VLAN", "de couper SSH"], a: 0, exp: "Le deny any implicite peut couper tout le trafic non explicitement autorisé." }
+    ],
+    solution: "<pre class=\"pseudo\"># Récapitulatif des choix\nHoraire (8h-18h)        -> ACL temporelle : time-range periodic + mot-clé time-range\nIntra-VLAN (même VLAN)  -> VACL : vlan access-map + vlan filter\nRetour des sessions     -> ACL réflexive : reflect (sortie) / evaluate (entrée)\nProtéger l'infra        -> iACL en bordure + anti-spoofing\n\n# Toujours : évaluation top-down, deny any implicite en fin.</pre><p>Le bon réflexe : identifier la dimension du besoin (temps, conversation, VLAN, infrastructure) pour choisir l'ACL avancée qui convient.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j21", title: "La bonne ACL pour chaque besoin", level: 2,
+    statement: "Décris en quelques lignes ce que fait chacune de ces ACL avancées et donne un cas d'usage : <strong>ACL temporelle</strong>, <strong>ACL réflexive</strong>, <strong>VACL</strong>. Précise aussi la règle implicite présente en fin de toute ACL.",
+    hints: [
+      "Temporelle = filtrage selon l'heure (time-range).",
+      "Réflexive = laisse revenir le trafic de retour des sessions internes.",
+      "VACL = filtre le trafic à l'intérieur d'un même VLAN."
+    ],
+    solution: "# ACL temporelle :\n#   -> active seulement pendant des plages horaires (time-range periodic/absolute)\n#   -> cas : autoriser le web aux stagiaires uniquement 8h-18h en semaine\n#\n# ACL reflexive :\n#   -> cree des entrees miroir pour laisser revenir le trafic de retour\n#      des sessions initiees depuis l'interieur (reflect / evaluate)\n#   -> cas : bloquer tout entrant sauf les reponses aux connexions sortantes\n#\n# VACL (vlan access-map) :\n#   -> filtre le trafic commute A L'INTERIEUR d'un meme VLAN (forward/drop)\n#   -> cas : interdire Telnet entre deux PC du VLAN 10\n#\n# Regle implicite : toute ACL se termine par un 'deny any' implicite.",
+    note: "L'evaluation est toujours descendante (top-down) : la premiere entree qui correspond decide." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

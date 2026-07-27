@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 10</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 10,
+  title: "STP avancé (Rapid PVST+, MST)",
+  subtitle: "Éviter les boucles en couche 2 sans sacrifier la vitesse ni la stabilité.",
+  theory: `
+<h3>1. Pourquoi le Spanning Tree existe</h3>
+<p>En couche 2, une trame de diffusion (« broadcast ») recopiée en boucle sur des liens redondants provoque une <strong>tempête de broadcast</strong> qui sature le réseau en quelques secondes. Le <strong>STP</strong> (« Spanning Tree Protocol », IEEE 802.1D) construit un arbre logique sans boucle en bloquant certains liens, tout en les gardant prêts à réactiver si un chemin tombe. Le commutateur avec le plus petit <strong>bridge ID</strong> (priorité + adresse MAC) devient la <strong>racine</strong> (« root bridge »).</p>
+<h3>2. Rapid PVST+ : la version rapide et par VLAN</h3>
+<p>Le STP historique met jusqu'à 50 secondes à converger. Le <strong>RSTP</strong> (« Rapid STP », 802.1w) réduit cela à quelques secondes. Cisco l'implémente en <strong>Rapid PVST+</strong> : une instance RSTP <em>par VLAN</em> (« Per-VLAN Spanning Tree Plus »), ce qui permet d'équilibrer les liens selon les VLAN.</p>
+<pre class="pseudo">Switch(config)# spanning-tree mode rapid-pvst
+Switch(config)# spanning-tree vlan 20 root primary   ! force la racine du VLAN 20
+Switch(config)# spanning-tree vlan 20 priority 4096   ! priorite (multiples de 4096)</pre>
+<h3>3. Rôles et états sous RSTP</h3>
+<p>RSTP définit des <strong>rôles</strong> de port : <strong>root</strong> (meilleur chemin vers la racine), <strong>designated</strong> (désigné pour un segment), <strong>alternate</strong> (chemin de secours vers la racine, bloqué) et <strong>backup</strong> (secours d'un port désigné sur le même segment). Surtout, RSTP simplifie les <strong>états</strong> à trois seulement :</p>
+<pre class="pseudo"># discarding : le port n'apprend rien et ne transmet pas (bloque)
+# learning   : il apprend les adresses MAC mais ne transmet pas encore
+# forwarding : il transmet normalement le trafic
+# (802.1D avait 5 etats : disabled, blocking, listening, learning, forwarding)</pre>
+<div class="tip">RSTP accélère la convergence grâce aux <strong>liens edge</strong> (ports d'accès en PortFast passant direct en forwarding) et à la négociation <strong>proposal/agreement</strong> entre commutateurs, qui remplace les temporisateurs d'attente.</div>
+<h3>4. MST : mutualiser les instances</h3>
+<p>Avec Rapid PVST+, 500 VLAN = 500 instances : gourmand en CPU. Le <strong>MST</strong> (« Multiple Spanning Tree », 802.1s) regroupe plusieurs VLAN dans un nombre réduit d'<strong>instances</strong> (MSTI). On mappe par exemple les VLAN pairs sur l'instance 1 et les impairs sur l'instance 2, et on obtient deux arbres seulement. Tous les commutateurs d'une même <strong>région MST</strong> doivent partager le même <strong>nom de région</strong>, le même <strong>numéro de révision</strong> et le même <strong>mapping VLAN vers instance</strong>.</p>
+<pre class="pseudo">Switch(config)# spanning-tree mode mst
+Switch(config)# spanning-tree mst configuration
+Switch(config-mst)# name REGION1
+Switch(config-mst)# revision 1
+Switch(config-mst)# instance 1 vlan 10,20,30
+Switch(config-mst)# instance 2 vlan 40,50,60</pre>
+<div class="warn">Un simple écart (nom, révision ou mapping différent) place le commutateur dans une AUTRE région MST : la mutualisation attendue ne se produit pas. Vérifie la cohérence des trois paramètres sur tous les commutateurs.</div>
+<h3>5. Les protections STP</h3>
+<p>Des mécanismes protègent l'arbre contre les erreurs et les attaques :</p>
+<pre class="pseudo"># BPDU Guard : sur un port d'acces (PortFast), coupe le port s'il recoit un BPDU
+#              -> empeche de brancher un switch pirate sur un port utilisateur
+Switch(config-if)# spanning-tree portfast
+Switch(config-if)# spanning-tree bpduguard enable
+# Root Guard : sur un port designe, refuse qu'un voisin devienne racine (met en root-inconsistent)
+Switch(config-if)# spanning-tree guard root
+# Loop Guard : evite qu'un port bloque passe en forwarding si les BPDU disparaissent
+Switch(config-if)# spanning-tree guard loop</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Rapid PVST+ : RSTP (802.1w) une instance PAR VLAN, convergence rapide
+# Roles RSTP  : root / designated / alternate / backup
+# Etats RSTP  : discarding / learning / forwarding (3 etats)
+# MST (802.1s): regroupe des VLAN en instances -> region = nom + revision + mapping identiques
+# BPDU Guard  : coupe un port d'acces qui recoit un BPDU
+# Root Guard  : empeche un voisin de devenir racine sur un port designe</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel problème le Spanning Tree empêche-t-il ?", opts: ["La fragmentation IP", "Les tempêtes de broadcast dues aux boucles de couche 2", "La perte de VLAN", "Les collisions half-duplex"], a: 1, exp: "STP bloque les liens redondants pour éviter les boucles et donc les tempêtes de broadcast." },
+    { type: "qcm", q: "Quel standard IEEE définit le Rapid STP ?", opts: ["802.1D", "802.1w", "802.1s", "802.1Q"], a: 1, exp: "802.1w = RSTP (Rapid). 802.1D = STP classique, 802.1s = MST." },
+    { type: "qcm", q: "Combien d'états de port RSTP existe-t-il et lesquels ?", opts: ["5 : disabled, blocking, listening, learning, forwarding", "3 : discarding, learning, forwarding", "2 : up, down", "4 : blocking, listening, learning, forwarding"], a: 1, exp: "RSTP simplifie à 3 états : discarding, learning, forwarding." },
+    { type: "qcm", q: "Quel rôle de port RSTP correspond au meilleur chemin d'un commutateur vers la racine ?", opts: ["designated", "alternate", "root", "backup"], a: 2, exp: "Le port root est celui offrant le meilleur coût vers la racine." },
+    { type: "qcm", q: "Quel est l'intérêt principal de MST par rapport à Rapid PVST+ ?", opts: ["Il chiffre les BPDU", "Il regroupe plusieurs VLAN dans peu d'instances pour économiser le CPU", "Il supprime les boucles physiques", "Il double la bande passante"], a: 1, exp: "MST mutualise les VLAN en quelques instances, réduisant la charge." },
+    { type: "qcm", q: "Que fait BPDU Guard sur un port d'accès qui reçoit un BPDU ?", opts: ["Il l'ignore", "Il place le port en err-disabled (le coupe)", "Il devient racine", "Il passe le port en trunk"], a: 1, exp: "BPDU Guard désactive (err-disable) le port pour bloquer un switch non autorisé." },
+    { type: "vf", q: "Sous RSTP, un port alternate est un chemin de secours vers la racine, actuellement bloqué.", a: true, exp: "Le port alternate garde un chemin de repli vers la racine, en état discarding." },
+    { type: "vf", q: "Rapid PVST+ crée une seule instance de spanning tree pour tous les VLAN.", a: false, exp: "Rapid PVST+ crée une instance PAR VLAN ; c'est MST qui les regroupe." },
+    { type: "vf", q: "Deux commutateurs avec un nom de région MST différent appartiennent quand même à la même région.", a: false, exp: "Nom, révision et mapping doivent être identiques ; sinon ce sont des régions distinctes." },
+    { type: "vf", q: "Root Guard empêche un voisin de devenir root bridge sur un port désigné.", a: true, exp: "Root Guard met le port en root-inconsistent si un BPDU supérieur arrive, protégeant la racine." },
+    { type: "input", q: "Quel commutateur devient racine (root bridge) ? Celui avec le plus … bridge ID.", a: ["petit", "faible", "bas", "plus petit"], ph: "petit ou grand ?", exp: "Le plus petit bridge ID (priorité + MAC) devient racine." },
+    { type: "input", q: "Dans l'état RSTP où le port apprend les adresses MAC sans transmettre, on parle d'état…", a: ["learning", "apprentissage"], ph: "un mot", exp: "L'état learning apprend les MAC mais ne transmet pas encore." },
+    { type: "input", q: "Par quel pas (multiple) se règle la priorité STP d'un VLAN sur Cisco ?", a: ["4096", "4 096"], ph: "un nombre", exp: "La priorité STP se configure par multiples de 4096." },
+    { type: "input", q: "Quelle commande IOS passe le commutateur en mode Rapid PVST+ ?", a: ["spanning-tree mode rapid-pvst", "mode rapid-pvst", "rapid-pvst"], ph: "spanning-tree mode ...", exp: "spanning-tree mode rapid-pvst active le RSTP par VLAN." },
+    { type: "input", q: "Quel standard IEEE définit MST ?", a: ["802.1s", "8021s", "ieee 802.1s"], ph: "802.1...", exp: "802.1s définit le Multiple Spanning Tree." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir une couche 2 rapide et protégée",
+    intro: "<p>Deux commutateurs d'accès et un cœur redondant hébergent les VLAN 10, 20, 30, 40. Tu veux une convergence rapide, un équilibrage de charge par instances, et une protection contre les branchements sauvages.</p>",
+    questions: [
+      { type: "qcm", q: "Pour équilibrer 4 VLAN sur deux arbres tout en limitant le CPU, tu choisis…", opts: ["STP classique 802.1D", "MST avec 2 instances", "Une seule instance globale", "Désactiver le spanning tree"], a: 1, exp: "MST avec deux instances offre deux arbres équilibrés sans une instance par VLAN." },
+      { type: "input", q: "Quels trois paramètres doivent être identiques pour que les commutateurs soient dans la même région MST ?", a: ["nom revision mapping", "nom, revision et mapping", "name revision instance", "nom revision instance"], ph: "trois éléments", exp: "Nom de région, numéro de révision et mapping VLAN vers instance." },
+      { type: "qcm", q: "Sur les ports utilisateurs en PortFast, quelle protection éviter un switch pirate ?", opts: ["Root Guard", "BPDU Guard", "Loop Guard", "UDLD"], a: 1, exp: "BPDU Guard coupe le port d'accès qui reçoit un BPDU inattendu." },
+      { type: "vf", q: "Sur les liens vers les commutateurs d'accès, Root Guard empêche l'un d'eux de s'imposer comme racine.", a: true, exp: "Root Guard protège le placement de la racine sur le cœur." },
+      { type: "qcm", q: "Grâce à quel mécanisme RSTP converge-t-il sans attendre de longs temporisateurs ?", opts: ["Le broadcast storm", "La négociation proposal/agreement et les liens edge", "Le VTP pruning", "Le DTP"], a: 1, exp: "Proposal/agreement et PortFast (edge) rendent la convergence quasi immédiate." }
+    ],
+    solution: "<pre class=\"pseudo\">! Coeur : mode MST, region coherente\nspanning-tree mode mst\nspanning-tree mst configuration\n name REGION1\n revision 1\n instance 1 vlan 10,30\n instance 2 vlan 20,40\n!\n! Racines equilibrees\nspanning-tree mst 1 root primary\nspanning-tree mst 2 root secondary\n!\n! Ports utilisateurs (acces)\ninterface range gi0/1-24\n spanning-tree portfast\n spanning-tree bpduguard enable\n!\n! Liens vers acces (cote coeur)\ninterface gi1/0/1\n spanning-tree guard root</pre><p>MST donne deux arbres équilibrés dans une région cohérente ; BPDU Guard protège les ports d'accès et Root Guard verrouille la place de la racine sur le cœur.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j10", title: "Une région MST cohérente et protégée", level: 2,
+    statement: "Écris la configuration Cisco IOS qui : passe le commutateur en <strong>mode MST</strong>, crée la région <code>REGION1</code> révision <code>1</code> avec l'instance 1 (VLAN 10,20) et l'instance 2 (VLAN 30,40). Ajoute sur l'interface d'accès <code>Gi0/5</code> le <strong>PortFast</strong> et le <strong>BPDU Guard</strong>.",
+    hints: [
+      "Le mode se change avec spanning-tree mode mst.",
+      "Le mapping se fait sous spanning-tree mst configuration avec name, revision et instance ... vlan ...",
+      "Sur le port d'accès : spanning-tree portfast puis spanning-tree bpduguard enable."
+    ],
+    solution: "spanning-tree mode mst\n!\nspanning-tree mst configuration\n name REGION1\n revision 1\n instance 1 vlan 10,20\n instance 2 vlan 30,40\n exit\n!\ninterface Gi0/5\n switchport mode access\n spanning-tree portfast\n spanning-tree bpduguard enable",
+    note: "Nom, révision et mapping VLAN doivent être identiques sur tous les commutateurs de la région, sinon MST ne mutualise pas." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

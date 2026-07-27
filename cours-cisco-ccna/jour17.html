@@ -1,0 +1,93 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Le protocole OSPF (single-area)",
+  subtitle: "Un plan du réseau partagé par tous : chaque routeur calcule lui-même le chemin le plus court.",
+  theory: `
+<h3>1. Pourquoi OSPF ? Le principe « état de lien »</h3>
+<p><strong>OSPF</strong> (« Open Shortest Path First ») est un protocole de routage <strong>interne</strong> (IGP) de type <strong>état de lien</strong> (en anglais <em>link-state</em>). Contrairement à un protocole à vecteur de distance qui répète « ce que disent les voisins », chaque routeur OSPF construit une <strong>carte complète</strong> de la topologie et calcule ensuite lui-même le meilleur chemin. C'est comme si chaque routeur possédait le plan entier du métro et choisissait son itinéraire, au lieu de demander la direction à chaque station.</p>
+<p>Chaque routeur décrit ses liens dans des annonces appelées <strong>LSA</strong> (« Link-State Advertisement »). Toutes ces LSA sont stockées dans une base commune, la <strong>LSDB</strong> (« Link-State Database »), identique sur tous les routeurs d'une même aire. À partir de cette base, l'algorithme <strong>SPF</strong> de Dijkstra calcule l'arbre des plus courts chemins.</p>
+<h3>2. Distance administrative et métrique « cost »</h3>
+<p>Quand plusieurs sources proposent une route, IOS choisit d'abord selon la <strong>distance administrative</strong> (AD) : la plus faible gagne. La distance administrative d'OSPF est <strong>110</strong> (à comparer : EIGRP interne 90, RIP 120, statique 1). À AD égale, OSPF départage avec sa <strong>métrique</strong> : le <strong>coût</strong> (en anglais <em>cost</em>), qui s'additionne le long du chemin. Le coût le plus bas gagne.</p>
+<pre class="pseudo"># Formule Cisco par defaut :
+cost = bande_passante_reference / bande_passante_du_lien
+# reference par defaut = 100 Mbit/s (100 000 000 bit/s)
+#   FastEthernet 100 Mbit/s -> cout 1
+#   Serial 1544 kbit/s      -> cout ~64
+# On peut changer la reference : auto-cost reference-bandwidth (en Mbit/s)</pre>
+<div class="tip">Le coût OSPF est <strong>inversement proportionnel</strong> à la bande passante : plus un lien est rapide, plus son coût est faible, donc plus il est attractif.</div>
+<h3>3. Le Router-ID : la carte d'identité du routeur</h3>
+<p>Chaque routeur OSPF possède un identifiant unique de 32 bits qui ressemble à une adresse IP : le <strong>Router-ID</strong> (RID). Ordre de sélection : (1) un RID configuré manuellement par <code>router-id</code> ; sinon (2) la plus haute adresse IP d'une interface <strong>loopback</strong> active ; sinon (3) la plus haute adresse IP d'une interface physique active. Le RID est fixé au démarrage du processus et ne change pas tant que le processus n'est pas relancé.</p>
+<div class="warn">On recommande de <strong>fixer le Router-ID</strong> (ou d'utiliser une loopback) : sinon un simple changement d'adresse ou l'extinction d'une interface peut modifier le RID au prochain redémarrage du processus, ce qui perturbe la supervision.</div>
+<h3>4. L'aire 0, dorsale du réseau</h3>
+<p>OSPF organise le réseau en <strong>aires</strong> (en anglais <em>areas</em>) pour limiter la taille de la base et le recalcul SPF. L'<strong>aire 0</strong> est spéciale : c'est la <strong>dorsale</strong> (en anglais <em>backbone</em>). Toutes les autres aires doivent s'y connecter. En « single-area », tout le monde est simplement dans l'aire 0, ce qui simplifie l'étude. L'aire s'écrit <code>area 0</code> ou <code>area 0.0.0.0</code>.</p>
+<h3>5. DR et BDR sur les réseaux à accès multiple</h3>
+<p>Sur un segment Ethernet partagé (réseau <em>broadcast</em> à accès multiple), faire dialoguer chaque routeur avec tous les autres créerait trop d'adjacences. OSPF élit donc un <strong>DR</strong> (« Designated Router ») et un <strong>BDR</strong> (« Backup Designated Router ») : les autres routeurs (DROTHER) ne nouent une adjacence complète qu'avec le DR et le BDR. L'élection compare d'abord la <strong>priorité d'interface</strong> (0 à 255, la plus haute gagne ; <strong>0 = jamais DR</strong>) puis, à égalité, le <strong>Router-ID le plus élevé</strong>. Les paquets OSPF échangés avec le DR utilisent l'adresse multicast <strong>224.0.0.6</strong> ; les Hello généraux utilisent <strong>224.0.0.5</strong>.</p>
+<div class="tip">Sur une liaison point-à-point (deux routeurs seulement), il n'y a <strong>pas</strong> d'élection DR/BDR : c'est inutile.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># OSPF = link-state, IGP, algorithme SPF (Dijkstra)
+# Distance administrative OSPF = 110
+# Metrique = COST = 100 Mbit/s / bande passante du lien (plus bas = meilleur)
+# Router-ID : manuel > loopback la + haute > interface physique la + haute
+# Aire 0 = backbone (dorsale) ; toutes les aires s'y raccordent
+# DR/BDR sur reseau broadcast : priorite (0-255) puis RID le + haut ; prio 0 = jamais DR
+# Multicast : Hello 224.0.0.5 ; vers le DR 224.0.0.6</pre>`,
+  exercises: [
+    { type: "qcm", q: "OSPF appartient à quelle famille de protocoles de routage ?", opts: ["Vecteur de distance", "État de lien (link-state)", "Routage statique", "Protocole de passerelle externe (BGP)"], a: 1, exp: "OSPF est un protocole à état de lien : chaque routeur construit une carte complète puis calcule SPF." },
+    { type: "qcm", q: "Quelle est la distance administrative d'OSPF sur Cisco IOS ?", opts: ["90", "100", "110", "120"], a: 2, exp: "OSPF a une AD de 110 (EIGRP interne 90, RIP 120)." },
+    { type: "qcm", q: "Comment se calcule le coût OSPF par défaut d'un lien ?", opts: ["Bande passante du lien / 100", "100 Mbit/s / bande passante du lien", "Nombre de sauts × 10", "Délai + charge"], a: 1, exp: "Coût = bande passante de référence (100 Mbit/s par défaut) / bande passante du lien." },
+    { type: "vf", q: "Un lien à plus haute bande passante a un coût OSPF plus faible.", a: true, exp: "Le coût est inversement proportionnel à la bande passante : plus rapide = coût plus bas = plus attractif." },
+    { type: "qcm", q: "Quel algorithme OSPF utilise-t-il pour calculer les plus courts chemins ?", opts: ["Bellman-Ford", "Dijkstra (SPF)", "Diffusing Update (DUAL)", "Spanning Tree"], a: 1, exp: "OSPF exécute l'algorithme SPF de Dijkstra sur la LSDB." },
+    { type: "input", q: "Comment appelle-t-on la base de données identique sur tous les routeurs d'une aire OSPF (sigle) ?", a: ["lsdb", "link-state database", "base d'etat de lien"], ph: "un sigle", exp: "La LSDB (Link-State Database) est synchronisée dans toute l'aire." },
+    { type: "qcm", q: "Quelle aire OSPF joue le rôle de dorsale (backbone) ?", opts: ["Aire 1", "Aire 255", "Aire 0", "Aire 100"], a: 2, exp: "L'aire 0 (0.0.0.0) est la dorsale ; toutes les autres aires doivent s'y raccorder." },
+    { type: "vf", q: "Une interface avec une priorité OSPF de 0 ne peut jamais devenir DR ni BDR.", a: true, exp: "Priorité 0 signifie que l'interface est écartée de l'élection DR/BDR." },
+    { type: "qcm", q: "Sur un segment broadcast, comment se départage l'élection du DR à priorités égales ?", opts: ["Adresse MAC la plus basse", "Router-ID le plus élevé", "Interface la plus rapide", "Ordre alphabétique du nom"], a: 1, exp: "À priorité égale, le Router-ID le plus élevé l'emporte pour devenir DR." },
+    { type: "input", q: "Quelle adresse multicast OSPF est utilisée pour les paquets Hello généraux (AllSPFRouters) ?", a: ["224.0.0.5", "224005"], ph: "224.0.0.x", exp: "224.0.0.5 = tous les routeurs OSPF (Hello) ; 224.0.0.6 = DR/BDR." },
+    { type: "qcm", q: "Ordre de sélection du Router-ID lorsqu'aucun n'est configuré ?", opts: ["Interface physique la plus haute puis loopback", "Loopback la plus haute, sinon interface physique la plus haute", "Adresse MAC la plus basse", "Toujours 0.0.0.0"], a: 1, exp: "Sans router-id manuel : plus haute IP de loopback active, sinon plus haute IP d'interface physique active." },
+    { type: "vf", q: "Sur une liaison point-à-point entre deux routeurs, OSPF élit un DR et un BDR.", a: false, exp: "Non : sur du point-à-point, l'élection DR/BDR est inutile et n'a pas lieu." },
+    { type: "input", q: "Comment appelle-t-on l'annonce décrivant les liens d'un routeur en OSPF (sigle de 3 lettres) ?", a: ["lsa", "link-state advertisement"], ph: "un sigle", exp: "Une LSA (Link-State Advertisement) décrit les liens et est inondée dans l'aire." },
+    { type: "qcm", q: "Que signifie une distance administrative plus faible ?", opts: ["Une route moins fiable", "Une source de route plus digne de confiance, préférée", "Un coût plus élevé", "Un chemin plus long"], a: 1, exp: "L'AD classe la fiabilité des sources : la plus basse est préférée avant même de comparer les métriques." },
+    { type: "qcm", q: "Un routeur avec priorité par défaut mais le RID le plus haut sur un segment Ethernet devient probablement…", opts: ["DROTHER", "Le DR", "Inactif", "Un routeur externe"], a: 1, exp: "Priorités égales par défaut : le RID le plus élevé remporte le rôle de DR." }
+  ],
+  final: {
+    title: "Exercice final — Comprendre une topologie OSPF single-area",
+    intro: `<p>Trois routeurs R1, R2, R3 sont tous dans l'<strong>aire 0</strong>. R1 a une loopback 1.1.1.1, R2 une loopback 2.2.2.2, R3 une loopback 3.3.3.3. Aucun <code>router-id</code> n'est configuré manuellement. R1 et R2 partagent un segment Ethernet commun ; R2 et R3 sont reliés par une liaison série point-à-point. Toutes les priorités d'interface sont à leur valeur par défaut.</p>`,
+    questions: [
+      { type: "input", q: "Quel sera le Router-ID de R3 ?", a: ["3.3.3.3", "3333"], ph: "a.b.c.d", exp: "Sans router-id manuel, la plus haute IP de loopback est prise : 3.3.3.3." },
+      { type: "qcm", q: "Sur le segment Ethernet R1-R2, qui devient DR ?", opts: ["R1 (RID 1.1.1.1)", "R2 (RID 2.2.2.2)", "Aucun, c'est du point-à-point", "R3"], a: 1, exp: "Priorités égales : le RID le plus haut gagne, soit R2 (2.2.2.2)." },
+      { type: "vf", q: "Sur la liaison série R2-R3, une élection DR/BDR a lieu.", a: false, exp: "Non : une liaison point-à-point n'élit pas de DR/BDR." },
+      { type: "qcm", q: "Quelle est la distance administrative des routes OSPF apprises ?", opts: ["1", "90", "110", "120"], a: 2, exp: "OSPF = AD 110." },
+      { type: "qcm", q: "Comment R1 choisit-il entre deux chemins OSPF vers un même réseau ?", opts: ["Le moins de routeurs traversés", "Le coût cumulé le plus faible", "L'adresse IP la plus basse", "Le lien le plus ancien"], a: 1, exp: "OSPF additionne les coûts le long du chemin et retient le coût total le plus bas." }
+    ],
+    solution: `<pre class="pseudo"># Router-ID (aucun manuel) : plus haute loopback active
+#   R1 -> 1.1.1.1 | R2 -> 2.2.2.2 | R3 -> 3.3.3.3
+# Segment Ethernet R1-R2 : reseau broadcast -> election DR/BDR
+#   priorites egales -> RID le + haut = R2 -> DR ; R1 -> BDR
+# Liaison serie R2-R3 : point-a-point -> PAS de DR/BDR
+# Choix de route : coût OSPF cumule le plus faible (AD 110)</pre>
+<p>En single-area, tout tient dans l'aire 0 : une seule LSDB partagée, un calcul SPF par routeur, et le coût comme arbitre final.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j17", title: "Expliquer OSPF single-area", level: 2,
+    statement: "En quelques phrases, explique : (1) pourquoi OSPF est dit <strong>état de lien</strong>, (2) la valeur de sa <strong>distance administrative</strong>, (3) comment se calcule le <strong>coût</strong> par défaut, et (4) l'ordre de sélection du <strong>Router-ID</strong> quand aucun n'est configuré.",
+    hints: [
+      "Chaque routeur construit une carte complète (LSDB) puis lance SPF/Dijkstra.",
+      "AD d'OSPF = un nombre à trois chiffres commençant par 1.",
+      "Router-ID : manuel, sinon loopback la plus haute, sinon interface physique la plus haute."
+    ],
+    solution: "# 1) Etat de lien : chaque routeur decrit ses liens (LSA), tous partagent\n#    la meme base (LSDB) et calculent eux-memes le plus court chemin (SPF/Dijkstra).\n# 2) Distance administrative OSPF = 110.\n# 3) Cout = 100 Mbit/s (reference) / bande passante du lien ; plus bas = meilleur.\n# 4) Router-ID : (1) router-id manuel > (2) loopback la plus haute active\n#    > (3) interface physique la plus haute active.",
+    note: "L'aire 0 est la dorsale : en single-area tout le monde y est raccordé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

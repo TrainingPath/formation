@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 11</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 11,
+  title: "Les overlays : VXLAN / EVPN",
+  subtitle: "Étendre la couche 2 sur un cœur IP, et remplacer le flood-and-learn par du BGP.",
+  theory: `
+<h3>1. Pourquoi des overlays ?</h3>
+<p>Les datacenters modernes veulent la mobilité des machines virtuelles (déplacer une VM sans changer son IP) et la multi-tenancy à grande échelle. Le VLAN classique ne suffit plus : il est limité à <strong>4094</strong> identifiants (12 bits) et suppose un domaine de couche 2 étendu, fragile et difficile à faire grandir. La solution : un <strong>overlay</strong>, un réseau logique construit <em>par-dessus</em> un réseau physique routé IP (l'<strong>underlay</strong>). Le principe : encapsuler les trames Ethernet dans des paquets IP pour les transporter à travers un cœur uniquement routé (souvent une fabric spine-leaf en OSPF ou IS-IS/BGP).</p>
+<h3>2. Le data plane : VXLAN</h3>
+<p><strong>VXLAN</strong> (<em>Virtual eXtensible LAN</em>, RFC 7348) encapsule une trame Ethernet dans <strong>MAC-in-UDP</strong>. L'en-tête VXLAN ajoute un identifiant de segment de <strong>24 bits</strong>, le <strong>VNI</strong> (<em>VXLAN Network Identifier</em>), soit plus de <strong>16 millions</strong> de segments — à comparer aux 4094 VLAN. Le point d'entrée/sortie du tunnel s'appelle le <strong>VTEP</strong> (<em>VXLAN Tunnel EndPoint</em>) : il encapsule à l'origine et décapsule à destination. Le transport se fait en UDP sur le port de destination <strong>4789</strong> (assigné par l'IANA).</p>
+<pre class="pseudo"># Empilement d'une trame VXLAN
+[ IP/UDP exterieur (VTEP src -&gt; VTEP dst, UDP 4789) ]
+   [ En-tete VXLAN : flags + VNI (24 bits) ]
+      [ Trame Ethernet d'origine (MAC client) ]
+# 24 bits de VNI  =&gt;  16 777 216 segments possibles</pre>
+<div class="tip">L'IP source du paquet UDP externe est le VTEP d'origine, l'IP destination est le VTEP distant : le cœur ne voit que du trafic IP entre VTEP, jamais les MAC clientes. Prévoyez un MTU plus élevé (jumbo) car VXLAN ajoute ~50 octets d'en-tête.</div>
+<h3>3. Le problème du plan de contrôle : flood-and-learn</h3>
+<p>VXLAN d'origine apprenait les adresses MAC comme un switch : par inondation (BUM = Broadcast, Unknown unicast, Multicast) via du multicast dans l'underlay, puis apprentissage à la volée. C'est le <strong>flood-and-learn</strong>, simple mais peu scalable et dépendant du multicast. La réponse moderne : un vrai plan de contrôle qui distribue les MAC/IP de façon proactive, sans inondation. C'est le rôle d'EVPN.</p>
+<h3>4. Le control plane : BGP EVPN</h3>
+<p><strong>EVPN</strong> (<em>Ethernet VPN</em>, RFC 7432) est une famille d'adresses MP-BGP (<strong>L2VPN EVPN</strong>) qui distribue les informations d'accessibilité de couche 2 et 3. Au lieu d'inonder, chaque VTEP <em>annonce</em> en BGP les MAC (et IP) qu'il connaît. On gagne : suppression du flood, apprentissage de MAC via le plan de contrôle, ARP suppression, mobilité de VM, et intégration L2 + L3 (routage inter-VNI distribué). EVPN réutilise les concepts du L3VPN : <strong>Route Distinguisher</strong> et <strong>Route Targets</strong> encadrent chaque instance (EVI).</p>
+<h3>5. Les types de routes EVPN à connaître</h3>
+<p>EVPN définit plusieurs types de routes NLRI. Les incontournables :</p>
+<pre class="pseudo"># Type 2 : MAC/IP Advertisement
+#   annonce une MAC (et eventuellement son IP) derriere un VTEP.
+#   -&gt; apprentissage des hotes, ARP suppression, mobilite.
+# Type 3 : Inclusive Multicast Ethernet Tag
+#   annonce l'appartenance d'un VTEP a un VNI ; construit les listes
+#   de replication pour le trafic BUM (ingress replication).
+# Type 5 : IP Prefix Route
+#   annonce un prefixe IP (routage L3 entre subnets/VNI, prefix routing),
+#   utile pour connecter l'exterieur ou faire du routage symetrique.
+# (Type 1 : Ethernet Auto-Discovery / Type 4 : Ethernet Segment,
+#  utilises pour le multihoming ESI.)</pre>
+<div class="warn">Ne confondez pas VXLAN et EVPN. <strong>VXLAN</strong> = le data plane (comment on encapsule et transporte). <strong>EVPN</strong> = le control plane (comment on apprend et distribue les MAC/IP). On dit « VXLAN EVPN » car on combine les deux ; VXLAN peut techniquement fonctionner sans EVPN (en flood-and-learn), mais l'inverse fait perdre tout l'intérêt.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Overlay VXLAN sur underlay IP route (fabric spine-leaf)
+# VXLAN (RFC 7348) : MAC-in-UDP, port 4789, VNI 24 bits (16 M segments)
+# VTEP = point d'encapsulation/decapsulation
+# EVPN (RFC 7432) = control plane BGP (famille L2VPN EVPN), remplace le flood-and-learn
+# Routes : Type 2 (MAC/IP), Type 3 (multicast inclusif/BUM), Type 5 (prefixe IP L3)
+# Benefices EVPN : ARP suppression, mobilite VM, routage integre, RD/RT par EVI</pre>`,
+  exercises: [
+    { type: "qcm", q: "Combien de bits fait le VNI de VXLAN, et donc combien de segments ?", opts: ["12 bits, 4094", "16 bits, 65536", "24 bits, ~16 millions", "32 bits, ~4 milliards"], a: 2, exp: "Le VNI fait 24 bits, soit 16 777 216 segments, contre 4094 VLAN (12 bits)." },
+    { type: "qcm", q: "VXLAN encapsule les trames Ethernet dans…", opts: ["MAC-in-IP (GRE)", "MAC-in-UDP", "IP-in-IP", "MAC-in-TCP"], a: 1, exp: "VXLAN = MAC-in-UDP, port de destination 4789." },
+    { type: "qcm", q: "Quel port UDP de destination utilise VXLAN (IANA) ?", opts: ["4784", "4789", "6081", "8472"], a: 1, exp: "4789 est le port officiel IANA. 8472 était l'ancien port Linux, 6081 est Geneve." },
+    { type: "qcm", q: "Comment nomme-t-on le point d'encapsulation/décapsulation VXLAN ?", opts: ["VTEP", "VNI", "PE", "RP"], a: 0, exp: "VTEP = VXLAN Tunnel EndPoint." },
+    { type: "qcm", q: "Quelle famille MP-BGP porte le plan de contrôle EVPN ?", opts: ["VPNv4", "L2VPN EVPN", "IPv6 unicast", "MDT"], a: 1, exp: "EVPN utilise la famille L2VPN EVPN de MP-BGP." },
+    { type: "qcm", q: "Quel type de route EVPN annonce une adresse MAC (et son IP) d'un hôte ?", opts: ["Type 2", "Type 3", "Type 5", "Type 4"], a: 0, exp: "Type 2 = MAC/IP Advertisement ; base de l'ARP suppression et de la mobilité." },
+    { type: "vf", q: "EVPN est le plan de contrôle, VXLAN est le plan de données.", a: true, exp: "Vrai : EVPN distribue les MAC/IP (control plane), VXLAN encapsule/transporte (data plane)." },
+    { type: "vf", q: "L'objectif d'EVPN est de remplacer le flood-and-learn par un apprentissage via BGP.", a: true, exp: "Vrai : au lieu d'inonder le BUM, chaque VTEP annonce ses MAC/IP en BGP." },
+    { type: "vf", q: "La route EVPN de Type 5 sert à annoncer un préfixe IP pour le routage L3.", a: true, exp: "Vrai : Type 5 = IP Prefix Route (prefix routing, sortie/inter-subnet)." },
+    { type: "vf", q: "Dans le cœur (underlay), les switches spine voient les adresses MAC des VM clientes.", a: false, exp: "Faux : le cœur ne voit que du trafic IP entre VTEP ; les MAC clientes sont encapsulées." },
+    { type: "input", q: "Quelle RFC définit VXLAN ?", a: ["7348", "rfc 7348"], ph: "numéro RFC", exp: "RFC 7348 définit VXLAN. (RFC 7432 définit EVPN.)" },
+    { type: "input", q: "Quelle RFC définit BGP EVPN ?", a: ["7432", "rfc 7432"], ph: "numéro RFC", exp: "RFC 7432 définit EVPN (BGP MPLS-Based Ethernet VPN)." },
+    { type: "input", q: "Quel type de route EVPN construit les listes de réplication BUM (ingress replication) ?", a: ["type 3", "3", "type3"], ph: "un type", exp: "Type 3 = Inclusive Multicast Ethernet Tag : appartenance au VNI et réplication BUM." },
+    { type: "input", q: "Sigle (3 lettres) de l'identifiant de segment 24 bits de VXLAN ?", a: ["VNI", "vni"], ph: "sigle", exp: "VNI = VXLAN Network Identifier (24 bits)." },
+    { type: "input", q: "Quel acronyme regroupe le trafic Broadcast, Unknown unicast et Multicast à répliquer ?", a: ["BUM", "bum"], ph: "3 lettres", exp: "BUM = Broadcast, Unknown unicast, Multicast." }
+  ],
+  final: {
+    title: "Exercice final — Migrer du flood-and-learn vers EVPN",
+    intro: `<p>Une fabric VXLAN fonctionne en flood-and-learn avec multicast dans l'underlay. Les équipes constatent une inondation excessive et veulent la mobilité des VM. Vous proposez de passer à un plan de contrôle BGP EVPN.</p>`,
+    questions: [
+      { type: "qcm", q: "Qu'apporte EVPN par rapport au flood-and-learn ?", opts: ["Un débit plus élevé garanti", "Un apprentissage des MAC via BGP, sans inondation", "La suppression du chiffrement", "Un VNI plus grand"], a: 1, exp: "EVPN distribue proactivement les MAC/IP en BGP, supprimant le flood." },
+      { type: "qcm", q: "Quel type de route EVPN permet l'ARP suppression sur les VTEP ?", opts: ["Type 1", "Type 2", "Type 3", "Type 4"], a: 1, exp: "Type 2 (MAC/IP) fournit les couples MAC/IP nécessaires à l'ARP suppression." },
+      { type: "vf", q: "En EVPN, le trafic BUM peut être géré par ingress replication grâce aux routes Type 3.", a: true, exp: "Vrai : les Type 3 construisent la liste des VTEP d'un VNI pour la réplication à la source." },
+      { type: "qcm", q: "Que reste-t-il inchangé lors de cette migration ?", opts: ["Le plan de données (VXLAN, port 4789)", "Le protocole de découverte des MAC", "La dépendance au multicast obligatoire", "Le VNI passe à 12 bits"], a: 0, exp: "VXLAN reste le data plane ; seul le plan de contrôle change (BGP EVPN)." },
+      { type: "qcm", q: "Comment EVPN cadre-t-il l'isolation entre tenants ?", opts: ["Par TTL", "Par Route Distinguisher et Route Targets, comme en L3VPN", "Par VLAN natif", "Par MTU"], a: 1, exp: "EVPN réutilise RD (unicité) et RT (import/export) par EVI." }
+    ],
+    solution: `<pre class="pseudo"># Avant : VXLAN flood-and-learn (BUM via multicast underlay, apprentissage a la volee)
+# Apres : VXLAN EVPN
+#   - Data plane inchange : VXLAN MAC-in-UDP, port 4789, VNI 24 bits
+#   - Control plane : MP-BGP famille L2VPN EVPN entre VTEP (souvent via RR sur les spines)
+#   - Type 2  : annonce MAC/IP  -> apprentissage sans flood + ARP suppression + mobilite VM
+#   - Type 3  : appartenance VNI -> ingress replication du BUM
+#   - Type 5  : prefixes IP      -> routage L3 / sortie fabric
+#   - RD + RT par EVI            -> isolation multi-tenant
+# Resultat : moins d'inondation, mobilite des VM, routage integre.</pre>
+<p>La fabric passe d'un modèle « switch géant qui inonde » à un modèle « routé et annoncé », bien plus scalable. Demain : comment Cisco industrialise ce genre de fabric dans le campus avec SD-Access.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j11", title: "VXLAN et EVPN : qui fait quoi", level: 2,
+    statement: "Distingue clairement le rôle de <strong>VXLAN</strong> et celui d'<strong>EVPN</strong>, donne les caractéristiques clés de VXLAN (encapsulation, port, taille du VNI) et décris les routes EVPN <strong>Type 2</strong>, <strong>Type 3</strong> et <strong>Type 5</strong>.",
+    hints: [
+      "VXLAN = data plane (MAC-in-UDP, port 4789, VNI 24 bits).",
+      "EVPN = control plane BGP (famille L2VPN EVPN) qui remplace le flood-and-learn.",
+      "Type 2 = MAC/IP, Type 3 = multicast inclusif (BUM), Type 5 = préfixe IP."
+    ],
+    solution: "# VXLAN = DATA PLANE (comment on transporte)\n#   - Encapsulation MAC-in-UDP (RFC 7348)\n#   - Port UDP destination 4789\n#   - VNI de 24 bits -> ~16 millions de segments\n#   - Points de tunnel = VTEP (encapsulent/decapsulent)\n#\n# EVPN = CONTROL PLANE (comment on apprend/distribue) (RFC 7432)\n#   - Famille MP-BGP L2VPN EVPN\n#   - Remplace le flood-and-learn par des annonces BGP\n#   - Beneficie : ARP suppression, mobilite VM, routage integre, RD/RT par EVI\n#\n# Routes EVPN :\n#   Type 2 : MAC/IP Advertisement -> hotes, ARP suppression, mobilite\n#   Type 3 : Inclusive Multicast   -> appartenance VNI, ingress replication du BUM\n#   Type 5 : IP Prefix Route       -> routage L3 inter-subnet / sortie fabric",
+    note: "On combine les deux : « VXLAN EVPN ». VXLAN sans EVPN = flood-and-learn (déconseillé à grande échelle)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

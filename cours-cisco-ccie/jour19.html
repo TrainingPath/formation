@@ -1,0 +1,125 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 19</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Le contrôle des plans de gestion et de contrôle",
+  subtitle: "Séparer ce qui pilote, ce qui décide et ce qui transporte — et blinder chacun séparément.",
+  theory: `
+<h3>1. Trois plans, trois métiers</h3>
+<p>Un routeur fait mentalement trois choses très différentes, qu'on nomme les <strong>trois plans</strong>. Le <strong>plan de données</strong> (en anglais <em>data plane</em>, ou <em>forwarding plane</em>) transporte les paquets des utilisateurs à pleine vitesse, en hardware. Le <strong>plan de contrôle</strong> (<em>control plane</em>) est le cerveau : il fait tourner OSPF, BGP, ARP, STP, construit les tables et décide où va le trafic. Le <strong>plan de gestion</strong> (<em>management plane</em>) est le tableau de bord : SSH, SNMP, NETCONF, syslog, NTP, AAA — tout ce qui sert à <em>administrer</em> l'équipement. Chaque plan a ses menaces, donc ses défenses propres.</p>
+<pre class="pseudo"># Analogie : une voiture
+# Data plane    -> les roues (transportent, sans reflechir)
+# Control plane -> le conducteur (decide de la direction)
+# Management    -> le tableau de bord + la cle (on regle et on pilote l'engin)</pre>
+<div class="tip">La règle d'or CCIE : ne jamais mélanger les plans. Un problème sur le plan de gestion (un flood SSH) ne doit pas pouvoir écrouler le plan de contrôle (le routage), et le trafic des utilisateurs (data) ne doit jamais côtoyer les paquets d'administration.</div>
+<h3>2. Protéger le plan de contrôle</h3>
+<p>Le plan de contrôle est vital : s'il tombe, les adjacences de routage meurent et le réseau se disloque. On le protège d'abord par le <strong>CoPP</strong> et le <strong>CPPr</strong> (vus au jour 18), qui limitent le débit du trafic destiné au CPU. On y ajoute l'<strong>authentification</strong> des protocoles (MD5/keychain, GTSM pour BGP) et le filtrage des messages non sollicités. L'objectif : que seul le trafic de contrôle <em>légitime et attendu</em> atteigne le processeur, à un débit borné.</p>
+<pre class="pseudo">control-plane
+ service-policy input COPP        ! limite le trafic vers le CPU
+router ospf 1
+ area 0 authentication message-digest   ! authentifie les voisins</pre>
+<h3>3. Protéger le plan de gestion</h3>
+<p>Le plan de gestion est la porte d'entrée de l'administrateur — donc aussi la cible favorite de l'attaquant. On applique plusieurs verrous : <strong>SSH v2</strong> uniquement (jamais Telnet en clair), <strong>AAA</strong> centralisé via <strong>TACACS+</strong> ou RADIUS pour l'authentification et la traçabilité des commandes, <strong>SNMPv3</strong> (authentifié et chiffré, jamais v2c en clair), des <strong>ACL sur les lignes vty</strong> pour n'autoriser que les postes d'administration, et le <strong>MPP</strong> (« Management Plane Protection ») qui restreint <em>quelles interfaces</em> acceptent le trafic de gestion.</p>
+<pre class="pseudo">! N'accepter la gestion QUE depuis les stations autorisees
+ip access-list standard ACL-VTY
+ permit 10.0.0.0 0.0.0.255
+line vty 0 15
+ access-class ACL-VTY in
+ transport input ssh
+! Management Plane Protection : gestion permise seulement sur une interface dediee
+control-plane host
+ management-interface GigabitEthernet0/0 allow ssh snmp</pre>
+<div class="warn">Une erreur classique : laisser Telnet et SNMPv2c « pour dépanner ». Ce sont des protocoles en clair : mots de passe et communautés circulent lisibles sur le câble. Au niveau expert, on impose SSHv2 et SNMPv3, point final.</div>
+<h3>4. La gestion hors bande (out-of-band)</h3>
+<p>Le principe le plus fort de séparation est la <strong>gestion hors bande</strong> (en anglais <em>out-of-band</em>, OOB) : on administre l'équipement par un <strong>réseau physiquement distinct</strong> du réseau de production. Chaque routeur possède une interface de gestion dédiée (souvent <code>mgmt0</code> ou <code>GigabitEthernet0/0</code> placée dans une <strong>VRF de gestion</strong>, la <em>Mgmt-intf</em>), reliée à un réseau d'administration isolé, complété par des serveurs de console (<em>terminal servers</em>). Avantage décisif : si la production s'effondre ou est saturée par une attaque, l'administrateur <strong>garde la main</strong> pour diagnostiquer et réparer. À l'inverse, la gestion <em>in-band</em> (dans le même réseau que le trafic utilisateur) tombe avec lui.</p>
+<pre class="pseudo">! Interface de gestion isolee dans sa propre VRF
+interface GigabitEthernet0/0
+ vrf forwarding Mgmt-intf
+ ip address 172.16.0.10 255.255.255.0
+ip route vrf Mgmt-intf 0.0.0.0 0.0.0.0 172.16.0.1
+! Services de gestion cloisonnes dans la VRF
+ip ssh version 2
+snmp-server host 172.16.0.5 vrf Mgmt-intf version 3 auth NMS</pre>
+<h3>5. Protéger le plan de données</h3>
+<p>Le plan de données se protège par les outils du transit : <strong>ACL</strong> (dont les iACL d'infrastructure), <strong>uRPF</strong> contre le spoofing, marquage et police <strong>QoS</strong>, et Netflow pour la visibilité. L'idée reste la même : chaque plan a sa boîte à outils dédiée, et un incident sur l'un ne doit pas contaminer les autres.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Trois plans a ne JAMAIS melanger :
+#   Data     -> transporte (hardware)         : ACL, uRPF, QoS, Netflow
+#   Control  -> decide (routage, ARP, STP)    : CoPP/CPPr, auth MD5/keychain, GTSM
+#   Management-> administre (SSH/SNMP/NETCONF) : SSHv2, AAA/TACACS+, SNMPv3, MPP, ACL vty
+# Out-of-band (OOB) : reseau de gestion PHYSIQUEMENT separe
+#   -> interface mgmt dediee dans la VRF Mgmt-intf
+#   -> on garde la main meme si la production s'effondre
+# In-band : gestion dans le reseau de prod -> tombe avec lui (a eviter)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel plan transporte les paquets des utilisateurs à pleine vitesse ?", opts: ["Le plan de contrôle", "Le plan de données (forwarding)", "Le plan de gestion", "Le plan de supervision"], a: 1, exp: "Le data plane / forwarding plane achemine le trafic, généralement en hardware." },
+    { type: "qcm", q: "OSPF, BGP, ARP et STP appartiennent à quel plan ?", opts: ["Data plane", "Control plane", "Management plane", "Aucun"], a: 1, exp: "Ce sont les protocoles qui décident du routage/commutation : c'est le plan de contrôle (le cerveau)." },
+    { type: "qcm", q: "SSH, SNMP, NETCONF et syslog relèvent de quel plan ?", opts: ["Data plane", "Control plane", "Management plane", "Backplane"], a: 2, exp: "Ce sont les outils d'administration de l'équipement : le plan de gestion." },
+    { type: "qcm", q: "Quel est l'avantage décisif de la gestion out-of-band ?", opts: ["Elle est plus rapide pour les utilisateurs", "On garde la main sur l'équipement même si la production s'effondre", "Elle supprime le besoin d'ACL", "Elle chiffre automatiquement le trafic utilisateur"], a: 1, exp: "Le réseau de gestion étant séparé, une panne ou une attaque sur la production ne coupe pas l'accès d'administration." },
+    { type: "qcm", q: "Que restreint la fonction MPP (Management Plane Protection) ?", opts: ["Le débit BGP", "Quelles interfaces acceptent le trafic de gestion", "La taille des tables de routage", "Le nombre de VLAN"], a: 1, exp: "MPP limite l'administration à des interfaces désignées, réduisant la surface d'attaque du plan de gestion." },
+    { type: "qcm", q: "Où place-t-on typiquement l'interface de gestion dédiée pour l'isoler ?", opts: ["Dans le VLAN 1", "Dans une VRF de gestion (Mgmt-intf)", "Dans la table de routage globale", "Sur le plan de données"], a: 1, exp: "La VRF Mgmt-intf cloisonne le routage de gestion, séparé de la table globale de production." },
+    { type: "vf", q: "Un flood du plan de gestion (SSH) ne doit jamais pouvoir écrouler le plan de contrôle (routage).", a: true, exp: "Vrai : c'est tout l'intérêt de séparer et de protéger chaque plan indépendamment (CoPP, MPP, OOB)." },
+    { type: "vf", q: "Telnet et SNMPv2c sont acceptables au niveau expert pour dépanner rapidement.", a: false, exp: "Faux : ce sont des protocoles en clair. On impose SSHv2 et SNMPv3, authentifiés et chiffrés." },
+    { type: "vf", q: "La gestion in-band reste disponible même si le réseau de production est saturé par une attaque.", a: false, exp: "Faux : in-band partage le réseau de prod, donc elle tombe avec lui. C'est pourquoi on préfère l'out-of-band." },
+    { type: "vf", q: "Le plan de données se protège notamment par des ACL, du uRPF et de la QoS.", a: true, exp: "Vrai : ce sont les outils du transit, propres au data plane." },
+    { type: "vf", q: "AAA via TACACS+ permet d'authentifier les administrateurs et de tracer les commandes tapées.", a: true, exp: "Vrai : TACACS+ fournit authentification, autorisation et comptabilité (accounting) des commandes, essentiel pour la traçabilité." },
+    { type: "input", q: "Quel terme anglais (2 mots, avec tiret) désigne l'administration par un réseau physiquement séparé de la production ?", a: ["out-of-band", "out of band", "oob"], ph: "out-…", exp: "Out-of-band (OOB) : réseau de gestion dédié et isolé." },
+    { type: "input", q: "Nomme le plan qui fait tourner les protocoles de routage et construit les tables.", a: ["control plane", "plan de controle", "controle", "control"], ph: "plan de …", exp: "Le plan de contrôle (control plane) : le cerveau décisionnel de l'équipement." },
+    { type: "input", q: "Quelle version de SNMP, authentifiée et chiffrée, impose-t-on au niveau expert ?", a: ["snmpv3", "snmp v3", "v3", "3"], ph: "SNMPv…", exp: "SNMPv3 apporte authentification et chiffrement, contrairement à v1/v2c en clair." },
+    { type: "input", q: "Quelle commande sur les lignes vty applique une ACL restreignant les postes d'administration autorisés ? (deux mots)", a: ["access-class", "access class"], ph: "access-…", exp: "access-class NOM in filtre les connexions entrantes sur les lignes vty." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir un plan de gestion sûr",
+    intro: `<p>Tu conçois l'administration d'un cœur de réseau. La direction exige que « même en cas d'attaque massive sur la production, l'équipe garde l'accès aux équipements ». Les administrateurs travaillent depuis le sous-réseau 10.0.0.0/24. Structure ta réponse par plan.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour garantir l'accès malgré une production saturée, tu déploies…", opts: ["De la gestion in-band bien optimisée", "Un réseau de gestion out-of-band avec interface dédiée en VRF Mgmt-intf", "Plus de bande passante sur la prod", "Uniquement des consoles locales"], a: 1, exp: "L'OOB sépare physiquement la gestion : elle survit à l'effondrement de la production." },
+      { type: "qcm", q: "Sur les lignes vty, tu autorises l'administration…", opts: ["Depuis n'importe où en Telnet", "Uniquement en SSHv2 avec access-class limitée à 10.0.0.0/24", "En SNMPv2c", "Sans authentification pour aller vite"], a: 1, exp: "SSHv2 + ACL vty restreignent l'accès aux seuls postes légitimes." },
+      { type: "vf", q: "Ajouter une politique CoPP protège le plan de contrôle indépendamment des protections du plan de gestion.", a: true, exp: "Vrai : chaque plan a sa défense propre ; CoPP borne le trafic vers le CPU quoi qu'il arrive au plan de gestion." },
+      { type: "qcm", q: "Pour la supervision SNMP, tu choisis…", opts: ["SNMPv2c pour la simplicité", "SNMPv3 authentifié et chiffré, joignable via la VRF de gestion", "Aucune supervision", "Telnet scripté"], a: 1, exp: "SNMPv3 protège les données de supervision ; le placer dans la VRF de gestion respecte la séparation des plans." },
+      { type: "qcm", q: "Pour tracer qui a tapé quelle commande sur les équipements, tu t'appuies sur…", opts: ["Le spanning-tree", "AAA/TACACS+ (authentification + accounting des commandes)", "Le uRPF", "Le DHCP snooping"], a: 1, exp: "TACACS+ centralise l'authentification et journalise les commandes, indispensable à l'audit." }
+    ],
+    solution: `<pre class="pseudo">! --- Plan de gestion (out-of-band + durcissement) ---
+interface GigabitEthernet0/0
+ vrf forwarding Mgmt-intf
+ ip address 172.16.0.10 255.255.255.0
+ip ssh version 2
+ip access-list standard ACL-VTY
+ permit 10.0.0.0 0.0.0.255
+line vty 0 15
+ access-class ACL-VTY in
+ transport input ssh
+aaa new-model
+aaa authentication login default group tacacs+ local
+aaa accounting commands 15 default start-stop group tacacs+
+snmp-server host 172.16.0.5 vrf Mgmt-intf version 3 auth NMS
+! --- Plan de controle ---
+control-plane
+ service-policy input COPP
+! --- Plan de donnees ---
+interface Gi0/2
+ ip verify unicast source reachable-via rx</pre>
+<p>Résultat : trois plans, trois défenses. La gestion vit sur son propre réseau (OOB/VRF), le contrôle est borné par CoPP, les données filtrées par uRPF/ACL. Même sous attaque de la production, l'équipe conserve la main.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j19", title: "Séparer et protéger les trois plans", level: 3,
+    statement: "En texte brut, nomme les <strong>trois plans</strong> d'un équipement réseau, donne pour chacun un exemple de trafic et le principal outil de protection, puis explique en trois lignes pourquoi la gestion <strong>out-of-band</strong> est supérieure à la gestion <strong>in-band</strong>.",
+    hints: [
+      "Data / Control / Management.",
+      "Data : uRPF/ACL/QoS ; Control : CoPP ; Management : SSHv2/AAA/MPP.",
+      "Out-of-band = réseau physiquement séparé : on garde la main même si la prod tombe."
+    ],
+    solution: "LES TROIS PLANS :\n1) Plan de DONNEES (data / forwarding plane)\n   - trafic : paquets des utilisateurs (transit)\n   - protection : ACL, uRPF, QoS, Netflow\n2) Plan de CONTROLE (control plane) = le cerveau\n   - trafic : OSPF, BGP, ARP, STP\n   - protection : CoPP / CPPr, authentification MD5/keychain, GTSM\n3) Plan de GESTION (management plane) = le tableau de bord\n   - trafic : SSH, SNMP, NETCONF, syslog, NTP, AAA\n   - protection : SSHv2, AAA/TACACS+, SNMPv3, MPP, ACL vty (access-class)\n\nOUT-OF-BAND vs IN-BAND :\n- Out-of-band = reseau de gestion PHYSIQUEMENT separe (interface mgmt dediee, VRF Mgmt-intf).\n- Avantage : si la production s'effondre ou est saturee par une attaque, l'admin GARDE LA MAIN.\n- In-band partage le reseau de prod : la gestion tombe AVEC lui, precisement quand on en a le plus besoin.",
+    note: "Le fil rouge : chaque plan a sa boîte à outils, et un incident sur l'un ne doit jamais contaminer les autres." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

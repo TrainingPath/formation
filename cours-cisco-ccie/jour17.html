@@ -1,0 +1,126 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 17</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 17,
+  title: "Haute disponibilité et convergence rapide",
+  subtitle: "Détecter la panne en millisecondes et rebasculer le trafic avant que l'utilisateur ne s'en aperçoive.",
+  theory: `
+<h3>1. Le vrai ennemi : le temps de détection</h3>
+<p>À l'échelle CCIE, un lien qui tombe n'est pas grave en soi : ce qui coûte cher, c'est le <strong>temps de convergence</strong>, la durée pendant laquelle le trafic est « trou noiré » (en anglais <em>black-holed</em>) avant que le réseau ne trouve un nouveau chemin. Ce délai se décompose en quatre étapes : <strong>détecter</strong> la panne, <strong>propager</strong> l'information, <strong>recalculer</strong> les routes, puis <strong>reprogrammer</strong> le plan de transfert (le FIB). Historiquement, c'est la détection qui domine : un timer de <em>hello</em> OSPF par défaut expire au bout de 40 secondes (dead interval). Une éternité.</p>
+<p>La philosophie de la haute disponibilité moderne consiste donc à découpler la détection du protocole de routage : on confie la détection à un mécanisme ultra-rapide et léger, et on garde des chemins de secours <strong>pré-calculés</strong> pour n'avoir à reprogrammer que le FIB.</p>
+<h3>2. BFD : le détecteur de panne universel</h3>
+<p>Le <strong>BFD</strong> (« Bidirectional Forwarding Detection », RFC 5880) est un protocole minimaliste dont l'unique métier est de dire « le voisin répond-il, oui ou non ? », le plus vite possible. Deux routeurs échangent des paquets BFD à très haute cadence (par exemple toutes les 50 ms) ; si aucun n'arrive pendant <em>interval × multiplier</em>, la session est déclarée morte et BFD prévient instantanément ses <strong>clients</strong> : OSPF, IS-IS, EIGRP, BGP, HSRP, static routes… On obtient une détection <strong>sous la seconde</strong> là où les timers natifs mettaient des dizaines de secondes.</p>
+<pre class="pseudo">! BFD sur une interface : intervalle 50 ms, min_rx 50 ms, multiplier 3
+interface GigabitEthernet0/1
+ bfd interval 50 min_rx 50 multiplier 3
+! On abonne un protocole client (ici OSPF)
+router ospf 1
+ bfd all-interfaces
+! Vérification
+show bfd neighbors detail</pre>
+<p>BFD tourne sur UDP : port <strong>3784</strong> pour le mode asynchrone (control), <strong>3785</strong> pour le mode <em>echo</em>, <strong>4784</strong> pour le multihop (BGP entre loopbacks). Le mode <em>echo</em> renvoie ses propres paquets vers soi-même via le voisin, testant réellement le plan de transfert.</p>
+<div class="tip">BFD ne remplace pas le protocole de routage : il le rend <strong>aveugle mais rapide</strong>. Le protocole garde la logique de topologie ; BFD n'apporte qu'un signal binaire « voisin vivant / mort » quasi instantané. Un seul détecteur sert tous les protocoles à la fois.</div>
+<h3>3. Fast Reroute : le chemin de secours déjà prêt</h3>
+<p>Détecter vite ne suffit pas si le routeur doit ensuite recalculer tout son SPF. L'idée du <strong>fast reroute</strong> (FRR) est de pré-installer dans le FIB un <strong>chemin de secours</strong> qu'on active en microsecondes dès la panne, le temps que le vrai recalcul se termine. Côté IP pur, cela s'appuie sur les <strong>LFA</strong> (« Loop-Free Alternate », RFC 5286) : un voisin de secours prouvé sans boucle. Comme les LFA simples ne couvrent pas toutes les topologies, on utilise le <strong>Remote LFA</strong> (nœud PQ atteint par un tunnel LDP ciblé) puis surtout le <strong>TI-LFA</strong> (« Topology-Independent LFA ») bâti sur le Segment Routing, qui garantit <strong>100 %</strong> de couverture et emprunte le chemin post-convergence.</p>
+<pre class="pseudo">! LFA / Remote-LFA sous IS-IS
+router isis
+ fast-reroute per-prefix level-1 all
+ fast-reroute remote-lfa level-1 mpls-ldp
+! TI-LFA avec Segment Routing sous IS-IS
+router isis
+ segment-routing mpls
+ fast-reroute per-prefix ti-lfa</pre>
+<p>Dans le monde MPLS-TE, l'équivalent est le <strong>MPLS TE FRR</strong> (RFC 4090) : un tunnel de secours (<em>facility backup</em>) protège soit le lien (<em>link protection</em>), soit le nœud suivant (<em>node protection</em>), avec bascule en moins de 50 ms.</p>
+<h3>4. Régler les timers sans tout casser</h3>
+<p>Quand BFD n'est pas disponible, on peut durcir les timers du protocole, mais avec méthode. Sous OSPF, le <strong>SPF throttling</strong> (<code>timers throttle spf</code>) et le <strong>LSA throttling</strong> utilisent un algorithme de <em>backoff</em> exponentiel : première réaction rapide, puis on ralentit si les événements se répètent, pour éviter qu'un lien qui « clignote » (flapping) ne fasse s'effondrer le CPU. Le <strong>IP Event Dampening</strong> et le <strong>carrier-delay</strong> amortissent justement ces interfaces instables.</p>
+<pre class="pseudo">router ospf 1
+ timers throttle spf 50 200 5000      ! start 50ms, hold 200ms, max 5s
+ timers throttle lsa 50 200 5000
+ timers lsa arrival 100
+interface Gi0/1
+ dampening                            ! amortit un lien qui flappe</pre>
+<div class="warn">Ne descends jamais les <em>hello</em> IGP à 1 seconde « pour aller plus vite » sur un réseau chargé : sous forte charge CPU, les hello peuvent être retardés et provoquer de <strong>fausses pannes</strong> (adjacences qui tombent alors que le lien est bon). BFD, traité en hardware/plan dédié, est bien plus fiable pour la détection sub-seconde.</div>
+<h3>5. NSF/SSO : survivre à la panne d'un moteur de routage</h3>
+<p>Sur un châssis à deux <strong>Route Processors</strong> (RP), le <strong>SSO</strong> (« Stateful Switchover ») maintient le RP de secours <em>synchronisé</em> en permanence (état des interfaces, sessions, FIB). Si le RP actif meurt, le secours prend la main sans réinitialiser le châssis. Le <strong>NSF</strong> (« Non-Stop Forwarding ») complète SSO : pendant la bascule, le plan de transfert (CEF) <strong>continue d'acheminer</strong> avec la dernière FIB connue, pendant que le nouveau RP reconstruit sa table de routage. Pour éviter que les voisins ne cassent l'adjacence en voyant le RP « redémarrer », on utilise le <strong>Graceful Restart</strong> (GR) : le routeur en NSF est dit <em>capable</em>, et ses voisins doivent être <em>aware</em> (conscients) pour l'aider sans purger les routes.</p>
+<pre class="pseudo">redundancy
+ mode sso
+router ospf 1
+ nsf                 ! Graceful Restart OSPF (RFC 3623)
+router bgp 65000
+ bgp graceful-restart</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Convergence = detecter + propager + calculer + reprogrammer
+# BFD  : detection sub-seconde, client de OSPF/ISIS/BGP/EIGRP/HSRP
+#        UDP 3784 (async) / 3785 (echo) / 4784 (multihop)
+# FRR  : chemin de secours PRE-calcule -> LFA, Remote-LFA, TI-LFA (SR, 100%)
+#        MPLS-TE FRR (RFC 4090) : link / node protection, < 50 ms
+# Timers : SPF/LSA throttling (backoff exponentiel), dampening, carrier-delay
+# NSF/SSO : deux RP -> SSO synchronise l'etat, NSF garde le forwarding (CEF)
+#           Graceful Restart : NSF-capable + voisins NSF-aware</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel est l'unique rôle de BFD ?", opts: ["Calculer les meilleures routes", "Détecter très rapidement si un voisin répond encore", "Chiffrer le trafic entre routeurs", "Attribuer les adresses IP"], a: 1, exp: "BFD ne fait que de la détection binaire vivant/mort, à très haute cadence, pour ses protocoles clients." },
+    { type: "qcm", q: "Sur quel port UDP le BFD asynchrone (control) échange-t-il ses paquets ?", opts: ["179", "3784", "830", "3785"], a: 1, exp: "3784 = BFD control (async). 3785 = echo, 4784 = multihop, 830 = NETCONF, 179 = BGP." },
+    { type: "qcm", q: "Que garantit le TI-LFA par rapport au LFA simple ?", opts: ["Un chiffrement du chemin de secours", "Une couverture de protection de 100 % quelle que soit la topologie", "Une réduction de la table de routage", "La suppression du besoin de BFD"], a: 1, exp: "TI-LFA (Topology-Independent LFA), bâti sur Segment Routing, protège 100 % des cas et suit le chemin post-convergence." },
+    { type: "qcm", q: "Dans NSF/SSO, que fait le NSF pendant la bascule de RP ?", opts: ["Il éteint les interfaces", "Il continue d'acheminer le trafic avec la dernière FIB (CEF)", "Il efface la table de routage", "Il redémarre le châssis complet"], a: 1, exp: "NSF (Non-Stop Forwarding) garde le plan de transfert actif pendant que le nouveau RP reconstruit le routage." },
+    { type: "qcm", q: "Le SPF throttling utilise quel type d'algorithme de temporisation ?", opts: ["Un délai fixe unique", "Un backoff exponentiel (rapide puis de plus en plus lent)", "Un tirage aléatoire pur", "Aucun, il recalcule en boucle"], a: 1, exp: "Le throttling réagit vite au premier événement puis ralentit si ça se répète, pour protéger le CPU face au flapping." },
+    { type: "qcm", q: "Quel mécanisme protège un routeur voisin qui redémarre son RP sans purger ses routes ?", opts: ["Le proxy ARP", "Le Graceful Restart (NSF-aware)", "Le NAT", "Le spanning-tree"], a: 1, exp: "Graceful Restart : le voisin NSF-aware aide le routeur NSF-capable à repartir sans casser l'adjacence." },
+    { type: "vf", q: "Descendre les hello IGP à des valeurs très basses est toujours plus sûr que d'utiliser BFD pour la détection sub-seconde.", a: false, exp: "Faux : sous forte charge CPU les hello peuvent être retardés et provoquer de fausses pannes. BFD est plus fiable." },
+    { type: "vf", q: "BFD peut servir simultanément de détecteur pour OSPF, IS-IS et BGP sur le même routeur.", a: true, exp: "Vrai : plusieurs protocoles clients s'abonnent à la même session BFD ; un seul détecteur les sert tous." },
+    { type: "vf", q: "SSO synchronise en permanence l'état entre le RP actif et le RP de secours.", a: true, exp: "Vrai : c'est le principe du Stateful Switchover, qui permet une bascule sans réinitialisation." },
+    { type: "vf", q: "Le fast reroute recalcule entièrement le SPF avant de rediriger le trafic.", a: false, exp: "Faux : le FRR active un chemin de secours DÉJÀ pré-calculé, en attendant que le vrai recalcul se termine en arrière-plan." },
+    { type: "vf", q: "MPLS TE FRR peut offrir une protection de lien ou de nœud en moins de 50 ms.", a: true, exp: "Vrai : le facility backup (RFC 4090) rebascule vers un tunnel de secours en général sous 50 ms." },
+    { type: "input", q: "Quel protocole de détection (sigle 3 lettres) sert de client rapide à OSPF, IS-IS et BGP ?", a: ["bfd"], ph: "3 lettres", exp: "BFD = Bidirectional Forwarding Detection." },
+    { type: "input", q: "Quelle technologie de FRR, bâtie sur Segment Routing, garantit 100 % de couverture ? (sigle)", a: ["ti-lfa", "tilfa", "ti lfa"], ph: "TI-…", exp: "TI-LFA = Topology-Independent Loop-Free Alternate." },
+    { type: "input", q: "Complète : sur un châssis redondant, le mode de bascule à état synchronisé s'active par « redundancy / mode ___ ».", a: ["sso"], ph: "3 lettres", exp: "mode sso = Stateful Switchover." },
+    { type: "input", q: "Quel mot anglais désigne un lien instable qui monte et descend sans arrêt, et qu'on amortit avec le dampening ?", a: ["flapping", "flap"], ph: "en anglais", exp: "Le flapping ; le dampening amortit ces interfaces pour protéger le CPU et la stabilité du routage." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir une convergence sub-seconde",
+    intro: `<p>Sur un cœur de réseau opérateur, tu dois faire converger un lien de transport en moins de 200 ms. Les routeurs font tourner IS-IS avec Segment Routing, ont deux RP chacun, et les liaisons directes entre routeurs P sont point à point. Choisis la bonne combinaison de mécanismes.</p>`,
+    questions: [
+      { type: "qcm", q: "Quel mécanisme confies-tu à la DÉTECTION de panne du lien ?", opts: ["Les hello IS-IS par défaut", "BFD (interval bas, multiplier 3)", "Le carrier-delay seul", "Le spanning-tree"], a: 1, exp: "BFD assure une détection sub-seconde fiable, indépendante des timers IS-IS." },
+      { type: "qcm", q: "Pour rediriger instantanément le trafic pendant le recalcul, tu actives…", opts: ["Le proxy ARP", "TI-LFA (fast-reroute per-prefix ti-lfa)", "Le NAT statique", "Une route flottante à AD 250"], a: 1, exp: "TI-LFA pré-calcule un chemin de secours à 100 % de couverture via Segment Routing." },
+      { type: "vf", q: "Activer BFD comme client d'IS-IS permet de garder les hello IS-IS à des valeurs raisonnables.", a: true, exp: "Vrai : la détection rapide est déléguée à BFD, on n'a plus besoin de hello agressifs." },
+      { type: "qcm", q: "Pour survivre à la panne d'un RP sans couper le trafic, tu configures…", opts: ["Uniquement du SNMP", "NSF/SSO (mode sso + nsf/graceful-restart)", "Un reload programmé", "Du port-security"], a: 1, exp: "SSO synchronise l'état, NSF garde le forwarding, le Graceful Restart évite la purge chez les voisins." },
+      { type: "qcm", q: "Un lien commence à flapper toutes les 2 secondes. Quelle protection évite l'effondrement du CPU ?", opts: ["Baisser encore les hello", "Le SPF/LSA throttling et le dampening d'interface", "Désactiver CEF", "Supprimer BFD"], a: 1, exp: "Le throttling (backoff exponentiel) et le dampening amortissent les événements répétés." }
+    ],
+    solution: `<pre class="pseudo">! Detection rapide et fiable
+interface Gi0/1
+ bfd interval 50 min_rx 50 multiplier 3
+ dampening
+! IS-IS : BFD client + TI-LFA (Segment Routing)
+router isis
+ bfd all-interfaces
+ segment-routing mpls
+ fast-reroute per-prefix ti-lfa
+ spf-interval 50 200 5000
+! Redondance RP
+redundancy
+ mode sso
+router isis
+ nsf cisco</pre>
+<p>Détection par BFD, secours pré-calculé par TI-LFA, stabilité par throttling/dampening et continuité matérielle par NSF/SSO : la convergence tombe sous les 50 ms côté données, bien en deçà des 200 ms visés.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j17", title: "Architecturer la convergence rapide", level: 3,
+    statement: "Un opérateur veut une convergence &lt; 100 ms sur son cœur IS-IS/Segment Routing. En texte brut, propose l'enchaînement de mécanismes : (1) la <strong>détection</strong>, (2) le <strong>secours pré-calculé</strong>, (3) la <strong>protection du CPU</strong> contre le flapping, (4) la <strong>redondance RP</strong>. Cite pour chacun la commande IOS clé et explique en une ligne pourquoi.",
+    hints: [
+      "La détection sub-seconde ne doit PAS reposer sur les hello du protocole.",
+      "Le secours doit être déjà installé dans le FIB avant la panne (pense Segment Routing).",
+      "Deux Route Processors + un mécanisme pour ne pas casser les adjacences voisines."
+    ],
+    solution: "1) DETECTION : BFD\n   interface : bfd interval 50 min_rx 50 multiplier 3\n   router isis : bfd all-interfaces\n   -> detection sub-seconde independante des hello IS-IS, fiable sous charge CPU.\n\n2) SECOURS PRE-CALCULE : TI-LFA\n   router isis : segment-routing mpls\n                 fast-reroute per-prefix ti-lfa\n   -> chemin de secours deja dans le FIB, 100% de couverture, chemin post-convergence.\n\n3) PROTECTION CPU (anti-flapping) :\n   router isis : spf-interval 50 200 5000 (backoff exponentiel du SPF)\n   interface   : dampening (amortit un lien instable)\n   -> evite l'effondrement du CPU si un lien monte/descend en boucle.\n\n4) REDONDANCE RP : NSF/SSO\n   redundancy : mode sso  (etat synchronise entre les deux RP)\n   router isis : nsf cisco (Graceful Restart : voisins NSF-aware n'effacent pas les routes)\n   -> panne d'un RP sans coupure : le forwarding CEF continue.\n\n# Resultat : detection BFD + secours TI-LFA => bascule cote donnees < 50 ms.",
+    note: "L'ordre logique est toujours le même : détecter vite, avoir un secours déjà prêt, se protéger du flapping, puis assurer la continuité matérielle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

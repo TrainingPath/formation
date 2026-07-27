@@ -1,0 +1,115 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 05</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Le routage avancé : OSPF multi-aires",
+  subtitle: "LSA, ABR/ASBR et aires stub/NSSA : structurer un grand domaine OSPF.",
+  theory: `
+<h3>1. Pourquoi découper OSPF en aires ?</h3>
+<p>OSPF (« Open Shortest Path First ») est un protocole à <strong>état de liens</strong> : chaque routeur construit une carte complète du réseau et calcule les plus courts chemins avec l'algorithme de <strong>Dijkstra (SPF)</strong>. Problème : sur un grand réseau, cette carte devient énorme et chaque changement force un recalcul coûteux. La solution est de découper le domaine en <strong>aires</strong> (« areas ») numérotées. L'<strong>aire 0</strong> (backbone) est obligatoire ; toutes les autres aires doivent s'y raccorder. On limite ainsi la propagation des détails et la charge de calcul.</p>
+<pre class="pseudo"># Hiérarchie OSPF
+        [ Aire 0 = backbone ]
+         /       |        \\
+    [Aire 1]  [Aire 2]  [Aire 3]
+# Toute aire non-backbone se connecte à l'aire 0 (via un ABR).</pre>
+<h3>2. Les rôles de routeurs : interne, ABR, ASBR</h3>
+<p>Selon sa position, un routeur OSPF joue un rôle :</p>
+<pre class="pseudo"># Rôles OSPF
+Routeur interne  -> toutes ses interfaces dans une même aire
+ABR (Area Border Router) -> à cheval entre l'aire 0 et une autre aire
+ASBR (Autonomous System Boundary Router) -> injecte des routes EXTERNES
+        (venant d'un autre protocole : redistribution) dans OSPF</pre>
+<p>L'<strong>ABR</strong> est la frontière entre aires : il résume et relaie les informations d'une aire à l'autre. L'<strong>ASBR</strong> est la porte vers l'extérieur : il fait entrer dans OSPF des routes apprises ailleurs (statique, EIGRP, BGP...).</p>
+<div class="tip">Moyen mnémotechnique : ABR = <em>Area</em> Border (frontière entre aires OSPF) ; ASBR = <em>Autonomous System</em> Boundary (frontière du domaine OSPF vers un autre système). Un même routeur peut cumuler les deux rôles.</div>
+<h3>3. Les types de LSA (les briques d'information)</h3>
+<p>OSPF échange des <strong>LSA</strong> (« Link-State Advertisements »), les annonces qui composent la base de données topologique. Les types à connaître pour ENCOR :</p>
+<pre class="pseudo"># Types de LSA (OSPFv2)
+Type 1  Router LSA   -> généré par chaque routeur, décrit ses liens (dans l'aire)
+Type 2  Network LSA  -> généré par le DR, décrit un segment à accès multiple
+Type 3  Summary LSA  -> généré par l'ABR, annonce un réseau d'une AUTRE aire
+Type 4  ASBR Summary -> généré par l'ABR, indique COMMENT joindre l'ASBR
+Type 5  External LSA -> généré par l'ASBR, route externe (redistribuée), diffusée partout
+Type 7  NSSA External-> route externe DANS une aire NSSA (convertie en type 5 par l'ABR)</pre>
+<p>Types 1 et 2 restent <strong>internes à une aire</strong>. Le type 3 traverse les aires (via l'ABR). Le type 5 est global. Le type 7 est le remplaçant du type 5 dans les aires NSSA, où le type 5 est interdit.</p>
+<h3>4. Les aires spéciales : stub et NSSA</h3>
+<p>Pour alléger encore les aires périphériques, OSPF propose des <strong>aires spéciales</strong> qui filtrent les LSA externes :</p>
+<pre class="pseudo"># Aires spéciales
+Stub            -> bloque les LSA type 5 (externes) ; l'ABR injecte une route par défaut
+Totally Stubby  -> bloque type 5 ET type 3 (Cisco) ; ne garde qu'une route par défaut
+NSSA            -> comme stub, mais AUTORISE un ASBR local via des LSA type 7
+Totally NSSA    -> NSSA qui bloque aussi les type 3 (route par défaut + type 7)</pre>
+<p>La règle-clé : une aire <strong>stub</strong> ne peut PAS contenir d'ASBR (pas de routes externes injectées localement). Quand on a besoin d'un ASBR dans une aire par ailleurs « stub », on utilise une <strong>NSSA</strong> (« Not-So-Stubby Area ») : elle transporte l'externe via le type 7, que l'ABR reconvertit en type 5 vers le reste du domaine.</p>
+<pre class="pseudo"># Configuration IOS (extraits)
+router ospf 1
+ network 10.0.0.0 0.0.0.255 area 0
+ area 1 stub               ! aire 1 en stub
+ area 2 nssa               ! aire 2 en NSSA
+# Toutes les interfaces d'une aire stub/NSSA doivent porter la même option.</pre>
+<div class="warn">Tous les routeurs d'une aire stub (ou NSSA) doivent être configurés avec la même option, sinon l'adjacence ne se forme pas : le flag stub est vérifié dans les paquets Hello. Et l'aire 0 ne peut jamais être une aire stub.</div>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Aire 0 = backbone obligatoire ; les autres s'y raccordent via un ABR
+# ABR = frontière entre aires ; ASBR = injecte des routes externes
+# LSA : 1 Router, 2 Network, 3 Summary(inter-aires), 4 ASBR-Summary,
+#       5 External(global), 7 NSSA-External
+# Stub : bloque type 5 (+ défaut) ; NSSA : stub AVEC ASBR local (type 7)
+# Même option stub/NSSA sur TOUS les routeurs de l'aire.</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel algorithme OSPF utilise-t-il pour calculer les plus courts chemins ?", opts: ["Bellman-Ford", "Dijkstra (SPF)", "DUAL", "Diffusion de vecteurs"], a: 1, exp: "OSPF est à état de liens et emploie Dijkstra (SPF)." },
+    { type: "input", q: "Quel numéro d'aire OSPF est le backbone obligatoire ?", a: ["0", "area 0", "aire 0", "zéro", "zero"], ph: "un numéro", exp: "L'aire 0 est le backbone auquel toutes les autres se raccordent." },
+    { type: "qcm", q: "Que fait un ABR (Area Border Router) ?", opts: ["Injecte des routes d'un autre protocole", "Relie l'aire 0 à une autre aire et résume l'information", "Calcule le DR", "Bloque OSPF"], a: 1, exp: "L'ABR est à cheval sur deux aires et relaie/résume l'information inter-aires." },
+    { type: "qcm", q: "Quel routeur injecte des routes externes (redistribuées) dans OSPF ?", opts: ["Le routeur interne", "L'ABR", "L'ASBR", "Le DR"], a: 2, exp: "L'ASBR (Autonomous System Boundary Router) fait entrer les routes externes." },
+    { type: "input", q: "Quel type de LSA est généré par chaque routeur pour décrire ses liens (Router LSA) ?", a: ["1", "type 1", "lsa 1", "type1"], ph: "un numéro", exp: "Le Router LSA est de type 1." },
+    { type: "qcm", q: "Le Summary LSA (annonçant un réseau d'une autre aire) est de quel type ?", opts: ["Type 1", "Type 2", "Type 3", "Type 5"], a: 2, exp: "Le type 3 (Summary LSA) est généré par l'ABR pour les réseaux inter-aires." },
+    { type: "qcm", q: "Quel type de LSA porte une route EXTERNE diffusée dans tout le domaine ?", opts: ["Type 2", "Type 3", "Type 4", "Type 5"], a: 3, exp: "Le type 5 (External LSA) est généré par l'ASBR pour les routes externes." },
+    { type: "vf", q: "Une aire stub bloque les LSA de type 5 (externes) et reçoit une route par défaut de l'ABR.", a: true, exp: "Oui : la stub filtre les type 5 et l'ABR y injecte une route par défaut." },
+    { type: "vf", q: "Une aire stub peut contenir un ASBR qui injecte des routes externes localement.", a: false, exp: "Non : la stub interdit l'ASBR local. Pour cela, il faut une NSSA." },
+    { type: "input", q: "Quel type de LSA transporte une route externe à l'intérieur d'une aire NSSA ?", a: ["7", "type 7", "lsa 7", "type7"], ph: "un numéro", exp: "Le type 7 (NSSA External) ; l'ABR le reconvertit en type 5." },
+    { type: "qcm", q: "Que signifie NSSA ?", opts: ["Network Simple Stub Area", "Not-So-Stubby Area", "No Summary Static Area", "Nested Stub Sub-Area"], a: 1, exp: "NSSA = Not-So-Stubby Area : une stub qui autorise un ASBR local via le type 7." },
+    { type: "qcm", q: "Une aire Totally Stubby (Cisco) bloque quels LSA ?", opts: ["Uniquement les type 1", "Les type 5 seulement", "Les type 5 ET les type 3 (ne garde qu'une route par défaut)", "Aucun"], a: 2, exp: "La totally stubby bloque type 5 et type 3, ne laissant qu'une route par défaut." },
+    { type: "vf", q: "Tous les routeurs d'une même aire stub doivent porter la configuration stub, sinon l'adjacence échoue.", a: true, exp: "Oui : le flag stub est vérifié dans les Hello ; incohérence = pas d'adjacence." },
+    { type: "qcm", q: "À quoi sert le LSA de type 4 (ASBR Summary) ?", opts: ["Décrire un segment multi-accès", "Indiquer comment joindre l'ASBR depuis une autre aire", "Résumer un réseau interne", "Porter la route par défaut"], a: 1, exp: "Le type 4 indique aux routeurs des autres aires comment atteindre l'ASBR." },
+    { type: "input", q: "En IOS, quelle commande (mot-clé) place l'aire 2 en NSSA sous 'router ospf 1' ? (donne la ligne)", a: ["area 2 nssa", "area2 nssa"], ph: "commande IOS", exp: "La commande est : area 2 nssa." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir un domaine OSPF",
+    intro: `<p>Un réseau comporte une aire 0 (backbone), une aire 1 périphérique sans aucune sortie externe, et une aire 2 qui héberge un routeur redistribuant des routes statiques vers l'extérieur. On te demande de typer correctement chaque aire.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour l'aire 1, périphérique et sans routes externes, quel type est idéal ?", opts: ["Backbone", "Stub", "NSSA", "Aire 0"], a: 1, exp: "Sans besoin d'ASBR local, une aire stub allège l'aire 1." },
+      { type: "qcm", q: "L'aire 2 héberge un ASBR (redistribution). Quel type d'aire spéciale convient ?", opts: ["Stub", "Totally Stubby", "NSSA", "Backbone"], a: 2, exp: "Une NSSA autorise un ASBR local tout en filtrant les autres externes." },
+      { type: "input", q: "Quel type de LSA l'ASBR de l'aire 2 va-t-il générer pour ses routes externes ?", a: ["7", "type 7", "lsa 7"], ph: "un numéro", exp: "Dans une NSSA, les externes voyagent en LSA type 7." },
+      { type: "vf", q: "L'ABR de l'aire 2 reconvertit les LSA type 7 en type 5 vers le reste du domaine.", a: true, exp: "Oui : l'ABR traduit type 7 -> type 5 pour la diffusion globale." },
+      { type: "qcm", q: "Peut-on configurer l'aire 0 en stub ?", opts: ["Oui, toujours", "Non, jamais", "Seulement si elle a un ABR", "Uniquement en totally stubby"], a: 1, exp: "L'aire 0 (backbone) ne peut jamais être une aire stub." }
+    ],
+    solution: `<pre class="pseudo"># Typage des aires
+Aire 0 : backbone (jamais stub)
+Aire 1 : STUB (périphérique, pas d'externe) -> bloque type 5, route par défaut
+Aire 2 : NSSA (héberge un ASBR)             -> externes en type 7
+         l'ABR de l'aire 2 traduit type 7 -> type 5 (diffusion globale)
+# router ospf 1
+#  area 1 stub
+#  area 2 nssa</pre>
+<p>Tu sais maintenant structurer et typer un domaine OSPF multi-aires. Demain : EIGRP, l'approche Cisco du routage à vecteur de distance avancé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j05", title: "LSA, ABR et aires spéciales", level: 3,
+    statement: "En texte, distingue le rôle d'un <strong>ABR</strong> et d'un <strong>ASBR</strong>, liste les <strong>types de LSA 1 à 5 et 7</strong> avec une phrase par type, puis explique la différence entre une aire <strong>stub</strong> et une aire <strong>NSSA</strong>.",
+    hints: [
+      "ABR = frontière entre aires ; ASBR = injecte l'externe.",
+      "LSA 1 Router, 2 Network, 3 Summary, 4 ASBR-Summary, 5 External, 7 NSSA-External.",
+      "Stub interdit l'ASBR local ; NSSA l'autorise via le type 7."
+    ],
+    solution: "# ABR vs ASBR\n# - ABR (Area Border Router) : a cheval entre l'aire 0 et une autre aire,\n#   resume et relaie l'info inter-aires.\n# - ASBR (Autonomous System Boundary Router) : injecte des routes\n#   externes (redistribuees) dans OSPF.\n#\n# Types de LSA\n# 1 Router   : genere par chaque routeur, decrit ses liens (dans l'aire)\n# 2 Network  : genere par le DR, decrit un segment multi-acces\n# 3 Summary  : genere par l'ABR, reseau d'une autre aire (inter-aires)\n# 4 ASBR-Summary : genere par l'ABR, comment joindre l'ASBR\n# 5 External : genere par l'ASBR, route externe, diffusee partout\n# 7 NSSA-External : route externe dans une aire NSSA (ABR -> type 5)\n#\n# Stub vs NSSA\n# - Stub : bloque les type 5, PAS d'ASBR local, route par defaut de l'ABR.\n# - NSSA : comme stub mais AUTORISE un ASBR local via des LSA type 7.",
+    note: "L'aire 0 (backbone) ne peut jamais être stub, et tous les routeurs d'une aire stub/NSSA doivent partager la même option." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

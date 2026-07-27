@@ -1,0 +1,96 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 18</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 18,
+  title: "La QoS avancée",
+  subtitle: "Donner la priorité à la voix quand le tuyau est plein, sans sacrifier le reste.",
+  theory: `
+<h3>1. Pourquoi la qualité de service ?</h3>
+<p>Sur un lien saturé, tous les paquets attendent leur tour. Pour un téléchargement, un retard de 200 ms est invisible ; pour un appel téléphonique, il devient un hachage insupportable. La <strong>QoS</strong> (Quality of Service) sert à traiter différemment les trafics selon leurs besoins : la voix veut peu de <em>délai</em> et peu de <em>gigue</em> (jitter), la vidéo veut du débit, les sauvegardes peuvent patienter. La QoS ne crée pas de bande passante : elle décide <strong>qui passe d'abord</strong> quand il y a embouteillage.</p>
+<h3>2. Deux modèles : IntServ et DiffServ</h3>
+<p>Historiquement, deux approches s'opposent. <strong>IntServ</strong> (Integrated Services) réserve des ressources de bout en bout, flux par flux, à l'aide du protocole <strong>RSVP</strong> : très précis, mais il faut mémoriser l'état de chaque flux sur chaque routeur, donc ça ne passe pas à l'échelle d'Internet. <strong>DiffServ</strong> (Differentiated Services) fait l'inverse : on ne réserve rien, on <em>marque</em> chaque paquet avec une classe de priorité, et chaque routeur applique un traitement (PHB, Per-Hop Behavior) selon cette marque. DiffServ est le modèle universellement déployé aujourd'hui.</p>
+<div class="tip">IntServ = réservation par flux (RSVP), précis mais lourd. DiffServ = marquage par classe, simple et scalable. En entreprise, on fait du DiffServ.</div>
+<h3>3. Le marquage DSCP</h3>
+<p>Dans DiffServ, la classe est inscrite dans l'en-tête IP, sur 6 bits, appelés <strong>DSCP</strong> (Differentiated Services Code Point). On marque au plus près de la source (à la périphérie, dans la zone de confiance). Quelques valeurs à connaître par cœur : <strong>EF = 46</strong> (Expedited Forwarding) pour la <em>voix</em> ; <strong>CS6 = 48</strong> pour le trafic réseau ; les classes <strong>AF</strong> (Assured Forwarding, ex. AF41 = 34) pour la vidéo et les données importantes ; <strong>DF = 0</strong> (Default) pour le best-effort.</p>
+<pre class="pseudo"># Valeurs DSCP à retenir
+EF   = 46   -> voix (Expedited Forwarding, faible délai)
+AF41 = 34   -> vidéo interactive
+CS6  = 48   -> trafic de contrôle réseau (routage)
+DF   = 0    -> best-effort (par défaut)</pre>
+<h3>4. Le MQC : class-map, policy-map, service-policy</h3>
+<p>Sur IOS, on configure la QoS avec le <strong>MQC</strong> (Modular QoS CLI), en trois temps toujours identiques. D'abord la <strong>class-map</strong> : elle <em>identifie</em> le trafic (par ACL, par DSCP, par protocole). Ensuite la <strong>policy-map</strong> : pour chaque classe, elle décide <em>quoi faire</em> (marquer, garantir un débit, prioriser, limiter). Enfin la <strong>service-policy</strong> : elle <em>applique</em> la policy-map à une interface, en entrée (input) ou en sortie (output).</p>
+<pre class="pseudo"># 1) Identifier le trafic
+class-map match-all VOIX
+ match dscp ef
+# 2) Décider du traitement
+policy-map SORTIE-WAN
+ class VOIX
+  priority 1000            # file prioritaire (LLQ), 1000 kbps
+ class class-default
+  fair-queue
+# 3) Appliquer sur l'interface
+interface GigabitEthernet0/1
+ service-policy output SORTIE-WAN</pre>
+<h3>5. Les files d'attente et la LLQ</h3>
+<p>Quand plusieurs classes se disputent la sortie, l'ordonnanceur choisit qui envoyer. Le mécanisme moderne est le <strong>CBWFQ</strong> (Class-Based Weighted Fair Queuing) : chaque classe reçoit une part garantie de bande passante avec la commande <code>bandwidth</code>. Mais la voix ne supporte pas d'attendre : on lui réserve une <strong>file à priorité stricte</strong>, la <strong>LLQ</strong> (Low Latency Queuing), configurée par la commande <code>priority</code>. La LLQ est servie <em>avant</em> toutes les autres, ce qui garantit un délai minimal ; pour éviter qu'elle n'affame le reste, un plafond (policer) limite son débit.</p>
+<div class="warn">Piège classique : la commande <code>bandwidth</code> garantit un minimum mais ne priorise pas ; seule <code>priority</code> crée la file prioritaire (LLQ) indispensable à la voix. Ne mets jamais la voix en simple CBWFQ.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Modèles : IntServ (RSVP, réservation) / DiffServ (marquage DSCP)
+# DSCP clé : EF=46 (voix), AF41=34 (vidéo), CS6=48, DF=0
+# MQC en 3 étapes :
+class-map    -> identifier le trafic
+policy-map   -> décider (marquer, bandwidth, priority)
+service-policy-> appliquer à l'interface (input/output)
+# Files : CBWFQ (bandwidth = garantie) + LLQ (priority = voix)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle valeur DSCP marque le trafic voix (Expedited Forwarding) ?", opts: ["0", "34", "46", "48"], a: 2, exp: "EF = 46 : faible délai, faible gigue, réservé à la voix." },
+    { type: "qcm", q: "Quel modèle de QoS repose sur le marquage par classe, sans réserver de ressources par flux ?", opts: ["IntServ", "DiffServ", "RSVP", "MPLS"], a: 1, exp: "DiffServ marque les paquets (DSCP) et applique un traitement par saut (PHB). C'est le modèle déployé." },
+    { type: "qcm", q: "Quel protocole IntServ sert à réserver des ressources de bout en bout ?", opts: ["RSVP", "DSCP", "CBWFQ", "LLQ"], a: 0, exp: "IntServ utilise RSVP pour réserver flux par flux : précis mais peu scalable." },
+    { type: "vf", q: "La QoS crée de la bande passante supplémentaire sur un lien saturé.", a: false, exp: "Non : elle ne crée rien, elle décide de l'ordre de passage quand il y a congestion." },
+    { type: "input", q: "Quelle commande de policy-map crée la file à priorité stricte (LLQ) pour la voix ?", a: ["priority", "priority command"], ph: "un mot IOS", exp: "priority crée la LLQ ; bandwidth ne fait que garantir un minimum." },
+    { type: "qcm", q: "Dans le MQC, quel objet IDENTIFIE le trafic à traiter ?", opts: ["policy-map", "class-map", "service-policy", "route-map"], a: 1, exp: "La class-map identifie (match dscp, match access-group…) ; la policy-map décide." },
+    { type: "qcm", q: "Dans le MQC, quel objet APPLIQUE la politique à une interface ?", opts: ["class-map", "policy-map", "service-policy", "access-list"], a: 2, exp: "service-policy input|output attache la policy-map à l'interface." },
+    { type: "vf", q: "La commande bandwidth suffit à donner à la voix la priorité stricte dont elle a besoin.", a: false, exp: "Faux : bandwidth garantit un minimum mais ne priorise pas. Seule priority (LLQ) garantit le faible délai." },
+    { type: "input", q: "Sur combien de bits le champ DSCP est-il codé dans l'en-tête IP ?", a: ["6", "6 bits", "six"], ph: "un nombre", exp: "DSCP = 6 bits, soit 64 valeurs possibles (0 à 63)." },
+    { type: "qcm", q: "Que signifie le sigle MQC ?", opts: ["Multi Queue Control", "Modular QoS CLI", "Managed Quality Class", "Media Queue Command"], a: 1, exp: "MQC = Modular QoS CLI : le cadre class-map / policy-map / service-policy." },
+    { type: "qcm", q: "Le mécanisme CBWFQ, via la commande bandwidth, sert à…", opts: ["marquer les paquets en EF", "garantir une part de bande passante à chaque classe", "capturer le trafic", "chiffrer les flux"], a: 1, exp: "CBWFQ garantit un minimum de débit par classe ; la LLQ ajoute la priorité stricte." },
+    { type: "input", q: "Comment appelle-t-on la variation du délai entre paquets, très gênante pour la voix ? (mot français ou anglais)", a: ["gigue", "jitter", "la gigue"], ph: "un mot", exp: "La gigue (jitter) est la variation du délai ; la LLQ la minimise pour la voix." },
+    { type: "vf", q: "Dans DiffServ, on doit mémoriser l'état de chaque flux sur chaque routeur.", a: false, exp: "Non, c'est IntServ (RSVP) qui garde l'état par flux. DiffServ ne mémorise rien : il lit la marque DSCP." },
+    { type: "qcm", q: "Où recommande-t-on de marquer le trafic en DiffServ ?", opts: ["au cœur du réseau uniquement", "au plus près de la source, à la périphérie de confiance", "sur Internet", "nulle part, c'est automatique"], a: 1, exp: "On marque à la périphérie (zone de confiance) puis on fait confiance à la marque dans le cœur." },
+    { type: "input", q: "Quelle valeur DSCP correspond au best-effort par défaut (Default) ?", a: ["0", "df", "zero"], ph: "un nombre", exp: "DF = 0 : le trafic par défaut, sans priorité." }
+  ],
+  final: {
+    title: "Exercice final — Prioriser la voix sur un lien WAN",
+    intro: "<p>Un site distant a un lien WAN de 2 Mbps souvent saturé par les sauvegardes. La téléphonie IP (voix) grésille. On te demande d'appliquer une politique QoS DiffServ complète sur l'interface de sortie.</p>",
+    questions: [
+      { type: "qcm", q: "Première étape : identifier la voix. On crée une class-map qui fait…", opts: ["match dscp ef", "match dscp 0", "priority 1000", "service-policy output"], a: 0, exp: "La voix est marquée EF (46) : la class-map fait match dscp ef." },
+      { type: "input", q: "Dans la policy-map, quelle commande place la classe VOIX en file prioritaire ?", a: ["priority", "priority 1000"], ph: "commande IOS", exp: "priority crée la LLQ, servie avant tout le reste." },
+      { type: "qcm", q: "Pour appliquer la politique dans le sens sortant du lien, on tape sur l'interface…", opts: ["service-policy input POL", "service-policy output POL", "ip policy POL", "qos output POL"], a: 1, exp: "service-policy output attache la policy-map dans le sens de sortie." },
+      { type: "vf", q: "Placer les sauvegardes en class-default avec fair-queue leur laisse le reste de la bande, sans gêner la voix.", a: true, exp: "Oui : la voix passe d'abord (LLQ), le reste se partage équitablement le solde." },
+      { type: "qcm", q: "Quel modèle de QoS met-on ainsi en œuvre ?", opts: ["IntServ avec RSVP", "DiffServ avec marquage DSCP", "MPLS-TE", "aucun"], a: 1, exp: "Marquage DSCP + traitement par classe = DiffServ." }
+    ],
+    solution: "<pre class=\"pseudo\"># Politique QoS DiffServ complète (MQC)\nclass-map match-all VOIX\n match dscp ef\n!\npolicy-map WAN-OUT\n class VOIX\n  priority 512          # LLQ : file prioritaire pour la voix\n class class-default\n  fair-queue            # le reste se partage équitablement\n!\ninterface Serial0/0/0\n service-policy output WAN-OUT</pre><p>La voix (EF=46) est identifiée par la class-map, priorisée par la LLQ dans la policy-map, et le tout est appliqué en sortie par la service-policy. Résultat : plus de grésillement, même lien saturé.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j18", title: "Une politique QoS en trois temps", level: 2,
+    statement: "Écris (en pseudo-config IOS) une politique QoS qui met la <strong>voix</strong> (marquée DSCP EF) en file prioritaire et applique le tout en sortie de l'interface <code>Gi0/1</code>. Respecte les trois étapes du <strong>MQC</strong> : class-map, policy-map, service-policy.",
+    hints: [
+      "La class-map identifie : match dscp ef.",
+      "Dans la policy-map, la commande priority crée la LLQ.",
+      "La service-policy s'applique sur l'interface, sens output."
+    ],
+    solution: "! 1) class-map : identifier la voix\nclass-map match-all VOIX\n match dscp ef\n!\n! 2) policy-map : decider du traitement\npolicy-map QOS-SORTIE\n class VOIX\n  priority 1000\n class class-default\n  fair-queue\n!\n! 3) service-policy : appliquer sur l'interface\ninterface GigabitEthernet0/1\n service-policy output QOS-SORTIE",
+    note: "Rappel : priority = LLQ (file stricte pour la voix), bandwidth = simple garantie de debit." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

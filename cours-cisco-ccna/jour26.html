@@ -1,0 +1,119 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 26</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 26,
+  title: "Sécuriser les accès (SSH, AAA)",
+  subtitle: "Remplacer Telnet par SSH et durcir l'accès administratif d'un équipement IOS.",
+  theory: `
+<h3>1. Telnet contre SSH : le chiffrement change tout</h3>
+<p>Pour administrer un routeur ou un commutateur à distance, on ouvre une session vers ses lignes virtuelles (les lignes <strong>VTY</strong>). Deux protocoles le permettent. <strong>Telnet</strong> (port TCP 23) est l'historique : simple mais <strong>en clair</strong>. Tout ce qui passe — y compris le mot de passe — circule en texte lisible ; un attaquant qui capture le trafic voit tout. <strong>SSH</strong> (en anglais <em>Secure Shell</em>, port TCP 22) fait la même chose mais <strong>chiffre</strong> intégralement la session.</p>
+<div class="warn">Telnet ne doit plus être utilisé sur un vrai réseau. Considère-le comme une carte postale (tout le monde peut lire) et SSH comme une lettre scellée. Le CCNA insiste : on désactive Telnet et on n'autorise que SSH sur les VTY.</div>
+<p>Il existe deux versions de SSH ; on impose <strong>SSHv2</strong>, plus sûr que SSHv1. La commande est <code>ip ssh version 2</code>.</p>
+<h3>2. Les prérequis avant d'activer SSH</h3>
+<p>SSH chiffre grâce à une paire de clés. Pour générer cette paire, IOS a besoin d'un contexte cryptographique. Trois prérequis :</p>
+<pre class="pseudo"># 1) Un nom d'hote (autre que le defaut "Router")
+Router(config)# hostname R1
+# 2) Un nom de domaine (compose avec le hostname pour nommer les cles)
+R1(config)# ip domain name exemple.local
+# 3) Un compte local pour s'authentifier
+R1(config)# username admin secret MonMotDePasse</pre>
+<div class="tip">On utilise <code>secret</code> (haché en interne) plutôt que <code>password</code> (stocké de façon faible). <code>username admin secret ...</code> crée un identifiant chiffré et robuste.</div>
+<h3>3. Générer la clé RSA et activer SSH</h3>
+<p>Le cœur de la configuration est la génération de la paire de clés <strong>RSA</strong>. La commande <code>crypto key generate rsa</code> demande une taille de module (le <em>modulus</em>) en bits. On choisit au moins <strong>1024 bits</strong> ; 2048 est recommandé. En dessous de 768, IOS refuse d'activer SSHv2.</p>
+<pre class="pseudo">R1(config)# crypto key generate rsa
+  How many bits in the modulus [512]: 2048
+R1(config)# ip ssh version 2
+# (option de durcissement)
+R1(config)# ip ssh time-out 60
+R1(config)# ip ssh authentication-retries 3</pre>
+<p>Générer la clé active automatiquement le service SSH. Il reste à dire aux lignes VTY d'accepter SSH et de vérifier l'identité via les comptes locaux.</p>
+<h3>4. Configurer les lignes VTY : n'autoriser que SSH</h3>
+<p>Les sessions distantes arrivent sur les lignes <strong>vty 0 15</strong> (16 lignes). Deux réglages essentiels : imposer SSH comme unique protocole d'entrée avec <code>transport input ssh</code>, et exiger une connexion via la base d'utilisateurs locale avec <code>login local</code>.</p>
+<pre class="pseudo">R1(config)# line vty 0 15
+R1(config-line)# transport input ssh      # n'autorise QUE SSH (bloque Telnet)
+R1(config-line)# login local              # authentifie via username/secret local
+R1(config-line)# exec-timeout 5 0         # deconnexion apres 5 min d'inactivite
+R1(config-line)# exit</pre>
+<div class="warn">Erreur classique : oublier <code>transport input ssh</code>. Si on laisse <code>transport input all</code> (ou telnet), Telnet reste ouvert et le chiffrement ne protège rien. <code>transport input ssh</code> ferme la porte du clair.</div>
+<h3>5. Durcir les mots de passe : service password-encryption</h3>
+<p>Par défaut, plusieurs mots de passe apparaissent en clair dans la configuration (mot de passe de <code>line console</code>, de <code>enable password</code>...). La commande globale <strong>service password-encryption</strong> applique un chiffrement (faible, type 7) qui masque ces mots de passe dans <code>show running-config</code>. Ce n'est pas de la cryptographie forte, mais cela évite qu'un mot de passe soit lu par-dessus l'épaule.</p>
+<pre class="pseudo">R1(config)# service password-encryption   # masque les mots de passe en clair
+R1(config)# enable secret ClasseEnable    # "secret" = hache robuste (type 5/9)
+R1(config)# banner motd #Acces reserve#   # avertissement legal a la connexion</pre>
+<div class="tip">Retiens la hiérarchie : <code>enable secret</code> (haché robuste) est toujours préféré à <code>enable password</code> (faible). <code>service password-encryption</code> ne fait que masquer les mots de passe restés faibles.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Telnet (TCP 23) = clair  |  SSH (TCP 22) = chiffre => on utilise SSH
+# Prerequis SSH : hostname + ip domain name + username secret
+# Cle : crypto key generate rsa  (modulus >= 1024, 2048 conseille)
+#       ip ssh version 2
+# Lignes VTY :
+#   line vty 0 15
+#   transport input ssh   (bloque Telnet, n'autorise que SSH)
+#   login local           (authentifie via comptes locaux)
+# Durcissement : service password-encryption + enable secret + exec-timeout</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel protocole permet une administration distante chiffrée d'un équipement IOS ?", opts: ["Telnet", "SSH", "HTTP", "FTP"], a: 1, exp: "SSH (port TCP 22) chiffre la session. Telnet (TCP 23) est en clair." },
+    { type: "qcm", q: "Sur quel port TCP fonctionne SSH ?", opts: ["21", "22", "23", "80"], a: 1, exp: "SSH = TCP 22. Telnet = TCP 23, HTTP = 80, FTP = 21." },
+    { type: "vf", q: "Telnet chiffre le mot de passe pendant la connexion.", a: false, exp: "Non : Telnet transmet tout en clair, y compris le mot de passe. C'est pourquoi on lui préfère SSH." },
+    { type: "input", q: "Quelle commande génère la paire de clés nécessaire à SSH sur IOS ?", a: ["crypto key generate rsa", "crypto key generate rsa"], ph: "commande complète", exp: "crypto key generate rsa crée la paire RSA ; on choisit un modulus d'au moins 1024 bits." },
+    { type: "qcm", q: "Quelle commande, en mode ligne, n'autorise QUE SSH sur les VTY (bloque Telnet) ?", opts: ["login local", "transport input ssh", "ip ssh version 2", "service password-encryption"], a: 1, exp: "transport input ssh limite l'entrée à SSH et ferme Telnet." },
+    { type: "qcm", q: "Parmi les prérequis à SSH, lequel est INDISPENSABLE avant de générer la clé RSA ?", opts: ["Configurer un serveur DHCP", "Définir un nom de domaine (ip domain name)", "Activer OSPF", "Créer un VLAN"], a: 1, exp: "IOS combine hostname + nom de domaine pour nommer les clés ; il faut aussi un hostname différent du défaut." },
+    { type: "vf", q: "La commande service password-encryption fournit un chiffrement fort et incassable des mots de passe.", a: false, exp: "Non : c'est un chiffrement faible (type 7) qui masque simplement les mots de passe en clair." },
+    { type: "input", q: "Quelle commande de mode ligne exige l'authentification via les comptes locaux (username/secret) ?", a: ["login local"], ph: "deux mots", exp: "login local authentifie l'accès à l'aide de la base d'utilisateurs locale." },
+    { type: "qcm", q: "Quelle version de SSH doit-on imposer pour plus de sécurité ?", opts: ["SSHv1", "SSHv2", "SSHv0", "Telnet"], a: 1, exp: "On impose SSHv2 avec ip ssh version 2 ; SSHv1 est obsolète et moins sûr." },
+    { type: "qcm", q: "Combien de lignes VTY configure-t-on typiquement avec « line vty 0 15 » ?", opts: ["5", "8", "16", "24"], a: 2, exp: "0 à 15 = 16 lignes VTY sur les IOS récents." },
+    { type: "vf", q: "On préfère enable secret à enable password car secret est haché de façon robuste.", a: true, exp: "Oui : enable secret utilise un hachage robuste ; enable password est faiblement protégé." },
+    { type: "input", q: "Quelle commande globale masque les mots de passe affichés en clair dans la configuration ?", a: ["service password-encryption"], ph: "commande complète", exp: "service password-encryption applique un chiffrement de type 7 pour masquer les mots de passe restants." },
+    { type: "qcm", q: "Un module RSA (modulus) d'au moins quelle taille est requis pour activer SSHv2 ?", opts: ["256 bits", "512 bits", "768 bits", "1024 bits"], a: 3, exp: "SSHv2 exige un modulus d'au moins 768 bits pour démarrer ; on recommande 1024 minimum, 2048 idéalement." },
+    { type: "qcm", q: "Quelle commande déconnecte automatiquement une session VTY inactive au bout d'un délai ?", opts: ["exec-timeout", "ip ssh version 2", "transport input ssh", "banner motd"], a: 0, exp: "exec-timeout 5 0 ferme la session après 5 minutes d'inactivité." },
+    { type: "vf", q: "Générer la paire de clés RSA active automatiquement le service SSH sur l'équipement.", a: true, exp: "Oui : la génération de la clé active le service SSH ; il reste à régler les VTY." }
+  ],
+  final: {
+    title: "Exercice final — Durcir R1 pour un accès SSH uniquement",
+    intro: `<p>R1 est un routeur neuf (hostname « Router », aucun mot de passe). L'administrateur veut interdire Telnet, n'autoriser que SSHv2 avec un compte local, et masquer les mots de passe. Reconstituons la configuration.</p>`,
+    questions: [
+      { type: "qcm", q: "Première étape logique avant de générer la clé RSA ?", opts: ["Créer un VLAN", "Définir hostname + ip domain name", "Lancer transport input ssh", "Activer OSPF"], a: 1, exp: "La clé RSA est nommée à partir du hostname et du nom de domaine : ces deux réglages viennent d'abord." },
+      { type: "input", q: "Quelle commande crée le compte local chiffré « admin » ?", a: ["username admin secret", "username admin secret cisco", "username admin secret motdepasse"], ph: "username admin secret ...", exp: "username admin secret <mdp> crée un compte local avec un mot de passe haché." },
+      { type: "qcm", q: "Sur les lignes vty 0 15, quelles deux commandes ferment Telnet et exigent le compte local ?", opts: ["transport input telnet + login", "transport input ssh + login local", "no login + transport input all", "exec-timeout + banner"], a: 1, exp: "transport input ssh bloque Telnet, login local force l'authentification locale." },
+      { type: "input", q: "Quelle commande impose la version 2 de SSH ?", a: ["ip ssh version 2"], ph: "commande complète", exp: "ip ssh version 2 force SSHv2, plus sûr que SSHv1." },
+      { type: "qcm", q: "Pour masquer les mots de passe restants en clair, l'administrateur ajoute…", opts: ["no service password", "service password-encryption", "enable password", "ip ssh time-out"], a: 1, exp: "service password-encryption masque les mots de passe affichés en clair dans la config." }
+    ],
+    solution: `<pre class="pseudo"># Configuration SSH complete de R1
+Router(config)# hostname R1
+R1(config)# ip domain name exemple.local
+R1(config)# username admin secret Cisco123
+R1(config)# crypto key generate rsa
+  How many bits in the modulus [512]: 2048
+R1(config)# ip ssh version 2
+R1(config)# service password-encryption
+R1(config)# enable secret ClasseEnable
+R1(config)# line vty 0 15
+R1(config-line)# transport input ssh
+R1(config-line)# login local
+R1(config-line)# exec-timeout 5 0
+R1(config-line)# end</pre>
+<p>Telnet est bloqué, seul SSHv2 est accepté avec authentification locale, et les mots de passe sont masqués. L'accès administratif de R1 est durci.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j26", title: "Activer SSH pas à pas", level: 2,
+    statement: "Sur un commutateur neuf nommé « Switch », écris la <strong>suite de commandes IOS</strong> pour : définir le hostname <code>SW1</code> et le domaine <code>lab.local</code>, créer le compte <code>admin</code> avec un mot de passe haché, générer une clé RSA de 2048 bits, imposer SSHv2, et sur les VTY n'autoriser que SSH avec authentification locale.",
+    hints: [
+      "L'ordre compte : hostname et domaine AVANT crypto key generate rsa.",
+      "Pour un compte chiffré, utilise username ... secret ... (pas password).",
+      "Sur les VTY : transport input ssh puis login local."
+    ],
+    solution: "Switch(config)# hostname SW1\nSW1(config)# ip domain name lab.local\nSW1(config)# username admin secret Cisco123\nSW1(config)# crypto key generate rsa\n  How many bits in the modulus [512]: 2048\nSW1(config)# ip ssh version 2\nSW1(config)# line vty 0 15\nSW1(config-line)# transport input ssh\nSW1(config-line)# login local\nSW1(config-line)# end",
+    note: "Sans hostname ni nom de domaine, crypto key generate rsa échoue : IOS ne sait pas comment nommer la clé." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 05</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 5,
+  title: "Le routage OSPF au niveau expert",
+  subtitle: "Comprendre les LSA, dompter les liens virtuels, résumer et filtrer avec chirurgie.",
+  theory: `
+<h3>1. OSPF vu par un expert : tout est LSA</h3>
+<p><strong>OSPF</strong> (« Open Shortest Path First ») est un protocole à <strong>état de liens</strong> : chaque routeur décrit son environnement dans des <strong>LSA</strong> (« Link-State Advertisements »), les diffuse dans la zone, et tous calculent le même graphe avec l'algorithme de Dijkstra (SPF). Maîtriser OSPF en expert, c'est d'abord <strong>connaître les types de LSA</strong> et savoir où chacun circule.</p>
+<pre class="pseudo"># Principaux types de LSA (rappel expert)
+Type 1  Router LSA   : liens d'un routeur, reste DANS sa zone
+Type 2  Network LSA  : genere par le DR sur un segment multi-acces
+Type 3  Summary LSA  : reseaux inter-zones, genere par l'ABR
+Type 4  ASBR Summary : chemin vers un ASBR, genere par l'ABR
+Type 5  External LSA : routes externes (redistribuees), flood inter-zones
+Type 7  NSSA External: externe dans une zone NSSA (traduit en Type 5 a l'ABR)</pre>
+<div class="tip">Réflexe d'expert : un <strong>ABR</strong> (Area Border Router) fabrique les LSA de type 3 et 4 ; un <strong>ASBR</strong> (Autonomous System Boundary Router) injecte les type 5. Les LSA de type 1 et 2 ne <strong>quittent jamais</strong> leur zone.</p></div>
+<h3>2. Les liens virtuels (virtual links)</h3>
+<p>OSPF impose que <strong>toute zone soit connectée à la zone 0</strong> (backbone). Quand une zone se retrouve <strong>coupée du backbone</strong> — ou que le backbone est physiquement discontinu — on répare la topologie logique avec un <strong>lien virtuel</strong> (virtual link) : un tunnel logique qui traverse une <strong>zone de transit</strong> non-backbone pour rattacher la zone orpheline à l'aire 0.</p>
+<pre class="pseudo"># Lien virtuel a travers l'aire 1 (zone de transit)
+! sur l'ABR cote backbone :
+router ospf 1
+ area 1 virtual-link 10.0.0.2   ! Router-ID du pair distant
+! sur l'ABR cote zone isolee :
+router ospf 1
+ area 1 virtual-link 10.0.0.1
+! verification :
+show ip ospf virtual-links</pre>
+<div class="warn">La zone de transit d'un virtual link ne peut <strong>PAS</strong> être une zone stub / NSSA. Le lien virtuel se configure avec le <strong>Router-ID</strong> du pair (pas son adresse d'interface). C'est un dépannage classique du labo.</p></div>
+<h3>3. Résumés (summarization)</h3>
+<p>Résumer réduit la taille des tables et stabilise le réseau. OSPF résume à deux endroits précis :</p>
+<pre class="pseudo"># Resume INTER-ZONES (sur un ABR) : agrege des Type 3
+router ospf 1
+ area 1 range 10.1.0.0 255.255.0.0
+# Resume EXTERNE (sur un ASBR) : agrege des Type 5
+router ospf 1
+ summary-address 172.16.0.0 255.255.0.0</pre>
+<p>À retenir : <strong>area range</strong> = résumé inter-zones sur l'ABR ; <strong>summary-address</strong> = résumé des routes externes sur l'ASBR. Résumer crée aussi une route <strong>Null0</strong> anti-boucle vers l'agrégat.</p>
+<h3>4. Filtrage et optimisation</h3>
+<p>On filtre les inter-zones sur l'ABR avec des <strong>filter-list</strong>, et les routes apprises localement avec des <strong>distribute-list</strong>. On optimise le SPF avec des <strong>coûts</strong> ajustés (bande passante de référence), le <strong>SPF throttling</strong>, les zones <strong>stub/totally stub/NSSA</strong> pour réduire les LSA, et l'authentification pour la sécurité.</p>
+<pre class="pseudo"># Filtrer des Type 3 entrant/sortant sur un ABR :
+router ospf 1
+ area 1 filter-list prefix BLOQUE in
+# Ajuster le cout d'une interface :
+interface Gi0/0
+ ip ospf cost 50
+# Reference de bande passante coherente sur tout le domaine :
+router ospf 1
+ auto-cost reference-bandwidth 100000   ! en Mbps</pre>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># LSA : 1 Router, 2 Network(DR), 3 Summary(ABR), 4 ASBR-Summary(ABR),
+#       5 External(ASBR), 7 NSSA-External(-&gt; traduit en 5 a l'ABR)
+# Virtual link : rattache une zone a l'aire 0 via une zone de TRANSIT
+#   (jamais stub/NSSA), configure avec le ROUTER-ID du pair
+# Resumes : area range (inter-zones, ABR) / summary-address (externe, ASBR)
+# Filtrage : filter-list (Type 3 sur ABR), distribute-list (local)
+# Optimisation : cout, reference-bandwidth, SPF throttling, stub/NSSA</pre>`,
+  exercises: [
+    { type: "qcm", q: "OSPF appartient à quelle famille de protocoles ?", opts: ["Vecteur de distance", "État de liens (link-state)", "Chemin vectoriel", "Statique"], a: 1, exp: "OSPF est un protocole à état de liens, basé sur les LSA et Dijkstra (SPF)." },
+    { type: "qcm", q: "Quel LSA est généré par le DR sur un segment multi-accès ?", opts: ["Type 1 (Router)", "Type 2 (Network)", "Type 3 (Summary)", "Type 5 (External)"], a: 1, exp: "Le Network LSA (type 2) est produit par le DR sur un réseau multi-accès." },
+    { type: "input", q: "Quel type de LSA (numéro) porte les routes externes redistribuées dans OSPF ?", a: ["5", "type 5", "lsa 5"], ph: "type …", exp: "Le type 5 (External LSA) transporte les routes externes, injecté par l'ASBR." },
+    { type: "vf", q: "Les LSA de type 1 et 2 ne quittent jamais leur zone.", a: true, exp: "Vrai : Router et Network LSA restent internes à la zone." },
+    { type: "qcm", q: "À quoi sert un lien virtuel (virtual link) ?", opts: ["À accélérer le SPF", "À rattacher à l'aire 0 une zone coupée du backbone via une zone de transit", "À chiffrer OSPF", "À supprimer les LSA de type 5"], a: 1, exp: "Il relie logiquement une zone orpheline au backbone à travers une zone de transit." },
+    { type: "vf", q: "La zone de transit d'un lien virtuel peut être une zone stub.", a: false, exp: "Faux : la zone de transit ne peut pas être stub ni NSSA." },
+    { type: "input", q: "Un lien virtuel se configure en référençant quel identifiant du routeur pair ? (deux mots)", a: ["router-id", "router id", "le router-id"], ph: "R…-ID", exp: "On utilise le Router-ID du pair, pas son adresse d'interface." },
+    { type: "qcm", q: "Quelle commande résume des routes inter-zones sur un ABR ?", opts: ["summary-address", "area X range", "ip ospf cost", "area X stub"], a: 1, exp: "area <id> range agrège les Type 3 sur l'ABR." },
+    { type: "qcm", q: "Quelle commande résume des routes externes sur un ASBR ?", opts: ["area X range", "summary-address", "area X virtual-link", "distribute-list"], a: 1, exp: "summary-address agrège les routes externes (Type 5) sur l'ASBR." },
+    { type: "vf", q: "Créer un résumé OSPF installe aussi une route Null0 anti-boucle vers l'agrégat.", a: true, exp: "Vrai : la route de discard vers Null0 évite les boucles sur l'agrégat." },
+    { type: "qcm", q: "Quel outil filtre les LSA de type 3 sur un ABR ?", opts: ["route-map d'entrée", "area filter-list prefix", "ip ospf priority", "passive-interface"], a: 1, exp: "area <id> filter-list prefix … in/out filtre les Type 3 sur l'ABR." },
+    { type: "qcm", q: "Que fait un ABR (Area Border Router) ?", opts: ["Il injecte les routes externes (Type 5)", "Il génère les LSA de type 3 et 4 entre zones", "Il élit le DR", "Il chiffre les paquets"], a: 1, exp: "L'ABR fabrique les Summary LSA (Type 3) et ASBR-Summary (Type 4)." },
+    { type: "input", q: "Quel paramètre global harmonise le calcul des coûts sur tout le domaine ? (deux mots)", a: ["reference-bandwidth", "reference bandwidth", "auto-cost reference-bandwidth"], ph: "reference …", exp: "auto-cost reference-bandwidth doit être cohérent partout." },
+    { type: "vf", q: "Toute zone OSPF doit être connectée, directement ou logiquement, à la zone 0.", a: true, exp: "Vrai : c'est la règle du backbone ; le virtual link répare une discontinuité." },
+    { type: "qcm", q: "Un LSA de type 7 (NSSA External) devient quoi en franchissant l'ABR ?", opts: ["Un Type 1", "Un Type 3", "Un Type 5", "Il est supprimé"], a: 2, exp: "L'ABR NSSA traduit le Type 7 en Type 5 vers le reste du domaine." }
+  ],
+  final: {
+    title: "Exercice final — Dépanner et optimiser un domaine OSPF",
+    intro: `<p>La zone 2 a perdu son lien direct vers l'aire 0 ; elle ne reste joignable qu'à travers la zone 1. De plus, la table est saturée de préfixes /24. Interviens.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour reconnecter logiquement la zone 2 au backbone via la zone 1, tu configures…", opts: ["Une distribute-list", "Un lien virtuel (virtual link) à travers la zone 1", "Un summary-address", "Une passive-interface"], a: 1, exp: "Un virtual link à travers la zone de transit 1 rattache la zone 2 à l'aire 0." },
+      { type: "vf", q: "Cela imposerait que la zone 1 ne soit ni stub ni NSSA.", a: true, exp: "Vrai : la zone de transit d'un virtual link ne peut pas être stub/NSSA." },
+      { type: "input", q: "Quel identifiant du pair renseignes-tu dans la commande virtual-link ? (deux mots)", a: ["router-id", "router id", "le router-id"], ph: "R…-ID", exp: "Le Router-ID du pair distant." },
+      { type: "qcm", q: "Pour réduire les nombreux /24 inter-zones, sur l'ABR tu utilises…", opts: ["summary-address", "area X range", "ip ospf cost", "area X virtual-link"], a: 1, exp: "area <id> range agrège les Type 3 inter-zones sur l'ABR." },
+      { type: "qcm", q: "Effet secondaire utile de ce résumé ?", opts: ["Il chiffre OSPF", "Il installe une route Null0 anti-boucle vers l'agrégat", "Il supprime le backbone", "Il élit un nouveau DR"], a: 1, exp: "Le résumé crée une route de discard Null0 protégeant contre les boucles." }
+    ],
+    solution: `<pre class="pseudo"># 1) Reconnecter la zone 2 via la zone 1 (transit) :
+router ospf 1
+ area 1 virtual-link &lt;ROUTER-ID-du-pair&gt;
+ ! a faire sur les DEUX ABR, avec le Router-ID de l'autre
+ ! zone 1 doit rester normale (ni stub ni NSSA)
+
+# 2) Resumer les /24 inter-zones sur l'ABR :
+router ospf 1
+ area 2 range 10.2.0.0 255.255.0.0
+ ! -&gt; un seul Type 3 + route Null0 anti-boucle
+
+# Verifications :
+show ip ospf virtual-links
+show ip ospf database summary</pre>
+<p>La zone 2 rejoint le backbone et la table respire. Demain : EIGRP en profondeur.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j05", title: "Synthèse OSPF expert", level: 3,
+    statement: "En texte brut, résume l'essentiel d'OSPF niveau expert : les <strong>types de LSA</strong> principaux (qui les génère, où ils circulent), le rôle d'un <strong>virtual link</strong> et sa contrainte, et la différence entre <strong>area range</strong> et <strong>summary-address</strong>.",
+    hints: [
+      "LSA 1/2 restent dans la zone ; 3/4 par l'ABR ; 5 par l'ASBR ; 7 en NSSA.",
+      "Un virtual link relie une zone à l'aire 0 via une zone de transit (jamais stub/NSSA), avec le Router-ID du pair.",
+      "area range = résumé inter-zones (ABR) ; summary-address = résumé externe (ASBR)."
+    ],
+    solution: "# OSPF niveau expert :\n# LSA :\n#   Type 1 Router  : liens d'un routeur, reste DANS la zone.\n#   Type 2 Network : genere par le DR sur segment multi-acces, reste dans la zone.\n#   Type 3 Summary : inter-zones, genere par l'ABR.\n#   Type 4 ASBR-Summary : chemin vers l'ASBR, genere par l'ABR.\n#   Type 5 External : routes externes, injecte par l'ASBR, flood inter-zones.\n#   Type 7 NSSA External : externe en NSSA, traduit en Type 5 a l'ABR.\n# Virtual link :\n#   rattache une zone a l'aire 0 a travers une zone de TRANSIT.\n#   La zone de transit ne peut etre ni stub ni NSSA.\n#   Se configure avec le ROUTER-ID du pair.\n# Resumes :\n#   area X range     -> resume INTER-ZONES sur l'ABR (agrege des Type 3).\n#   summary-address  -> resume EXTERNE sur l'ASBR (agrege des Type 5).\n#   Les deux installent une route Null0 anti-boucle vers l'agregat.",
+    note: "Optimisation courante : cohérence de auto-cost reference-bandwidth sur tout le domaine, plus zones stub/NSSA pour limiter les LSA." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

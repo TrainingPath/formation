@@ -1,0 +1,180 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 31</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 31,
+  title: "Projet final : conception et configuration CCNA",
+  subtitle: "Concevoir de A à Z un réseau d'entreprise multi-VLAN, routé, sécurisé et connecté à Internet.",
+  theory: `
+<h3>1. Le cahier des charges</h3>
+<p>Voici le projet de synthèse. L'entreprise « Atlas » installe un nouveau site et te demande de concevoir et configurer son réseau. Le cahier des charges réunit tout le programme CCNA : segmentation par VLAN, routage inter-VLAN, un protocole de routage dynamique (OSPF), adressage privé avec accès Internet par NAT, services (DHCP), et sécurité (SSH, mots de passe, bonnes pratiques). Notre rôle : traduire ce besoin en une architecture cohérente, puis en configuration IOS.</p>
+<pre class="pseudo"># Besoins d'Atlas
+- 3 services : VENTES, TECH, GESTION -> 3 VLAN separes
+- Communication entre services (routage inter-VLAN)
+- Un coeur de reseau route (OSPF) vers un routeur de bordure
+- Acces Internet partage (NAT/PAT vers le FAI)
+- Attribution automatique des IP aux PC (DHCP)
+- Administration a distance securisee (SSH uniquement)</pre>
+<h3>2. Conception : plan d'adressage et VLAN</h3>
+<p>La première étape d'un projet réseau n'est pas de taper des commandes, c'est de <strong>concevoir</strong> : découper l'espace d'adressage, attribuer un sous-réseau par VLAN, choisir les passerelles. On part d'un bloc privé <strong>192.168.0.0/16</strong> et on découpe en /24 lisibles :</p>
+<pre class="pseudo"># Plan d'adressage d'Atlas
+VLAN 10 VENTES  : 192.168.10.0/24  passerelle 192.168.10.1
+VLAN 20 TECH    : 192.168.20.0/24  passerelle 192.168.20.1
+VLAN 30 GESTION : 192.168.30.0/24  passerelle 192.168.30.1
+Liaison coeur R1 &lt;-&gt; bordure R2 : 10.0.0.0/30 (R1 .1, R2 .2)
+Liaison bordure R2 &lt;-&gt; FAI      : 203.0.113.0/30 (R2 .1, FAI .2)</pre>
+<div class="tip">Une bonne conception se documente AVANT la configuration : un tableau VLAN/sous-réseau/passerelle évite les collisions d'adresses et les oublis. C'est la marque d'un travail professionnel.</div>
+<h3>3. Couche d'accès : VLAN et trunk</h3>
+<p>Sur le commutateur d'accès SW1, on crée les trois VLAN, on place les ports utilisateurs en <strong>access</strong>, et le lien vers le routeur en <strong>trunk</strong>.</p>
+<pre class="pseudo">SW1(config)# vlan 10
+SW1(config-vlan)# name VENTES
+SW1(config)# vlan 20
+SW1(config-vlan)# name TECH
+SW1(config)# vlan 30
+SW1(config-vlan)# name GESTION
+SW1(config)# interface range fa0/1-8
+SW1(config-if-range)# switchport mode access
+SW1(config-if-range)# switchport access vlan 10
+SW1(config)# interface gi0/1
+SW1(config-if)# switchport mode trunk</pre>
+<h3>4. Couche de distribution : routage inter-VLAN et DHCP</h3>
+<p>R1 relie les VLAN via des sous-interfaces 802.1Q (router-on-a-stick) et distribue les adresses par <strong>DHCP</strong> à chaque VLAN.</p>
+<pre class="pseudo"># Routage inter-VLAN
+R1(config)# interface gi0/0.10
+R1(config-subif)# encapsulation dot1Q 10
+R1(config-subif)# ip address 192.168.10.1 255.255.255.0
+R1(config)# interface gi0/0.20
+R1(config-subif)# encapsulation dot1Q 20
+R1(config-subif)# ip address 192.168.20.1 255.255.255.0
+R1(config)# interface gi0/0.30
+R1(config-subif)# encapsulation dot1Q 30
+R1(config-subif)# ip address 192.168.30.1 255.255.255.0
+
+# DHCP pour le VLAN 10 (idem pour 20 et 30)
+R1(config)# ip dhcp excluded-address 192.168.10.1 192.168.10.10
+R1(config)# ip dhcp pool VENTES
+R1(dhcp-config)# network 192.168.10.0 255.255.255.0
+R1(dhcp-config)# default-router 192.168.10.1
+R1(dhcp-config)# dns-server 8.8.8.8</pre>
+<h3>5. Cœur routé (OSPF) et bordure (NAT vers Internet)</h3>
+<p>R1 et R2 échangent leurs routes par <strong>OSPF</strong> (aire 0). R2, routeur de bordure, réalise la <strong>NAT/PAT</strong> vers le FAI et porte une route par défaut vers Internet, redistribuée aux voisins.</p>
+<pre class="pseudo"># R1 : OSPF interne + liaison vers R2
+R1(config)# interface gi0/1
+R1(config-if)# ip address 10.0.0.1 255.255.255.252
+R1(config)# router ospf 1
+R1(config-router)# network 192.168.10.0 0.0.0.255 area 0
+R1(config-router)# network 192.168.20.0 0.0.0.255 area 0
+R1(config-router)# network 192.168.30.0 0.0.0.255 area 0
+R1(config-router)# network 10.0.0.0 0.0.0.3 area 0
+
+# R2 : bordure, route par defaut + NAT/PAT + OSPF
+R2(config)# ip route 0.0.0.0 0.0.0.0 203.0.113.2
+R2(config)# router ospf 1
+R2(config-router)# network 10.0.0.0 0.0.0.3 area 0
+R2(config-router)# default-information originate
+R2(config)# access-list 1 permit 192.168.0.0 0.0.255.255
+R2(config)# interface gi0/0
+R2(config-if)# ip nat inside
+R2(config)# interface gi0/1
+R2(config-if)# ip nat outside
+R2(config)# ip nat inside source list 1 interface gi0/1 overload</pre>
+<div class="warn">Le routeur de bordure a besoin d'une route par défaut vers le FAI ET de la redistribuer aux autres routeurs OSPF avec <code>default-information originate</code>, sinon les VLAN internes ne « connaissent » pas le chemin vers Internet.</div>
+<h3>6. Sécurité et vérification finale</h3>
+<p>Dernière couche : durcir l'administration (SSH sur R1 et R2, mots de passe chiffrés) puis <strong>vérifier</strong> chaque brique.</p>
+<pre class="pseudo"># Securite (sur R1 et R2)
+ip domain name atlas.local
+username admin secret Cisco123
+crypto key generate rsa   (2048)
+ip ssh version 2
+service password-encryption
+enable secret ClasseEnable
+line vty 0 15 -> transport input ssh ; login local
+
+# Verifications
+show vlan brief            # VLAN et ports
+show ip interface brief    # etat des interfaces
+show ip route              # routes OSPF (O) et par defaut
+show ip nat translations   # traductions NAT actives
+show ip ssh                # SSH actif (version 2)</pre>
+<h3>7. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Methode de projet CCNA :
+# 1) CONCEVOIR : plan d'adressage, un sous-reseau /24 par VLAN, passerelles
+# 2) ACCES : VLAN + ports access + trunk (switch)
+# 3) DISTRIBUTION : router-on-a-stick (802.1Q) + DHCP par VLAN
+# 4) COEUR : OSPF area 0 entre R1 et R2
+# 5) BORDURE : route par defaut + default-information originate + NAT/PAT
+# 6) SECURITE : SSH (crypto key generate rsa, transport input ssh, login local)
+#              service password-encryption, enable secret
+# 7) VERIFIER : show vlan brief / ip route / ip nat translations / ip ssh</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la toute première étape d'un projet réseau réussi ?", opts: ["Taper les commandes IOS", "Concevoir le plan d'adressage et les VLAN", "Activer la NAT", "Redémarrer les équipements"], a: 1, exp: "On conçoit d'abord (adressage, VLAN, passerelles) avant de configurer." },
+    { type: "qcm", q: "Combien de VLAN le cahier des charges d'Atlas impose-t-il ?", opts: ["Deux", "Trois (VENTES, TECH, GESTION)", "Quatre", "Un seul"], a: 1, exp: "Trois services = trois VLAN : VENTES (10), TECH (20), GESTION (30)." },
+    { type: "vf", q: "Attribuer un sous-réseau /24 distinct à chaque VLAN évite les collisions d'adresses.", a: true, exp: "Oui : un sous-réseau par VLAN clarifie le plan et prévient les chevauchements." },
+    { type: "input", q: "Quel service distribue automatiquement les adresses IP aux PC de chaque VLAN ?", a: ["dhcp", "le dhcp"], ph: "4 lettres", exp: "Le DHCP attribue dynamiquement les adresses ; on configure un pool par VLAN." },
+    { type: "qcm", q: "Sur le routeur de bordure R2, quelle commande crée une route par défaut vers le FAI ?", opts: ["ip route 0.0.0.0 0.0.0.0 203.0.113.2", "network 0.0.0.0 area 0", "ip nat outside", "default-router 203.0.113.2"], a: 0, exp: "ip route 0.0.0.0 0.0.0.0 <next-hop> crée la route par défaut vers Internet." },
+    { type: "qcm", q: "Quelle commande redistribue la route par défaut aux autres routeurs OSPF ?", opts: ["redistribute static", "default-information originate", "network 0.0.0.0", "ip nat inside"], a: 1, exp: "default-information originate annonce la route par défaut dans OSPF." },
+    { type: "vf", q: "Le routage inter-VLAN d'Atlas repose sur des sous-interfaces 802.1Q (router-on-a-stick).", a: true, exp: "Oui : une sous-interface encapsulation dot1Q par VLAN assure le routage inter-VLAN." },
+    { type: "input", q: "Quel mot-clé, à la fin de la commande NAT, active la PAT (partage d'une IP publique) ?", a: ["overload"], ph: "un mot", exp: "overload active la PAT : plusieurs machines derrière une seule adresse publique." },
+    { type: "qcm", q: "Dans quelle aire OSPF Atlas place-t-il ses réseaux internes et sa liaison de cœur ?", opts: ["Area 1", "Area 0", "Area 10", "Area 30"], a: 1, exp: "L'aire 0 (backbone) fédère les réseaux OSPF du site." },
+    { type: "qcm", q: "Pour exclure les adresses de passerelle et de serveurs d'un pool DHCP, on utilise…", opts: ["ip dhcp pool", "ip dhcp excluded-address", "default-router", "dns-server"], a: 1, exp: "ip dhcp excluded-address réserve une plage que le DHCP ne distribuera pas." },
+    { type: "vf", q: "Sécuriser l'accès administratif se fait notamment avec crypto key generate rsa, transport input ssh et login local.", a: true, exp: "Oui : ces commandes activent SSH et réservent les VTY à un accès chiffré authentifié localement." },
+    { type: "input", q: "Quelle commande de vérification affiche les routes apprises par OSPF (code O) et la route par défaut ?", a: ["show ip route", "sh ip route"], ph: "show ip ...", exp: "show ip route liste les routes, dont les entrées OSPF (O) et par défaut (O*E2 / S*)." },
+    { type: "qcm", q: "Sur R2, sur quelle interface applique-t-on « ip nat outside » ?", opts: ["L'interface interne vers R1", "L'interface de sortie vers le FAI", "Une sous-interface VLAN", "L'interface de management"], a: 1, exp: "ip nat outside se place sur l'interface qui sort vers Internet (le FAI)." },
+    { type: "qcm", q: "Dans quel ordre logique construit-on le réseau d'Atlas ?", opts: ["NAT, puis VLAN, puis conception", "Conception, accès (VLAN/trunk), distribution (inter-VLAN/DHCP), cœur (OSPF), bordure (NAT), sécurité", "SSH d'abord, puis rien", "OSPF, puis conception, puis VLAN"], a: 1, exp: "On descend de la conception vers l'accès, la distribution, le cœur, la bordure, puis la sécurité." },
+    { type: "vf", q: "Sans redistribution de la route par défaut, les VLAN internes ne connaîtraient pas le chemin vers Internet.", a: true, exp: "Oui : default-information originate est indispensable pour propager la sortie Internet aux routeurs internes." }
+  ],
+  final: {
+    title: "Exercice final — Valider la conception d'Atlas",
+    intro: `<p>Tu présentes ton projet Atlas au client : trois VLAN, routage inter-VLAN, OSPF entre R1 (cœur) et R2 (bordure), NAT/PAT vers le FAI, DHCP et SSH. Le client te pose cinq questions de validation.</p>`,
+    questions: [
+      { type: "qcm", q: "« Comment mes trois services communiquent-ils entre eux ? »", opts: ["Par la NAT", "Par le routage inter-VLAN (sous-interfaces 802.1Q sur R1)", "Par DHCP", "Ils ne peuvent pas"], a: 1, exp: "Le routage inter-VLAN (router-on-a-stick) relie les VLAN 10, 20 et 30." },
+      { type: "input", q: "« Quel protocole dynamique échange les routes entre R1 et R2 ? » (nom)", a: ["ospf"], ph: "4 lettres", exp: "OSPF (aire 0) échange les routes entre le cœur et la bordure." },
+      { type: "qcm", q: "« Comment mes PC obtiennent-ils une adresse sans configuration manuelle ? »", opts: ["Par NAT", "Par un pool DHCP configuré par VLAN sur R1", "Par OSPF", "Par SSH"], a: 1, exp: "Un pool DHCP par VLAN attribue automatiquement les adresses." },
+      { type: "qcm", q: "« Comment tout le site partage-t-il une seule IP publique vers Internet ? »", opts: ["Grâce à la NAT/PAT (overload) sur R2", "Grâce à OSPF", "Grâce au trunk", "Grâce à enable secret"], a: 0, exp: "La PAT (NAT overload) sur R2 partage l'IP publique du FAI." },
+      { type: "vf", q: "« Mon administration à distance est-elle chiffrée ? » — Oui, car les VTY n'acceptent que SSH (transport input ssh) après génération de la clé RSA.", a: true, exp: "Oui : SSHv2 + transport input ssh + login local garantissent un accès chiffré et authentifié." }
+    ],
+    solution: `<pre class="pseudo"># Dossier de conception Atlas (synthese)
+CONCEPTION : 192.168.10/20/30.0/24 (VENTES/TECH/GESTION), gw .1 ; coeur 10.0.0.0/30
+ACCES (SW1) : vlan 10/20/30 + ports access + int gi0/1 trunk
+DISTRIBUTION (R1) : gi0/0.10/.20/.30 encapsulation dot1Q + DHCP par VLAN
+COEUR : router ospf 1 -> network ... area 0 (R1 et R2)
+BORDURE (R2) : ip route 0.0.0.0 0.0.0.0 FAI + default-information originate
+               access-list 1 permit 192.168.0.0 0.0.255.255
+               ip nat inside/outside + ip nat inside source list 1 int gi0/1 overload
+SECURITE (R1+R2) : crypto key generate rsa 2048 ; ip ssh version 2
+               service password-encryption ; enable secret
+               line vty 0 15 -> transport input ssh ; login local
+VERIF : show vlan brief | show ip route | show ip nat translations | show ip ssh</pre>
+<p>Segmentation, routage, accès Internet et sécurité réunis : le réseau d'Atlas est conçu, configuré et vérifiable de bout en bout. Félicitations, tu maîtrises la démarche complète d'un projet CCNA.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j31", title: "Concevoir le plan d'adressage", level: 3,
+    statement: "Atlas a trois services (VENTES, TECH, GESTION). Propose un <strong>plan d'adressage</strong> : pour chaque VLAN, donne un <strong>numéro de VLAN</strong>, un <strong>sous-réseau /24</strong> tiré de <code>192.168.0.0/16</code> et l'<strong>adresse de passerelle</strong>. Explique en une phrase pourquoi un sous-réseau distinct par VLAN est une bonne pratique.",
+    hints: [
+      "Un VLAN = un sous-réseau. Choisis des numéros et des /24 faciles à mémoriser.",
+      "La passerelle est souvent la première adresse utilisable (.1).",
+      "Pense à l'isolation du trafic et à l'absence de chevauchement d'adresses."
+    ],
+    solution: "# Plan d'adressage propose\n# VLAN 10 VENTES  : 192.168.10.0/24  passerelle 192.168.10.1\n# VLAN 20 TECH    : 192.168.20.0/24  passerelle 192.168.20.1\n# VLAN 30 GESTION : 192.168.30.0/24  passerelle 192.168.30.1\n#\n# Pourquoi un sous-reseau par VLAN ?\n# Cela isole le trafic de chaque service, evite tout chevauchement\n# d'adresses et permet au routeur inter-VLAN d'avoir une passerelle\n# claire (.1) par reseau.",
+    note: "Documenter ce tableau AVANT de configurer est la marque d'un projet professionnel." },
+  { id: "ccna-j31b", title: "Accès Internet du site complet", level: 3,
+    statement: "Sur le routeur de bordure R2, écris les commandes qui donnent l'accès Internet à tout le site : une <strong>route par défaut</strong> vers le FAI (<code>203.0.113.2</code>), sa <strong>redistribution</strong> dans OSPF, et la <strong>NAT/PAT</strong> (surcharge) traduisant tout <code>192.168.0.0/16</code> vers l'interface de sortie <code>gi0/1</code> (l'interface interne étant <code>gi0/0</code>).",
+    hints: [
+      "La route par défaut : ip route 0.0.0.0 0.0.0.0 <next-hop>.",
+      "Pour l'annoncer aux voisins OSPF : default-information originate.",
+      "NAT : ip nat inside / ip nat outside + ip nat inside source list ... interface ... overload."
+    ],
+    solution: "R2(config)# ip route 0.0.0.0 0.0.0.0 203.0.113.2\nR2(config)# router ospf 1\nR2(config-router)# default-information originate\nR2(config-router)# exit\nR2(config)# access-list 1 permit 192.168.0.0 0.0.255.255\nR2(config)# interface gi0/0\nR2(config-if)# ip nat inside\nR2(config-if)# exit\nR2(config)# interface gi0/1\nR2(config-if)# ip nat outside\nR2(config-if)# exit\nR2(config)# ip nat inside source list 1 interface gi0/1 overload",
+    note: "Sans default-information originate, R1 et les VLAN ne connaîtraient pas le chemin vers Internet." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

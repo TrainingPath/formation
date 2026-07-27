@@ -1,0 +1,119 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 08</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 8,
+  title: "La redistribution de routes",
+  subtitle: "Faire dialoguer OSPF, EIGRP et BGP sans créer de boucles.",
+  theory: `
+<h3>1. Pourquoi redistribuer ?</h3>
+<p>Un grand réseau fait rarement tourner un seul protocole. Après une fusion d'entreprises, un rachat, ou une migration, on se retrouve avec OSPF ici, EIGRP là, et BGP en bordure. La <strong>redistribution</strong> est le mécanisme qui <strong>injecte les routes d'un protocole de routage dans un autre</strong>. Sans elle, deux domaines de routage restent aveugles l'un à l'autre : OSPF ignore ce qu'EIGRP connaît, et inversement.</p>
+<p>On parle du <strong>routeur de redistribution</strong> (ou frontière), qui parle les deux protocoles et sert de traducteur. Rappel du jour 5 : dans OSPF, ce routeur devient un <strong>ASBR</strong> car il injecte des routes externes (LSA type 5, ou type 7 en NSSA).</p>
+<h3>2. Le problème de la métrique : la seed metric</h3>
+<p>Chaque protocole a sa propre <strong>métrique</strong>, et elles ne sont pas compatibles : le coût OSPF ne veut rien dire pour EIGRP, dont la métrique composite (bande passante + délai) est d'une autre nature. Quand on injecte des routes, il faut donc leur <strong>attribuer une nouvelle métrique de départ</strong> dans le protocole cible : c'est la <strong>seed metric</strong> (« métrique de départ »).</p>
+<pre class="pseudo"># Seed metric par défaut selon la cible
+Vers OSPF   -> coût par défaut 20 (110 pour les routes issues de BGP)
+Vers RIP    -> métrique "infinie" par défaut => routes INUTILISABLES !
+Vers EIGRP  -> métrique "infinie" par défaut => routes INUTILISABLES !
+Vers BGP    -> MED dérivé de l'IGP
+# Pour EIGRP et RIP, il FAUT préciser la métrique, sinon rien ne passe.</pre>
+<div class="warn">Piège classique : redistribuer vers EIGRP (ou RIP) SANS définir de seed metric. Par défaut la métrique vaut l'infini, donc les routes sont considérées injoignables et jamais installées. On fournit la métrique via le mot-clé metric ou la commande default-metric.</div>
+<pre class="pseudo"># Configuration IOS (exemples)
+! Redistribuer OSPF dans EIGRP en donnant une seed metric
+router eigrp 100
+ redistribute ospf 1 metric 1000000 100 255 1 1500
+ ! ordre : bande-passante charge fiabilité délai MTU
+
+! Redistribuer EIGRP dans OSPF (sous-réseaux inclus)
+router ospf 1
+ redistribute eigrp 100 subnets
+ ! 'subnets' est indispensable, sinon seules les routes classful passent</pre>
+<div class="tip">Astuce mémoire pour OSPF : sans le mot-clé subnets, OSPF ne redistribue QUE les réseaux à masque « classful ». Presque tous les réseaux réels étant en sous-réseaux, on ajoute quasi systématiquement subnets. En prime, choisis le type de métrique : E1 (le coût s'additionne le long du chemin) ou E2 (coût constant, valeur par défaut).</div>
+<h3>3. Les boucles de redistribution</h3>
+<p>Le vrai danger apparaît avec une <strong>redistribution mutuelle</strong> (bidirectionnelle) faite à <strong>plusieurs points de frontière</strong>. Une route peut alors partir d'OSPF vers EIGRP par un routeur, revenir dans OSPF par un autre, et boucler. Le problème vient du fait que les routes externes perdent leur métrique d'origine et peuvent être réinjectées avec une distance administrative trompeuse.</p>
+<pre class="pseudo"># Scénario de boucle (redistribution mutuelle, 2 frontières)
+OSPF &lt;--> [R1: redistrib] &lt;--> EIGRP &lt;--> [R2: redistrib] &lt;--> OSPF
+# Une route peut recirculer et être préférée par une AD incohérente.</pre>
+<h3>4. Les solutions anti-boucle</h3>
+<p>Trois familles de parades, à connaître pour ENCOR :</p>
+<pre class="pseudo"># Solutions contre les boucles de redistribution
+1. FILTRAGE : route-map / distribute-list / prefix-list
+   -> on empêche les routes déjà externes de repartir dans leur protocole d'origine
+2. TAGS de route : on marque (tag) les routes redistribuées,
+   -> puis on refuse la réinjection des routes portant ce tag (via route-map)
+3. AJUSTER la distance administrative (AD)
+   -> rendre les routes internes plus fiables que les mêmes routes revenues externes</pre>
+<p>La méthode la plus robuste combine <strong>tag + route-map</strong> : au premier point de redistribution, on tague les routes (par exemple tag 100) ; à tout autre point, une route-map <strong>refuse</strong> les routes portant ce tag, ce qui casse net toute recirculation. C'est la parade recommandée pour la redistribution mutuelle.</p>
+<pre class="pseudo"># Exemple : taguer puis bloquer
+route-map VERS-EIGRP permit 10
+ set tag 100                       ! marque les routes injectées
+!
+route-map VERS-OSPF deny 10
+ match tag 100                     ! bloque le retour des routes taguées
+route-map VERS-OSPF permit 20      ! laisse passer le reste</pre>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Redistribution = injecter les routes d'un protocole dans un autre
+# Le routeur frontière devient ASBR côté OSPF (routes externes)
+# SEED METRIC obligatoire vers EIGRP/RIP (défaut = infini = injoignable)
+# OSPF : penser au mot-clé 'subnets' ; type E1 (additif) ou E2 (constant)
+# Boucles : surtout en redistribution MUTUELLE à plusieurs frontières
+# Parades : filtrage (route-map/prefix-list), TAGS de route, ajustement d'AD.</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que fait la redistribution de routes ?", opts: ["Elle chiffre les routes", "Elle injecte les routes d'un protocole dans un autre", "Elle supprime les routes externes", "Elle accélère OSPF"], a: 1, exp: "La redistribution injecte les routes d'un protocole de routage dans un autre." },
+    { type: "qcm", q: "Côté OSPF, le routeur qui redistribue des routes externes devient…", opts: ["Un ABR", "Un ASBR", "Un DR", "Un routeur interne"], a: 1, exp: "Injecter des routes externes fait de lui un ASBR (LSA type 5 ou 7)." },
+    { type: "input", q: "Comment appelle-t-on la métrique de départ attribuée aux routes injectées dans le protocole cible ?", a: ["seed metric", "seed-metric", "métrique de départ", "metrique de depart"], ph: "un terme", exp: "La seed metric est la métrique de départ dans le protocole cible." },
+    { type: "vf", q: "Redistribuer vers EIGRP sans définir de métrique laisse les routes injoignables (métrique infinie par défaut).", a: true, exp: "Oui : vers EIGRP/RIP la seed metric par défaut est infinie ; il faut la préciser." },
+    { type: "qcm", q: "Quelle est la seed metric par défaut d'une route redistribuée vers OSPF (hors BGP) ?", opts: ["1", "20", "100", "Infinie"], a: 1, exp: "Vers OSPF le coût par défaut est 20 (et 110 pour les routes issues de BGP)." },
+    { type: "qcm", q: "En redistribuant vers OSPF, quel mot-clé faut-il pour inclure les sous-réseaux ?", opts: ["classful", "subnets", "external", "default"], a: 1, exp: "Sans 'subnets', OSPF ne redistribue que les réseaux classful." },
+    { type: "qcm", q: "Quels protocoles cibles exigent qu'on précise la métrique sous peine de routes inutilisables ?", opts: ["OSPF et BGP", "EIGRP et RIP", "BGP uniquement", "Aucun"], a: 1, exp: "EIGRP et RIP ont une seed metric par défaut infinie : il faut la définir." },
+    { type: "vf", q: "Les boucles de redistribution surviennent surtout en redistribution mutuelle à plusieurs points de frontière.", a: true, exp: "Oui : la recirculation devient possible avec une redistribution bidirectionnelle multipoint." },
+    { type: "qcm", q: "Quelle technique consiste à marquer les routes redistribuées pour refuser ensuite leur retour ?", opts: ["Le résumé de route", "Les tags de route (avec route-map)", "Le PoE", "Le split-horizon EIGRP"], a: 1, exp: "On tague les routes puis on bloque celles portant le tag avec une route-map." },
+    { type: "input", q: "Cite un outil de filtrage utilisable pour empêcher une route de repartir dans son protocole d'origine.", a: ["route-map", "route map", "distribute-list", "distribute list", "prefix-list", "prefix list"], ph: "un outil IOS", exp: "route-map, distribute-list ou prefix-list servent à filtrer la redistribution." },
+    { type: "qcm", q: "Une troisième parade contre les boucles consiste à…", opts: ["Ajuster la distance administrative des routes", "Désactiver TCP", "Supprimer l'ASBR", "Passer en collapsed core"], a: 0, exp: "Ajuster l'AD rend les routes internes plus fiables que les mêmes routes revenues externes." },
+    { type: "qcm", q: "Quel type de route externe OSPF ajoute le coût interne au coût externe le long du chemin ?", opts: ["E2 (par défaut)", "E1", "N1", "Type 3"], a: 1, exp: "E1 additionne le coût interne ; E2 (par défaut) garde un coût constant." },
+    { type: "vf", q: "En redistribution mutuelle, taguer les routes puis bloquer le tag au retour casse la recirculation.", a: true, exp: "Oui : tag + route-map deny sur ce tag est la parade recommandée." },
+    { type: "input", q: "Dans 'router ospf 1', quelle commande redistribue EIGRP 100 avec les sous-réseaux ? (donne la ligne)", a: ["redistribute eigrp 100 subnets", "redistribute eigrp 100 subnet"], ph: "commande IOS", exp: "La commande est : redistribute eigrp 100 subnets." },
+    { type: "qcm", q: "Pourquoi la redistribution est-elle souvent nécessaire après une fusion d'entreprises ?", opts: ["Pour chiffrer le WAN", "Parce que deux domaines de routage différents (ex OSPF et EIGRP) doivent échanger leurs routes", "Pour supprimer BGP", "Pour créer des VLAN"], a: 1, exp: "Deux protocoles distincts issus de la fusion doivent partager leurs routes via la redistribution." }
+  ],
+  final: {
+    title: "Exercice final — Redistribution mutuelle maîtrisée",
+    intro: `<p>Après un rachat, un réseau fait tourner OSPF d'un côté et EIGRP de l'autre. On met en place une redistribution mutuelle sur DEUX routeurs frontière (R1 et R2) pour la redondance. Ton objectif : que ça marche, sans boucle.</p>`,
+    questions: [
+      { type: "qcm", q: "En redistribuant OSPF vers EIGRP, que ne faut-il surtout pas oublier ?", opts: ["De désactiver TCP", "De définir une seed metric (sinon métrique infinie)", "De supprimer l'aire 0", "De passer en iBGP"], a: 1, exp: "Vers EIGRP, sans seed metric les routes sont injoignables." },
+      { type: "qcm", q: "En redistribuant EIGRP vers OSPF, quel mot-clé garantit l'inclusion des sous-réseaux ?", opts: ["default", "subnets", "classful", "stub"], a: 1, exp: "Le mot-clé 'subnets' évite de ne redistribuer que le classful." },
+      { type: "input", q: "Quel mécanisme de marquage permet, avec une route-map, de bloquer le retour des routes déjà redistribuées ?", a: ["tag", "les tags", "route tag", "tags de route"], ph: "un mécanisme", exp: "On tague les routes puis on refuse le tag au retour (route-map)." },
+      { type: "vf", q: "Avec deux points de redistribution mutuelle, il existe un vrai risque de boucle si l'on ne filtre pas.", a: true, exp: "Oui : la redondance R1/R2 ouvre la porte à la recirculation sans filtrage." },
+      { type: "qcm", q: "Quelle combinaison est la parade la plus robuste ici ?", opts: ["Désactiver EIGRP", "Tags de route + route-map de blocage au retour", "Augmenter la bande passante", "Supprimer un des deux routeurs frontière"], a: 1, exp: "Tag + route-map deny sur le tag casse la recirculation tout en gardant la redondance." }
+    ],
+    solution: `<pre class="pseudo"># Recette redistribution mutuelle OSPF &lt;-> EIGRP (R1 et R2)
+1) OSPF -> EIGRP : redistribute ospf 1 metric ...   (SEED METRIC obligatoire)
+2) EIGRP -> OSPF : redistribute eigrp 100 subnets    (mot-clé subnets)
+3) Anti-boucle : sur chaque frontière
+     route-map ... set tag 100     (marquer a l'injection)
+     route-map ... deny match tag 100 (refuser le retour du tag)
+# Résultat : routes échangées dans les deux sens, redondance R1/R2,
+#            AUCUNE recirculation.</pre>
+<p>Bravo : tu sais désormais faire cohabiter plusieurs protocoles proprement. C'était la dernière leçon de ce module ENCOR sur le routage et l'architecture. Continue avec la pratique en labo pour ancrer ces réflexes.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j08", title: "Redistribuer sans boucler", level: 3,
+    statement: "En texte, explique ce qu'est la <strong>seed metric</strong> et pourquoi elle est <strong>obligatoire vers EIGRP/RIP</strong>, rappelle le mot-clé utile en redistribution <strong>vers OSPF</strong>, puis cite les <strong>trois familles de solutions</strong> contre les boucles de redistribution.",
+    hints: [
+      "Vers EIGRP/RIP, la seed metric par défaut est infinie => routes injoignables.",
+      "Vers OSPF, on ajoute presque toujours 'subnets'.",
+      "Anti-boucle : filtrage, tags de route, ajustement d'AD."
+    ],
+    solution: "# Seed metric\n# - c'est la metrique de depart donnee aux routes injectees\n#   dans le protocole cible (les metriques ne sont pas compatibles).\n# - vers EIGRP et RIP : defaut = INFINIE => routes injoignables,\n#   donc il FAUT la preciser (metric ... ou default-metric).\n# - vers OSPF : defaut = cout 20 (110 pour les routes issues de BGP).\n#\n# Redistribution vers OSPF : mot-cle 'subnets'\n# - sans lui, OSPF ne redistribue que les reseaux classful.\n#\n# Trois familles de solutions anti-boucle :\n# 1) Filtrage (route-map / distribute-list / prefix-list)\n# 2) Tags de route (marquer puis refuser le retour du tag)\n# 3) Ajustement de la distance administrative (AD)",
+    note: "Le routeur de redistribution devient un ASBR côté OSPF ; les boucles apparaissent surtout en redistribution mutuelle à plusieurs points de frontière." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

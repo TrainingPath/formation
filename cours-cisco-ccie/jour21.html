@@ -1,0 +1,117 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 21</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 21,
+  title: "La programmabilité pilotée par modèle (YANG, gNMI)",
+  subtitle: "Décrire le réseau par des modèles de données plutôt que par des lignes de CLI.",
+  theory: `
+<h3>1. Du bricolage CLI au modèle de données</h3>
+<p>Automatiser en envoyant de la CLI par SSH (jour 20) reste fragile : la sortie est du texte pensé pour l'œil humain, elle change de format d'une version à l'autre, et rien ne garantit sa structure. La <strong>programmabilité pilotée par modèle</strong> (en anglais <em>model-driven programmability</em>) renverse la logique : on décrit la configuration et l'état de l'équipement par un <strong>modèle de données</strong> formel, non ambigu, compréhensible par une machine. L'humain et le programme parlent alors le même langage structuré. Ce langage de modélisation s'appelle <strong>YANG</strong>, et plusieurs <em>protocoles de transport</em> l'exploitent : NETCONF, RESTCONF et gNMI.</p>
+<pre class="pseudo"># La pile model-driven
+# YANG          -> le MODELE (le schema : quels champs, quels types)
+# NETCONF/RESTCONF/gNMI -> les PROTOCOLES (comment lire/ecrire le modele)
+# XML / JSON / protobuf -> les ENCODAGES (comment serialiser les donnees)</pre>
+<h3>2. YANG : le langage des modèles</h3>
+<p><strong>YANG</strong> (RFC 7950) est un <em>langage de modélisation de données</em>. Il décrit une arborescence : des <strong>modules</strong> qui contiennent des <strong>containers</strong> (nœuds de regroupement), des <strong>leaves</strong> (feuilles, une valeur typée) et des <strong>lists</strong> (listes indexées par une clé). Chaque champ a un <em>type</em> strict (string, uint32, enumeration, adresse IP…), ce qui rend la validation automatique. Il existe trois familles de modèles : les modèles <strong>natifs</strong> propres au constructeur (Cisco IOS-XE, IOS-XR), les modèles <strong>IETF</strong> standardisés, et les modèles <strong>OpenConfig</strong>, neutres et portables entre constructeurs.</p>
+<pre class="pseudo">// Extrait YANG (pseudo) : une interface
+container interfaces {
+  list interface {
+    key "name";
+    leaf name        { type string; }
+    leaf enabled     { type boolean; }
+    leaf description { type string; }
+  }
+}</pre>
+<div class="tip">L'atout des modèles <strong>OpenConfig</strong> : le même modèle décrit un équipement Cisco, Juniper ou Arista. On écrit une automatisation une fois, elle s'applique partout — l'équivalent structurel de ce que NAPALM faisait sur la CLI, mais standardisé au niveau du modèle.</p></div>
+<h3>3. NETCONF : le vétéran robuste (XML sur SSH)</h3>
+<p><strong>NETCONF</strong> (RFC 6241) transporte les modèles YANG en <strong>XML</strong>, au-dessus de <strong>SSH sur le port 830</strong>. Il manipule des <em>datastores</em> (bases de configuration) : <strong>running</strong> (config active), <strong>candidate</strong> (brouillon modifiable) et <strong>startup</strong>. Ses opérations fondamentales sont des <em>RPC</em> : <code>&lt;get-config&gt;</code>, <code>&lt;get&gt;</code> (config + état), <code>&lt;edit-config&gt;</code> et <code>&lt;commit&gt;</code>. Le modèle candidate + commit offre une gestion transactionnelle : on prépare, on valide, on applique — ou on annule.</p>
+<pre class="pseudo">&lt;rpc message-id="1"&gt;
+  &lt;edit-config&gt;
+    &lt;target&gt;&lt;candidate/&gt;&lt;/target&gt;
+    &lt;config&gt;
+      &lt;interfaces xmlns="..."&gt;
+        &lt;interface&gt;&lt;name&gt;Lo0&lt;/name&gt;&lt;enabled&gt;true&lt;/enabled&gt;&lt;/interface&gt;
+      &lt;/interfaces&gt;
+    &lt;/config&gt;
+  &lt;/edit-config&gt;
+&lt;/rpc&gt;
+&lt;!-- puis &lt;commit/&gt; pour appliquer le candidate au running --&gt;</pre>
+<h3>4. RESTCONF : la simplicité HTTP/REST</h3>
+<p><strong>RESTCONF</strong> (RFC 8040) expose les mêmes modèles YANG via une <strong>API REST sur HTTPS</strong> (port 443). Chaque ressource du modèle devient une URL, et l'on utilise les verbes HTTP habituels : <strong>GET</strong> (lire), <strong>POST</strong> (créer), <strong>PUT</strong> (remplacer), <strong>PATCH</strong> (modifier), <strong>DELETE</strong> (supprimer). L'encodage est <strong>JSON</strong> ou XML. RESTCONF est plus simple à intégrer dans des applications web et des scripts (une simple requête HTTP), au prix d'un modèle transactionnel moins riche que le candidate/commit de NETCONF.</p>
+<pre class="pseudo">GET /restconf/data/ietf-interfaces:interfaces
+Accept: application/yang-data+json
+# Reponse JSON structuree, directement exploitable en Python (requests)</pre>
+<h3>5. gNMI : le moderne et performant (gRPC/protobuf)</h3>
+<p><strong>gNMI</strong> (« gRPC Network Management Interface ») est le plus récent. Il s'appuie sur <strong>gRPC</strong> (transport <em>HTTP/2</em>) et sérialise les données en <strong>protobuf</strong>, un format binaire compact et rapide. Issu de l'écosystème <strong>OpenConfig</strong>, il propose trois opérations : <strong>Get</strong> (lire), <strong>Set</strong> (écrire) et surtout <strong>Subscribe</strong> — la brique de la télémétrie en flux continu (streaming, sujet du jour 22). Son binaire performant et son abonnement natif en font le choix privilégié pour la supervision temps réel à grande échelle.</p>
+<pre class="pseudo"># gNMI : operations
+# Get       -> lecture ponctuelle d'un chemin du modele
+# Set       -> ecriture (update / replace / delete)
+# Subscribe -> flux continu de telemetrie (streaming)
+# Transport : gRPC (HTTP/2), encodage protobuf (binaire compact)</pre>
+<div class="warn">Ne confonds pas les couches : YANG est le <strong>modèle</strong> (le quoi), NETCONF/RESTCONF/gNMI sont les <strong>protocoles</strong> (le comment), XML/JSON/protobuf sont les <strong>encodages</strong> (la sérialisation). Une même donnée YANG peut voyager en XML via NETCONF ou en protobuf via gNMI.</p></div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># YANG : langage de MODELE (modules, containers, leaves, lists ; types stricts)
+#        familles : natif (constructeur), IETF, OpenConfig (portable)
+# NETCONF : XML sur SSH port 830 ; datastores running/candidate/startup
+#           RPC get-config / get / edit-config / commit (transactionnel)
+# RESTCONF: REST sur HTTPS 443 ; verbes GET/POST/PUT/PATCH/DELETE ; JSON/XML
+# gNMI    : gRPC (HTTP/2) + protobuf ; Get / Set / Subscribe (streaming)
+# Couches : MODELE (YANG) / PROTOCOLE (NC,RC,gNMI) / ENCODAGE (XML,JSON,protobuf)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que décrit exactement YANG ?", opts: ["Un protocole de transport", "Un langage de modélisation de données (le schéma)", "Un format d'encodage binaire", "Un algorithme de routage"], a: 1, exp: "YANG est le langage de MODÈLE : il définit l'arborescence et les types, pas le transport." },
+    { type: "qcm", q: "Sur quel port et quel transport fonctionne NETCONF ?", opts: ["HTTP port 80", "SSH port 830", "gRPC port 57400", "Telnet port 23"], a: 1, exp: "NETCONF transporte du XML au-dessus de SSH, sur le port 830." },
+    { type: "qcm", q: "Quel protocole s'appuie sur gRPC (HTTP/2) et encode en protobuf ?", opts: ["NETCONF", "RESTCONF", "gNMI", "SNMP"], a: 2, exp: "gNMI utilise gRPC/HTTP2 et protobuf, format binaire compact, idéal pour le streaming." },
+    { type: "qcm", q: "Quels verbes HTTP RESTCONF utilise-t-il pour manipuler les ressources ?", opts: ["SELECT/INSERT/UPDATE", "GET/POST/PUT/PATCH/DELETE", "OPEN/EDIT/COMMIT", "SUBSCRIBE/PUBLISH"], a: 1, exp: "RESTCONF est une API REST : chaque ressource YANG est une URL manipulée par les verbes HTTP." },
+    { type: "qcm", q: "Quel modèle YANG est neutre et portable entre constructeurs ?", opts: ["Le modèle natif Cisco", "Le modèle OpenConfig", "Le modèle propriétaire Juniper", "Le modèle SNMP MIB"], a: 1, exp: "OpenConfig est conçu multi-constructeur : le même modèle s'applique à Cisco, Juniper, Arista…" },
+    { type: "qcm", q: "Quelle opération gNMI est la brique de la télémétrie en flux continu ?", opts: ["Get", "Set", "Subscribe", "Commit"], a: 2, exp: "Subscribe fournit un flux (streaming) de données, base de la télémétrie temps réel." },
+    { type: "vf", q: "Une même donnée modélisée en YANG peut voyager en XML via NETCONF ou en protobuf via gNMI.", a: true, exp: "Vrai : YANG est le modèle ; le protocole et l'encodage sont des couches distinctes." },
+    { type: "vf", q: "NETCONF permet un fonctionnement transactionnel via un datastore candidate puis un commit.", a: true, exp: "Vrai : on édite le candidate, puis commit applique au running (ou on annule)." },
+    { type: "vf", q: "RESTCONF utilise HTTPS et peut encoder les données en JSON.", a: true, exp: "Vrai : RESTCONF (RFC 8040) est une API REST sur HTTPS 443, en JSON ou XML." },
+    { type: "vf", q: "protobuf est un format texte lisible directement par un humain, comme le JSON.", a: false, exp: "Faux : protobuf est un format binaire compact, pensé pour la performance, pas pour la lecture humaine." },
+    { type: "vf", q: "Piloter le réseau par modèle est plus fiable que de parser de la CLI texte destinée à l'œil humain.", a: true, exp: "Vrai : le modèle est structuré et typé, donc non ambigu et stable entre versions." },
+    { type: "input", q: "Quel langage de modélisation (4 lettres) sert de base à NETCONF, RESTCONF et gNMI ?", a: ["yang"], ph: "Y___", exp: "YANG : le modèle commun exploité par les trois protocoles." },
+    { type: "input", q: "Sur quel numéro de port NETCONF fonctionne-t-il ?", a: ["830", "port 830"], ph: "un nombre", exp: "NETCONF = SSH port 830." },
+    { type: "input", q: "Quel encodage binaire compact gNMI utilise-t-il (via gRPC) ?", a: ["protobuf", "protocol buffers", "proto"], ph: "proto…", exp: "protobuf (Protocol Buffers), sérialisation binaire d'OpenConfig/gRPC." },
+    { type: "input", q: "Comment nomme-t-on le datastore NETCONF qui sert de brouillon avant le commit ?", a: ["candidate", "le candidate", "candidat"], ph: "en anglais", exp: "Le datastore candidate : on l'édite, puis commit l'applique au running." }
+  ],
+  final: {
+    title: "Exercice final — Choisir le bon protocole model-driven",
+    intro: `<p>Trois besoins arrivent le même jour : (a) appliquer un changement de config de façon transactionnelle avec possibilité d'annuler avant application, (b) intégrer une lecture de config simple dans une application web existante, (c) recevoir un flux temps réel de compteurs d'interfaces. Associe chaque besoin au bon protocole model-driven.</p>`,
+    questions: [
+      { type: "qcm", q: "Besoin (a) : changement transactionnel avec brouillon puis validation. Tu choisis…", opts: ["gNMI Subscribe", "NETCONF (candidate + commit)", "SNMPv2c", "RESTCONF DELETE"], a: 1, exp: "Le couple candidate/commit de NETCONF offre la transaction (préparer, valider, ou annuler)." },
+      { type: "qcm", q: "Besoin (b) : lecture de config simple intégrée à une app web. Tu choisis…", opts: ["RESTCONF (GET HTTPS, JSON)", "NETCONF XML", "Telnet", "gNMI Set"], a: 0, exp: "RESTCONF, API REST/JSON sur HTTPS, s'intègre naturellement à une application web." },
+      { type: "qcm", q: "Besoin (c) : flux temps réel de compteurs. Tu choisis…", opts: ["RESTCONF PUT en boucle", "gNMI Subscribe", "NETCONF get répété toutes les secondes", "SNMP get polling"], a: 1, exp: "gNMI Subscribe fournit un flux continu efficace, base de la télémétrie streaming." },
+      { type: "vf", q: "Utiliser des modèles OpenConfig rendrait ces automatisations portables entre plusieurs constructeurs.", a: true, exp: "Vrai : OpenConfig standardise le modèle, donc le même code vaut pour Cisco, Juniper, Arista…" },
+      { type: "qcm", q: "Quel élément est commun aux trois besoins, quelle que soit la réponse choisie ?", opts: ["Le port 23", "Le modèle de données YANG sous-jacent", "L'encodage protobuf obligatoire", "L'absence de sécurité"], a: 1, exp: "YANG est le modèle commun ; seuls le protocole et l'encodage changent selon le besoin." }
+    ],
+    solution: `<pre class="pseudo"># Un seul MODELE (YANG), trois PROTOCOLES selon le besoin :
+# (a) transactionnel  -> NETCONF : edit-config sur &lt;candidate&gt; puis &lt;commit&gt;
+#                        (XML sur SSH 830, datastores running/candidate/startup)
+# (b) app web simple  -> RESTCONF : GET /restconf/data/... (HTTPS 443, JSON)
+# (c) flux temps reel -> gNMI Subscribe (gRPC/HTTP2, protobuf) => telemetrie streaming
+# Bonus portabilite : utiliser des modeles OpenConfig -> multi-constructeur.</pre>
+<p>Le réflexe expert : identifier d'abord le modèle (YANG/OpenConfig), puis choisir le protocole selon le besoin — transaction (NETCONF), intégration REST (RESTCONF) ou streaming (gNMI).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j21", title: "Séparer modèle, protocole et encodage", level: 3,
+    statement: "En texte brut, explique la pile <strong>model-driven</strong> en trois couches (modèle / protocole / encodage), puis compare <strong>NETCONF</strong>, <strong>RESTCONF</strong> et <strong>gNMI</strong> sur : transport, port, encodage et cas d'usage phare. Conclus par le rôle unique de YANG.",
+    hints: [
+      "Modèle = YANG ; protocoles = NETCONF/RESTCONF/gNMI ; encodages = XML/JSON/protobuf.",
+      "NETCONF = SSH 830, XML, transactionnel (candidate/commit).",
+      "gNMI = gRPC/HTTP2, protobuf, Subscribe pour le streaming."
+    ],
+    solution: "PILE MODEL-DRIVEN (3 couches) :\n- MODELE   : YANG (le schema : containers, leaves, lists ; types stricts).\n- PROTOCOLE: NETCONF / RESTCONF / gNMI (comment lire/ecrire le modele).\n- ENCODAGE : XML / JSON / protobuf (comment serialiser les donnees).\n\nCOMPARAISON :\nNETCONF\n- transport : SSH, port 830\n- encodage  : XML\n- cas phare : configuration TRANSACTIONNELLE (candidate + commit, rollback)\nRESTCONF\n- transport : HTTPS, port 443 (REST : GET/POST/PUT/PATCH/DELETE)\n- encodage  : JSON (ou XML)\n- cas phare : integration simple dans une application web / script HTTP\ngNMI\n- transport : gRPC (HTTP/2), souvent port 57400\n- encodage  : protobuf (binaire compact)\n- cas phare : telemetrie en STREAMING (operation Subscribe)\n\nROLE DE YANG :\n- YANG est le MODELE commun aux trois protocoles : une meme donnee peut voyager\n  en XML (NETCONF) ou en protobuf (gNMI). Les modeles OpenConfig la rendent\n  portable entre constructeurs.",
+    note: "Ne jamais confondre le quoi (YANG), le comment (protocole) et la sérialisation (encodage) : ce sont trois couches indépendantes." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

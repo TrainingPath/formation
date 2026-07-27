@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 27</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 27,
+  title: "Étude de cas : topologie multi-protocoles",
+  subtitle: "Assembler OSPF, BGP, MPLS et redistribution comme un vrai réseau opérateur.",
+  theory: `
+<h3>1. Le scénario : un cœur MPLS et deux sites clients</h3>
+<p>Étudions un cas réaliste de niveau expert. Un opérateur (Service Provider) exploite un <strong>cœur MPLS</strong> composé de routeurs P et PE. À l'intérieur du cœur, l'<strong>IGP</strong> choisi est <strong>OSPF</strong> : il distribue les adresses de loopback des PE et calcule le plus court chemin. Par-dessus l'IGP, le <strong>LDP</strong> distribue les labels MPLS. Enfin, une session <strong>MP-BGP</strong> (Multiprotocol BGP) entre les PE transporte les routes VPN des clients dans un <strong>L3VPN</strong>. Aux extrémités, chaque site client (CE) échange ses routes avec son PE, parfois en OSPF, parfois en BGP, ce qui impose de la <strong>redistribution</strong>.</p>
+<pre class="pseudo"># Topologie de l'étude de cas
+Site A (CE-A) === PE1 ==== P ==== PE2 === (CE-B) Site B
+                 \\____ cœur MPLS (OSPF + LDP + MP-BGP VPNv4) ____/
+# OSPF : IGP du cœur (loopbacks PE)      LDP : labels MPLS
+# MP-BGP VPNv4 : transport des VPN       CE-PE : OSPF ou BGP selon le site</pre>
+<h3>2. La sous-couche : OSPF + LDP dans le cœur</h3>
+<p>Tout repose sur l'IGP. Chaque routeur du cœur annonce sa <strong>loopback</strong> (avec masque /32) en OSPF area 0, car les sessions MP-BGP s'établissent entre loopbacks. Ensuite, on active MPLS/LDP sur les interfaces du cœur pour que les labels soient distribués le long des chemins OSPF. Si l'OSPF ne converge pas, le LDP n'a pas de chemin, MP-BGP ne monte pas, et le VPN est mort : c'est la chaîne de dépendances vue au jour 26.</p>
+<pre class="pseudo"># PE1 - cœur : OSPF puis LDP
+interface Loopback0
+ ip address 1.1.1.1 255.255.255.255
+router ospf 1
+ network 1.1.1.1 0.0.0.0 area 0
+ network 10.0.12.0 0.0.0.3 area 0
+mpls ip                 # active MPLS sur l'interface cœur
+mpls label protocol ldp # LDP distribue les labels le long des chemins OSPF</pre>
+<h3>3. Le L3VPN : VRF et MP-BGP VPNv4</h3>
+<p>Chaque client est isolé dans une <strong>VRF</strong> (Virtual Routing and Forwarding), une table de routage indépendante. On lui attribue un <strong>route-distinguisher</strong> (RD) pour rendre ses préfixes uniques, et des <strong>route-targets</strong> (RT) pour contrôler l'import/export entre PE. Les routes du client voyagent alors comme des préfixes <strong>VPNv4</strong> dans MP-BGP, du PE d'entrée au PE de sortie.</p>
+<pre class="pseudo"># PE1 - VRF client et session VPNv4 vers PE2 (loopback 2.2.2.2)
+vrf definition CLIENT_A
+ rd 65000:100
+ route-target export 65000:100
+ route-target import 65000:100
+router bgp 65000
+ neighbor 2.2.2.2 remote-as 65000
+ neighbor 2.2.2.2 update-source Loopback0
+ address-family vpnv4
+  neighbor 2.2.2.2 activate</pre>
+<h3>4. Le raccordement client et la redistribution</h3>
+<p>Côté site, le CE parle à son PE. Si le lien PE-CE utilise <strong>OSPF</strong>, le PE doit <strong>redistribuer</strong> les routes OSPF du client dans BGP (address-family de la VRF) et inversement redistribuer BGP dans OSPF pour que le site apprenne les routes distantes. Là se cachent les pièges experts : <strong>boucles de redistribution</strong>, préfixes en double, mauvaise métrique.</p>
+<pre class="pseudo"># PE1 - redistribution mutuelle dans la VRF du client
+router ospf 10 vrf CLIENT_A
+ redistribute bgp 65000 subnets
+router bgp 65000
+ address-family ipv4 vrf CLIENT_A
+  redistribute ospf 10</pre>
+<div class="warn">La redistribution mutuelle entre deux protocoles peut créer des <strong>boucles</strong> et des sous-optimalités. Maîtrise la distance administrative, les tags de route et le filtrage (route-map) pour éviter qu'une route redistribuée revienne « polluer » son protocole d'origine.</div>
+<div class="tip">Ordre de vérification : OSPF cœur (voisins + loopbacks) → LDP (labels) → MP-BGP VPNv4 (sessions + préfixes) → VRF (routes client) → ping de bout en bout entre CE-A et CE-B.</div>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Cœur MPLS = OSPF (IGP, loopbacks /32) + LDP (labels) sous MP-BGP VPNv4
+# MP-BGP entre loopbacks → 'update-source Loopback0' obligatoire
+# VRF isole le client : RD (unicité) + RT (import/export)
+# PE-CE en OSPF → redistribution mutuelle OSPF <-> BGP dans la VRF
+# Danger : boucles de redistribution → distance admin, tags, route-map
+# Vérifier dans l'ordre : OSPF → LDP → MP-BGP → VRF → ping CE à CE</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel rôle joue OSPF dans le cœur MPLS de l'étude de cas ?", opts: ["Il transporte les routes VPN des clients", "Il sert d'IGP et distribue les loopbacks des PE", "Il distribue les labels MPLS", "Il isole les clients"], a: 1, exp: "OSPF est l'IGP du cœur : il propage les loopbacks sur lesquelles montent les sessions MP-BGP." },
+    { type: "qcm", q: "Quel protocole distribue les labels MPLS le long des chemins OSPF ?", opts: ["BGP", "LDP", "EIGRP", "RIP"], a: 1, exp: "LDP (Label Distribution Protocol) distribue les labels selon les chemins de l'IGP." },
+    { type: "input", q: "Quelle version de BGP transporte les routes VPN (préfixes VPNv4) dans un L3VPN ? (deux lettres + BGP)", a: ["mp-bgp", "mpbgp", "mp bgp", "multiprotocol bgp", "mp-bgp vpnv4"], ph: "…-BGP", exp: "MP-BGP (Multiprotocol BGP) transporte l'address-family VPNv4." },
+    { type: "qcm", q: "À quoi sert une VRF ?", opts: ["À accélérer OSPF", "À isoler la table de routage d'un client", "À distribuer les labels", "À compresser le trafic"], a: 1, exp: "La VRF (Virtual Routing and Forwarding) donne une table de routage indépendante par client." },
+    { type: "input", q: "Comment appelle-t-on l'identifiant qui rend les préfixes d'une VRF uniques dans MP-BGP ? (sigle 2 lettres)", a: ["rd", "route-distinguisher", "route distinguisher"], ph: "sigle", exp: "Le RD (route-distinguisher) préfixe les routes pour les rendre uniques." },
+    { type: "qcm", q: "Le contrôle de l'import/export des routes entre PE se fait grâce aux…", opts: ["Wildcard masks", "Route-targets (RT)", "Numéros de VLAN", "Bannières"], a: 1, exp: "Les route-targets (RT) déterminent quelles VRF importent/exportent quels préfixes." },
+    { type: "vf", q: "Les sessions MP-BGP entre PE s'établissent généralement entre leurs interfaces loopback.", a: true, exp: "Oui, d'où l'usage de 'update-source Loopback0' et l'annonce des loopbacks en OSPF." },
+    { type: "input", q: "Quelle commande BGP force l'utilisation de la loopback comme source de la session ?", a: ["update-source loopback0", "update-source loopback", "neighbor update-source loopback0", "update source loopback0"], ph: "commande BGP", exp: "update-source Loopback0 fixe l'adresse source de la session sur la loopback." },
+    { type: "qcm", q: "Si l'OSPF du cœur ne converge pas, quelle est la conséquence en cascade ?", opts: ["Rien de grave", "LDP n'a pas de chemin, MP-BGP ne monte pas, le VPN est mort", "La QoS s'améliore", "Les VLAN disparaissent"], a: 1, exp: "Chaîne de dépendances : sans IGP, pas de labels, pas de session VPN, pas de service." },
+    { type: "qcm", q: "Quand le lien PE-CE utilise OSPF, que doit faire le PE pour propager les routes distantes au client ?", opts: ["Rien", "Redistribuer mutuellement OSPF et BGP dans la VRF", "Désactiver MPLS", "Supprimer la VRF"], a: 1, exp: "Il faut redistribuer BGP→OSPF et OSPF→BGP dans la VRF du client." },
+    { type: "vf", q: "La redistribution mutuelle entre deux protocoles peut créer des boucles de routage.", a: true, exp: "Oui : c'est un piège expert qu'on maîtrise avec distance admin, tags et route-map." },
+    { type: "qcm", q: "Quel outil filtre finement les routes lors d'une redistribution ?", opts: ["Une route-map", "Un no shutdown", "Une bannière", "Un VLAN"], a: 0, exp: "La route-map permet de filtrer/marquer les routes et d'éviter les boucles." },
+    { type: "input", q: "Quelle commande vérifie que les sessions MP-BGP sont montées et que des préfixes arrivent ? (résumé BGP)", a: ["show ip bgp summary", "show bgp vpnv4 unicast summary", "show ip bgp vpnv4 all summary", "sh ip bgp summary"], ph: "commande show", exp: "show ip bgp summary (ou show bgp vpnv4 unicast summary) donne l'état des sessions." },
+    { type: "qcm", q: "Dans quel ordre vérifier la topologie de bout en bout ?", opts: ["Ping d'abord, OSPF ensuite", "OSPF → LDP → MP-BGP → VRF → ping CE à CE", "MP-BGP → OSPF → ping", "VRF → ping → OSPF"], a: 1, exp: "On remonte la pile de dépendances : IGP, labels, VPN, VRF, puis test de bout en bout." },
+    { type: "vf", q: "Le route-distinguisher (RD) et le route-target (RT) jouent exactement le même rôle.", a: false, exp: "Non : le RD assure l'unicité des préfixes ; le RT contrôle l'import/export entre VRF." }
+  ],
+  final: {
+    title: "Exercice final — Dérouler l'étude de cas",
+    intro: `<p>PE1 (loopback 1.1.1.1) et PE2 (loopback 2.2.2.2) forment un cœur MPLS en OSPF. Le client A est en VRF CLIENT_A, raccordé en OSPF côté CE. Un ping CE-A → CE-B échoue. Diagnostique méthodiquement.</p>`,
+    questions: [
+      { type: "qcm", q: "Première chose à vérifier ?", opts: ["La QoS", "Les voisinages OSPF du cœur et les loopbacks apprises", "La couleur des câbles", "La bannière"], a: 1, exp: "Sans IGP convergé, rien au-dessus ne fonctionne : on commence par OSPF." },
+      { type: "input", q: "Quelle commande montre si les labels MPLS sont distribués ?", a: ["show mpls forwarding-table", "show mpls ldp neighbor", "show mpls ldp bindings", "sh mpls forwarding-table"], ph: "commande show", exp: "show mpls forwarding-table (ou show mpls ldp neighbor) confirme la distribution des labels." },
+      { type: "qcm", q: "MP-BGP VPNv4 est up mais le CE-B n'apprend pas les routes du site A. Cause probable ?", opts: ["Câble débranché", "Redistribution OSPF<->BGP absente ou mal filtrée dans la VRF", "OSPF area 1", "MPLS désactivé partout"], a: 1, exp: "Sans redistribution mutuelle correcte dans la VRF, les routes ne passent pas OSPF↔BGP." },
+      { type: "vf", q: "Vérifier 'update-source Loopback0' est inutile si MP-BGP est déjà up.", a: true, exp: "Vrai : si la session VPNv4 est établie, la source loopback est déjà correcte." },
+      { type: "qcm", q: "Après correction de la redistribution, quel test final valide le bout-en-bout ?", opts: ["show running-config", "ping CE-A → CE-B (et vérifier la route dans la VRF)", "reload des routeurs", "effacer la VRF"], a: 1, exp: "Le ping CE à CE, confirmé par la route apprise dans la VRF, prouve le service." }
+    ],
+    solution: `<pre class="pseudo"># Démarche de résolution (de bas en haut)
+1) OSPF cœur   : show ip ospf neighbor  → voisins FULL ? loopbacks 1.1.1.1 / 2.2.2.2 apprises ?
+2) LDP/MPLS    : show mpls ldp neighbor + show mpls forwarding-table → labels présents ?
+3) MP-BGP VPNv4: show ip bgp summary → session PE1-PE2 up, préfixes VPNv4 reçus ?
+4) VRF client  : show ip route vrf CLIENT_A → routes du site distant présentes ?
+   Si absentes → vérifier la REDISTRIBUTION mutuelle OSPF<->BGP dans la VRF
+   (et le filtrage route-map / tags pour éviter les boucles)
+5) Preuve      : ping vrf CLIENT_A CE-B depuis CE-A  → connectivité de bout en bout</pre>
+<p>Cette étude de cas condense l'expertise CCIE : une pile OSPF + LDP + MP-BGP + redistribution où <strong>chaque couche dépend de la précédente</strong>. On diagnostique toujours de bas en haut et on prouve par un test de bout en bout.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j27", title: "Ta pile MPLS L3VPN annotée", level: 3,
+    statement: "Décris, en pseudo-configuration commentée, l'assemblage d'un <strong>MPLS L3VPN</strong> pour un client raccordé en OSPF : le rôle de <code>OSPF</code> et <code>LDP</code> dans le cœur, la session <code>MP-BGP VPNv4</code> entre loopbacks, la <code>VRF</code> avec son RD/RT, et la <code>redistribution</code> mutuelle OSPF↔BGP. Termine par l'ordre de vérification.",
+    hints: [
+      "Cœur : OSPF annonce les loopbacks /32, LDP distribue les labels le long des chemins OSPF.",
+      "MP-BGP monte entre loopbacks (update-source Loopback0) en address-family vpnv4.",
+      "VRF : rd pour l'unicité, route-target import/export ; PE-CE OSPF → redistribuer dans les deux sens."
+    ],
+    solution: "# Assemblage MPLS L3VPN (client raccordé en OSPF)\n#\n# 1) Cœur - IGP + labels\n#    router ospf 1 : annonce Loopback0 (/32) et liens du cœur en area 0\n#    mpls ip / mpls label protocol ldp : LDP distribue les labels le long des chemins OSPF\n#    -> si OSPF ne converge pas, LDP n'a pas de chemin et le VPN est mort\n#\n# 2) Session MP-BGP VPNv4 (entre loopbacks)\n#    router bgp 65000\n#     neighbor 2.2.2.2 remote-as 65000\n#     neighbor 2.2.2.2 update-source Loopback0\n#     address-family vpnv4\n#      neighbor 2.2.2.2 activate\n#\n# 3) VRF du client\n#    vrf definition CLIENT_A\n#     rd 65000:100                 (unicité des préfixes)\n#     route-target export 65000:100 / import 65000:100  (import/export entre PE)\n#\n# 4) Raccordement PE-CE en OSPF + redistribution mutuelle\n#    router ospf 10 vrf CLIENT_A : redistribute bgp 65000 subnets\n#    router bgp 65000 / address-family ipv4 vrf CLIENT_A : redistribute ospf 10\n#    -> attention aux boucles : distance admin, tags de route, route-map de filtrage\n#\n# 5) Vérification (de bas en haut)\n#    show ip ospf neighbor -> show mpls forwarding-table -> show ip bgp summary\n#    -> show ip route vrf CLIENT_A -> ping vrf CLIENT_A de CE-A vers CE-B",
+    note: "C'est le socle du Service Provider : OSPF+LDP+MP-BGP+VRF. Chaque couche dépend de la précédente." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

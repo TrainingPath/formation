@@ -1,0 +1,127 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 07</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 7,
+  title: "BGP avancé (attributs, politiques, communautés)",
+  subtitle: "Route-maps, communautés, sélection du meilleur chemin, route reflectors et confédérations.",
+  theory: `
+<h3>1. BGP : un protocole de politiques</h3>
+<p><strong>BGP</strong> (« Border Gateway Protocol ») ne cherche pas le chemin le plus court : il applique des <strong>politiques</strong>. On oriente le trafic en manipulant des <strong>attributs</strong> via des <strong>route-maps</strong>. Maîtriser BGP en expert, c'est connaître les attributs, l'ordre exact de sélection du meilleur chemin, et les outils d'échelle (communautés, route reflectors, confédérations).</p>
+<h3>2. Les attributs et la sélection du meilleur chemin</h3>
+<p>Quand plusieurs routes existent pour un même préfixe, BGP les départage dans un <strong>ordre précis</strong>. Voici la séquence classique Cisco (du plus décisif au moins décisif) :</p>
+<pre class="pseudo"># Selection du meilleur chemin BGP (ordre Cisco) :
+1. Weight le plus ELEVE           (local au routeur, Cisco)
+   weight &gt; local-preference &gt; origine locale (next-hop 0.0.0.0)
+2. Local-Preference la plus ELEVEE (dans tout l'AS)
+3. Route ORIGINEE localement (network / redistribute / aggregate)
+4. AS-Path le plus COURT
+5. Origine : IGP &gt; EGP &gt; Incomplete
+6. MED (Multi-Exit Discriminator) le plus BAS
+7. eBGP &gt; iBGP
+8. Metrique IGP vers le next-hop la plus BASSE
+9. plus ancien chemin eBGP / plus petit Router-ID / plus petit next-hop</pre>
+<div class="tip">Moyen mnémotechnique : « <strong>We Love Oranges AS Oranges Mean Pure Refreshment</strong> » (Weight, LocalPref, Originate, AS-path, Origin, MED, Paths eBGP/iBGP, Router-ID). Le <strong>weight</strong> est local au routeur (jamais annoncé) ; la <strong>local-preference</strong> se propage dans tout l'AS en iBGP.</p></div>
+<h3>3. Les communautés (communities)</h3>
+<p>Une <strong>community</strong> est une étiquette attachée à un préfixe pour le <strong>marquer</strong> et lui appliquer une politique plus loin, sans réécrire des listes de préfixes partout. On les pose et on les lit avec des route-maps.</p>
+<pre class="pseudo"># Marquer des routes avec une community :
+route-map TAG permit 10
+ set community 65000:100
+router bgp 65000
+ neighbor 10.0.0.2 route-map TAG out
+ neighbor 10.0.0.2 send-community    ! ne pas oublier d'envoyer !
+# Communities bien connues :
+#  no-export     : ne pas annoncer hors de l'AS
+#  no-advertise  : ne pas annoncer du tout
+#  local-as      : ne pas sortir de la sous-confederation</pre>
+<div class="warn">Piège classique : sans <strong>send-community</strong>, les communautés ne sont <strong>pas transmises</strong> au voisin. Beaucoup de dépannages BGP se résument à cet oubli.</p></div>
+<h3>4. Passage à l'échelle : Route Reflectors et confédérations</h3>
+<p>La règle du <strong>split-horizon iBGP</strong> impose qu'une route apprise d'un pair iBGP ne soit pas réannoncée à un autre pair iBGP. Résultat : sans mécanisme, il faudrait un <strong>full-mesh</strong> iBGP (chaque routeur avec tous les autres), impraticable à grande échelle. Deux solutions :</p>
+<pre class="pseudo"># Route Reflector (RR) : un routeur reflechit les routes iBGP
+router bgp 65000
+ neighbor 10.0.0.5 route-reflector-client
+!  -&gt; le RR reannonce aux clients : plus besoin de full-mesh
+!  attributs anti-boucle : ORIGINATOR-ID et CLUSTER-LIST
+
+# Confederation : decouper l'AS en sous-AS relies en eBGP interne
+router bgp 65001
+ bgp confederation identifier 65000     ! AS visible de l'exterieur
+ bgp confederation peers 65002 65003    ! sous-AS partenaires</pre>
+<p>Le <strong>route reflector</strong> résout le full-mesh en désignant un réflecteur (et des clients). La <strong>confédération</strong> résout le même problème en découpant l'AS en <strong>sous-AS</strong> qui se parlent en eBGP interne, tout en n'exposant qu'un seul numéro d'AS vers l'extérieur.</p>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># BGP = politiques via route-maps sur des ATTRIBUTS
+# Ordre : weight &gt; local-pref &gt; originee localement &gt; AS-path court &gt;
+#         origine(IGP&gt;EGP&gt;Incomplete) &gt; MED bas &gt; eBGP&gt;iBGP &gt; IGP next-hop &gt; ...
+# Weight = local (jamais annonce) ; Local-Pref = dans tout l'AS
+# Communities = etiquettes de politique (no-export, no-advertise, local-as)
+#   -&gt; penser a send-community
+# Echelle iBGP (evite le full-mesh) : Route Reflector OU Confederation</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel est le tout premier critère de sélection du meilleur chemin BGP (Cisco) ?", opts: ["AS-Path le plus court", "Weight le plus élevé", "MED le plus bas", "Router-ID le plus bas"], a: 1, exp: "Le weight (attribut local Cisco, le plus élevé) est examiné en premier." },
+    { type: "qcm", q: "Après le weight, quel attribut départage les chemins ?", opts: ["Le MED", "La local-preference la plus élevée", "L'origine", "Le Router-ID"], a: 1, exp: "Ordre : weight &gt; local-preference &gt; route originée localement &gt; …" },
+    { type: "vf", q: "Le weight est annoncé aux voisins BGP.", a: false, exp: "Faux : le weight est purement local au routeur, jamais propagé." },
+    { type: "input", q: "Quel attribut, propagé dans tout l'AS en iBGP, sert à préférer une sortie ? (deux mots)", a: ["local-preference", "local preference", "local-pref", "localpref"], ph: "local-…", exp: "La local-preference se propage dans tout l'AS et oriente la sortie." },
+    { type: "qcm", q: "Entre deux chemins restés à égalité jusque-là, lequel gagne côté AS-Path ?", opts: ["Le plus long", "Le plus court", "Celui avec le plus de préfixes", "Peu importe"], a: 1, exp: "BGP préfère l'AS-Path le plus court." },
+    { type: "qcm", q: "Dans le critère d'origine, quel ordre de préférence s'applique ?", opts: ["Incomplete &gt; EGP &gt; IGP", "IGP &gt; EGP &gt; Incomplete", "EGP &gt; IGP &gt; Incomplete", "Tous égaux"], a: 1, exp: "Origine : IGP est préféré à EGP, lui-même préféré à Incomplete." },
+    { type: "qcm", q: "Le MED est préféré quand il est…", opts: ["Le plus élevé", "Le plus bas", "Égal à zéro seulement", "Négatif"], a: 1, exp: "BGP préfère le MED (Multi-Exit Discriminator) le plus bas." },
+    { type: "vf", q: "À égalité tardive, BGP préfère un chemin eBGP à un chemin iBGP.", a: true, exp: "Vrai : eBGP est préféré à iBGP dans l'ordre de sélection." },
+    { type: "input", q: "Quelle community empêche d'annoncer un préfixe hors de l'AS ? (un terme)", a: ["no-export", "no export", "noexport"], ph: "no-…", exp: "La community no-export bloque l'annonce hors de l'AS local." },
+    { type: "qcm", q: "Quel oubli fréquent empêche la transmission des communautés à un voisin ?", opts: ["Absence de send-community", "MED trop bas", "Weight nul", "Router-ID manquant"], a: 0, exp: "Sans send-community, les communautés ne sont pas envoyées au voisin." },
+    { type: "qcm", q: "Pourquoi le full-mesh iBGP devient-il ingérable à grande échelle ?", opts: ["Trop peu de sessions", "À cause du split-horizon iBGP, chaque routeur doit peer avec tous les autres", "iBGP est interdit", "Le weight l'empêche"], a: 1, exp: "Le split-horizon iBGP impose un maillage complet, non scalable." },
+    { type: "input", q: "Quel rôle BGP réannonce les routes iBGP à ses clients pour éviter le full-mesh ? (deux mots)", a: ["route reflector", "route-reflector", "reflecteur"], ph: "route …", exp: "Le route reflector (RR) reflète les routes iBGP vers ses clients." },
+    { type: "qcm", q: "Quels attributs anti-boucle un route reflector ajoute-t-il ?", opts: ["Weight et MED", "Originator-ID et Cluster-List", "AS-Path et Origin", "Local-Pref et Community"], a: 1, exp: "Le RR marque les routes avec Originator-ID et Cluster-List (anti-boucle)." },
+    { type: "qcm", q: "Une confédération BGP découpe l'AS en…", opts: ["Zones OSPF", "Sous-AS reliés en eBGP interne, un seul AS visible dehors", "Domaines EIGRP", "Interfaces passives"], a: 1, exp: "La confédération crée des sous-AS parlant en eBGP interne, exposant un seul AS." },
+    { type: "vf", q: "Route reflector et confédération répondent au même problème : éviter le full-mesh iBGP.", a: true, exp: "Vrai : ce sont deux réponses au besoin de scalabilité iBGP." }
+  ],
+  final: {
+    title: "Exercice final — Politiques et échelle en BGP",
+    intro: `<p>Ton AS multi-sites doit : préférer une sortie précise, marquer certaines routes pour un partenaire, et cesser d'exiger un full-mesh iBGP. Décide.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour préférer une sortie sur tout l'AS, tu ajustes…", opts: ["Le weight (local seulement)", "La local-preference (propagée dans l'AS)", "Le Router-ID", "La MTU"], a: 1, exp: "La local-preference influence toute la sortie de l'AS, contrairement au weight local." },
+      { type: "input", q: "Quel attribut local à un seul routeur monterais-tu pour l'influencer lui uniquement ? (un mot)", a: ["weight", "le weight"], ph: "w…", exp: "Le weight n'agit que sur le routeur où il est posé." },
+      { type: "qcm", q: "Pour marquer des routes destinées à un partenaire, tu utilises…", opts: ["Une community (set community + send-community)", "Un area range", "Un virtual-link", "Un eigrp stub"], a: 0, exp: "Les communautés étiquettent les routes ; ne pas oublier send-community." },
+      { type: "vf", q: "Sans send-community, ton partenaire ne verra pas l'étiquette.", a: true, exp: "Vrai : send-community est obligatoire pour transmettre la community." },
+      { type: "qcm", q: "Pour éviter le full-mesh iBGP à grande échelle, tu déploies…", opts: ["Un route reflector (ou une confédération)", "Un lien virtuel OSPF", "Une leak-map EIGRP", "Un summary-address"], a: 0, exp: "Route reflector ou confédération résolvent le full-mesh iBGP." }
+    ],
+    solution: `<pre class="pseudo"># 1) Preferer une sortie sur tout l'AS :
+route-map SORTIE permit 10
+ set local-preference 200        ! propage dans l'AS (plus haut = prefere)
+
+# 2) Weight pour influencer UN SEUL routeur (local, non annonce) :
+neighbor 10.0.0.2 weight 100
+
+# 3) Marquer pour un partenaire :
+route-map TAG permit 10
+ set community 65000:500
+neighbor 10.0.0.9 route-map TAG out
+neighbor 10.0.0.9 send-community   ! indispensable
+
+# 4) Eviter le full-mesh iBGP :
+neighbor 10.0.0.5 route-reflector-client   ! RR
+!  (ou) confederation : bgp confederation identifier / peers
+
+# Rappel ordre : weight &gt; local-pref &gt; originee &gt; AS-path &gt; origine &gt; MED ...</pre>
+<p>Politiques posées, échelle maîtrisée. Demain : redistribution complexe et contrôle de routage.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j07", title: "Synthèse BGP avancé", level: 3,
+    statement: "En texte brut, résume BGP avancé : l'<strong>ordre de sélection</strong> du meilleur chemin (au moins jusqu'au MED), la différence <strong>weight</strong> vs <strong>local-preference</strong>, le rôle des <strong>communautés</strong> (avec le piège send-community), et les deux réponses au <strong>full-mesh iBGP</strong> (route reflector, confédération).",
+    hints: [
+      "Ordre : weight > local-pref > originée localement > AS-path court > origine (IGP>EGP>Incomplete) > MED bas > eBGP>iBGP > IGP next-hop...",
+      "Weight = local au routeur (non annoncé) ; local-pref = dans tout l'AS.",
+      "Communities marquent les routes ; send-community obligatoire ; RR et confédération évitent le full-mesh."
+    ],
+    solution: "# BGP avance :\n# SELECTION DU MEILLEUR CHEMIN (ordre Cisco) :\n#   1. weight le plus eleve (local, Cisco)\n#   2. local-preference la plus elevee (dans tout l'AS)\n#   3. route originee localement (network/redistribute/aggregate)\n#   4. AS-path le plus court\n#   5. origine : IGP > EGP > Incomplete\n#   6. MED le plus bas\n#   7. eBGP > iBGP\n#   8. metrique IGP vers le next-hop la plus basse\n#   9. plus ancien eBGP / plus petit Router-ID / plus petit next-hop\n# WEIGHT vs LOCAL-PREFERENCE :\n#   weight = local au routeur, jamais annonce.\n#   local-preference = propagee a tout l'AS en iBGP.\n# COMMUNITIES :\n#   etiquettes de politique (no-export, no-advertise, local-as).\n#   PIEGE : sans send-community, elles ne sont pas transmises au voisin.\n# ECHELLE iBGP (eviter le full-mesh du split-horizon iBGP) :\n#   - ROUTE REFLECTOR : un RR reflechit les routes a ses clients\n#     (attributs anti-boucle : Originator-ID, Cluster-List).\n#   - CONFEDERATION : decoupe l'AS en sous-AS relies en eBGP interne,\n#     un seul numero d'AS visible de l'exterieur.",
+    note: "Mnémo de l'ordre BGP : We Love Oranges AS Oranges Mean Pure Refreshment (Weight, LocalPref, Originate, AS-path, Origin, MED, Paths, Router-ID)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

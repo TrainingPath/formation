@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 22</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 22,
+  title: "La télémétrie et l'observabilité",
+  subtitle: "Passer du sondage lent et aveugle à un flux continu de données pour voir le réseau en temps réel.",
+  theory: `
+<h3>1. Le problème du SNMP : demander, encore et encore</h3>
+<p>Pendant des décennies, on a supervisé le réseau par <strong>SNMP polling</strong> : le collecteur <em>demande</em> une valeur, l'équipement <em>répond</em>, et on recommence toutes les 5 minutes. Ce modèle <em>pull</em> (tirer) a trois défauts majeurs au niveau expert : il est <strong>lent</strong> (on rate ce qui se passe entre deux sondages), il <strong>charge le CPU</strong> de l'équipement à chaque requête, et il ne <em>voit</em> qu'au moment où on regarde. Un micro-pic de latence entre deux polls SNMP est tout simplement invisible.</p>
+<p>La <strong>télémétrie en flux continu</strong> (en anglais <em>streaming telemetry</em>) inverse le modèle : c'est du <strong>push</strong> (pousser). L'équipement <em>envoie de lui-même</em> ses données, à haute cadence (par exemple toutes les secondes), vers un collecteur. On ne rate plus rien, et on décharge le CPU du cycle question/réponse.</p>
+<pre class="pseudo"># SNMP polling (pull)     : collecteur -&gt; "donne-moi X" -&gt; equipement (lent, periodique)
+# Streaming telemetry(push): equipement -&gt; "voici X en continu" -&gt; collecteur (temps reel)</pre>
+<h3>2. Télémétrie pilotée par modèle (model-driven telemetry)</h3>
+<p>La télémétrie moderne est <strong>pilotée par modèle</strong> (<em>model-driven telemetry</em>, MDT) : au lieu d'un OID SNMP obscur, on désigne les données à streamer par un <strong>chemin de capteur</strong> (en anglais <em>sensor path</em>), c'est-à-dire un chemin dans un modèle <strong>YANG</strong> (vu au jour 21). On crée une <strong>souscription</strong> (subscription) qui associe un ou plusieurs sensor paths à une <strong>cadence</strong> et à un collecteur. Les données partent structurées, sérialisées en <strong>protobuf</strong> (gpb / kv-gpb), transportées par <strong>gRPC</strong>.</p>
+<pre class="pseudo">! Souscription MDT (IOS-XE, style natif)
+telemetry ietf subscription 101
+ encoding encode-kvgpb
+ filter xpath /interfaces-state/interface/statistics
+ stream yang-push
+ update-policy periodic 1000          ! toutes les 1000 centisecondes = 10 s
+ receiver ip address 172.16.0.5 57400 protocol grpc-tcp</pre>
+<h3>3. Dial-in ou dial-out : qui appelle qui ?</h3>
+<p>Deux architectures coexistent, selon <em>qui initie</em> la connexion. En <strong>dial-out</strong>, c'est l'<strong>équipement</strong> qui ouvre la session vers le collecteur et pousse ses données (configuré à l'avance sur le routeur). En <strong>dial-in</strong>, c'est le <strong>collecteur</strong> qui se connecte à l'équipement via <strong>gNMI Subscribe</strong> et demande dynamiquement un abonnement. Le dial-in est plus souple (le collecteur pilote), le dial-out plus simple à traverser un pare-feu (l'équipement sort vers le collecteur).</p>
+<pre class="pseudo"># DIAL-OUT : l'EQUIPEMENT initie -&gt; pousse vers le collecteur (config figee sur le routeur)
+# DIAL-IN  : le COLLECTEUR initie -&gt; gNMI Subscribe -&gt; abonnement dynamique</pre>
+<div class="tip">Côté gNMI, l'opération <strong>Subscribe</strong> a plusieurs modes : <strong>SAMPLE</strong> (envoi périodique à intervalle fixe, ex. chaque seconde) et <strong>ON_CHANGE</strong> (envoi uniquement quand la valeur change). ON_CHANGE est parfait pour l'état des interfaces (up/down) : zéro trafic tant que rien ne bouge, réaction immédiate au changement.</p></div>
+<h3>4. La chaîne de collecte et les dashboards</h3>
+<p>Recevoir un flux ne suffit pas : il faut le <strong>stocker</strong>, l'<strong>agréger</strong> et le <strong>visualiser</strong>. Une chaîne classique est la <strong>pile TIG</strong> : <strong>Telegraf</strong> (agent collecteur qui parle gNMI/gRPC et normalise), <strong>InfluxDB</strong> (base de données temporelle, en anglais <em>time-series database</em>, TSDB) et <strong>Grafana</strong> (tableaux de bord, en anglais <em>dashboards</em>). Des alternatives existent : <strong>Prometheus</strong> comme TSDB, la pile <strong>ELK</strong> (Elasticsearch/Logstash/Kibana) pour les logs. Le dashboard transforme des millions de points en courbes lisibles et en alertes.</p>
+<pre class="pseudo"># Chaine type : equipement --gRPC/gNMI--&gt; Telegraf --&gt; InfluxDB --&gt; Grafana
+#   Telegraf  : collecte + parse le protobuf
+#   InfluxDB  : stocke la serie temporelle (TSDB)
+#   Grafana   : dashboards, seuils, alertes</pre>
+<h3>5. Observabilité : au-delà des métriques</h3>
+<p>La <strong>télémétrie</strong> alimente une notion plus large, l'<strong>observabilité</strong> : la capacité à comprendre l'état <em>interne</em> du réseau à partir de ses sorties. On la structure classiquement en <strong>trois piliers</strong> : les <strong>métriques</strong> (valeurs numériques dans le temps : débit, erreurs, CPU), les <strong>logs</strong> (événements horodatés : syslog), et les <strong>traces</strong> (le cheminement d'une requête). La télémétrie streaming apporte surtout des métriques riches et temps réel ; combinées aux logs et aux traces, elles permettent non seulement de <em>voir</em> un incident mais d'en <em>comprendre la cause</em> rapidement.</p>
+<div class="warn">Streamer TOUT à la seconde n'est pas une stratégie : cela sature le collecteur et le stockage. Au niveau expert, on choisit les bons <strong>sensor paths</strong>, on réserve la cadence rapide (SAMPLE 1 s) aux compteurs critiques, et on utilise <strong>ON_CHANGE</strong> pour les états discrets. La télémétrie se conçoit, elle ne s'active pas au hasard.</p></div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># SNMP polling = PULL, lent, periodique, charge le CPU
+# Streaming telemetry = PUSH, temps reel, structure
+# Model-driven telemetry : sensor path = chemin YANG ; subscription + cadence
+#   encodage protobuf (gpb/kvgpb), transport gRPC
+# Dial-out : l'equipement initie (pousse)  |  Dial-in : le collecteur initie (gNMI Subscribe)
+# gNMI Subscribe : SAMPLE (periodique) / ON_CHANGE (sur variation)
+# Chaine : Telegraf -&gt; InfluxDB (TSDB) -&gt; Grafana (dashboards) ; alt. Prometheus, ELK
+# Observabilite = 3 piliers : metriques + logs + traces</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel est le modèle de la télémétrie en flux continu ?", opts: ["Pull (le collecteur demande)", "Push (l'équipement envoie de lui-même)", "Aucun échange", "Requête/réponse SNMP"], a: 1, exp: "La streaming telemetry pousse (push) les données en continu, contrairement au polling SNMP (pull)." },
+    { type: "qcm", q: "Qu'est-ce qu'un sensor path en télémétrie model-driven ?", opts: ["Un câble physique de supervision", "Un chemin dans un modèle YANG désignant les données à streamer", "Un OID SNMP", "Une adresse MAC"], a: 1, exp: "Le sensor path est un chemin YANG (XPath) qui identifie précisément la donnée à envoyer." },
+    { type: "qcm", q: "En dial-out, qui initie la connexion ?", opts: ["Le collecteur", "L'équipement réseau (il pousse vers le collecteur)", "Le pare-feu", "L'utilisateur final"], a: 1, exp: "En dial-out, l'équipement ouvre la session vers le collecteur (config figée sur le routeur)." },
+    { type: "qcm", q: "En dial-in, quel mécanisme le collecteur utilise-t-il pour s'abonner ?", opts: ["SNMP get", "gNMI Subscribe", "Telnet", "ICMP"], a: 1, exp: "En dial-in, le collecteur se connecte à l'équipement et demande un abonnement via gNMI Subscribe." },
+    { type: "qcm", q: "Quel mode gNMI n'envoie une donnée QUE lorsqu'elle change ?", opts: ["SAMPLE", "ON_CHANGE", "ONCE", "POLL"], a: 1, exp: "ON_CHANGE ne transmet que sur variation : idéal pour les états discrets (up/down)." },
+    { type: "qcm", q: "Dans la pile TIG, quel composant affiche les dashboards ?", opts: ["Telegraf", "InfluxDB", "Grafana", "Logstash"], a: 2, exp: "Telegraf collecte, InfluxDB stocke (TSDB), Grafana visualise (dashboards et alertes)." },
+    { type: "vf", q: "Le SNMP polling peut manquer un micro-pic survenu entre deux sondages.", a: true, exp: "Vrai : le modèle pull ne voit qu'aux instants de sondage ; entre deux, il est aveugle." },
+    { type: "vf", q: "La télémétrie streaming décharge le CPU du cycle question/réponse propre au SNMP.", a: true, exp: "Vrai : l'équipement pousse à son rythme, sans traiter des requêtes répétées." },
+    { type: "vf", q: "Streamer toutes les métriques à la seconde est la meilleure stratégie par défaut.", a: false, exp: "Faux : cela sature collecteur et stockage. On choisit les sensor paths et on module la cadence." },
+    { type: "vf", q: "L'observabilité repose classiquement sur trois piliers : métriques, logs et traces.", a: true, exp: "Vrai : ces trois piliers combinés permettent de voir ET de comprendre un incident." },
+    { type: "vf", q: "La télémétrie model-driven sérialise typiquement ses données en protobuf transporté par gRPC.", a: true, exp: "Vrai : gpb/kvgpb (protobuf) sur gRPC, cohérent avec l'écosystème gNMI/OpenConfig." },
+    { type: "input", q: "Quel mot anglais désigne le modèle où l'équipement envoie ses données de lui-même ?", a: ["push", "le push"], ph: "en anglais", exp: "Push : l'équipement pousse ses données, cœur de la streaming telemetry." },
+    { type: "input", q: "Quel type de base de données stocke des mesures indexées par le temps (sigle 4 lettres) ?", a: ["tsdb", "time-series database", "time series database"], ph: "T___", exp: "TSDB = Time-Series Database (ex. InfluxDB, Prometheus)." },
+    { type: "input", q: "Quelle opération gNMI met en place un abonnement à un flux de télémétrie ?", a: ["subscribe", "gnmi subscribe"], ph: "S…", exp: "Subscribe : l'opération gNMI d'abonnement (modes SAMPLE / ON_CHANGE)." },
+    { type: "input", q: "Nomme l'agent collecteur de la pile TIG qui parle gNMI/gRPC et normalise les données.", a: ["telegraf"], ph: "T…", exp: "Telegraf collecte et parse le protobuf avant de le stocker dans InfluxDB." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir une chaîne de télémétrie",
+    intro: `<p>Ton NOC veut remplacer un SNMP polling à 5 minutes par une supervision temps réel. Objectifs : suivre le débit des interfaces cœur à la seconde, être alerté immédiatement d'un lien qui passe down, et le tout traversant un pare-feu qui n'autorise que les connexions sortantes des équipements. Conçois la solution.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour remplacer le polling lent, tu bascules vers…", opts: ["Un polling à 1 minute", "La télémétrie streaming model-driven (push)", "Du Telnet scripté", "Rien, SNMP suffit"], a: 1, exp: "Le push temps réel supprime les angles morts du polling et décharge le CPU." },
+      { type: "qcm", q: "Le pare-feu n'autorise que le trafic sortant des équipements : quelle architecture ?", opts: ["Dial-in", "Dial-out (l'équipement initie vers le collecteur)", "Aucune ne passe", "SNMP inbound"], a: 1, exp: "En dial-out, l'équipement ouvre la connexion vers le collecteur : compatible avec un pare-feu qui n'autorise que le sortant." },
+      { type: "qcm", q: "Pour le débit des interfaces cœur à la seconde, tu choisis un mode…", opts: ["ON_CHANGE", "SAMPLE (période 1 s)", "ONCE", "POLL manuel"], a: 1, exp: "SAMPLE périodique convient aux compteurs qui évoluent en continu, comme le débit." },
+      { type: "qcm", q: "Pour être alerté immédiatement qu'un lien passe down, tu choisis…", opts: ["SAMPLE toutes les 10 s", "ON_CHANGE sur l'état de l'interface", "Un poll horaire", "Rien"], a: 1, exp: "ON_CHANGE réagit à l'instant du changement d'état, sans trafic inutile tant que le lien est stable." },
+      { type: "qcm", q: "Pour stocker et visualiser, tu déploies…", opts: ["Un simple fichier texte", "Telegraf -> InfluxDB (TSDB) -> Grafana (dashboards/alertes)", "Uniquement des e-mails", "Un tableur manuel"], a: 1, exp: "La pile TIG collecte, stocke en série temporelle et affiche des dashboards avec seuils d'alerte." }
+    ],
+    solution: `<pre class="pseudo">! Equipement : dial-out, debit en SAMPLE 1s + etat en ON_CHANGE
+telemetry ietf subscription 201
+ encoding encode-kvgpb
+ filter xpath /interfaces-state/interface/statistics
+ stream yang-push
+ update-policy periodic 100            ! 100 cs = 1 s (SAMPLE)
+ receiver ip address 172.16.0.5 57400 protocol grpc-tcp
+telemetry ietf subscription 202
+ filter xpath /interfaces-state/interface/oper-status
+ stream yang-push
+ update-policy on-change               ! alerte immediate si le lien tombe
+ receiver ip address 172.16.0.5 57400 protocol grpc-tcp
+# Collecte : Telegraf (gNMI/gRPC) -&gt; InfluxDB (TSDB) -&gt; Grafana (dashboards + alertes)</pre>
+<p>Dial-out pour franchir le pare-feu, SAMPLE 1 s pour le débit, ON_CHANGE pour l'état des liens, et la pile TIG pour stocker/visualiser : le NOC passe de 5 minutes d'angle mort à une vision temps réel.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j22", title: "Du polling SNMP au streaming observable", level: 3,
+    statement: "En texte brut : (1) explique pourquoi le <strong>SNMP polling</strong> est inadapté au temps réel et ce que la <strong>télémétrie streaming</strong> change (pull vs push). (2) Distingue <strong>dial-in</strong> et <strong>dial-out</strong>, et <strong>SAMPLE</strong> vs <strong>ON_CHANGE</strong>. (3) Décris la chaîne de collecte (pile TIG) et cite les 3 piliers de l'observabilité.",
+    hints: [
+      "Pull = le collecteur demande, périodique et aveugle entre deux sondages ; push = l'équipement envoie.",
+      "Dial-out = l'équipement initie ; dial-in = le collecteur initie via gNMI Subscribe.",
+      "Telegraf -> InfluxDB -> Grafana ; métriques / logs / traces."
+    ],
+    solution: "1) SNMP POLLING vs STREAMING\n- SNMP = modele PULL : le collecteur demande une valeur toutes les X minutes.\n  Defauts : lent (aveugle entre deux sondages), charge le CPU (question/reponse repetee),\n  ne voit qu'au moment ou on regarde (micro-pics invisibles).\n- Streaming telemetry = modele PUSH : l'equipement ENVOIE ses donnees en continu\n  (ex. chaque seconde), structurees. Temps reel, moins de charge CPU, rien de rate.\n\n2) DIAL-IN / DIAL-OUT et SAMPLE / ON_CHANGE\n- DIAL-OUT : l'EQUIPEMENT initie la connexion et pousse (config figee sur le routeur ;\n  passe un pare-feu qui n'autorise que le sortant).\n- DIAL-IN  : le COLLECTEUR initie via gNMI Subscribe (abonnement dynamique, plus souple).\n- SAMPLE    : envoi periodique a intervalle fixe -> compteurs continus (debit).\n- ON_CHANGE : envoi seulement quand la valeur change -> etats discrets (lien up/down).\n\n3) CHAINE DE COLLECTE + OBSERVABILITE\n- Pile TIG : Telegraf (collecte gNMI/gRPC, parse le protobuf)\n             -> InfluxDB (TSDB, stocke la serie temporelle)\n             -> Grafana (dashboards, seuils, alertes).\n  Alternatives : Prometheus (TSDB), ELK (logs).\n- Observabilite = 3 piliers : METRIQUES + LOGS + TRACES\n  (voir un incident ET en comprendre la cause).",
+    note: "La télémétrie se conçoit : bons sensor paths, cadence adaptée (SAMPLE rapide pour les compteurs, ON_CHANGE pour les états)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

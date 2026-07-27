@@ -1,0 +1,109 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 20</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 20,
+  title: "Le NAT et la PAT",
+  subtitle: "Faire tenir tout un réseau privé derrière une poignée d'adresses publiques.",
+  theory: `
+<h3>1. Pourquoi traduire les adresses ?</h3>
+<p>Les adresses IPv4 privées (RFC 1918 : 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) ne sont pas routables sur Internet. Le <strong>NAT</strong> (« Network Address Translation ») remplace, dans l'en-tête des paquets, une adresse privée par une adresse publique routable, et fait le chemin inverse au retour. C'est le <strong>standardiste</strong> d'une entreprise : à l'extérieur, tout le monde voit un seul numéro public ; en interne, il redirige vers le bon poste.</p>
+<h3>2. Le vocabulaire inside / outside</h3>
+<p>Cisco emploie quatre termes. Retiens deux idées : <strong>inside</strong> = côté réseau local, <strong>outside</strong> = côté Internet ; <strong>local</strong> = adresse vue à l'intérieur, <strong>global</strong> = adresse vue à l'extérieur.</p>
+<pre class="pseudo"># inside local   : adresse privee du poste interne (ex. 192.168.1.10)
+# inside global  : adresse publique qui le represente sur Internet (ex. 203.0.113.5)
+# outside global : adresse publique du serveur distant (ex. 8.8.8.8)
+# outside local  : comment le serveur distant est vu cote interne (souvent = global)</pre>
+<div class="tip">Les interfaces se marquent : <code>ip nat inside</code> côté LAN, <code>ip nat outside</code> côté Internet. Sans ce marquage, aucune traduction n'a lieu.</div>
+<h3>3. NAT statique</h3>
+<p>Le <strong>NAT statique</strong> crée une correspondance <strong>fixe, un-pour-un</strong> entre une adresse privée et une adresse publique. Utile pour publier un serveur interne toujours joignable à la même adresse publique.</p>
+<pre class="pseudo">R1(config)# ip nat inside source static 192.168.1.10 203.0.113.10
+R1(config)# interface Gi0/0
+R1(config-if)# ip nat inside
+R1(config)# interface Gi0/1
+R1(config-if)# ip nat outside</pre>
+<h3>4. NAT dynamique</h3>
+<p>Le <strong>NAT dynamique</strong> puise dans un <strong>pool</strong> d'adresses publiques et attribue la première libre à un hôte qui sort. La correspondance est temporaire. Si le pool est vide, les hôtes suivants ne peuvent plus sortir (pas de partage d'adresse).</p>
+<pre class="pseudo">R1(config)# ip nat pool MONPOOL 203.0.113.1 203.0.113.5 netmask 255.255.255.248
+R1(config)# access-list 1 permit 192.168.1.0 0.0.0.255
+R1(config)# ip nat inside source list 1 pool MONPOOL</pre>
+<h3>5. PAT (NAT overload) : le plus courant</h3>
+<p>La <strong>PAT</strong> (« Port Address Translation »), appelée <strong>NAT overload</strong> chez Cisco, permet à <strong>des centaines d'hôtes de partager UNE seule adresse publique</strong>. Le routeur distingue chaque conversation grâce au <strong>numéro de port source</strong>, qu'il modifie si besoin. C'est ce que fait ta box à la maison.</p>
+<pre class="pseudo"># Surcharge d'UNE adresse publique = celle de l'interface de sortie :
+R1(config)# access-list 1 permit 192.168.1.0 0.0.0.255
+R1(config)# ip nat inside source list 1 interface Gi0/1 overload
+#
+# Ou surcharge d'un pool :
+R1(config)# ip nat inside source list 1 pool MONPOOL overload</pre>
+<div class="warn">Le mot-clé <strong>overload</strong> est ce qui transforme un NAT dynamique en PAT. Sans lui, chaque hôte consomme une adresse entière du pool ; avec lui, tous partagent la même grâce aux ports.</div>
+<h3>6. Vérifier et dépanner</h3>
+<pre class="pseudo">show ip nat translations     # table des traductions actives (avec ports en PAT)
+show ip nat statistics       # compteurs, pool, interfaces inside/outside
+clear ip nat translation *   # vide la table (pour re-tester)
+debug ip nat                 # trace chaque traduction (a manier avec prudence)</pre>
+<h3>7. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># NAT : traduit prive &lt;-&gt; public ; interfaces ip nat inside / ip nat outside
+# inside = LAN, outside = Internet ; local = vu dedans, global = vu dehors
+# STATIQUE  : 1-pour-1 fixe (publier un serveur)
+# DYNAMIQUE : pool, 1-pour-1 temporaire (pas de partage)
+# PAT / OVERLOAD : plusieurs hotes -> 1 adresse, distingues par le PORT source
+# Verifier : show ip nat translations | show ip nat statistics</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que fait fondamentalement le NAT ?", opts: ["Chiffrer les paquets", "Traduire une adresse IP privée en adresse publique (et inversement)", "Router selon le coût", "Filtrer les ports"], a: 1, exp: "Le NAT remplace l'adresse dans l'en-tête pour faire communiquer privé et public." },
+    { type: "qcm", q: "Comment marque-t-on l'interface côté LAN pour le NAT ?", opts: ["ip nat outside", "ip nat inside", "ip nat local", "ip nat enable"], a: 1, exp: "ip nat inside côté LAN, ip nat outside côté Internet." },
+    { type: "qcm", q: "Qu'est-ce qu'une adresse « inside local » ?", opts: ["L'adresse publique du serveur distant", "L'adresse privée du poste interne", "L'adresse de loopback", "L'adresse de diffusion"], a: 1, exp: "inside local = adresse privée de l'hôte interne vue depuis l'intérieur." },
+    { type: "vf", q: "Le NAT statique crée une correspondance fixe un-pour-un.", a: true, exp: "Vrai : statique = mapping permanent d'une privée vers une publique précise." },
+    { type: "qcm", q: "Quel mot-clé transforme un NAT dynamique en PAT ?", opts: ["static", "overload", "pool", "permit"], a: 1, exp: "overload active la surcharge (PAT) : partage d'une adresse via les ports." },
+    { type: "input", q: "Quel autre nom Cisco donne-t-il à la PAT ?", a: ["nat overload", "overload", "surcharge", "nat avec surcharge"], ph: "terme Cisco", exp: "Cisco appelle la PAT « NAT overload »." },
+    { type: "qcm", q: "Sur quoi la PAT s'appuie-t-elle pour distinguer plusieurs hôtes derrière une même IP ?", opts: ["L'adresse MAC", "Le numéro de port source", "Le TTL", "Le VLAN"], a: 1, exp: "La PAT utilise (et modifie si besoin) le numéro de port source pour suivre chaque conversation." },
+    { type: "vf", q: "Avec un NAT dynamique sans overload, si le pool est épuisé, de nouveaux hôtes ne peuvent plus sortir.", a: true, exp: "Vrai : sans partage, chaque hôte consomme une adresse ; pool vide = plus de traduction possible." },
+    { type: "qcm", q: "À quoi sert typiquement le NAT statique ?", opts: ["Faire sortir 500 postes avec une IP", "Publier un serveur interne à une adresse publique fixe", "Filtrer les ports", "Élire un DR"], a: 1, exp: "Un mapping fixe rend un serveur interne joignable de l'extérieur à une adresse stable." },
+    { type: "input", q: "Quelle commande affiche la table des traductions NAT actives ?", a: ["show ip nat translations", "sh ip nat translations"], ph: "commande show", exp: "show ip nat translations liste les traductions (avec ports en PAT)." },
+    { type: "qcm", q: "Dans « ip nat inside source list 1 interface Gi0/1 overload », que fait « list 1 » ?", opts: ["Désigne le pool", "Désigne l'ACL qui sélectionne les adresses internes à traduire", "Fixe le port", "Nomme l'interface outside"], a: 1, exp: "list 1 pointe une ACL qui définit quels hôtes internes sont traduits." },
+    { type: "qcm", q: "Quelle adresse partagée utilise typiquement une box domestique pour tout le foyer ?", opts: ["Une adresse par appareil", "Une seule adresse publique via PAT", "Aucune", "Une adresse privée publique"], a: 1, exp: "La box fait de la PAT : tous les appareils partagent l'unique IP publique." },
+    { type: "vf", q: "Les interfaces doivent être marquées ip nat inside/outside pour que la traduction se produise.", a: true, exp: "Vrai : sans ce marquage, le routeur ne sait pas quel trafic traduire." },
+    { type: "qcm", q: "Quelle commande donne les compteurs et l'état du NAT (pool, interfaces) ?", opts: ["show ip nat statistics", "show version", "show vlan", "show ip ospf neighbor"], a: 0, exp: "show ip nat statistics affiche compteurs, pool et interfaces inside/outside." },
+    { type: "qcm", q: "Un pool NAT dynamique sans overload attribue les adresses selon quel principe ?", opts: ["Partage par ports", "Une adresse publique par hôte, temporairement", "Toujours la même adresse", "Aucune traduction"], a: 1, exp: "Dynamique sans overload = un-pour-un temporaire, tiré du pool." }
+  ],
+  final: {
+    title: "Exercice final — PAT pour tout un LAN",
+    intro: `<p>Le LAN 192.168.1.0/24 (interface Gi0/0 de R1) doit accéder à Internet. R1 dispose d'une seule adresse publique, celle de son interface de sortie Gi0/1. Configure une PAT (overload) et vérifie-la.</p>`,
+    questions: [
+      { type: "qcm", q: "Combien d'adresses publiques suffisent pour faire sortir tout le /24 ici ?", opts: ["254", "Une seule, grâce à la PAT", "128", "Deux"], a: 1, exp: "La PAT partage une unique adresse publique entre tous les hôtes via les ports." },
+      { type: "input", q: "Écris l'ACL 1 qui sélectionne le LAN 192.168.1.0/24 à traduire.", a: ["access-list 1 permit 192.168.1.0 0.0.0.255"], ph: "access-list 1 ...", exp: "access-list 1 permit 192.168.1.0 0.0.0.255." },
+      { type: "input", q: "Écris la commande de PAT surchargeant l'interface Gi0/1.", a: ["ip nat inside source list 1 interface gigabitethernet0/1 overload", "ip nat inside source list 1 interface gi0/1 overload"], ph: "ip nat inside source ...", exp: "ip nat inside source list 1 interface Gi0/1 overload." },
+      { type: "qcm", q: "Quelles commandes d'interface marquent inside et outside ?", opts: ["ip nat local / ip nat global", "ip nat inside sur Gi0/0 et ip nat outside sur Gi0/1", "ip access-group in / out", "nat enable"], a: 1, exp: "Gi0/0 (LAN) = ip nat inside ; Gi0/1 (Internet) = ip nat outside." },
+      { type: "qcm", q: "Quelle commande prouve que des hôtes sont bien traduits (avec ports) ?", opts: ["show ip route", "show ip nat translations", "show vlan", "show cdp neighbors"], a: 1, exp: "show ip nat translations montre les traductions actives et les ports en PAT." }
+    ],
+    solution: `<pre class="pseudo">R1(config)# access-list 1 permit 192.168.1.0 0.0.0.255
+R1(config)# ip nat inside source list 1 interface GigabitEthernet0/1 overload
+R1(config)# interface GigabitEthernet0/0
+R1(config-if)#  ip nat inside
+R1(config)# interface GigabitEthernet0/1
+R1(config-if)#  ip nat outside
+R1# show ip nat translations     # verifier : lignes avec adresse:port
+R1# show ip nat statistics</pre>
+<p>Le mot-clé <strong>overload</strong> fait toute la différence : sans lui, une seule adresse ne servirait qu'à un hôte à la fois ; avec lui, tout le /24 partage l'adresse de Gi0/1.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j20", title: "Distinguer statique, dynamique et PAT", level: 2,
+    statement: "Explique en quelques lignes la différence entre <strong>NAT statique</strong>, <strong>NAT dynamique</strong> et <strong>PAT (overload)</strong>, puis écris la commande de <strong>NAT statique</strong> publiant le serveur interne 192.168.1.50 sur l'adresse publique 203.0.113.50.",
+    hints: [
+      "Statique = correspondance fixe un-pour-un ; dynamique = pool, un-pour-un temporaire.",
+      "PAT = plusieurs hôtes derrière une adresse, distingués par le port source.",
+      "La commande statique est de la forme : ip nat inside source static PRIVEE PUBLIQUE."
+    ],
+    solution: "# NAT STATIQUE  : correspondance fixe 1-pour-1 (publier un serveur).\n# NAT DYNAMIQUE : puise dans un pool, 1-pour-1 temporaire, pas de partage.\n# PAT / OVERLOAD: plusieurs hotes partagent 1 adresse, distingues par le PORT source.\n#\nR1(config)# ip nat inside source static 192.168.1.50 203.0.113.50",
+    note: "N'oublie pas de marquer les interfaces ip nat inside et ip nat outside, sinon rien n'est traduit." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

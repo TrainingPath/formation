@@ -1,0 +1,118 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 23</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 23,
+  title: "CI/CD pour le réseau",
+  subtitle: "Appliquer au réseau les méthodes du développement logiciel : versionner, tester, déployer automatiquement.",
+  theory: `
+<h3>1. Traiter la configuration comme du code</h3>
+<p>Au niveau expert, on ne modifie plus un routeur « à la main en production ». On applique la philosophie <strong>infrastructure-as-code</strong> : la configuration réseau devient du <strong>code</strong>, stocké dans un dépôt <strong>Git</strong>, versionné, relu et testé avant d'atteindre un équipement. Le <strong>CI/CD</strong> — <strong>intégration continue</strong> (en anglais <em>Continuous Integration</em>) et <strong>livraison/déploiement continu</strong> (<em>Continuous Delivery/Deployment</em>) — automatise ce parcours du commit jusqu'à la production. Bénéfice : chaque changement est tracé, testé et reproductible ; fini les erreurs de copier-coller nocturnes.</p>
+<div class="tip">L'idée-force : un changement réseau suit exactement le même cycle qu'un correctif logiciel. On l'écrit, on l'ouvre en <em>merge request</em>, un <strong>pipeline</strong> le vérifie automatiquement, un collègue le relit, puis il est déployé. Le réseau hérite de 20 ans de bonnes pratiques du logiciel.</p></div>
+<h3>2. Le pipeline : une chaîne d'étapes automatiques</h3>
+<p>Un <strong>pipeline</strong> est une suite d'<em>étapes</em> (stages) exécutées automatiquement à chaque changement. Un enchaînement typique pour le réseau : <strong>lint</strong> (vérifier la syntaxe et le style), <strong>validate</strong> (contrôler la cohérence, par exemple valider un modèle YANG), <strong>test</strong> (simuler et vérifier le comportement, souvent dans un labo virtuel), <strong>deploy</strong> (appliquer si tout est vert), puis <strong>verify</strong> (post-vérification en production). Les plateformes courantes sont <strong>GitLab CI</strong> (fichier <code>.gitlab-ci.yml</code>), <strong>GitHub Actions</strong> et <strong>Jenkins</strong>.</p>
+<pre class="pseudo"># .gitlab-ci.yml (extrait conceptuel)
+stages: [lint, test, deploy, verify]
+lint:
+  stage: lint
+  script:
+    - yamllint inventory/
+    - pyang models/*.yang          # valide les modeles YANG
+test:
+  stage: test
+  script:
+    - pyats run job pre_checks.py   # tests dans un labo virtuel
+deploy:
+  stage: deploy
+  script:
+    - nornir_deploy.py              # pousse la config (voir jour 20)
+  when: manual                      # deploiement declenche apres approbation</pre>
+<h3>3. Tester le réseau avant de casser la production</h3>
+<p>La valeur du CI/CD réseau tient dans les <strong>tests automatisés</strong>. Chez Cisco, le cadre de référence est <strong>pyATS</strong> (avec sa bibliothèque <strong>Genie</strong>) : il collecte l'état d'un équipement, le compare à un état attendu et signale toute dérive. On distingue les <strong>pre-checks</strong> (état avant changement), le changement, puis les <strong>post-checks</strong> (état après) — et un <strong>diff</strong> automatique. Pour l'analyse <em>hors ligne</em> de la configuration (sans toucher au matériel), <strong>Batfish</strong> modélise le réseau et détecte les erreurs (routes manquantes, ACL contradictoires) avant tout déploiement.</p>
+<pre class="pseudo"># pyATS / Genie : snapshot avant / apres
+snapshot_before = device.learn("bgp")     # etat BGP avant
+# ... deploiement du changement ...
+snapshot_after  = device.learn("bgp")     # etat BGP apres
+diff = snapshot_before.diff(snapshot_after)   # ecarts detectes -&gt; test PASS/FAIL</pre>
+<div class="warn">Ne teste jamais « en direct » sur la production comme seul filet. Le pipeline doit d'abord jouer les tests en <strong>dry-run</strong> ou dans un <strong>labo virtuel</strong> (par ex. avec des conteneurs ou un simulateur). Si un test échoue, le pipeline <strong>bloque</strong> le déploiement : la production ne voit que du code déjà validé.</p></div>
+<h3>4. GitOps réseau : Git comme source unique de vérité</h3>
+<p>Le <strong>GitOps</strong> pousse la logique à son terme : le dépôt <strong>Git</strong> devient la <strong>source unique de vérité</strong> (en anglais <em>single source of truth</em>) de l'état <em>désiré</em> du réseau. On ne modifie plus jamais un équipement directement ; on modifie le dépôt. Le flux est <strong>déclaratif</strong> : on décrit l'état voulu, et l'automatisation <strong>réconcilie</strong> l'état réel avec l'état décrit. Concrètement : un ingénieur ouvre une <em>merge request</em>, le pipeline la teste, un pair l'approuve, la fusion (<em>merge</em>) déclenche le déploiement. L'historique Git devient le journal d'audit complet : qui a changé quoi, quand, et pourquoi.</p>
+<pre class="pseudo"># Flux GitOps reseau
+# 1. Modifier le desired state dans Git (branche)
+# 2. Ouvrir une Merge Request -&gt; pipeline : lint + test (labo virtuel)
+# 3. Revue par un pair (approbation obligatoire)
+# 4. Merge -&gt; deploiement automatique -&gt; post-checks
+# 5. Ecart detecte ? -&gt; rollback (revert Git) et re-deploiement</pre>
+<h3>5. Rollback et sécurité du changement</h3>
+<p>Un bon pipeline prévoit toujours le <strong>retour arrière</strong>. Comme l'état désiré vit dans Git, annuler un changement, c'est faire un <em>revert</em> du commit fautif : le pipeline redéploie l'état antérieur, connu et testé. On combine cela avec les mécanismes vus précédemment : le <strong>commit/rollback</strong> de NETCONF ou de NAPALM (jour 20-21) offre un filet au niveau de l'équipement, tandis que Git offre le filet au niveau de l'intention. Résultat : des changements réseau <em>fréquents, petits et réversibles</em> — l'inverse des grosses fenêtres de maintenance risquées.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Infrastructure-as-code : la config reseau = du code versionne dans Git
+# CI/CD : Integration Continue + Livraison/Deploiement Continu (automatise commit -&gt; prod)
+# Pipeline (stages) : lint -&gt; validate -&gt; test -&gt; deploy -&gt; verify
+#   plateformes : GitLab CI (.gitlab-ci.yml), GitHub Actions, Jenkins
+# Tests : pyATS/Genie (snapshot/diff, pre/post-checks), Batfish (analyse hors ligne)
+#         jouer en dry-run / labo virtuel ; un test rouge BLOQUE le deploiement
+# GitOps : Git = source unique de verite ; declaratif ; reconciliation
+#   flux : Merge Request -&gt; pipeline -&gt; revue -&gt; merge -&gt; deploy -&gt; post-checks
+# Rollback : revert Git + commit/rollback NETCONF/NAPALM</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie CI/CD ?", opts: ["Cisco IOS / Cisco DNA", "Intégration Continue / Livraison (ou Déploiement) Continu", "Control Interface / Control Data", "Config Init / Config Deploy"], a: 1, exp: "CI = Continuous Integration, CD = Continuous Delivery/Deployment : l'automatisation du commit à la production." },
+    { type: "qcm", q: "Dans le CI/CD réseau, que devient la configuration ?", opts: ["Un secret non partagé", "Du code versionné dans Git, relu et testé", "Une capture d'écran", "Un fichier jamais modifié"], a: 1, exp: "C'est l'infrastructure-as-code : la config est du code Git, tracé et testé avant déploiement." },
+    { type: "qcm", q: "Quel cadre Cisco fait des snapshots d'état et compare avant/après un changement ?", opts: ["Batfish", "pyATS/Genie", "Grafana", "Telegraf"], a: 1, exp: "pyATS/Genie apprend l'état (learn), le compare (diff) et produit un verdict PASS/FAIL." },
+    { type: "qcm", q: "Quel outil analyse la configuration réseau HORS LIGNE, sans toucher au matériel ?", opts: ["Batfish", "Netmiko", "InfluxDB", "SNMP"], a: 0, exp: "Batfish modélise le réseau et détecte les erreurs (routes, ACL) avant tout déploiement." },
+    { type: "qcm", q: "Dans GitOps, quel est le rôle du dépôt Git ?", opts: ["Un simple espace de sauvegarde", "La source unique de vérité de l'état désiré", "Un serveur de logs", "Un pare-feu"], a: 1, exp: "GitOps fait de Git la source unique de vérité : on modifie le dépôt, l'automatisation réconcilie le réseau." },
+    { type: "qcm", q: "Quel fichier décrit un pipeline sur GitLab CI ?", opts: ["Jenkinsfile", ".gitlab-ci.yml", "ansible.cfg", "config.yaml"], a: 1, exp: "GitLab CI lit le fichier .gitlab-ci.yml à la racine du dépôt." },
+    { type: "vf", q: "Si un test du pipeline échoue, le déploiement en production doit être bloqué.", a: true, exp: "Vrai : le pipeline empêche que du code non validé atteigne la production." },
+    { type: "vf", q: "En GitOps, on continue de modifier les équipements directement en plus du dépôt.", a: false, exp: "Faux : on ne modifie plus l'équipement à la main ; on modifie Git, et l'automatisation réconcilie." },
+    { type: "vf", q: "Un revert d'un commit fautif dans Git permet de redéployer l'état antérieur testé.", a: true, exp: "Vrai : comme l'intention vit dans Git, le rollback est un revert suivi d'un redéploiement." },
+    { type: "vf", q: "Le CI/CD encourage des changements gros et rares plutôt que petits et fréquents.", a: false, exp: "Faux : il favorise des changements petits, fréquents et réversibles, l'inverse des grosses fenêtres risquées." },
+    { type: "vf", q: "L'historique Git sert de journal d'audit (qui a changé quoi, quand, pourquoi).", a: true, exp: "Vrai : chaque commit et merge request tracent l'auteur, la date et la justification." },
+    { type: "input", q: "Quel outil de version (4 lettres) sert de source de vérité au GitOps réseau ?", a: ["git"], ph: "G__", exp: "Git : le dépôt versionné, source unique de vérité." },
+    { type: "input", q: "Comment nomme-t-on la suite d'étapes automatiques (lint, test, deploy) déclenchée à chaque changement ?", a: ["pipeline", "un pipeline", "le pipeline"], ph: "en anglais", exp: "Le pipeline CI/CD enchaîne les étapes automatiquement." },
+    { type: "input", q: "Quel cadre Cisco (avec Genie) réalise les tests d'état et les diffs du réseau ?", a: ["pyats", "pyats/genie", "pyats genie"], ph: "py…", exp: "pyATS (et sa bibliothèque Genie) : le cadre de test réseau de Cisco." },
+    { type: "input", q: "Comment appelle-t-on la demande de fusion, relue par un pair, qui déclenche les tests du pipeline ? (2 mots anglais)", a: ["merge request", "pull request", "mergerequest"], ph: "merge …", exp: "La merge request (ou pull request) : elle est testée puis approuvée avant fusion." }
+  ],
+  final: {
+    title: "Exercice final — Bâtir un pipeline réseau GitOps",
+    intro: `<p>Ton équipe veut fiabiliser ses changements BGP. Aujourd'hui, un ingénieur se connecte la nuit et colle des lignes en production. Tu dois proposer un flux CI/CD GitOps complet, du commit au rollback, en réutilisant les outils des jours précédents.</p>`,
+    questions: [
+      { type: "qcm", q: "Première étape du nouveau flux : où l'ingénieur écrit-il désormais son changement BGP ?", opts: ["Directement sur le routeur en SSH", "Dans le dépôt Git (état désiré), via une merge request", "Dans un e-mail", "Sur un tableur"], a: 1, exp: "En GitOps, on modifie Git (source de vérité), pas l'équipement directement." },
+      { type: "qcm", q: "Le pipeline, avant tout déploiement, doit d'abord…", opts: ["Pousser en prod puis tester", "Lint + valider + tester en dry-run/labo virtuel (ex. pyATS)", "Rien, la revue suffit", "Redémarrer les routeurs"], a: 1, exp: "On lint, on valide et on teste en environnement virtuel ; la prod ne voit que du code validé." },
+      { type: "vf", q: "Une approbation par un pair (revue de la merge request) doit précéder la fusion et le déploiement.", a: true, exp: "Vrai : la revue par un pair est un contrôle qualité clé du flux GitOps." },
+      { type: "qcm", q: "Pour pousser effectivement la config validée, tu réutilises…", opts: ["Du copier-coller manuel", "Une automatisation Nornir/NAPALM déclenchée par le pipeline", "Telnet interactif", "SNMP set"], a: 1, exp: "Le déploiement s'appuie sur l'automatisation du jour 20 (Nornir orchestre, NAPALM commit/rollback)." },
+      { type: "qcm", q: "Un post-check pyATS détecte une session BGP tombée après déploiement. Que fais-tu ?", opts: ["J'ignore, ça remontera", "Revert du commit dans Git -> redéploiement de l'état antérieur testé", "Je débranche le routeur", "Je désactive les tests"], a: 1, exp: "Le rollback GitOps = revert du commit fautif + redéploiement de l'état connu, complété par le rollback NAPALM/NETCONF." }
+    ],
+    solution: `<pre class="pseudo"># Flux CI/CD GitOps pour un changement BGP
+# 1. Ingenieur : branche Git, edite l'etat desire (config BGP), ouvre une Merge Request
+# 2. Pipeline (.gitlab-ci.yml) :
+#      lint    : yamllint, pyang
+#      test    : pyATS/Genie en labo virtuel (pre-checks), Batfish (analyse hors ligne)
+#      -> test rouge = pipeline BLOQUE, pas de deploiement
+# 3. Revue par un pair -> approbation obligatoire
+# 4. Merge -> deploy : Nornir orchestre + NAPALM (compare_config, commit)
+# 5. verify : pyATS post-checks (snapshot BGP avant/apres, diff PASS/FAIL)
+# 6. Ecart ? -> rollback : revert du commit Git + redeploiement (filet NAPALM/NETCONF)</pre>
+<p>On remplace le collage nocturne risqué par un flux tracé, testé et réversible : Git porte l'intention, le pipeline garantit la qualité, l'automatisation applique, et le revert assure le retour arrière. Des changements petits, fréquents et sûrs.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j23", title: "Concevoir un pipeline CI/CD réseau", level: 3,
+    statement: "En texte brut, décris un pipeline <strong>CI/CD GitOps</strong> pour un changement réseau, étape par étape (du commit au rollback). Pour chaque étape, cite l'outil clé et son rôle. Termine en expliquant pourquoi <strong>Git comme source unique de vérité</strong> change la gestion des incidents.",
+    hints: [
+      "Étapes type : lint -> test -> revue -> deploy -> verify -> rollback.",
+      "Outils : yamllint/pyang, pyATS/Genie et Batfish, Nornir/NAPALM, revert Git.",
+      "Un test rouge doit bloquer le déploiement."
+    ],
+    solution: "PIPELINE CI/CD GITOPS (commit -> rollback) :\n1. MODIFIER L'INTENTION : editer l'etat desire dans Git (branche) + ouvrir une Merge Request.\n   -> Git = source unique de verite ; on ne touche plus l'equipement a la main.\n2. LINT : yamllint (inventaire) + pyang (valide les modeles YANG). Role : syntaxe/coherence.\n3. TEST : pyATS/Genie en labo virtuel (pre-checks, snapshot) + Batfish (analyse HORS LIGNE\n   des routes/ACL). Role : verifier le comportement AVANT la prod.\n   -> Si un test echoue, le pipeline BLOQUE le deploiement.\n4. REVUE : approbation obligatoire d'un pair sur la Merge Request. Role : controle qualite humain.\n5. DEPLOY : sur merge, Nornir orchestre + NAPALM (compare_config puis commit). Role : appliquer.\n6. VERIFY : pyATS post-checks (diff avant/apres) -> PASS/FAIL.\n7. ROLLBACK : si ecart, revert du commit fautif dans Git + redeploiement de l'etat anterieur\n   (double filet avec commit/rollback NAPALM/NETCONF).\n\nPOURQUOI GIT = SOURCE UNIQUE DE VERITE :\n- L'historique Git est le journal d'audit complet (qui, quoi, quand, pourquoi).\n- Un incident se corrige par un simple revert vers un etat connu et deja teste.\n- Cela permet des changements PETITS, FREQUENTS et REVERSIBLES, au lieu de grosses\n  fenetres de maintenance risquees.",
+    note: "Le réseau hérite des pratiques du logiciel : versionner, tester en amont, déployer petit et savoir revenir en arrière." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

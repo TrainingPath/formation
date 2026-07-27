@@ -1,0 +1,91 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 19</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Le multicast",
+  subtitle: "Envoyer un flux une seule fois et le laisser se dupliquer au bon endroit.",
+  theory: `
+<h3>1. Trois façons d'adresser</h3>
+<p>Pour envoyer des données, il existe trois modes. L'<strong>unicast</strong> vise un seul destinataire (une conversation privée). Le <strong>broadcast</strong> arrose tout le monde sur le réseau local. Le <strong>multicast</strong> vise un <em>groupe</em> précis d'abonnés, où qu'ils soient. Imagine une chaîne de télévision : diffuser en unicast reviendrait à envoyer un flux vidéo distinct à chaque téléspectateur (catastrophe pour la bande passante) ; le multicast envoie <strong>un seul flux</strong> que le réseau duplique uniquement là où il y a des abonnés.</p>
+<h3>2. Les adresses de groupe</h3>
+<p>Un groupe multicast est identifié par une adresse IP de la plage <strong>224.0.0.0 à 239.255.255.255</strong> (classe D). L'émetteur envoie vers cette adresse de groupe ; les récepteurs qui veulent recevoir « s'abonnent » à ce groupe. La plage 224.0.0.0/24 est réservée au trafic de contrôle local (par exemple 224.0.0.5 pour OSPF), et la plage 239.0.0.0/8 est à usage privé (administrativement délimitée).</p>
+<pre class="pseudo"># Plage multicast (classe D)
+224.0.0.0  -> 239.255.255.255
+224.0.0.x  = contrôle local (224.0.0.5 = OSPF, 224.0.0.9 = RIPv2)
+239.0.0.0/8 = usage privé (scope administratif)</pre>
+<h3>3. IGMP : l'abonnement côté hôtes</h3>
+<p>Comment un PC dit-il « je veux ce groupe » ? Grâce à <strong>IGMP</strong> (Internet Group Management Protocol), le protocole entre les <em>hôtes</em> et leur routeur local. L'hôte envoie un message <em>join</em> pour s'abonner, et le routeur envoie régulièrement des <em>queries</em> pour savoir qui écoute encore. IGMPv2 introduit le <em>leave</em> explicite (départ rapide) ; IGMPv3 permet de choisir aussi la source (SSM). Sur les commutateurs, l'<strong>IGMP snooping</strong> évite d'inonder tous les ports : le switch écoute l'IGMP et n'envoie le flux qu'aux ports abonnés.</p>
+<div class="tip">Retiens la division du travail : IGMP gère l'abonnement entre l'hôte et son routeur ; PIM gère la construction du chemin multicast ENTRE les routeurs.</div>
+<h3>4. PIM : construire le chemin entre routeurs</h3>
+<p>Entre les routeurs, c'est <strong>PIM</strong> (Protocol Independent Multicast) qui bâtit l'arbre de distribution. « Independent » signifie qu'il s'appuie sur la table de routage unicast existante (peu importe qu'elle vienne d'OSPF ou d'EIGRP). Deux modes historiques : le mode <strong>dense</strong> (PIM-DM) inonde tout le réseau puis « élague » (prune) les branches sans abonné : simple mais gaspilleur, réservé aux petits réseaux où presque tout le monde veut le flux. Le mode <strong>sparse</strong> (PIM-SM) fait l'inverse : rien n'est envoyé tant que personne ne s'abonne explicitement ; on construit l'arbre à la demande. PIM-SM est le mode déployé en production.</p>
+<h3>5. Le point de rendez-vous (RP) et les arbres</h3>
+<p>En PIM sparse, un routeur particulier sert de point de ralliement : le <strong>RP</strong> (Rendez-vous Point). Les sources s'y enregistrent, les récepteurs le rejoignent. On distingue deux types d'arbres. L'<strong>arbre partagé</strong> (shared tree, noté (*,G)) est enraciné sur le RP : tout passe d'abord par lui. L'<strong>arbre du plus court chemin</strong> (SPT, noté (S,G)) est enraciné sur la source elle-même : une fois le flux établi, PIM-SM bascule souvent vers le SPT pour prendre le trajet le plus direct.</p>
+<pre class="pseudo"># Notations à connaître
+(*, G)  = arbre partagé, racine = RP        (tout groupe G, toute source)
+(S, G)  = arbre du plus court chemin (SPT), racine = source S
+# Commandes IOS de base
+ip multicast-routing            # activer le multicast
+interface Gi0/0
+ ip pim sparse-mode             # activer PIM-SM sur l'interface
+ip pim rp-address 10.0.0.1      # désigner le RP</pre>
+<div class="warn">Ne confonds pas les couches : IGMP est entre hôtes et routeur (abonnement) ; PIM est entre routeurs (chemin). Et un flux multicast doit passer la vérification <strong>RPF</strong> (Reverse Path Forwarding) : un paquet n'est accepté que s'il arrive par l'interface qui mène à la source. Sinon, il est jeté (anti-boucle).</p></div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Multicast = un flux, dupliqué seulement où il y a des abonnés
+# Adresses : 224.0.0.0 - 239.255.255.255 (classe D)
+# IGMP  = hôte <-> routeur (join / query / leave), snooping sur switch
+# PIM   = entre routeurs (dense = flood+prune, sparse = à la demande)
+# RP    = point de rendez-vous en PIM-SM
+# Arbres : (*,G) partagé (racine RP), (S,G) plus court chemin (racine source)
+# RPF   = contrôle anti-boucle (le paquet vient-il du bon côté ?)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel protocole gère l'abonnement à un groupe entre un hôte et son routeur ?", opts: ["PIM", "IGMP", "OSPF", "VXLAN"], a: 1, exp: "IGMP (join/query/leave) fonctionne entre les hôtes et le routeur local." },
+    { type: "qcm", q: "Quel protocole construit l'arbre de distribution ENTRE les routeurs ?", opts: ["IGMP", "PIM", "ARP", "STP"], a: 1, exp: "PIM (Protocol Independent Multicast) bâtit le chemin multicast entre routeurs." },
+    { type: "qcm", q: "Quelle plage d'adresses est réservée au multicast (classe D) ?", opts: ["10.0.0.0 - 10.255.255.255", "224.0.0.0 - 239.255.255.255", "169.254.0.0/16", "192.168.0.0/16"], a: 1, exp: "La classe D (224.0.0.0 à 239.255.255.255) est réservée aux groupes multicast." },
+    { type: "vf", q: "En mode dense (PIM-DM), le flux est d'abord inondé partout, puis les branches inutiles sont élaguées (prune).", a: true, exp: "Vrai : PIM dense = flood-and-prune. Simple mais gaspilleur, réservé aux petits réseaux." },
+    { type: "input", q: "En PIM sparse, comment appelle-t-on le routeur qui sert de point de ralliement pour un groupe ? (sigle 2 lettres)", a: ["rp", "rendez-vous point", "point de rendez-vous"], ph: "sigle", exp: "Le RP (Rendez-vous Point) : les sources s'y enregistrent, les récepteurs le rejoignent." },
+    { type: "qcm", q: "Que signifie le « Independent » de PIM ?", opts: ["Il n'utilise aucune table de routage", "Il s'appuie sur la table de routage unicast existante, peu importe le protocole", "Il fonctionne sans IP", "Il est indépendant des VLAN"], a: 1, exp: "PIM réutilise la table unicast (OSPF, EIGRP…) pour trouver le chemin vers la source." },
+    { type: "vf", q: "Le mode sparse (PIM-SM) n'envoie le flux que si un récepteur s'abonne explicitement.", a: true, exp: "Vrai : sparse = à la demande, contrairement au dense qui inonde d'abord." },
+    { type: "input", q: "Quel contrôle anti-boucle vérifie que le paquet multicast arrive bien par l'interface menant à la source ? (sigle 3 lettres)", a: ["rpf", "reverse path forwarding"], ph: "sigle", exp: "Le RPF (Reverse Path Forwarding) jette les paquets qui n'arrivent pas du bon côté." },
+    { type: "qcm", q: "La notation (*, G) désigne…", opts: ["l'arbre du plus court chemin", "l'arbre partagé enraciné sur le RP", "une adresse unicast", "un VLAN"], a: 1, exp: "(*,G) = arbre partagé (shared tree), racine = RP. (S,G) = SPT, racine = source." },
+    { type: "qcm", q: "À quoi sert l'IGMP snooping sur un commutateur ?", opts: ["à chiffrer le multicast", "à n'envoyer le flux qu'aux ports réellement abonnés", "à créer des VLAN", "à router le multicast"], a: 1, exp: "Le switch écoute l'IGMP et évite d'inonder tous les ports : le flux ne va qu'aux abonnés." },
+    { type: "vf", q: "Le broadcast et le multicast sont la même chose.", a: false, exp: "Non : le broadcast arrose tout le monde ; le multicast ne vise qu'un groupe d'abonnés." },
+    { type: "input", q: "Quelle commande globale IOS active le routage multicast sur un routeur ? Réponds : ip multicast-…", a: ["routing", "multicast-routing", "ip multicast-routing"], ph: "un mot", exp: "ip multicast-routing active le multicast globalement avant de configurer PIM." },
+    { type: "qcm", q: "La notation (S, G) désigne…", opts: ["l'arbre partagé (racine RP)", "l'arbre du plus court chemin (racine = la source)", "un groupe IGMP", "un broadcast"], a: 1, exp: "(S,G) = SPT enraciné sur la source ; PIM-SM y bascule pour un trajet direct." },
+    { type: "input", q: "Quel mode PIM est celui déployé en production sur les grands réseaux ? Réponds : mode …", a: ["sparse", "sparse-mode", "pim-sm", "sm"], ph: "dense ou sparse ?", exp: "Le mode sparse (PIM-SM) : rien n'est envoyé sans abonné, contrairement au dense gaspilleur." },
+    { type: "qcm", q: "Un émetteur multicast envoie ses paquets vers…", opts: ["l'adresse unicast de chaque récepteur", "l'adresse du groupe (classe D)", "l'adresse de broadcast", "l'adresse du RP en unicast"], a: 1, exp: "L'émetteur envoie une seule fois vers l'adresse de groupe ; le réseau duplique." }
+  ],
+  final: {
+    title: "Exercice final — Diffuser une vidéo en multicast",
+    intro: "<p>Un campus veut diffuser une conférence vidéo à plusieurs salles, sans saturer le réseau. On active le multicast et on décide des rôles de chaque protocole.</p>",
+    questions: [
+      { type: "qcm", q: "Un PC de salle veut recevoir le flux. Il envoie un message…", opts: ["PIM join", "IGMP join vers son routeur", "un broadcast", "une requête ARP"], a: 1, exp: "L'hôte s'abonne via IGMP auprès de son routeur local." },
+      { type: "qcm", q: "Entre les routeurs du campus, on active…", opts: ["PIM sparse-mode", "IGMP snooping", "OSPF area 0 uniquement", "RIP"], a: 0, exp: "PIM-SM construit l'arbre à la demande entre routeurs." },
+      { type: "input", q: "Quel routeur faut-il désigner comme point de rendez-vous ? (sigle)", a: ["rp", "le rp", "rendez-vous point"], ph: "sigle", exp: "Le RP centralise l'enregistrement des sources et le ralliement des récepteurs en PIM-SM." },
+      { type: "vf", q: "Grâce à l'IGMP snooping, les commutateurs n'envoient le flux qu'aux salles abonnées.", a: true, exp: "Oui : sans snooping, le switch inonderait tous les ports du VLAN." },
+      { type: "qcm", q: "Une fois le flux établi, PIM-SM peut basculer de (*,G) vers…", opts: ["un broadcast", "l'arbre du plus court chemin (S,G)", "de l'unicast pur", "IGMPv1"], a: 1, exp: "PIM-SM bascule souvent vers le SPT (S,G) pour prendre le trajet le plus direct." }
+    ],
+    solution: "<pre class=\"pseudo\"># Configuration multicast type\nip multicast-routing              ! activer le multicast globalement\n!\ninterface GigabitEthernet0/0\n ip pim sparse-mode               ! PIM-SM sur chaque interface concernée\n!\nip pim rp-address 10.0.0.1        ! désigner le RP\n!\n! Côté commutateurs d'accès : IGMP snooping (souvent actif par défaut)\n! Côté hôtes : abonnement automatique via IGMP join</pre><p>Répartition finale : IGMP (hôte vers routeur), PIM-SM (entre routeurs), RP (point de ralliement), IGMP snooping (limite la diffusion sur les switches). Un seul flux part de la source et se duplique uniquement là où des salles écoutent.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j19", title: "IGMP contre PIM", level: 2,
+    statement: "Explique clairement la <strong>différence de rôle</strong> entre <code>IGMP</code> et <code>PIM</code>, puis la différence entre le mode <strong>dense</strong> et le mode <strong>sparse</strong> de PIM. Termine en donnant le rôle du <code>RP</code>.",
+    hints: [
+      "L'un opère entre l'hôte et son routeur, l'autre entre les routeurs.",
+      "Dense = on inonde puis on élague ; sparse = on n'envoie qu'à la demande.",
+      "Le RP est le point de ralliement en mode sparse."
+    ],
+    solution: "# IGMP vs PIM :\n#   IGMP -> entre l'HOTE et son ROUTEUR local (abonnement : join/query/leave)\n#   PIM  -> entre les ROUTEURS (construit l'arbre de distribution)\n#\n# Dense vs Sparse (PIM) :\n#   Dense (PIM-DM)  -> inonde tout le reseau puis elague (prune) les branches sans abonne\n#   Sparse (PIM-SM) -> n'envoie rien tant qu'un recepteur ne s'abonne pas explicitement\n#\n# Role du RP (Rendez-vous Point) :\n#   -> point de ralliement en PIM-SM : les sources s'y enregistrent,\n#      les recepteurs le rejoignent (arbre partage (*,G)).",
+    note: "En production, on utilise PIM sparse-mode avec un RP ; le dense est reserve aux petits reseaux." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

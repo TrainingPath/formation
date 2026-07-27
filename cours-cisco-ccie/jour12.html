@@ -1,0 +1,108 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 12,
+  title: "Le SD-Access en profondeur",
+  subtitle: "Une fabric campus pilotée par intention : LISP + VXLAN + segmentation par groupe.",
+  theory: `
+<h3>1. Du campus traditionnel à la fabric</h3>
+<p>Le campus classique empile VLAN, STP, HSRP, ACL et interconnexions L2 fragiles. <strong>SD-Access</strong> (Software-Defined Access), la solution campus de Cisco, remplace ce modèle par une <strong>fabric</strong> : un underlay entièrement routé (IP, stable, sans STP étendu) et un overlay où la mobilité et la segmentation sont natives. L'idée directrice est le <em>réseau piloté par l'intention</em> : l'administrateur exprime une politique (« ces utilisateurs peuvent joindre ces ressources »), et l'automatisation la traduit en configuration.</p>
+<h3>2. Les rôles de la fabric</h3>
+<p>SD-Access définit des rôles précis :</p>
+<pre class="pseudo"># Control-Plane Node : la base de donnees LISP (mappage identite-&gt;localisation)
+# Edge Node          : ou se connectent les utilisateurs/terminaux (equiv. access)
+# Border Node        : la sortie de la fabric vers le reste du reseau (WAN, DC, Internet)
+# Intermediate Node  : simple transit IP dans l'underlay (ne participe pas a l'overlay)
+# Fabric WLC / AP    : integration du sans-fil dans la fabric</pre>
+<p>Un même équipement peut cumuler plusieurs rôles dans les petites fabrics (par exemple control-plane + border sur un « colocated » node).</p>
+<h3>3. Le control plane : LISP</h3>
+<p>SD-Access sépare <strong>l'identité</strong> (qui/quoi : l'adresse IP de l'hôte, l'EID) de <strong>la localisation</strong> (où : l'adresse du routeur d'accès, le RLOC). C'est exactement le rôle de <strong>LISP</strong> (<em>Locator/ID Separation Protocol</em>). Le Control-Plane Node héberge la base <strong>Map-Server / Map-Resolver</strong> : quand un Edge Node cherche à joindre un hôte, il interroge le Map-Resolver (« où est cet EID ? ») qui répond avec le RLOC de l'Edge Node distant. Cette indirection permet la mobilité : si un terminal se déplace, seul le mappage EID→RLOC change, pas son adresse.</p>
+<pre class="pseudo"># Terminologie LISP dans SD-Access
+# EID   (Endpoint Identifier)  = l'identite de l'hote (son IP)
+# RLOC  (Routing Locator)      = l'adresse du fabric edge qui le dessert
+# Map-Server / Map-Resolver    = annuaire EID -&gt; RLOC (Control-Plane node)
+# ITR/ETR (xTR)                = ingress/egress tunnel router (les edges)</pre>
+<h3>4. Le data plane : VXLAN et le SGT</h3>
+<p>Une fois le RLOC connu, le trafic est encapsulé et transporté dans l'overlay via <strong>VXLAN</strong> (variante GPO, « Group Policy Option ») entre Edge Nodes. Point clé propre à SD-Access : l'en-tête VXLAN transporte aussi le <strong>SGT</strong> (<em>Scalable Group Tag</em>, aussi appelé Security Group Tag), un identifiant de groupe qui suit l'utilisateur partout dans la fabric. Le VNI identifie le segment de niveau réseau (la VN), le SGT identifie le groupe de sécurité à l'intérieur.</p>
+<h3>5. Segmentation : macro et micro</h3>
+<p>SD-Access offre deux niveaux de segmentation, à bien distinguer :</p>
+<pre class="pseudo"># MACRO-segmentation : les Virtual Networks (VN)
+#   -&gt; equivalents a des VRF ; isolent completement des univers
+#      (ex : Employes, IoT, Invites). Aucun trafic ne passe d'une VN
+#      a l'autre sans passer par une fusion explicite (fusion/firewall).
+# MICRO-segmentation : les Scalable Group Tags (SGT) dans une meme VN
+#   -&gt; politiques de groupe (SGACL) : au sein d'une meme VN, on autorise
+#      ou refuse selon le groupe source et le groupe destination.</pre>
+<div class="tip">Analogie : la macro-segmentation, ce sont des <strong>bâtiments séparés</strong> (VN/VRF) ; la micro-segmentation, ce sont les <strong>badges d'accès aux pièces</strong> à l'intérieur d'un même bâtiment (SGT/SGACL). ISE (Identity Services Engine) distribue les SGT et les SGACL.</div>
+<h3>6. L'orchestration : DNA Center et l'intégration ISE</h3>
+<p>Le cerveau est <strong>Cisco DNA Center</strong> (désormais Catalyst Center) : contrôleur qui automatise le provisionnement (LAN Automation de l'underlay, création de la fabric, des VN, des pools), applique les politiques d'intention, et assure l'assurance (télémétrie, analytics). Il s'intègre à <strong>Cisco ISE</strong> pour l'authentification (802.1X), l'attribution dynamique du SGT selon l'identité, et la distribution des SGACL. En résumé : DNA Center automatise et surveille, ISE authentifie et attribue les groupes, LISP mappe identité→localisation, VXLAN transporte, et le SGT porte la politique.</p>
+<div class="warn">Ne pas confondre VN et SGT. La <strong>VN</strong> (macro) = isolation totale de type VRF. Le <strong>SGT</strong> (micro) = politique entre groupes DANS une VN. Deux hôtes de VN différentes ne se parlent pas par défaut ; deux hôtes de SGT différents dans la même VN se parlent selon la SGACL.</div>
+<h3>7. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># SD-Access = fabric campus : underlay route + overlay LISP/VXLAN, pilotee par intention
+# Roles : Control-Plane (LISP Map-Server/Resolver), Edge, Border, Intermediate, WLC/AP
+# Control plane = LISP : separe EID (identite) et RLOC (localisation) -> mobilite
+# Data plane = VXLAN (GPO) portant le VNI (segment) + le SGT (groupe de securite)
+# Macro-seg = Virtual Networks (VN, type VRF) ; Micro-seg = SGT + SGACL dans une VN
+# Orchestration = DNA/Catalyst Center ; identite/SGT/SGACL = ISE (802.1X)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel protocole assure le plan de contrôle (mappage identité/localisation) dans SD-Access ?", opts: ["OSPF", "LISP", "LDP", "STP"], a: 1, exp: "LISP sépare EID (identité) et RLOC (localisation) ; le Control-Plane node héberge Map-Server/Resolver." },
+    { type: "qcm", q: "Quel protocole encapsule les données dans l'overlay SD-Access ?", opts: ["GRE", "MPLS", "VXLAN", "IPsec"], a: 2, exp: "VXLAN (variante GPO) transporte le trafic entre Edge Nodes, avec le SGT dans l'en-tête." },
+    { type: "qcm", q: "Dans LISP, que désigne le RLOC ?", opts: ["L'identité (IP) de l'hôte", "L'adresse du fabric edge qui dessert l'hôte", "Le numéro de VLAN", "Le Route Target"], a: 1, exp: "RLOC = Routing Locator : l'adresse du routeur d'accès (localisation). L'EID est l'identité." },
+    { type: "qcm", q: "La macro-segmentation dans SD-Access repose sur…", opts: ["Les SGT", "Les Virtual Networks (VN), type VRF", "Les VLAN natifs", "Le STP"], a: 1, exp: "Les VN (Virtual Networks) isolent totalement, comme des VRF. Les SGT font la micro-seg." },
+    { type: "qcm", q: "Le SGT (Scalable Group Tag) sert à…", opts: ["Router entre VN", "Appliquer une politique de groupe (micro-seg) dans une VN", "Distribuer les labels MPLS", "Remplacer OSPF"], a: 1, exp: "Le SGT porte l'appartenance à un groupe de sécurité pour les SGACL (micro-segmentation)." },
+    { type: "qcm", q: "Quel contrôleur orchestre et automatise la fabric SD-Access ?", opts: ["vManage", "DNA Center (Catalyst Center)", "APIC", "Prime Infrastructure"], a: 1, exp: "Cisco DNA Center / Catalyst Center automatise et assure la fabric campus." },
+    { type: "vf", q: "Deux hôtes situés dans des Virtual Networks différentes communiquent librement par défaut.", a: false, exp: "Faux : les VN sont isolées comme des VRF ; il faut une fusion explicite (fusion router/firewall)." },
+    { type: "vf", q: "Le SGT est transporté dans l'en-tête VXLAN et suit l'utilisateur dans la fabric.", a: true, exp: "Vrai : la variante VXLAN-GPO porte le SGT de bout en bout." },
+    { type: "vf", q: "ISE est utilisé pour l'authentification 802.1X et l'attribution dynamique des SGT.", a: true, exp: "Vrai : ISE authentifie et distribue SGT/SGACL ; DNA Center automatise la fabric." },
+    { type: "vf", q: "Un Intermediate Node participe activement à l'overlay LISP/VXLAN.", a: false, exp: "Faux : l'Intermediate Node ne fait que du transit IP dans l'underlay." },
+    { type: "input", q: "Dans LISP, quel sigle désigne l'identité (l'IP) de l'hôte ?", a: ["EID", "eid", "endpoint identifier"], ph: "3 lettres", exp: "EID = Endpoint Identifier (l'identité de l'hôte)." },
+    { type: "input", q: "Quel rôle de nœud héberge la base LISP Map-Server / Map-Resolver ?", a: ["control-plane node", "control plane node", "control-plane", "cp node"], ph: "un rôle", exp: "Le Control-Plane Node héberge le Map-Server/Map-Resolver LISP." },
+    { type: "input", q: "Comment nomme-t-on le nœud de sortie de la fabric vers le WAN/DC/Internet ?", a: ["border node", "border", "borde node"], ph: "un rôle", exp: "Le Border Node connecte la fabric au reste du réseau." },
+    { type: "input", q: "Sigle (3 lettres) du tag de groupe utilisé pour la micro-segmentation ?", a: ["SGT", "sgt"], ph: "3 lettres", exp: "SGT = Scalable Group Tag (aussi Security Group Tag)." },
+    { type: "input", q: "Quelle liste de contrôle applique la politique entre groupes SGT (micro-seg) ?", a: ["SGACL", "sgacl", "sg acl"], ph: "un sigle", exp: "SGACL = Security Group ACL, distribuée par ISE." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir la segmentation d'un campus",
+    intro: `<p>Un campus héberge des <strong>employés</strong>, des équipements <strong>IoT</strong> (caméras, capteurs) et des <strong>invités</strong>. Sécurité exige : IoT et invités totalement isolés des employés ; parmi les employés, seuls les RH accèdent au serveur RH. Vous concevez la segmentation SD-Access.</p>`,
+    questions: [
+      { type: "qcm", q: "Comment isoler totalement IoT, Invités et Employés les uns des autres ?", opts: ["Un seul VN avec des ACL", "Trois Virtual Networks (macro-segmentation)", "Trois VLAN avec STP", "Trois RD"], a: 1, exp: "Trois VN distincts = isolation de type VRF (macro-segmentation)." },
+      { type: "qcm", q: "Comment restreindre l'accès au serveur RH aux seuls RH, tous dans le VN Employés ?", opts: ["Un nouveau VN pour les RH", "Des SGT + SGACL (micro-segmentation)", "Un tunnel GRE", "Un RT dédié"], a: 1, exp: "Dans un même VN, on distingue les groupes par SGT et on filtre avec des SGACL." },
+      { type: "vf", q: "Sans configuration de fusion, le VN IoT ne peut pas joindre le VN Employés.", a: true, exp: "Vrai : les VN sont isolés par défaut, comme des VRF." },
+      { type: "qcm", q: "Quel composant attribue dynamiquement le SGT selon l'identité à la connexion ?", opts: ["LDP", "ISE via 802.1X", "OSPF", "Le Border Node seul"], a: 1, exp: "ISE authentifie (802.1X) et pousse le SGT correspondant au profil." },
+      { type: "qcm", q: "Quel protocole permet à un employé de garder son IP en se déplaçant entre Edge Nodes ?", opts: ["STP", "LISP (mise à jour EID->RLOC)", "HSRP", "RIP"], a: 1, exp: "LISP met à jour le mappage EID->RLOC ; l'IP (EID) reste inchangée." }
+    ],
+    solution: `<pre class="pseudo"># Conception SD-Access
+# MACRO (isolation totale) : 3 Virtual Networks
+#   VN_EMPLOYES / VN_IOT / VN_INVITES   (comme 3 VRF, pas de trafic inter-VN par defaut)
+# MICRO (dans VN_EMPLOYES) : SGT + SGACL
+#   SGT_RH, SGT_STD, SGT_SRV_RH
+#   SGACL : SGT_RH -&gt; SGT_SRV_RH = permit ;  SGT_STD -&gt; SGT_SRV_RH = deny
+# Identite : ISE (802.1X) attribue le SGT au profil a la connexion
+# Control plane : LISP mappe EID(IP hote) -&gt; RLOC(edge) -> mobilite sans changer d'IP
+# Data plane : VXLAN-GPO porte VNI (la VN) + SGT (le groupe)
+# Orchestration/assurance : DNA / Catalyst Center</pre>
+<p>Macro pour séparer les mondes, micro pour trier à l'intérieur : c'est la combinaison gagnante. Demain, on quitte le campus pour le WAN avec SD-WAN.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j12", title: "Macro vs micro-segmentation", level: 3,
+    statement: "Explique la différence entre <strong>macro-segmentation</strong> et <strong>micro-segmentation</strong> dans SD-Access. Précise l'objet employé pour chacune (VN, SGT/SGACL), le rôle de <strong>LISP</strong>, celui de <strong>VXLAN</strong>, et le rôle respectif de <strong>DNA Center</strong> et d'<strong>ISE</strong>.",
+    hints: [
+      "Macro = Virtual Networks (VN), équivalents à des VRF, isolation totale.",
+      "Micro = SGT + SGACL à l'intérieur d'une même VN.",
+      "LISP mappe EID->RLOC (control plane), VXLAN transporte + porte le SGT (data plane)."
+    ],
+    solution: "# MACRO-segmentation : Virtual Networks (VN)\n#   - Equivalents a des VRF : isolation totale entre univers (Employes / IoT / Invites)\n#   - Pas de trafic inter-VN par defaut (fusion explicite requise)\n#\n# MICRO-segmentation : SGT + SGACL\n#   - A l'interieur d'une meme VN, distingue des groupes de securite (SGT)\n#   - Les SGACL autorisent/refusent selon groupe source -> groupe destination\n#\n# LISP (control plane) : separe EID (identite/IP hote) et RLOC (localisation/edge)\n#   -> permet la mobilite sans changer d'adresse (mise a jour EID->RLOC)\n# VXLAN (data plane, variante GPO) : encapsule le trafic entre edges et\n#   transporte le VNI (segment/VN) + le SGT (groupe) dans son en-tete\n#\n# DNA / Catalyst Center : orchestre, automatise (LAN Automation), assure (telemetrie)\n# ISE : authentification 802.1X, attribution dynamique du SGT, distribution des SGACL",
+    note: "Résumé : VN = bâtiments séparés (macro) ; SGT = badges de pièces dans un bâtiment (micro)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

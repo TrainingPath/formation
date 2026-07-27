@@ -1,0 +1,126 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 18</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 18,
+  title: "La sécurité de l'infrastructure au niveau expert",
+  subtitle: "Défendre le réseau lui-même : filtrer aux frontières, vérifier les sources, protéger le cerveau du routeur.",
+  theory: `
+<h3>1. La défense en profondeur appliquée au réseau</h3>
+<p>La <strong>défense en profondeur</strong> (en anglais <em>defense in depth</em>) refuse l'idée d'un mur unique. On empile des couches indépendantes : si l'une cède, les autres tiennent. Appliquée à l'<strong>infrastructure</strong> (les routeurs et commutateurs eux-mêmes, pas les serveurs qu'ils relient), elle protège trois surfaces d'attaque : le trafic qui <em>traverse</em> l'équipement, le trafic <em>destiné</em> à l'équipement (son CPU), et l'<em>accès de gestion</em>. L'attaquant cherche toujours le maillon faible : une source usurpée, une inondation vers le CPU, un protocole de routage non authentifié.</p>
+<div class="tip">Retiens la carte mentale : on filtre <strong>aux frontières</strong> (ACL d'infrastructure), on <strong>vérifie les sources</strong> (uRPF), on <strong>protège le CPU</strong> (CoPP), on <strong>authentifie les protocoles</strong> (MD5/keychain, GTSM) et on <strong>durcit l'accès de couche 2</strong> (DHCP snooping, DAI, port-security).</p></div>
+<h3>2. uRPF : refuser les adresses source usurpées</h3>
+<p>Le <strong>uRPF</strong> (« unicast Reverse Path Forwarding ») combat l'<em>usurpation d'adresse source</em> (spoofing). Le principe : quand un paquet arrive, le routeur regarde son <strong>adresse source</strong> et se demande « si je devais répondre à cette source, par où sortirais-je ? ». Il consulte sa FIB (CEF) et compare. Deux modes existent :</p>
+<pre class="pseudo">! Mode STRICT : la source doit etre joignable PAR l'interface d'arrivee
+interface Gi0/1
+ ip verify unicast source reachable-via rx
+! Mode LOOSE : la source doit juste exister quelque part dans la FIB
+interface Gi0/2
+ ip verify unicast source reachable-via any allow-default</pre>
+<p>Le mode <strong>strict</strong> est idéal en bordure d'accès (une interface = un ensemble de sources attendues). Le mode <strong>loose</strong> convient aux cœurs asymétriques : il rejette seulement les sources totalement inexistantes (par exemple les plages non routables), sans exiger la symétrie du chemin. L'option <code>allow-default</code> tolère les sources couvertes uniquement par la route par défaut.</p>
+<div class="warn">En cœur de réseau, le routage est souvent <strong>asymétrique</strong> : le retour n'emprunte pas forcément l'interface d'arrivée. Y activer uRPF <strong>strict</strong> jetterait du trafic légitime. Sur ces liens, utilise le mode <strong>loose</strong> ; réserve le strict aux ports d'accès où la topologie est prévisible.</div>
+<h3>3. CoPP : blinder le plan de contrôle</h3>
+<p>Le <strong>CoPP</strong> (« Control Plane Policing ») protège le <strong>CPU du routeur</strong> contre les inondations de trafic à destination du plan de contrôle (requêtes BGP, OSPF, SSH, SNMP, ICMP, ARP…). Sans lui, une attaque par déni de service noie le processeur et fait tomber les adjacences de routage — bien plus grave que de perdre du trafic de transit. CoPP s'écrit avec la <strong>MQC</strong> (Modular QoS CLI) : on classe le trafic destiné au CPU, on applique une <strong>police</strong> (limite de débit) par catégorie, et on l'attache au <strong>control-plane</strong>.</p>
+<pre class="pseudo">ip access-list extended ACL-BGP
+ permit tcp host 203.0.113.1 any eq bgp
+class-map match-all CM-BGP
+ match access-group name ACL-BGP
+class-map match-all CM-ICMP
+ match protocol icmp
+policy-map COPP
+ class CM-BGP
+  police 512000 conform-action transmit exceed-action transmit
+ class CM-ICMP
+  police 64000 conform-action transmit exceed-action drop
+ class class-default
+  police 128000 conform-action transmit exceed-action drop
+control-plane
+ service-policy input COPP</pre>
+<p>Au niveau expert, on affine avec le <strong>CPPr</strong> (« Control Plane Protection »), qui découpe le plan de contrôle en trois sous-interfaces logiques : <strong>host</strong> (trafic à destination directe du routeur), <strong>transit</strong> (paquets logiciels traversants) et <strong>cef-exception</strong> (paquets nécessitant un traitement CPU, comme le TTL expiré). On peut ainsi appliquer des politiques distinctes et plus fines.</p>
+<h3>4. Filtrer aux frontières et authentifier les protocoles</h3>
+<p>Aux points d'entrée du domaine, une <strong>ACL d'infrastructure</strong> (iACL) bloque tout trafic externe visant les adresses internes des équipements (loopbacks, liens) : de l'extérieur, personne ne doit pouvoir parler <em>au</em> routeur. On complète par des <strong>rACL</strong> (receive ACL) filtrant ce qui atteint le CPU. Côté protocoles de routage, on <strong>authentifie</strong> systématiquement : clés MD5 ou, mieux, <em>keychains</em> avec rotation, et pour BGP le <strong>GTSM</strong> (« Generalized TTL Security Mechanism ») qui vérifie que le TTL des paquets BGP vaut 255, prouvant que le voisin est bien adjacent.</p>
+<pre class="pseudo">router bgp 65000
+ neighbor 203.0.113.1 password 7 SECRET
+ neighbor 203.0.113.1 ttl-security hops 1     ! GTSM : TTL doit valoir 255</pre>
+<h3>5. Durcir la couche 2</h3>
+<p>La sécurité expert descend jusqu'au commutateur d'accès. On y combine : <strong>DHCP snooping</strong> (n'accepter les baux DHCP que des ports de confiance), <strong>Dynamic ARP Inspection</strong> (DAI, qui valide les paires IP/MAC via la table de snooping et bloque l'empoisonnement ARP), <strong>IP Source Guard</strong> (n'autoriser un port qu'aux IP/MAC apprises) et <strong>port-security</strong> (limiter le nombre de MAC par port). Ensemble, ces mécanismes empêchent l'usurpation locale et les attaques de type <em>man-in-the-middle</em>.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Defense en profondeur : plusieurs couches independantes
+# uRPF  : anti-spoofing de la source
+#   strict (reachable-via rx)  -> ports d'acces, topologie previsible
+#   loose  (reachable-via any) -> coeur asymetrique
+# CoPP  : protege le CPU (MQC + police + control-plane / service-policy input)
+#   CPPr : sous-interfaces host / transit / cef-exception
+# Frontieres : iACL et rACL ; authentification MD5/keychain ; GTSM (TTL=255)
+# Couche 2 : DHCP snooping, DAI, IP Source Guard, port-security</pre>`,
+  exercises: [
+    { type: "qcm", q: "Contre quelle menace le uRPF protège-t-il principalement ?", opts: ["La saturation du CPU", "L'usurpation d'adresse source (spoofing)", "Le vol de mot de passe SSH", "Les boucles de couche 2"], a: 1, exp: "uRPF vérifie la plausibilité de l'adresse source pour rejeter les paquets usurpés." },
+    { type: "qcm", q: "Sur un lien de cœur au routage asymétrique, quel mode uRPF choisir ?", opts: ["Strict, toujours", "Loose (reachable-via any)", "Aucun mode ne fonctionne", "Strict avec allow-self-ping"], a: 1, exp: "Le mode strict jetterait du trafic légitime en asymétrie ; le loose vérifie seulement l'existence de la source." },
+    { type: "qcm", q: "Que protège fondamentalement le CoPP ?", opts: ["Le disque du routeur", "Le CPU / plan de contrôle contre les inondations", "Les câbles physiques", "La table MAC"], a: 1, exp: "CoPP limite le débit du trafic destiné au processeur pour éviter qu'un flood ne fasse tomber le routage." },
+    { type: "qcm", q: "Avec quelle boîte à outils de configuration écrit-on une politique CoPP ?", opts: ["La MQC (class-map / policy-map / service-policy)", "Le protocole SNMP", "Le spanning-tree", "Le DHCP"], a: 0, exp: "CoPP s'appuie sur la Modular QoS CLI : classer, appliquer une police, attacher au control-plane." },
+    { type: "qcm", q: "Que vérifie le GTSM (ttl-security) pour un voisin BGP directement connecté ?", opts: ["Que le mot de passe est correct", "Que le TTL des paquets vaut 255", "Que l'ASN est privé", "Que la MTU est de 1500"], a: 1, exp: "GTSM exige un TTL de 255 : seul un voisin réellement adjacent peut l'atteindre, ce qui bloque les attaques à distance." },
+    { type: "qcm", q: "Quelle fonction découpe le plan de contrôle en sous-interfaces host / transit / cef-exception ?", opts: ["Le uRPF", "Le CPPr (Control Plane Protection)", "Le DHCP snooping", "Le port-security"], a: 1, exp: "CPPr affine CoPP en séparant les catégories de trafic CPU pour des politiques distinctes." },
+    { type: "vf", q: "En mode uRPF strict, la source d'un paquet doit être joignable via l'interface par laquelle il est arrivé.", a: true, exp: "Vrai : c'est la définition du strict (reachable-via rx). D'où son inadaptation aux chemins asymétriques." },
+    { type: "vf", q: "Perdre le plan de contrôle (CPU) d'un routeur est moins grave que de perdre un flux de transit.", a: false, exp: "Faux : si le CPU tombe, les adjacences de routage s'effondrent et c'est tout le réseau qui converge mal. D'où l'importance de CoPP." },
+    { type: "vf", q: "La Dynamic ARP Inspection (DAI) s'appuie sur la table du DHCP snooping pour valider les paires IP/MAC.", a: true, exp: "Vrai : DAI vérifie les réponses ARP contre les liaisons apprises par le snooping et bloque l'empoisonnement ARP." },
+    { type: "vf", q: "Une ACL d'infrastructure (iACL) doit autoriser l'extérieur à joindre les adresses internes des routeurs.", a: false, exp: "Faux : au contraire, l'iACL BLOQUE tout accès externe aux adresses d'infrastructure (loopbacks, liens)." },
+    { type: "vf", q: "La défense en profondeur repose sur un seul mécanisme de sécurité très robuste.", a: false, exp: "Faux : elle empile plusieurs couches indépendantes pour que la défaillance de l'une n'expose pas tout." },
+    { type: "input", q: "Quel sigle (4 lettres) désigne la vérification de plausibilité de l'adresse source contre la FIB ?", a: ["urpf", "urpf"], ph: "u___", exp: "uRPF = unicast Reverse Path Forwarding." },
+    { type: "input", q: "Quel sigle (4 lettres) désigne la protection du CPU par limitation de débit du trafic de plan de contrôle ?", a: ["copp"], ph: "C___", exp: "CoPP = Control Plane Policing." },
+    { type: "input", q: "Complète le mode uRPF strict : « ip verify unicast source reachable-via ___ ».", a: ["rx"], ph: "2 lettres", exp: "reachable-via rx = mode strict (par l'interface de réception)." },
+    { type: "input", q: "Quel mécanisme de couche 2 limite le nombre d'adresses MAC apprises sur un port d'accès ?", a: ["port-security", "port security"], ph: "port-…", exp: "Le port-security limite les MAC par port et peut verrouiller l'interface en cas de violation." }
+  ],
+  final: {
+    title: "Exercice final — Durcir un routeur de bordure",
+    intro: `<p>Tu sécurises un routeur de bordure (peering) chez un opérateur. Il apprend BGP d'un seul voisin externe directement connecté (203.0.113.1), sert des clients sur ses ports d'accès, et son CPU a déjà été saturé une fois par un flood ICMP. Applique la défense en profondeur.</p>`,
+    questions: [
+      { type: "qcm", q: "Sur les ports d'accès clients (topologie prévisible), quel mode uRPF ?", opts: ["Loose", "Strict (reachable-via rx)", "Aucun", "Désactivé pour la performance"], a: 1, exp: "En accès, le strict rejette efficacement toute source usurpée qui n'appartient pas au client." },
+      { type: "qcm", q: "Pour éviter un nouveau flood ICMP vers le CPU, tu déploies…", opts: ["Un reload nocturne", "Une politique CoPP qui limite le débit ICMP vers le control-plane", "Le désactivation d'ICMP partout", "Un second câble"], a: 1, exp: "CoPP borne le débit ICMP à destination du CPU sans casser le diagnostic légitime." },
+      { type: "vf", q: "Ajouter ttl-security hops 1 sur le voisin BGP bloque les tentatives BGP venant de plus loin sur Internet.", a: true, exp: "Vrai : le GTSM exige TTL=255, donc un attaquant distant (TTL décrémenté) est rejeté." },
+      { type: "qcm", q: "Pour interdire à l'extérieur de parler AUX adresses d'infrastructure du routeur, tu poses…", opts: ["Une ACL d'infrastructure (iACL) en entrée de bordure", "Du DHCP snooping", "Un keychain", "Un tunnel GRE"], a: 0, exp: "L'iACL bloque tout trafic externe visant les loopbacks et liens internes." },
+      { type: "qcm", q: "Sur les commutateurs d'accès en aval, contre l'empoisonnement ARP, tu combines…", opts: ["CoPP et uRPF", "DHCP snooping + Dynamic ARP Inspection + IP Source Guard", "Uniquement port-security", "GTSM et rACL"], a: 1, exp: "Ce trio de couche 2 valide les liaisons IP/MAC et bloque le spoofing local." }
+    ],
+    solution: `<pre class="pseudo">! Anti-spoofing en acces
+interface Gi0/2
+ ip verify unicast source reachable-via rx
+! CoPP anti-flood ICMP
+class-map match-all CM-ICMP
+ match protocol icmp
+policy-map COPP
+ class CM-ICMP
+  police 64000 conform-action transmit exceed-action drop
+control-plane
+ service-policy input COPP
+! BGP durci
+router bgp 65000
+ neighbor 203.0.113.1 ttl-security hops 1
+ neighbor 203.0.113.1 password 7 SECRET
+! Couche 2 en aval
+ip dhcp snooping
+ip arp inspection vlan 10
+ip verify source                 ! IP Source Guard
+! + iACL en bordure bloquant l'acces externe aux adresses d'infra</pre>
+<p>Chaque couche couvre une surface : uRPF (sources), CoPP (CPU), GTSM+MD5 (protocole), iACL (frontière), snooping/DAI/source-guard (couche 2). Aucune n'est indispensable seule, mais ensemble elles rendent l'attaque coûteuse.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j18", title: "Choisir le bon mode uRPF et justifier CoPP", level: 3,
+    statement: "En texte brut : (1) explique la différence entre uRPF <strong>strict</strong> et <strong>loose</strong> et dis lequel poser sur un port d'accès et lequel sur un lien de cœur asymétrique, avec la commande IOS. (2) Explique en deux lignes pourquoi protéger le CPU (CoPP) est plus critique que protéger un flux de transit, et donne le squelette MQC (les 3 objets à écrire).",
+    hints: [
+      "Strict = la source doit être joignable par l'interface d'arrivée ; loose = la source doit juste exister dans la FIB.",
+      "L'asymétrie casse le mode strict.",
+      "MQC = class-map, policy-map, puis service-policy input sous control-plane."
+    ],
+    solution: "1) uRPF strict vs loose\n   - STRICT : la source doit etre joignable PAR l'interface d'arrivee.\n     interface : ip verify unicast source reachable-via rx\n     -> a poser sur les PORTS D'ACCES (topologie previsible).\n   - LOOSE : la source doit seulement EXISTER dans la FIB (n'importe quelle interface).\n     interface : ip verify unicast source reachable-via any allow-default\n     -> a poser sur les LIENS DE COEUR asymetriques (le strict jetterait du trafic legitime).\n\n2) Pourquoi CoPP > transit\n   - Si le CPU (plan de controle) tombe, les adjacences de routage s'effondrent\n     et TOUT le reseau converge mal : c'est bien pire que la perte d'un seul flux de transit.\n   Squelette MQC (3 objets) :\n   - class-map  : classe le trafic destine au CPU (ex: ICMP, BGP...)\n   - policy-map : applique une police (limite de debit) par classe\n   - control-plane / service-policy input NOM : attache la politique au plan de controle",
+    note: "Règle d'or : strict en bordure d'accès, loose en cœur ; et on protège toujours le cerveau (CPU) avant le trafic qui traverse." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 24</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 24,
+  title: "La sécurité de couche 2",
+  subtitle: "Le commutateur est souvent le maillon oublié : verrouiller les ports, filtrer les faux DHCP et démasquer l'ARP menteur.",
+  theory: `
+<h3>1. Pourquoi sécuriser la couche 2 ?</h3>
+<p>On protège soigneusement le routeur et le pare-feu, mais on oublie le <strong>commutateur</strong>. Or beaucoup d'attaques frappent la <strong>couche 2</strong> (accès local) : brancher un appareil pirate sur une prise, saturer la table d'adresses, se faire passer pour la passerelle… Une chaîne de sécurité vaut par son maillon le plus faible, et l'accès physique au switch en est un.</p>
+<h3>2. Port Security : verrouiller les ports d'accès</h3>
+<p>Le <strong>port security</strong> limite quelles adresses <strong>MAC</strong> (et combien) peuvent apparaître sur un port. Il contre le <strong>MAC flooding</strong> (saturer la table CAM pour forcer le switch à inonder tout le trafic) et le branchement d'appareils non autorisés.</p>
+<pre class="pseudo">S1(config)# interface Gi0/2
+S1(config-if)# switchport mode access                 # obligatoire : port en mode acces
+S1(config-if)# switchport port-security               # activer
+S1(config-if)# switchport port-security maximum 2      # 2 MAC max sur le port
+S1(config-if)# switchport port-security mac-address sticky   # apprendre et coller les MAC
+S1(config-if)# switchport port-security violation restrict</pre>
+<h3>3. Les trois modes de violation</h3>
+<p>Que se passe-t-il si une MAC interdite apparaît ? Trois comportements :</p>
+<pre class="pseudo"># PROTECT   : jette silencieusement les trames interdites. AUCUN log, AUCUN compteur.
+# RESTRICT  : jette les trames interdites + INCREMENTE le compteur + envoie un LOG/SNMP.
+# SHUTDOWN  : (PAR DEFAUT) met le port en err-disabled (eteint) -> tout est bloque.
+#
+# Reactiver un port err-disabled : shutdown puis no shutdown sur l'interface
+# (ou errdisable recovery configure).</pre>
+<div class="warn">Le mode par défaut est <strong>shutdown</strong> : à la première violation, le port passe en <strong>err-disabled</strong> et il faut le réactiver manuellement (<code>shutdown</code> puis <code>no shutdown</code>). C'est le plus sûr mais le plus radical.</div>
+<div class="tip">L'option <strong>sticky</strong> apprend dynamiquement les MAC branchées et les enregistre dans la configuration : pratique pour ne pas les saisir à la main, tout en les figeant ensuite.</div>
+<h3>4. DHCP Snooping : bloquer les faux serveurs DHCP</h3>
+<p>Un pirate peut brancher un <strong>faux serveur DHCP</strong> qui distribue une mauvaise passerelle (la sienne) pour intercepter le trafic. Le <strong>DHCP snooping</strong> classe les ports en <strong>trusted</strong> (de confiance) et <strong>untrusted</strong> (non fiables). Les réponses DHCP (OFFER, ACK) ne sont acceptées que depuis un port <strong>trusted</strong> ; sur un port untrusted, elles sont rejetées.</p>
+<pre class="pseudo">S1(config)# ip dhcp snooping
+S1(config)# ip dhcp snooping vlan 10
+S1(config)# interface Gi0/1                     # port vers le VRAI serveur DHCP / uplink
+S1(config-if)# ip dhcp snooping trust           # de confiance
+# Les ports d'acces restent untrusted par defaut (les postes ne repondent pas au DHCP)</pre>
+<div class="tip">Le DHCP snooping construit une <strong>table de liaison</strong> (binding table) associant MAC, IP attribuée, VLAN et port. Cette table sert de base à d'autres protections, dont DAI.</div>
+<h3>5. DAI : contre l'empoisonnement ARP</h3>
+<p>Le <strong>DAI</strong> (« Dynamic ARP Inspection ») lutte contre l'<strong>ARP spoofing / poisoning</strong> : un pirate envoie de faux messages ARP pour se faire passer pour la passerelle et intercepter le trafic (attaque de l'homme du milieu). DAI <strong>inspecte chaque message ARP</strong> sur les ports untrusted et vérifie sa cohérence avec la <strong>table de binding du DHCP snooping</strong>. Un ARP incohérent est jeté.</p>
+<pre class="pseudo">S1(config)# ip arp inspection vlan 10
+S1(config)# interface Gi0/1
+S1(config-if)# ip arp inspection trust          # uplink de confiance
+# DAI s'appuie sur la binding table -> DHCP snooping doit etre actif d'abord.</pre>
+<div class="warn">DAI dépend du DHCP snooping : sans binding table, il ne peut pas valider les couples IP/MAC. Active donc le DHCP snooping en premier.</div>
+<h3>6. Vérifier</h3>
+<pre class="pseudo">show port-security interface Gi0/2     # etat, mode violation, compteur, MAC apprises
+show port-security address             # table des MAC securisees
+show ip dhcp snooping                  # etat + ports trusted/untrusted
+show ip dhcp snooping binding          # table de liaison MAC/IP/VLAN/port
+show ip arp inspection                 # statistiques DAI</pre>
+<h3>7. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># PORT SECURITY : limite les MAC par port (contre MAC flooding / appareils pirates)
+#   maximum N ; mac-address sticky ; violation protect | restrict | shutdown(defaut)
+#   protect = jette (silencieux) ; restrict = jette + log/compteur ; shutdown = err-disabled
+# DHCP SNOOPING : ports trusted/untrusted ; n'accepte les reponses DHCP que sur trusted
+#   -> construit la binding table (MAC/IP/VLAN/port)
+# DAI : inspecte l'ARP sur les ports untrusted via la binding table (anti ARP spoofing)
+#   -> necessite le DHCP snooping actif</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que limite le port security sur un port de commutateur ?", opts: ["Le débit maximal", "Quelles adresses MAC (et combien) peuvent apparaître", "Le nombre de VLAN", "La distance administrative"], a: 1, exp: "Le port security restreint les MAC autorisées et leur nombre sur le port." },
+    { type: "qcm", q: "Quelle attaque le port security contre-t-il directement ?", opts: ["L'ARP spoofing", "Le MAC flooding (saturation de la table CAM)", "Le faux serveur DHCP", "Une boucle STP"], a: 1, exp: "En limitant les MAC, il empêche de saturer la table d'adresses (MAC flooding)." },
+    { type: "qcm", q: "Quel mode de violation est actif par défaut ?", opts: ["protect", "restrict", "shutdown", "aucun"], a: 2, exp: "Par défaut, une violation met le port en err-disabled (mode shutdown)." },
+    { type: "qcm", q: "Quel mode jette les trames interdites SANS log ni compteur ?", opts: ["protect", "restrict", "shutdown", "sticky"], a: 0, exp: "protect jette silencieusement : aucun journal, aucun compteur incrémenté." },
+    { type: "qcm", q: "Quelle différence entre restrict et protect ?", opts: ["Aucune", "restrict incrémente un compteur et envoie un log ; protect non", "protect éteint le port", "restrict éteint le port"], a: 1, exp: "restrict jette + log + compteur ; protect jette silencieusement ; ni l'un ni l'autre n'éteint le port." },
+    { type: "input", q: "Comment réactiver un port passé en err-disabled après une violation ? (deux commandes)", a: ["shutdown puis no shutdown", "shutdown no shutdown", "shutdown, no shutdown"], ph: "deux commandes", exp: "On tape shutdown puis no shutdown sur l'interface (ou errdisable recovery)." },
+    { type: "vf", q: "L'option « sticky » apprend dynamiquement les MAC et les enregistre dans la configuration.", a: true, exp: "Vrai : sticky colle les MAC apprises dans la config pour les figer sans les saisir à la main." },
+    { type: "qcm", q: "À quoi sert le DHCP snooping ?", opts: ["À accélérer le DHCP", "À bloquer les réponses DHCP venant de ports non fiables (faux serveurs)", "À attribuer plus d'adresses", "À chiffrer le DHCP"], a: 1, exp: "Il n'accepte les OFFER/ACK que depuis les ports trusted, bloquant les faux serveurs." },
+    { type: "qcm", q: "Vers quel type de port un uplink ou le vrai serveur DHCP doit-il être configuré ?", opts: ["untrusted", "trusted", "err-disabled", "access seul"], a: 1, exp: "On déclare trust les ports vers le vrai serveur/uplink ; les ports d'accès restent untrusted." },
+    { type: "input", q: "Comment appelle-t-on la table (MAC/IP/VLAN/port) construite par le DHCP snooping ?", a: ["binding table", "table de liaison", "table de binding", "snooping binding"], ph: "un terme", exp: "La binding table (table de liaison) recense MAC, IP, VLAN et port." },
+    { type: "qcm", q: "Contre quelle attaque le DAI protège-t-il ?", opts: ["Le MAC flooding", "L'empoisonnement ARP (ARP spoofing)", "Le faux DHCP", "Le débordement de VLAN"], a: 1, exp: "DAI inspecte l'ARP pour bloquer l'usurpation (man-in-the-middle par ARP)." },
+    { type: "vf", q: "Le DAI a besoin que le DHCP snooping soit actif pour disposer de la binding table.", a: true, exp: "Vrai : DAI valide les couples IP/MAC grâce à la binding table du DHCP snooping." },
+    { type: "qcm", q: "Sur quels ports le DAI inspecte-t-il les messages ARP ?", opts: ["Les ports trusted", "Les ports untrusted", "Uniquement l'uplink", "Aucun"], a: 1, exp: "DAI inspecte l'ARP sur les ports untrusted ; les ports trusted sont exemptés." },
+    { type: "qcm", q: "Quel prérequis d'interface est nécessaire avant d'activer le port security ?", opts: ["switchport mode trunk", "switchport mode access", "no switchport", "ip dhcp snooping"], a: 1, exp: "Le port doit être en mode access (statique) pour accepter le port security." },
+    { type: "input", q: "Quelle commande affiche l'état du port security d'une interface ? (commande générique)", a: ["show port-security interface", "show port-security", "showport-security interface"], ph: "commande show", exp: "show port-security interface Gi0/2 montre l'état, le mode violation et les compteurs." }
+  ],
+  final: {
+    title: "Exercice final — Verrouiller un port d'accès",
+    intro: `<p>Sur le commutateur S1, le port Gi0/5 dessert un poste utilisateur. Tu veux : autoriser au maximum <strong>2 adresses MAC</strong>, les apprendre automatiquement (sticky), et qu'une violation <strong>journalise sans éteindre</strong> le port. Ensuite tu vérifies.</p>`,
+    questions: [
+      { type: "input", q: "Quelle commande met d'abord le port en mode accès (prérequis) ?", a: ["switchport mode access", "switchportmode access"], ph: "switchport mode ...", exp: "switchport mode access est requis avant d'activer le port security." },
+      { type: "input", q: "Quelle commande active le port security sur l'interface ?", a: ["switchport port-security", "switchportport-security"], ph: "switchport port-security", exp: "switchport port-security active la fonctionnalité." },
+      { type: "qcm", q: "Quelle commande limite à 2 le nombre de MAC ?", opts: ["switchport port-security maximum 2", "switchport port-security violation 2", "mac-address 2", "port-security limit 2"], a: 0, exp: "switchport port-security maximum 2 fixe le nombre maximal de MAC." },
+      { type: "qcm", q: "Quel mode de violation journalise mais garde le port actif ?", opts: ["protect", "restrict", "shutdown", "sticky"], a: 1, exp: "restrict jette l'excès, incrémente le compteur et envoie un log, sans éteindre le port." },
+      { type: "input", q: "Quelle commande apprend et enregistre automatiquement les MAC dans la config ?", a: ["switchport port-security mac-address sticky", "port-security mac-address sticky", "mac-address sticky"], ph: "... mac-address sticky", exp: "switchport port-security mac-address sticky colle les MAC apprises." }
+    ],
+    solution: `<pre class="pseudo">S1(config)# interface Gi0/5
+S1(config-if)# switchport mode access
+S1(config-if)# switchport port-security
+S1(config-if)# switchport port-security maximum 2
+S1(config-if)# switchport port-security mac-address sticky
+S1(config-if)# switchport port-security violation restrict
+S1# show port-security interface Gi0/5
+S1# show port-security address</pre>
+<p>Le port accepte 2 MAC apprises automatiquement ; toute MAC en trop est rejetée et journalisée, mais le port reste actif (restrict au lieu du shutdown par défaut).</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j24", title: "Trois protections de couche 2", level: 2,
+    statement: "Décris en quelques lignes le rôle de <strong>port security</strong>, du <strong>DHCP snooping</strong> et du <strong>DAI</strong>, en précisant contre quelle attaque chacun protège. Cite aussi les <strong>trois modes de violation</strong> du port security et lequel est actif par défaut.",
+    hints: [
+      "Port security limite les MAC (anti MAC flooding) ; DHCP snooping filtre les faux serveurs ; DAI inspecte l'ARP.",
+      "Les trois modes : protect, restrict, shutdown.",
+      "DAI s'appuie sur la binding table du DHCP snooping."
+    ],
+    solution: "# PORT SECURITY : limite les MAC autorisees par port.\n#   -> contre le MAC flooding et les appareils pirates.\n#   Modes de violation : protect (jette, silencieux),\n#   restrict (jette + log + compteur), shutdown (err-disabled, PAR DEFAUT).\n#\n# DHCP SNOOPING : n'accepte les reponses DHCP que sur les ports trusted.\n#   -> contre les FAUX serveurs DHCP. Construit la binding table (MAC/IP/VLAN/port).\n#\n# DAI (Dynamic ARP Inspection) : inspecte l'ARP sur les ports untrusted\n#   via la binding table. -> contre l'ARP spoofing / poisoning (man-in-the-middle).\n#   Necessite le DHCP snooping actif.",
+    note: "Ordre logique de déploiement : DHCP snooping d'abord (il fournit la binding table), puis DAI." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

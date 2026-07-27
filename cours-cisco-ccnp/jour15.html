@@ -1,0 +1,90 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 15</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 15,
+  title: "Les réseaux overlay : VXLAN, GRE, IPsec",
+  subtitle: "Faire passer un réseau logique par-dessus un autre, avec ou sans chiffrement.",
+  theory: `
+<h3>1. Overlay et underlay</h3>
+<p>Un <strong>overlay</strong> (« réseau superposé ») est un réseau logique construit <em>au-dessus</em> d'un réseau physique existant, appelé <strong>underlay</strong> (« sous-jacent »). Le principe : <strong>encapsuler</strong> (emballer) les paquets d'origine dans un nouvel en-tête, les transporter à travers l'underlay, puis les <strong>décapsuler</strong> à l'arrivée. C'est un tunnel : l'underlay ne voit que l'emballage extérieur, pas le contenu. Analogie : glisser une lettre (paquet d'origine) dans une enveloppe adressée (en-tête de tunnel) que la poste (underlay) achemine sans lire la lettre.</p>
+<h3>2. GRE : le tunnel générique</h3>
+<p>Le <strong>GRE</strong> (« Generic Routing Encapsulation », propriétaire Cisco devenu standard) crée un tunnel simple entre deux points. Il encapsule presque n'importe quel protocole, y compris le multicast et les protocoles de routage (OSPF, EIGRP) — ce que l'IPsec seul ne fait pas. Mais attention : <strong>GRE ne chiffre rien</strong>. C'est un tuyau, pas un coffre-fort.</p>
+<pre class="pseudo">R1(config)# interface tunnel 0
+R1(config-if)# ip address 172.16.0.1 255.255.255.252
+R1(config-if)# tunnel source 203.0.113.1        ! IP publique locale
+R1(config-if)# tunnel destination 198.51.100.1  ! IP publique distante
+R1(config-if)# tunnel mode gre ip               ! GRE (defaut)</pre>
+<h3>3. IPsec : la sécurité</h3>
+<p><strong>IPsec</strong> (« IP Security ») chiffre et authentifie le trafic IP. Deux briques : <strong>AH</strong> (authentification/intégrité seulement) et surtout <strong>ESP</strong> (« Encapsulating Security Payload », qui <em>chiffre</em> en plus). La négociation des clés passe par <strong>IKE</strong> (« Internet Key Exchange », phases 1 et 2). Deux modes : <strong>transport</strong> (chiffre seulement la charge utile) et <strong>tunnel</strong> (chiffre tout le paquet original, usage VPN site-à-site).</p>
+<div class="warn">IPsec pur ne transporte que de l'unicast IP : il ne sait pas véhiculer directement le multicast ni les protocoles de routage. D'où la combinaison classique <strong>GRE over IPsec</strong> : GRE apporte la souplesse (routage, multicast), IPsec apporte le chiffrement.</div>
+<h3>4. VXLAN : étendre la couche 2 sur la couche 3</h3>
+<p>Le <strong>VXLAN</strong> (« Virtual Extensible LAN ») transporte des trames Ethernet de couche 2 <em>par-dessus</em> un réseau IP de couche 3. Il encapsule la trame dans un en-tête <strong>UDP</strong>, port <strong>4789</strong>. Son identifiant de segment, le <strong>VNI</strong> (« VXLAN Network Identifier »), est codé sur <strong>24 bits</strong> : soit environ <strong>16 millions</strong> de segments, contre seulement 4094 VLAN en 802.1Q. C'est la base des data centers modernes (EVPN) et des fabriques.</p>
+<pre class="pseudo"># Encapsulation VXLAN (de l'exterieur vers l'interieur) :
+#   IP/UDP (dst port 4789) -> en-tete VXLAN (VNI 24 bits) -> trame Ethernet d'origine
+# VTEP : point d'entree/sortie du tunnel (VXLAN Tunnel End Point)
+#   -> encapsule/decapsule ; identifie par une IP dans l'underlay
+# 16 777 216 VNI possibles (2^24) vs 4094 VLAN</pre>
+<div class="tip">Le point qui encapsule et décapsule le VXLAN s'appelle un <strong>VTEP</strong> (« VXLAN Tunnel End Point »). Chaque VTEP mappe des VLAN locaux vers des VNI et route l'encapsulation via son IP dans l'underlay.</div>
+<h3>5. Quel outil pour quel besoin ?</h3>
+<pre class="pseudo"># GRE            : tunnel souple (routage, multicast) MAIS non chiffre
+# IPsec          : chiffrement/integrite MAIS unicast IP seulement
+# GRE over IPsec : souplesse + chiffrement (VPN site-a-site classique)
+# VXLAN          : etendre la couche 2 (L2) sur un underlay L3, 16M de segments (data center)</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Overlay = reseau logique au-dessus de l'underlay physique (encapsulation/tunnel)
+# GRE  : encapsule tout (routage, multicast), NON chiffre
+# IPsec: ESP chiffre, AH authentifie, IKE negocie ; modes transport / tunnel
+# GRE over IPsec : combine souplesse de GRE et chiffrement d'IPsec
+# VXLAN: trame L2 sur IP/UDP port 4789 ; VNI sur 24 bits (~16 M segments) ; VTEP = extremite</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que désigne l'underlay dans un modèle overlay ?", opts: ["Le réseau logique superposé", "Le réseau physique sous-jacent qui transporte les tunnels", "Le protocole de chiffrement", "Le serveur DNS"], a: 1, exp: "L'underlay est le réseau physique ; l'overlay est le réseau logique construit dessus." },
+    { type: "qcm", q: "Quelle est la principale limite de GRE ?", opts: ["Il ne transporte pas le multicast", "Il ne chiffre pas le trafic", "Il ne fonctionne qu'en LAN", "Il est incompatible IP"], a: 1, exp: "GRE encapsule beaucoup de choses mais n'assure aucun chiffrement." },
+    { type: "qcm", q: "Quelle brique d'IPsec assure le chiffrement de la charge utile ?", opts: ["AH", "ESP", "IKE", "GRE"], a: 1, exp: "ESP chiffre (et authentifie) ; AH n'authentifie que, sans chiffrer." },
+    { type: "qcm", q: "Sur quel port UDP VXLAN encapsule-t-il les trames ?", opts: ["500", "4500", "4789", "5246"], a: 2, exp: "VXLAN utilise UDP 4789." },
+    { type: "qcm", q: "Sur combien de bits est codé le VNI de VXLAN ?", opts: ["12 bits", "16 bits", "24 bits", "32 bits"], a: 2, exp: "Le VNI tient sur 24 bits, soit ~16 millions de segments." },
+    { type: "qcm", q: "Pourquoi combine-t-on souvent GRE et IPsec ?", opts: ["Pour doubler la bande passante", "GRE apporte le routage/multicast, IPsec apporte le chiffrement", "Pour supprimer les VLAN", "Pour éviter le NAT"], a: 1, exp: "GRE over IPsec unit la souplesse de GRE et la sécurité d'IPsec." },
+    { type: "vf", q: "Un overlay encapsule les paquets d'origine dans un nouvel en-tête pour les transporter.", a: true, exp: "L'encapsulation est le cœur de l'overlay : emballer puis décapsuler à l'arrivée." },
+    { type: "vf", q: "IPsec seul peut transporter nativement le multicast et les protocoles de routage.", a: false, exp: "IPsec ne gère que l'unicast IP ; d'où GRE over IPsec pour le routage/multicast." },
+    { type: "vf", q: "VXLAN permet d'étendre un réseau de couche 2 par-dessus un réseau de couche 3.", a: true, exp: "VXLAN transporte des trames L2 dans de l'IP/UDP L3." },
+    { type: "vf", q: "GRE chiffre le trafic par défaut.", a: false, exp: "GRE ne chiffre rien ; il faut IPsec pour la confidentialité." },
+    { type: "input", q: "Comment appelle-t-on le point qui encapsule/décapsule le VXLAN ? (sigle)", a: ["vtep", "vxlan tunnel end point"], ph: "4 lettres", exp: "Le VTEP (VXLAN Tunnel End Point) réalise l'encapsulation." },
+    { type: "input", q: "Quel protocole IPsec négocie les clés (phases 1 et 2) ?", a: ["ike", "internet key exchange", "isakmp"], ph: "3 lettres", exp: "IKE (Internet Key Exchange) négocie les associations de sécurité." },
+    { type: "input", q: "Combien de segments VXLAN le VNI 24 bits permet-il environ ? (ordre de grandeur)", a: ["16 millions", "16 millions environ", "16777216", "16 777 216", "2^24"], ph: "un ordre de grandeur", exp: "2^24 ≈ 16,7 millions de segments, contre 4094 VLAN." },
+    { type: "input", q: "Quel mode IPsec chiffre TOUT le paquet original (usage VPN site-à-site) ?", a: ["tunnel", "mode tunnel"], ph: "un mot", exp: "Le mode tunnel chiffre le paquet entier ; le mode transport, la charge utile seule." },
+    { type: "input", q: "Quel sigle désigne l'encapsulation générique de tunnel de Cisco ?", a: ["gre", "generic routing encapsulation"], ph: "3 lettres", exp: "GRE = Generic Routing Encapsulation." }
+  ],
+  final: {
+    title: "Exercice final — Relier deux sites de façon sûre et souple",
+    intro: "<p>Deux agences doivent échanger du trafic à travers Internet. Elles ont besoin de faire tourner OSPF entre elles ET de chiffrer tout le trafic. Un data center voisin, lui, veut étendre un VLAN entre deux salles sur un cœur IP.</p>",
+    questions: [
+      { type: "qcm", q: "Quel outil permet de faire passer OSPF (multicast) entre les deux agences ?", opts: ["IPsec seul", "GRE", "VXLAN", "802.1Q"], a: 1, exp: "GRE transporte le multicast et donc les protocoles de routage comme OSPF." },
+      { type: "qcm", q: "Comment chiffrer ce tunnel qui transporte OSPF ?", opts: ["En laissant GRE seul", "En combinant GRE over IPsec", "Avec du VXLAN", "Avec du VTP"], a: 1, exp: "GRE over IPsec ajoute le chiffrement au tunnel GRE." },
+      { type: "input", q: "Quelle brique d'IPsec assure la confidentialité (le chiffrement) ?", a: ["esp", "encapsulating security payload"], ph: "3 lettres", exp: "ESP chiffre la charge utile ; AH n'authentifie que." },
+      { type: "vf", q: "Pour étendre le VLAN du data center sur un cœur IP, VXLAN (VNI 24 bits, UDP 4789) est adapté.", a: true, exp: "VXLAN transporte la couche 2 sur un underlay IP, avec 16M de segments." },
+      { type: "qcm", q: "Dans le data center, comment nomme-t-on l'équipement qui encapsule/décapsule le VXLAN ?", opts: ["Un VTEP", "Un WLC", "Un AVG", "Un supplicant"], a: 0, exp: "Le VTEP est l'extrémité du tunnel VXLAN." }
+    ],
+    solution: "<pre class=\"pseudo\"># Entre les deux agences : GRE over IPsec\ninterface tunnel 0\n ip address 172.16.0.1 255.255.255.252\n tunnel source 203.0.113.1\n tunnel destination 198.51.100.1\n tunnel mode gre ip\n tunnel protection ipsec profile PROTECT   ! chiffrement ESP via IKE\n! -> OSPF (multicast) circule dans GRE, IPsec chiffre le tout\n#\n# Dans le data center : VXLAN\n#   trame L2 -> en-tete VXLAN (VNI 24 bits) -> IP/UDP 4789\n#   les VTEP encapsulent/decapsulent aux extremites\n#   -> le VLAN est etendu entre les deux salles sur le coeur IP</pre><p>GRE over IPsec relie les agences (routage + chiffrement), tandis que VXLAN étend la couche 2 du data center sur l'underlay IP via des VTEP.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j15", title: "Comparer GRE, IPsec et VXLAN", level: 3,
+    statement: "En texte, explique ce qu'est un <strong>overlay</strong>, puis compare <strong>GRE</strong>, <strong>IPsec</strong> et <strong>VXLAN</strong> : pour chacun, dis ce qu'il apporte et sa limite. Précise le <strong>port UDP</strong> et la taille du <strong>VNI</strong> de VXLAN.",
+    hints: [
+      "Overlay = réseau logique encapsulé au-dessus d'un underlay physique.",
+      "GRE encapsule tout mais ne chiffre pas ; IPsec chiffre mais unicast seulement.",
+      "VXLAN : trame L2 sur IP/UDP 4789, VNI sur 24 bits."
+    ],
+    solution: "Overlay : reseau logique construit au-dessus d'un reseau physique (underlay).\nOn encapsule les paquets d'origine dans un nouvel en-tete (tunnel), puis on decapsule.\n\nGRE : encapsule presque tout (routage, multicast). Limite : ne chiffre pas.\nIPsec : chiffre et authentifie (ESP chiffre, AH authentifie, IKE negocie les cles).\n  Limite : ne transporte que de l'unicast IP -> souvent GRE over IPsec.\nVXLAN : etend la couche 2 sur un underlay IP de couche 3.\n  Encapsulation dans IP/UDP port 4789 ; VNI sur 24 bits (~16 millions de segments).\n  Extremite du tunnel = VTEP.",
+    note: "Retenir : GRE = souplesse sans sécurité, IPsec = sécurité sans souplesse, VXLAN = extension L2 massive pour le data center." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

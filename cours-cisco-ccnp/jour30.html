@@ -1,0 +1,140 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 30</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 30,
+  title: "Pratique : un scénario d'entreprise complexe",
+  subtitle: "Routage multi-protocole, redistribution, haute disponibilité et sécurité, tout ensemble.",
+  theory: `
+<h3>1. Le décor : une entreprise à plusieurs domaines</h3>
+<p>Dans la vraie vie, un réseau n'utilise pas un seul protocole de routage. Une entreprise peut avoir hérité d'<strong>OSPF</strong> sur son cœur, d'<strong>EIGRP</strong> sur une filiale, et parler <strong>BGP</strong> avec son fournisseur Internet. Faire cohabiter ces domaines, tout en assurant la <strong>haute disponibilité</strong> et la <strong>sécurité</strong>, c'est l'exercice type du CCNP. Aujourd'hui, on assemble les briques des jours précédents.</p>
+<pre class="pseudo"># Topologie logique (schema simplifie)
+   [Internet]---BGP---[R-Bordure]
+                          |
+                       OSPF coeur
+                     /          \\
+               [R-A]            [R-B]   <- HSRP pour les VLAN
+                  \\  EIGRP filiale  /
+                     [R-Filiale]</pre>
+<h3>2. Le routage multi-protocole</h3>
+<p>Chaque protocole a sa <strong>distance administrative</strong> (AD), qui exprime sa fiabilité : plus elle est basse, plus la route est préférée. Un routeur qui connaît une même destination par deux protocoles choisit celle à l'AD la plus faible.</p>
+<pre class="pseudo"># Distances administratives par defaut (a connaitre)
+Route connectee        : 0
+Route statique         : 1
+EIGRP (interne)        : 90
+OSPF                   : 110
+RIP                    : 120
+EIGRP (externe)        : 170
+BGP (externe / eBGP)   : 20
+BGP (interne / iBGP)   : 200</pre>
+<div class="tip">Astuce mnémotechnique : eBGP (20) est plus fiable qu'EIGRP interne (90), lui-même préféré à OSPF (110). Ces valeurs par défaut tombent très souvent aux examens.</div>
+<h3>3. La redistribution : faire dialoguer les protocoles</h3>
+<p>Pour qu'une route apprise en EIGRP soit connue du domaine OSPF, il faut la <strong>redistribuer</strong>. La redistribution injecte les routes d'un protocole dans un autre. C'est puissant mais délicat : mal faite, elle crée des <strong>boucles de routage</strong> ou des <strong>routes sous-optimales</strong>.</p>
+<pre class="pseudo"># Redistribution mutuelle EIGRP &lt;-&gt; OSPF sur R-A (extrait IOS)
+router ospf 1
+ redistribute eigrp 100 subnets
+router eigrp 100
+ redistribute ospf 1 metric 1000000 100 255 1 1500
+! 'subnets' est indispensable cote OSPF pour inclure les
+! sous-reseaux non classful (sinon seules les routes /8,/16,/24
+! classful sont redistribuees).</pre>
+<div class="warn">Piège classique : oublier le mot-clé <code>subnets</code> côté OSPF fait disparaître la plupart des routes. Autre piège : la redistribution mutuelle en deux points peut créer des boucles ; on filtre alors avec des <em>route-maps</em> ou des tags.</div>
+<h3>4. La haute disponibilité (HA) de premier saut</h3>
+<p>Côté postes de travail, la passerelle par défaut doit survivre à la panne d'un routeur. Les protocoles <strong>FHRP</strong> (First Hop Redundancy Protocol) répondent à ce besoin : <strong>HSRP</strong> et <strong>GLBP</strong> (propres à Cisco) et <strong>VRRP</strong> (standard). Ils présentent une <strong>adresse IP virtuelle</strong> partagée : si le routeur actif tombe, un routeur en attente prend le relais sans que les PC ne changent leur passerelle.</p>
+<pre class="pseudo"># HSRP sur l'interface VLAN 10 de R-A (actif) et R-B (standby)
+! --- R-A ---
+interface vlan 10
+ ip address 10.10.10.2 255.255.255.0
+ standby 10 ip 10.10.10.1
+ standby 10 priority 110
+ standby 10 preempt
+! --- R-B ---
+interface vlan 10
+ ip address 10.10.10.3 255.255.255.0
+ standby 10 ip 10.10.10.1
+! IP virtuelle = 10.10.10.1 = passerelle des PC
+! priorite la plus haute = actif ; preempt = reprend son role</pre>
+<h3>5. La sécurité du périmètre et de l'infrastructure</h3>
+<p>On protège le routage et les accès. Côté <strong>contrôle</strong>, on authentifie les voisins (OSPF/EIGRP/BGP) et on filtre les préfixes. Côté <strong>données</strong>, des <strong>listes de contrôle d'accès</strong> (ACL) filtrent le trafic. On sécurise aussi l'accès d'administration (SSH plutôt que Telnet, AAA).</p>
+<pre class="pseudo"># Quelques mesures de securite (extraits IOS)
+! Authentifier OSPF sur une interface
+interface gig0/0
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 md5 M0nSecret
+! Filtrer avec une ACL etendue
+ip access-list extended PROTEGE-MGMT
+ permit tcp 10.0.0.0 0.0.0.255 any eq 22
+ deny   ip any any log
+! Forcer SSH sur les lignes vty
+line vty 0 4
+ transport input ssh
+ login local</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Multi-protocole : chaque protocole a une AD (0,1,20,90,110,...)
+#   -> la plus basse gagne
+# Redistribution : injecter les routes d'un protocole dans un autre
+#   -> cote OSPF ne pas oublier 'subnets' ; attention aux boucles
+# HA de 1er saut : FHRP (HSRP/VRRP/GLBP) = IP virtuelle partagee
+#   -> priorite + preempt determinent l'actif
+# Securite : authentification du routage, ACL, SSH + AAA
+# CCNP = assembler tout cela de facon coherente</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle est la distance administrative par défaut d'OSPF ?", opts: ["90", "110", "120", "20"], a: 1, exp: "OSPF a une distance administrative de 110 par défaut." },
+    { type: "qcm", q: "Entre deux routes vers la même destination, laquelle un routeur préfère-t-il ?", opts: ["Celle à la distance administrative la plus élevée", "Celle à la distance administrative la plus basse", "La plus ancienne", "La plus longue"], a: 1, exp: "La route à l'AD la plus faible (plus fiable) est préférée." },
+    { type: "input", q: "Quel mot-clé est indispensable côté OSPF pour redistribuer les sous-réseaux non classful ? (un mot)", a: ["subnets"], ph: "redistribute ... ?", exp: "Sans 'subnets', OSPF ne redistribue que les réseaux classful." },
+    { type: "vf", q: "La redistribution mutuelle mal maîtrisée peut créer des boucles de routage.", a: true, exp: "Vrai : d'où l'usage de route-maps et de tags pour l'éviter." },
+    { type: "qcm", q: "Que fournit un protocole FHRP comme HSRP aux postes de travail ?", opts: ["Un serveur DHCP", "Une passerelle par défaut redondante via une IP virtuelle", "Un chiffrement des données", "Un nouveau protocole de routage"], a: 1, exp: "HSRP présente une IP virtuelle : la passerelle survit à la panne d'un routeur." },
+    { type: "qcm", q: "Quelle est la distance administrative par défaut d'EIGRP interne ?", opts: ["110", "90", "170", "120"], a: 1, exp: "EIGRP interne a une AD de 90 ; l'externe, 170." },
+    { type: "input", q: "Quel protocole de redondance de premier saut est un standard ouvert (pas propriétaire Cisco) ? (sigle)", a: ["vrrp"], ph: "4 lettres", exp: "VRRP est le FHRP standard ; HSRP et GLBP sont propres à Cisco." },
+    { type: "vf", q: "Dans HSRP, le routeur ayant la priorité la plus élevée (avec preempt) devient actif.", a: true, exp: "Vrai : priorité la plus haute = actif, et preempt lui permet de reprendre son rôle." },
+    { type: "qcm", q: "Quelle est la distance administrative par défaut d'une route statique ?", opts: ["0", "1", "20", "90"], a: 1, exp: "Une route statique a une AD de 1 ; une route connectée, 0." },
+    { type: "input", q: "Comment appelle-t-on l'opération qui injecte les routes d'un protocole dans un autre ? (un mot)", a: ["redistribution", "la redistribution"], ph: "un mot", exp: "La redistribution fait dialoguer deux protocoles de routage." },
+    { type: "qcm", q: "Quelle distance administrative a l'eBGP (BGP externe) par défaut ?", opts: ["200", "110", "20", "90"], a: 2, exp: "eBGP a une AD de 20 ; iBGP, 200." },
+    { type: "vf", q: "Pour sécuriser l'administration, on préfère SSH à Telnet sur les lignes vty.", a: true, exp: "Vrai : SSH chiffre la session, contrairement à Telnet en clair." },
+    { type: "qcm", q: "Quel outil filtre le trafic (par adresse, port, protocole) sur une interface ?", opts: ["Une ACL (liste de contrôle d'accès)", "Un FHRP", "La redistribution", "Le spanning-tree"], a: 0, exp: "Les ACL filtrent le trafic selon des critères d'adresse/port/protocole." },
+    { type: "input", q: "Dans la configuration HSRP, quelle option permet à un routeur de reprendre son rôle actif après un retour en service ? (un mot)", a: ["preempt", "preemption"], ph: "standby ... ?", exp: "L'option preempt permet de reprendre le rôle actif dès que possible." },
+    { type: "qcm", q: "Pourquoi authentifier les voisins de routage (OSPF, BGP...) ?", opts: ["Pour aller plus vite", "Pour empêcher l'injection de fausses routes par un pair non autorisé", "Pour économiser des adresses IP", "Pour désactiver la redistribution"], a: 1, exp: "L'authentification évite qu'un pair malveillant injecte de fausses routes." }
+  ],
+  final: {
+    title: "Exercice final — Diagnostiquer un réseau multi-protocole",
+    intro: `<p>Sur le site central, R-A et R-B assurent la passerelle des VLAN via HSRP. R-A redistribue les routes EIGRP de la filiale dans OSPF. Après une intervention, certaines routes de la filiale ont disparu du cœur OSPF, et le basculement de passerelle ne se fait plus. Diagnostique.</p>`,
+    questions: [
+      { type: "qcm", q: "Les sous-réseaux de la filiale (en /26) ont disparu du domaine OSPF. Quelle cause probable ?", opts: ["OSPF est en panne", "Le mot-clé 'subnets' manque dans la redistribution vers OSPF", "HSRP est mal configuré", "Le câble est débranché"], a: 1, exp: "Sans 'subnets', OSPF ne redistribue pas les sous-réseaux non classful (/26)." },
+      { type: "input", q: "Quel mot-clé faut-il ajouter à la commande 'redistribute eigrp ... ' côté OSPF ?", a: ["subnets"], ph: "un mot", exp: "Il faut ajouter 'subnets' pour inclure les sous-réseaux." },
+      { type: "qcm", q: "Les PC ne basculent plus sur R-B quand R-A tombe. Quel protocole vérifier ?", opts: ["BGP", "HSRP (FHRP)", "La redistribution", "Une ACL"], a: 1, exp: "Le basculement de passerelle relève du FHRP, ici HSRP." },
+      { type: "vf", q: "Une même destination connue par EIGRP interne (AD 90) et OSPF (AD 110) sera installée via EIGRP.", a: true, exp: "Vrai : l'AD 90 d'EIGRP interne est plus faible que l'AD 110 d'OSPF." },
+      { type: "qcm", q: "Pour éviter une boucle lors de la redistribution mutuelle en deux points, on utilise…", opts: ["Un FHRP", "Des route-maps et des tags de route", "Une IP virtuelle", "Le port 830"], a: 1, exp: "Les route-maps et les tags empêchent les routes de reboucler entre domaines." }
+    ],
+    solution: `<pre class="pseudo"># Diagnostic
+1) Routes /26 absentes d'OSPF -> ajouter 'subnets' :
+   router ospf 1
+    redistribute eigrp 100 subnets
+2) Pas de bascule passerelle -> verifier HSRP :
+   show standby brief   (etat Active/Standby, priorite, preempt)
+   -> corriger priorite / activer 'preempt' si besoin
+3) Rappel AD : EIGRP interne (90) < OSPF (110) -> EIGRP gagne
+4) Anti-boucle redistribution mutuelle : route-maps + tags</pre>
+<p>Redistribution avec 'subnets', HSRP opérationnel, distances administratives comprises : le réseau retrouve sa cohérence. Demain, place au projet final de conception.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j30", title: "Corriger une redistribution", level: 3,
+    statement: "Un routeur R-A relie un domaine <strong>EIGRP 100</strong> (filiale, sous-réseaux en /26) à un domaine <strong>OSPF 1</strong> (cœur). Après configuration, les administrateurs constatent que les sous-réseaux /26 de la filiale n'apparaissent PAS dans OSPF. En texte : explique la cause la plus probable, donne la commande IOS corrigée pour redistribuer EIGRP dans OSPF, et cite une précaution contre les boucles en cas de redistribution mutuelle.",
+    hints: [
+      "OSPF ne redistribue par défaut que les réseaux classful. Quel mot-clé forcer ?",
+      "La commande est sous 'router ospf 1' : redistribute eigrp 100 ...",
+      "Contre les boucles : pense aux route-maps et aux tags de route."
+    ],
+    solution: "# Cause : sans le mot-cle 'subnets', OSPF ne redistribue que les\n# reseaux classful (/8, /16, /24). Les sous-reseaux /26 de la\n# filiale, non classful, sont donc ignores.\n#\n# Correction (IOS) :\n# router ospf 1\n#  redistribute eigrp 100 subnets\n#\n# Precaution anti-boucle : en cas de redistribution mutuelle en\n# deux points de sortie, marquer les routes redistribuees avec un\n# tag et utiliser des route-maps pour empecher une route\n# reinjectee de revenir dans son domaine d'origine.",
+    note: "Vérifie ensuite avec 'show ip route ospf' que les préfixes /26 apparaissent bien comme routes externes (O E2)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

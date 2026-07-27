@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 16</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 16,
+  title: "La QoS de bout en bout",
+  subtitle: "Modèles hiérarchiques HQoS, politiques par classe, du campus jusqu'au WAN.",
+  theory: `
+<h3>1. Pourquoi la QoS ?</h3>
+<p>Un lien n'a jamais une capacité infinie. Quand plusieurs flux se disputent la bande passante, sans arbitrage la voix et la vidéo souffrent autant qu'un téléchargement. La <strong>QoS</strong> (Quality of Service) organise ce partage : elle identifie les flux, leur attribue une priorité et gère la congestion pour que le trafic sensible (temps réel) reste protégé. Trois grandeurs comptent pour le temps réel : la <strong>latence</strong>, la <strong>gigue</strong> (jitter) et la <strong>perte</strong>. La voix, par exemple, tolère mal une latence &gt; 150 ms ou une perte &gt; 1 %.</p>
+<h3>2. Les modèles : IntServ vs DiffServ</h3>
+<p>Deux philosophies. <strong>IntServ</strong> réserve des ressources par flux (via RSVP) : précis mais peu scalable. <strong>DiffServ</strong> (le modèle dominant) classe le trafic en un petit nombre de <strong>classes</strong> et applique un traitement par saut (PHB, Per-Hop Behavior). Le marquage se fait dans le champ <strong>DSCP</strong> (6 bits, dans l'octet ToS/Traffic Class). Valeurs de référence : <strong>EF</strong> (Expedited Forwarding, DSCP 46) pour la voix, la famille <strong>AF</strong> (Assured Forwarding, ex. AF41 pour la vidéo interactive), <strong>CS</strong> (Class Selector) pour la signalisation/contrôle, et <strong>DF/BE</strong> (Default, best-effort).</p>
+<div class="tip">Principe DiffServ à retenir : <strong>classer et marquer une fois, au plus près de la source (à la périphérie de confiance)</strong>, puis faire confiance au marquage dans le cœur. On établit une « trust boundary » : au-delà, on croit le DSCP ; en deçà, on (re)marque.</div>
+<h3>3. Les quatre outils de base</h3>
+<pre class="pseudo"># CLASSIFICATION + MARQUAGE : reconnaitre un flux (ACL, NBAR, DSCP) et lui poser une etiquette (DSCP/CoS).
+# QUEUING (ordonnancement) : plusieurs files ; CBWFQ garantit une part de bande passante par classe ;
+#   LLQ ajoute une file a priorite stricte (Priority Queue) pour la voix (avec un policer implicite).
+# CONGESTION AVOIDANCE : WRED jette tot et selectivement pour eviter la synchro TCP globale.
+# POLICING vs SHAPING :
+#   Policing : impose un debit en JETANT (ou remarquant) l'exces. Pas de bufferisation. Rafales dures.
+#   Shaping  : impose un debit en BUFFERISANT l'exces (lissage). Introduit du delai mais moins de pertes.</pre>
+<div class="warn">Piège classique : mettre trop de trafic dans la LLQ (priority queue). La file prioritaire est bornée par un policer : au-delà du débit alloué, la voix elle-même est jetée. Dimensionnez la PQ au strict besoin (typiquement la voix, ~33 % max).</div>
+<h3>4. La QoS hiérarchique (HQoS)</h3>
+<p>Sur un lien qui agrège plusieurs clients ou sous-interfaces (par ex. un WAN ou un accès opérateur), il faut <strong>d'abord</strong> limiter le débit global vers chaque destination, <strong>puis</strong>, à l'intérieur de cette enveloppe, répartir entre classes. C'est la <strong>HQoS</strong> (Hierarchical QoS), implémentée sur IOS par une <strong>hierarchical policy-map</strong> : une policy « parent » fait le <em>shaping</em> global, une policy « child » applique le <em>queuing</em> par classe à l'intérieur.</p>
+<pre class="pseudo">! HQoS : parent (shape) + child (queuing par classe), IOS MQC
+policy-map CHILD
+ class VOICE
+  priority percent 33            ! LLQ pour la voix
+ class VIDEO
+  bandwidth percent 30           ! CBWFQ
+ class class-default
+  fair-queue
+policy-map PARENT
+ class class-default
+  shape average 20000000         ! shaping global (ex : 20 Mbit/s vers le site)
+  service-policy CHILD           ! imbrication : le child s'applique DANS l'enveloppe
+interface Gi0/1
+ service-policy output PARENT</pre>
+<p>Ce modèle est indispensable dès qu'un lien physique rapide dessert un CIR contractuel plus faible : sans shaping parent, la file de classe ne se déclencherait jamais (le routeur croirait le lien libre), et l'opérateur jetterait le surplus sans respecter vos priorités.</p>
+<h3>5. Du campus au WAN : la cohérence de bout en bout</h3>
+<p>La QoS n'a de sens que si elle est <strong>cohérente</strong> sur tout le chemin. Bonnes pratiques Cisco :</p>
+<pre class="pseudo"># CAMPUS (acces) : trust boundary au port ; classer/marquer au plus pres de la source
+#   (telephones : CoS/DSCP de confiance ; postes : re-marquer si non fiables).
+# CAMPUS (coeur/distribution) : faire confiance au DSCP, files par classe, WRED.
+# WAN (sortie) : le point critique (goulot). HQoS : shape au CIR + LLQ voix + CBWFQ + WRED.
+#   Mapper le DSCP interne vers le marquage attendu par l'operateur (souvent MPLS EXP).
+# Modele de reference : Cisco recommande des modeles a 4/8/12 classes selon les besoins.</pre>
+<div class="tip">Le maillon faible est presque toujours la <strong>sortie WAN</strong> (le lien le plus lent). C'est là qu'on concentre l'effort HQoS. Dans un cœur MPLS, les 3 bits <strong>EXP/TC</strong> de l'étiquette portent la QoS : il faut mapper votre DSCP vers l'EXP à l'entrée du réseau opérateur.</div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># QoS : arbitrer le partage ; metriques temps reel = latence, gigue, perte
+# DiffServ (dominant) : classes + PHB, marquage DSCP (EF=46 voix, AF ex AF41 video, CS, BE)
+# Outils : classifier/marquer, queuing (CBWFQ + LLQ), WRED, policing (jette) vs shaping (bufferise)
+# HQoS : policy parent (shape global) + policy child (queuing par classe) ; MQC IOS
+# Bout en bout : marquer une fois pres de la source (trust boundary), confiance dans le coeur,
+#   effort maximal a la SORTIE WAN (shape au CIR), mapper DSCP -> MPLS EXP chez l'operateur</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelles trois métriques comptent le plus pour le trafic temps réel ?", opts: ["Débit, coût, MTU", "Latence, gigue, perte", "TTL, DSCP, CoS", "RTT, hop count, jitter uniquement"], a: 1, exp: "Latence, gigue (jitter) et perte déterminent la qualité voix/vidéo." },
+    { type: "qcm", q: "Quel modèle QoS classe le trafic en un petit nombre de classes (par saut) et domine aujourd'hui ?", opts: ["IntServ", "DiffServ", "RSVP", "MPLS-TE"], a: 1, exp: "DiffServ : classes + PHB, marquage DSCP. IntServ (RSVP) réserve par flux, peu scalable." },
+    { type: "qcm", q: "Quelle valeur DSCP correspond à EF (voix) ?", opts: ["DSCP 26", "DSCP 34", "DSCP 46", "DSCP 0"], a: 2, exp: "EF (Expedited Forwarding) = DSCP 46, réservé à la voix." },
+    { type: "qcm", q: "Quelle différence entre policing et shaping ?", opts: ["Le policing bufferise, le shaping jette", "Le policing jette/remarque l'excès, le shaping bufferise (lisse)", "Ce sont des synonymes", "Le shaping ne s'applique qu'en entrée"], a: 1, exp: "Policing = jeter/remarquer (pas de buffer) ; shaping = bufferiser pour lisser." },
+    { type: "qcm", q: "À quoi sert la LLQ (Low Latency Queuing) ?", opts: ["À jeter le trafic best-effort", "À offrir une file à priorité stricte (bornée par un policer) pour la voix", "À remarquer le DSCP", "À faire du WRED"], a: 1, exp: "La LLQ ajoute une priority queue stricte à CBWFQ, idéale pour la voix, plafonnée par un policer." },
+    { type: "qcm", q: "Dans une HQoS IOS, que fait typiquement la policy 'parent' ?", opts: ["Le queuing par classe", "Le shaping global de l'enveloppe", "Le marquage DSCP", "Le WRED uniquement"], a: 1, exp: "Le parent fait le shaping global ; le child applique le queuing par classe à l'intérieur." },
+    { type: "vf", q: "En DiffServ, on marque idéalement une seule fois, au plus près de la source (trust boundary).", a: true, exp: "Vrai : classer/marquer à la périphérie, puis faire confiance au DSCP dans le cœur." },
+    { type: "vf", q: "Mettre trop de trafic dans la LLQ peut entraîner le rejet de la voix elle-même.", a: true, exp: "Vrai : la priority queue est bornée par un policer ; au-delà, même la voix est jetée." },
+    { type: "vf", q: "Le shaping introduit du délai (bufferisation) mais provoque moins de pertes que le policing.", a: true, exp: "Vrai : shaping lisse en bufferisant ; policing jette dur l'excès." },
+    { type: "vf", q: "Dans un cœur MPLS, la QoS est portée par les 3 bits EXP/TC de l'étiquette.", a: true, exp: "Vrai : il faut mapper le DSCP vers l'EXP à l'entrée du réseau opérateur." },
+    { type: "input", q: "Quel champ de 6 bits porte le marquage DiffServ ?", a: ["DSCP", "dscp"], ph: "un sigle", exp: "DSCP = Differentiated Services Code Point (6 bits)." },
+    { type: "input", q: "Quel mécanisme de congestion avoidance jette tôt et sélectivement pour éviter la synchro TCP ?", a: ["WRED", "wred", "red"], ph: "un sigle", exp: "WRED (Weighted Random Early Detection)." },
+    { type: "input", q: "Quel mécanisme de queuing garantit une part de bande passante par classe (base de la LLQ) ?", a: ["CBWFQ", "cbwfq"], ph: "un sigle", exp: "CBWFQ = Class-Based Weighted Fair Queuing ; LLQ = CBWFQ + priority queue." },
+    { type: "input", q: "Comment nomme-t-on la QoS à plusieurs niveaux (parent shape + child queuing) ?", a: ["HQoS", "hqos", "hierarchical qos", "qos hierarchique"], ph: "un sigle", exp: "HQoS = Hierarchical QoS." },
+    { type: "input", q: "Sur quel lien concentre-t-on l'effort QoS car il est le goulot d'étranglement ?", a: ["wan", "la sortie wan", "sortie wan", "le wan", "lien wan"], ph: "un lien", exp: "La sortie WAN (le lien le plus lent) est le point critique de la QoS." }
+  ],
+  final: {
+    title: "Exercice final — QoS de la voix, du poste au datacenter",
+    intro: `<p>Un appel de voix sur IP part d'un téléphone au campus, traverse le cœur, sort par un lien <strong>WAN de 20 Mbit/s</strong> (CIR contractuel) puis un cœur <strong>MPLS opérateur</strong>. Vous devez garantir sa qualité de bout en bout.</p>`,
+    questions: [
+      { type: "qcm", q: "Où marque-t-on idéalement la voix (EF/DSCP 46) ?", opts: ["Au cœur MPLS", "Au plus près de la source, à la trust boundary du port d'accès", "Uniquement en sortie WAN", "Nulle part, on laisse best-effort"], a: 1, exp: "On classe/marque une fois, près de la source, puis on fait confiance au DSCP." },
+      { type: "qcm", q: "Quel outil protège la latence de la voix dans les files ?", opts: ["WRED", "La LLQ (priority queue stricte)", "Le policing du best-effort", "Le shaping seul"], a: 1, exp: "La LLQ donne à la voix une file à priorité stricte (bornée par un policer)." },
+      { type: "qcm", q: "Pourquoi une HQoS avec shaping parent au CIR est-elle nécessaire en sortie WAN ?", opts: ["Pour chiffrer le flux", "Pour que le queuing par classe se déclenche dans l'enveloppe réelle (20 Mbit/s)", "Pour remplacer OSPF", "Pour désactiver le DSCP"], a: 1, exp: "Sans shaping au CIR, le routeur croit le lien libre et le queuing ne s'activerait pas ; l'opérateur jetterait le surplus." },
+      { type: "vf", q: "En entrée du cœur MPLS, il faut mapper le DSCP interne vers les bits EXP de l'étiquette.", a: true, exp: "Vrai : la QoS MPLS s'appuie sur les 3 bits EXP/TC ; il faut faire correspondre DSCP -> EXP." },
+      { type: "vf", q: "Allouer 90 % de la bande passante à la LLQ pour 'être sûr' est une bonne pratique.", a: false, exp: "Faux : surdimensionner la PQ affame les autres classes et le policer peut jeter la voix ; ~33 % max." }
+    ],
+    solution: `<pre class="pseudo"># QoS de bout en bout pour la voix (EF, DSCP 46)
+# 1) Campus acces : trust boundary au port ; le telephone marque EF, on fait confiance (ou re-marque le poste).
+# 2) Campus coeur : confiance DSCP ; files par classe ; WRED sur les classes TCP.
+# 3) Sortie WAN 20 Mbit/s (goulot) : HQoS
+#      policy PARENT : shape average 20000000  (au CIR)
+#      policy CHILD  : class VOICE -&gt; priority (LLQ ~33% max)
+#                      class VIDEO -&gt; bandwidth percent ..
+#                      class-default -&gt; fair-queue + WRED
+# 4) Entree coeur MPLS : mapper DSCP -&gt; EXP (3 bits) pour conserver la QoS chez l'operateur.
+# Regle d'or : marquer une fois pres de la source, effort maximal a la sortie WAN.</pre>
+<p>Marquage cohérent, LLQ dimensionnée, HQoS au CIR et mapping DSCP vers EXP : la voix reste protégée du poste jusqu'au datacenter. Vous avez bouclé le parcours CCIE expert.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j16", title: "Concevoir une HQoS de sortie WAN", level: 3,
+    statement: "Explique le modèle <strong>DiffServ</strong> (classes, PHB, marquage DSCP avec EF et AF), distingue <strong>policing</strong> et <strong>shaping</strong>, puis décris une <strong>HQoS</strong> de sortie WAN (rôle de la policy parent et de la policy child) et pourquoi le shaping au CIR est indispensable.",
+    hints: [
+      "DiffServ = classes + PHB, marquage DSCP (EF=46 voix, AF ex AF41 vidéo, BE).",
+      "Policing jette/remarque l'excès (pas de buffer) ; shaping bufferise et lisse.",
+      "HQoS : parent = shape global au CIR ; child = queuing par classe (LLQ + CBWFQ + WRED)."
+    ],
+    solution: "# DiffServ (modele dominant) :\n#   - Trafic reparti en un petit nombre de CLASSES ; traitement par saut (PHB).\n#   - Marquage dans le champ DSCP (6 bits) :\n#       EF (Expedited Forwarding) = DSCP 46 -> voix\n#       AF (Assured Forwarding), ex AF41 -> video interactive\n#       CS (Class Selector) -> signalisation/controle ; BE/DF -> best-effort\n#   - Bonne pratique : marquer UNE fois pres de la source (trust boundary), confiance dans le coeur.\n#\n# Policing vs Shaping :\n#   Policing : impose un debit en JETANT (ou remarquant) l'exces, sans buffer -> rafales dures.\n#   Shaping  : impose un debit en BUFFERISANT l'exces -> lisse, ajoute du delai, moins de pertes.\n#\n# HQoS de sortie WAN (MQC IOS) :\n#   policy PARENT : shape average <CIR>   (ex : 20 Mbit/s) -> definit l'enveloppe reelle\n#   policy CHILD  : class VOICE -> priority (LLQ, ~33% max)\n#                   class VIDEO -> bandwidth percent ..\n#                   class-default -> fair-queue + WRED\n#   Le child s'applique DANS l'enveloppe du parent (imbrication).\n#\n# Pourquoi shaper au CIR : sans shaping, le routeur croit le lien physique libre ; le queuing\n#   par classe ne se declenche jamais et l'operateur jette le surplus sans respecter les priorites.",
+    note: "Le maillon faible est la sortie WAN : c'est là qu'on concentre l'effort HQoS et le mapping DSCP vers MPLS EXP." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

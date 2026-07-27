@@ -1,0 +1,101 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 20</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 20,
+  title: "La sécurité des équipements (CoPP, hardening)",
+  subtitle: "Protéger le cerveau du routeur et fermer les portes qu'on a oublié de verrouiller.",
+  theory: `
+<h3>1. Les trois plans d'un équipement</h3>
+<p>Un routeur ou un commutateur travaille sur trois plans distincts. Le <strong>plan de données</strong> (data plane) commute les paquets des utilisateurs à toute vitesse, dans le matériel. Le <strong>plan de contrôle</strong> (control plane) est le cerveau : c'est là que tourne le CPU, que se calculent les tables de routage (OSPF, BGP), que sont traités les protocoles (ARP, SSH vers l'équipement). Le <strong>plan de gestion</strong> (management plane) sert à administrer la boîte (SSH, SNMP, Telnet). Attaquer le plan de contrôle, c'est viser le cerveau : si on noie le CPU sous des paquets, l'équipement ne calcule plus rien et le réseau tombe.</p>
+<h3>2. Pourquoi protéger le plan de contrôle ?</h3>
+<p>Beaucoup de paquets doivent « monter » au CPU pour être traités : requêtes de routage, ARP, paquets destinés à l'IP du routeur lui-même. Un attaquant peut délibérément inonder l'équipement de ce type de trafic pour saturer le CPU (déni de service). La parade s'appelle le <strong>CoPP</strong> (Control Plane Policing) : une politique QoS appliquée non pas à une interface physique, mais à l'entrée du plan de contrôle. Elle limite le débit de chaque catégorie de trafic destinée au CPU, de sorte qu'un flot d'ARP ou de pings ne puisse jamais l'affamer.</p>
+<pre class="pseudo"># CoPP : limiter le trafic qui monte au CPU
+class-map CM-PING
+ match access-group name ACL-ICMP
+policy-map COPP-POLICY
+ class CM-PING
+  police 8000 conform-action transmit exceed-action drop
+control-plane
+ service-policy input COPP-POLICY</pre>
+<div class="tip">CoPP réutilise le MQC (class-map / policy-map) vu pour la QoS, mais on l'attache au pseudo-interface <code>control-plane</code>. On classe le trafic par catégorie (routage, gestion, ICMP, indésirable) et on limite chacune par un <code>police</code>.</div>
+<h3>3. Le durcissement (hardening) : fermer les portes inutiles</h3>
+<p>Le <strong>durcissement</strong> (hardening) consiste à réduire la surface d'attaque en désactivant tout ce qui ne sert pas et en verrouillant les accès. Par défaut, IOS active des services historiques risqués. Quelques réflexes essentiels : désactiver les petits services (<code>no service tcp-small-servers</code>), couper le serveur HTTP si inutilisé, chiffrer les mots de passe affichés, et surtout remplacer <strong>Telnet</strong> (en clair) par <strong>SSH</strong> (chiffré).</p>
+<pre class="pseudo"># Hardening de base
+service password-encryption          # masque les mots de passe dans la config
+no ip http server                    # coupe le serveur web s'il est inutile
+no cdp run                           # CDP off vers l'extérieur (facultatif)
+enable secret MotDePasseFort         # secret haché (jamais enable password)
+!
+! Accès distant : SSH uniquement
+ip domain-name exemple.local
+crypto key generate rsa modulus 2048
+line vty 0 4
+ transport input ssh                 # interdit Telnet, n'autorise que SSH
+ login local</pre>
+<h3>4. Sécuriser les accès et les mots de passe</h3>
+<p>On protège les lignes d'accès (console et VTY) par une authentification, idéalement centralisée (AAA, vu au jour 22). Localement, on utilise <strong>enable secret</strong> (haché) plutôt qu'<strong>enable password</strong> (faible). On limite l'accès administratif par une ACL sur les lignes VTY (seules certaines IP de gestion peuvent se connecter), et on pose des délais et une bannière légale. On active aussi le <em>login block-for</em> pour ralentir les attaques par force brute.</p>
+<div class="warn">Ne confonds pas <code>enable password</code> et <code>enable secret</code> : le premier stocke un mot de passe réversible (faible, type 7) ; le second stocke un <em>haché</em> (bien plus sûr). Toujours utiliser <code>enable secret</code>. Et n'utilise jamais Telnet en production : il transmet identifiants et commandes en clair.</p></div>
+<h3>5. Protéger le plan de données et d'accès (rappel)</h3>
+<p>Côté accès, on complète par des protections de commutation : <strong>port-security</strong> (limiter les MAC par port), <strong>DHCP snooping</strong> (bloquer les faux serveurs DHCP), <strong>Dynamic ARP Inspection</strong> (contre l'usurpation ARP) et <strong>BPDU Guard</strong> (contre les fausses injections spanning-tree). Le durcissement est une démarche globale : plan de contrôle (CoPP), plan de gestion (SSH, ACL VTY, AAA) et plan d'accès (sécurité de port).</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># 3 plans : données (commutation) / contrôle (CPU, routage) / gestion (admin)
+# CoPP = Control Plane Policing : politique MQC appliquée à control-plane
+#        -> limite le trafic montant au CPU (anti-DoS)
+# Hardening :
+#   - SSH au lieu de Telnet (transport input ssh)
+#   - enable secret (haché) et non enable password
+#   - service password-encryption
+#   - couper les services inutiles (no ip http server, small-servers)
+#   - ACL sur les VTY + AAA pour l'accès</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que protège spécifiquement le CoPP ?", opts: ["Le plan de données", "Le plan de contrôle (le CPU de l'équipement)", "Les câbles", "Le VLAN natif"], a: 1, exp: "CoPP (Control Plane Policing) limite le trafic qui monte au CPU pour éviter le déni de service." },
+    { type: "qcm", q: "Sur quel pseudo-interface applique-t-on la policy-map CoPP ?", opts: ["interface Gi0/0", "control-plane", "line vty 0 4", "vlan 1"], a: 1, exp: "On attache la service-policy input à l'interface control-plane, pas à une interface physique." },
+    { type: "vf", q: "CoPP réutilise le cadre MQC (class-map / policy-map) déjà vu pour la QoS.", a: true, exp: "Vrai : on classe le trafic destiné au CPU et on le limite avec la commande police." },
+    { type: "qcm", q: "Quel protocole d'accès distant faut-il préférer à Telnet ?", opts: ["HTTP", "SSH", "FTP", "SNMPv1"], a: 1, exp: "SSH chiffre la session ; Telnet transmet tout en clair. transport input ssh sur les VTY." },
+    { type: "input", q: "Quelle commande sur les lignes VTY interdit Telnet et n'autorise que SSH ? Réponds : transport input …", a: ["ssh", "transport input ssh"], ph: "un mot", exp: "transport input ssh restreint l'accès distant au seul SSH." },
+    { type: "qcm", q: "Pour stocker le mot de passe d'accès privilégié de façon hachée, on utilise…", opts: ["enable password", "enable secret", "service telnet", "username guest"], a: 1, exp: "enable secret stocke un haché ; enable password est réversible (faible)." },
+    { type: "vf", q: "enable password stocke un mot de passe plus sûr que enable secret.", a: false, exp: "Faux : c'est l'inverse. enable secret (haché) est bien plus sûr qu'enable password." },
+    { type: "input", q: "Quelle commande globale masque les mots de passe en clair dans la configuration ? Réponds : service password-…", a: ["encryption", "service password-encryption"], ph: "un mot", exp: "service password-encryption applique un chiffrement (faible, type 7) pour éviter l'affichage en clair." },
+    { type: "qcm", q: "Le durcissement (hardening) consiste principalement à…", opts: ["ajouter le plus de services possibles", "réduire la surface d'attaque en désactivant l'inutile et en verrouillant les accès", "augmenter le débit", "supprimer les VLAN"], a: 1, exp: "Hardening = fermer les portes inutiles et sécuriser les accès." },
+    { type: "qcm", q: "Sur quel plan tournent le CPU et le calcul des tables de routage ?", opts: ["plan de données", "plan de contrôle", "plan physique", "plan optique"], a: 1, exp: "Le plan de contrôle (control plane) est le cerveau : CPU, OSPF, BGP, ARP local." },
+    { type: "vf", q: "Inonder un routeur de paquets destinés à sa propre IP peut saturer son CPU et faire tomber le réseau.", a: true, exp: "Vrai : ces paquets montent au CPU. C'est exactement ce que CoPP limite." },
+    { type: "input", q: "Dans une policy-map CoPP, quelle action limite le débit d'une classe de trafic ? (un mot IOS)", a: ["police", "police command"], ph: "un mot", exp: "police fixe un débit ; conform-action transmit / exceed-action drop décident du sort des paquets." },
+    { type: "qcm", q: "Quelle protection de commutation bloque les faux serveurs DHCP sur le réseau d'accès ?", opts: ["BPDU Guard", "DHCP snooping", "CoPP", "port-security"], a: 1, exp: "DHCP snooping n'autorise les réponses DHCP que sur les ports de confiance." },
+    { type: "input", q: "Quelle commande coupe le serveur web embarqué s'il est inutile ? Réponds : no ip http …", a: ["server", "no ip http server"], ph: "un mot", exp: "no ip http server désactive le serveur HTTP, souvent inutile et exposé." },
+    { type: "qcm", q: "Pour limiter les postes autorisés à administrer l'équipement, on applique…", opts: ["un CoPP sur Gi0/0", "une ACL sur les lignes VTY", "un port-security console", "un no cdp run"], a: 1, exp: "Une ACL sur les VTY restreint l'accès administratif à certaines IP de gestion." }
+  ],
+  final: {
+    title: "Exercice final — Durcir un routeur de bordure",
+    intro: "<p>Tu reçois un routeur neuf, en configuration d'usine : Telnet actif, HTTP allumé, mots de passe en clair, aucun contrôle sur le trafic montant au CPU. Applique un durcissement de base et protège le plan de contrôle.</p>",
+    questions: [
+      { type: "qcm", q: "Premier réflexe pour l'accès distant :", opts: ["laisser Telnet, c'est plus simple", "activer SSH et faire transport input ssh sur les VTY", "activer HTTP", "supprimer les VTY"], a: 1, exp: "SSH chiffré remplace Telnet ; on restreint les VTY à SSH." },
+      { type: "input", q: "Quelle commande utiliser pour le mot de passe d'accès privilégié (haché) ?", a: ["enable secret", "secret"], ph: "commande IOS", exp: "enable secret stocke un haché, contrairement à enable password." },
+      { type: "vf", q: "Couper le serveur web (no ip http server) réduit la surface d'attaque.", a: true, exp: "Oui : tout service inutile allumé est une porte potentielle." },
+      { type: "qcm", q: "Pour empêcher qu'un flot de pings sature le CPU, on met en place…", opts: ["un CoPP qui police le trafic ICMP montant", "un VLAN dédié", "un port-security", "une route statique"], a: 0, exp: "CoPP limite le débit du trafic destiné au plan de contrôle." },
+      { type: "input", q: "Sur quel pseudo-interface applique-t-on la policy CoPP ? (deux mots)", a: ["control-plane", "control plane"], ph: "…-plane", exp: "control-plane : c'est là qu'on attache la service-policy input." }
+    ],
+    solution: "<pre class=\"pseudo\"># Durcissement + protection du plan de contrôle\nservice password-encryption\nno ip http server\nenable secret Str0ng!Secret\n!\nip domain-name exemple.local\ncrypto key generate rsa modulus 2048\nline vty 0 4\n transport input ssh\n login local\n access-class 10 in            ! ACL de gestion sur les VTY\n!\n! CoPP anti-DoS ICMP\nip access-list extended ACL-ICMP\n permit icmp any any\nclass-map CM-PING\n match access-group name ACL-ICMP\npolicy-map COPP\n class CM-PING\n  police 8000 conform-action transmit exceed-action drop\ncontrol-plane\n service-policy input COPP</pre><p>Résultat : accès chiffré (SSH), mots de passe protégés, services inutiles coupés, accès admin restreint par ACL, et CPU protégé contre l'inondation grâce au CoPP.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j20", title: "Protéger le cerveau de l'équipement", level: 2,
+    statement: "En deux parties : (1) explique ce qu'est le <code>CoPP</code> et sur quel <strong>plan</strong> il agit, puis (2) donne au moins <strong>trois</strong> mesures de durcissement (hardening) d'un routeur IOS avec la commande correspondante.",
+    hints: [
+      "CoPP protège le plan de contrôle (le CPU) contre l'inondation.",
+      "Pense à SSH vs Telnet, aux mots de passe, aux services inutiles.",
+      "Utilise transport input ssh, enable secret, service password-encryption, no ip http server."
+    ],
+    solution: "# 1) CoPP (Control Plane Policing)\n#    -> agit sur le PLAN DE CONTROLE (le CPU de l'equipement)\n#    -> politique MQC appliquee a l'interface 'control-plane'\n#    -> limite (police) le trafic qui monte au CPU : anti deni de service\n#\n# 2) Trois mesures de durcissement (hardening) :\n#    - SSH au lieu de Telnet :   line vty 0 4 / transport input ssh\n#    - mot de passe prive hache : enable secret <mot>\n#    - masquer les mots de passe: service password-encryption\n#    (bonus) couper le web inutile : no ip http server",
+    note: "Le durcissement couvre les trois plans : controle (CoPP), gestion (SSH, ACL VTY, AAA), acces (port-security)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

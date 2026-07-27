@@ -1,0 +1,98 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 09</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 9,
+  title: "MPLS : concepts et L3VPN",
+  subtitle: "Commuter des étiquettes plutôt que router des adresses : le socle des réseaux d'opérateurs.",
+  theory: `
+<h3>1. Pourquoi MPLS ? De la destination à l'étiquette</h3>
+<p>Le routage IP classique est un travail répétitif : à chaque saut, le routeur regarde l'adresse IP de destination, consulte sa table (un « longest prefix match » coûteux) et renvoie le paquet. <strong>MPLS</strong> (<em>Multiprotocol Label Switching</em>) change de logique : un routeur d'entrée colle une <strong>étiquette</strong> (label) de longueur fixe (20 bits) devant le paquet, et tous les routeurs suivants ne regardent plus que cette étiquette. On ne <em>route</em> plus, on <em>commute</em> — d'où le terme « label switching ». Le paquet suit un chemin pré-calculé appelé <strong>LSP</strong> (<em>Label Switched Path</em>).</p>
+<p>L'analogie : dans un aéroport, votre bagage n'est pas ré-adressé à chaque tapis roulant selon votre nom. Une étiquette code-barres est apposée à l'enregistrement, et tout le tri se fait à partir d'elle jusqu'à la destination finale, où elle est retirée. MPLS fait exactement cela avec les paquets.</p>
+<h3>2. L'en-tête MPLS et les rôles PE / P / CE</h3>
+<p>L'étiquette MPLS est une « shim header » de 32 bits insérée entre la trame de couche 2 et le paquet IP. Elle contient : le <strong>label</strong> (20 bits), 3 bits <strong>TC/EXP</strong> (classe de trafic pour la QoS), 1 bit <strong>S</strong> (« Bottom of Stack », qui vaut 1 pour la dernière étiquette d'une pile) et 8 bits de <strong>TTL</strong>. On parle de « pile d'étiquettes » car on peut en empiler plusieurs (indispensable pour les VPN).</p>
+<pre class="pseudo"># En-tete MPLS (32 bits) inseree entre L2 et L3
++-----------------------+-----+---+----------+
+| Label (20 bits)       | EXP | S | TTL (8)  |
++-----------------------+-----+---+----------+
+# Trame :  [ En-tete L2 ] [ Label MPLS ] [ Paquet IP ]</pre>
+<p>Trois rôles définissent une architecture d'opérateur : le <strong>CE</strong> (<em>Customer Edge</em>) est le routeur du client, il ne connaît pas MPLS. Le <strong>PE</strong> (<em>Provider Edge</em>) est le routeur de bordure de l'opérateur : il impose (push) et retire (pop) les étiquettes, c'est lui qui fait la « magie ». Le <strong>P</strong> (<em>Provider core</em>) est un routeur de cœur : il ne fait que commuter des étiquettes (swap), sans jamais regarder l'IP du client.</p>
+<h3>3. LDP : distribuer les étiquettes</h3>
+<p>Pour que chaque routeur sache quelle étiquette utiliser vers quelle destination, il faut un protocole de distribution. Le plus courant est <strong>LDP</strong> (<em>Label Distribution Protocol</em>). LDP découvre ses voisins par des messages Hello en UDP 646, puis établit une session TCP 646. Chaque LSR (<em>Label Switch Router</em>) annonce, pour chaque préfixe de sa table de routage (l'IGP, souvent OSPF ou IS-IS), l'étiquette locale qu'il souhaite qu'on lui envoie. LDP suit donc fidèlement l'IGP : c'est du « unsolicited downstream ».</p>
+<pre class="pseudo">! Activer MPLS + LDP sur une interface de coeur (IOS)
+router(config)# mpls ip
+router(config)# mpls label protocol ldp
+router(config)# interface Gi0/1
+router(config-if)# mpls ip
+! Verifications
+router# show mpls ldp neighbor
+router# show mpls forwarding-table</pre>
+<div class="tip">Le « Label Space » d'un LSR est identifié par un <strong>LDP Router-ID</strong> (par défaut la plus haute loopback). Fixez-le explicitement avec <code>mpls ldp router-id Loopback0 force</code> pour une topologie stable.</div>
+<h3>4. Trois actions, une opération clé : le PHP</h3>
+<p>Un LSR fait l'une de trois choses avec une étiquette : <strong>PUSH</strong> (l'ajoute, rôle du PE d'entrée / ingress), <strong>SWAP</strong> (l'échange, rôle des P), <strong>POP</strong> (la retire, rôle du PE de sortie / egress). Une optimisation nommée <strong>PHP</strong> (<em>Penultimate Hop Popping</em>) demande à l'avant-dernier routeur de retirer l'étiquette de transport pour éviter au dernier PE un double travail. Cisco l'implémente via l'étiquette réservée <strong>3</strong> (« implicit-null »). L'étiquette 0 est « explicit-null ».</p>
+<h3>5. Du transport au service : introduction au L3VPN</h3>
+<p>MPLS seul ne fait que transporter. Le service phare est le <strong>L3VPN</strong> : plusieurs clients partagent le même cœur d'opérateur tout en restant totalement isolés, y compris s'ils utilisent les mêmes adresses privées (par ex. 10.0.0.0/8). L'astuce repose sur une <strong>pile de deux étiquettes</strong> : l'étiquette externe (« transport ») guide le paquet de PE à PE à travers les P ; l'étiquette interne (« VPN ») indique au PE de sortie dans quel client / quelle table locale (VRF) livrer le paquet. Le cœur P ne voit jamais l'étiquette interne : il ignore tout des clients. Nous détaillons VRF, RD, RT et MP-BGP demain.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># MPLS = commuter des etiquettes (20 bits) au lieu de router des IP
+# Roles : CE (client) - PE (bordure, push/pop) - P (coeur, swap)
+# LDP distribue les etiquettes (UDP 646 hello, TCP 646 session), suit l'IGP
+# Actions : PUSH (ingress) / SWAP (P) / POP (egress) ; PHP = pop a l'avant-dernier (label 3)
+# LSP = chemin d'etiquettes ; L3VPN = 2 labels (transport externe + VPN interne)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que signifie l'acronyme MPLS ?", opts: ["Multi Protocol Label Switching", "Multiple Path Link Service", "Managed Private Line Service", "Multicast Protocol Layer Setup"], a: 0, exp: "MPLS = Multiprotocol Label Switching : commutation d'étiquettes." },
+    { type: "qcm", q: "Quelle est la taille du champ label dans l'en-tête MPLS ?", opts: ["8 bits", "16 bits", "20 bits", "32 bits"], a: 2, exp: "Le label fait 20 bits ; l'en-tête complète (shim) fait 32 bits avec EXP, S et TTL." },
+    { type: "qcm", q: "Quel routeur impose (push) et retire (pop) les étiquettes VPN dans une architecture opérateur ?", opts: ["Le CE", "Le P", "Le PE", "Le routeur du client final"], a: 2, exp: "Le PE (Provider Edge) est la bordure : il gère les étiquettes de service. Le P ne fait que du swap." },
+    { type: "qcm", q: "Quel protocole distribue classiquement les étiquettes en suivant l'IGP ?", opts: ["BGP", "RSVP-TE", "LDP", "OSPF"], a: 2, exp: "LDP (Label Distribution Protocol). RSVP-TE existe aussi mais pour l'ingénierie de trafic." },
+    { type: "qcm", q: "LDP utilise quels ports / transports pour Hello et session ?", opts: ["TCP 179 pour tout", "UDP 646 (hello) puis TCP 646 (session)", "UDP 520 puis TCP 520", "TCP 646 (hello) puis UDP 179"], a: 1, exp: "Découverte par Hello en UDP 646 (multicast), session établie en TCP 646." },
+    { type: "qcm", q: "En quoi consiste le PHP (Penultimate Hop Popping) ?", opts: ["Le PE d'entrée retire deux étiquettes", "L'avant-dernier routeur retire l'étiquette de transport", "Le P ajoute une étiquette supplémentaire", "Le CE retire l'étiquette VPN"], a: 1, exp: "L'avant-dernier saut (penultimate) pop l'étiquette de transport pour soulager l'egress PE." },
+    { type: "vf", q: "Un routeur P (cœur) examine l'adresse IP du client pour prendre sa décision.", a: false, exp: "Faux : le P ne fait que commuter (swap) l'étiquette de transport, il ignore l'IP du client." },
+    { type: "vf", q: "Le bit S (Bottom of Stack) vaut 1 pour la dernière étiquette de la pile.", a: true, exp: "Vrai : S=1 marque le fond de pile, juste avant l'en-tête IP." },
+    { type: "vf", q: "Un L3VPN MPLS utilise une pile de deux étiquettes : transport puis VPN.", a: true, exp: "Vrai : l'étiquette externe guide PE-à-PE, l'interne désigne la VRF de livraison." },
+    { type: "vf", q: "Le CE (Customer Edge) doit obligatoirement comprendre et générer des étiquettes MPLS.", a: false, exp: "Faux : le CE fait du routage IP normal ; c'est le PE qui gère les étiquettes." },
+    { type: "input", q: "Comment nomme-t-on le chemin de bout en bout suivi par un paquet étiqueté (sigle de 3 lettres) ?", a: ["LSP", "label switched path"], ph: "sigle", exp: "LSP = Label Switched Path." },
+    { type: "input", q: "Quelle action réalise un routeur P sur l'étiquette de transport (un mot anglais) ?", a: ["swap", "swapping", "echange"], ph: "un mot", exp: "Le P fait un SWAP : il échange l'étiquette entrante contre une étiquette sortante." },
+    { type: "input", q: "Quelle valeur d'étiquette réservée Cisco signale l'implicit-null (déclenche le PHP) ?", a: ["3", "trois"], ph: "un nombre", exp: "L'étiquette 3 = implicit-null ; l'étiquette 0 = explicit-null." },
+    { type: "input", q: "Quelle commande IOS liste les voisins LDP établis ?", a: ["show mpls ldp neighbor", "show mpls ldp neighbors"], ph: "show mpls ...", exp: "show mpls ldp neighbor affiche les sessions LDP." },
+    { type: "input", q: "Quels 3 bits de l'en-tête MPLS servent à la classe de trafic (QoS) ?", a: ["exp", "tc", "exp/tc", "les bits exp", "champ exp"], ph: "3 lettres", exp: "Les bits EXP (aussi appelés TC, Traffic Class) portent le marquage QoS." }
+  ],
+  final: {
+    title: "Exercice final — Tracer un LSP de bout en bout",
+    intro: `<p>Un opérateur relie deux sites d'un client. Topologie : <code>CE1 -- PE1 -- P1 -- P2 -- PE2 -- CE2</code>. L'IGP est OSPF, LDP est actif dans le cœur, et un service L3VPN est configuré. Analysez le trajet d'un paquet de CE1 vers CE2.</p>`,
+    questions: [
+      { type: "qcm", q: "Qui appose la première étiquette (push) sur le paquet venant de CE1 ?", opts: ["CE1", "PE1", "P1", "PE2"], a: 1, exp: "PE1 (ingress PE) impose la pile d'étiquettes." },
+      { type: "qcm", q: "Combien d'étiquettes PE1 empile-t-il pour un L3VPN ?", opts: ["Une seule", "Deux (transport + VPN)", "Trois", "Aucune"], a: 1, exp: "Deux : l'étiquette de transport (externe) et l'étiquette VPN (interne)." },
+      { type: "qcm", q: "Que font P1 et P2 avec l'étiquette de transport ?", opts: ["Ils la retirent puis la remettent", "Ils la swappent sans regarder l'IP client", "Ils lisent l'étiquette VPN", "Ils routent en IP pur"], a: 1, exp: "Les P ne font que du swap sur l'étiquette externe ; ils ignorent l'étiquette VPN et l'IP." },
+      { type: "vf", q: "Avec le PHP, P2 retire l'étiquette de transport avant de livrer à PE2.", a: true, exp: "Vrai : l'avant-dernier saut (P2) pop l'étiquette externe (implicit-null / label 3)." },
+      { type: "qcm", q: "Grâce à quelle étiquette PE2 sait-il dans quelle VRF livrer le paquet ?", opts: ["L'étiquette de transport", "L'étiquette VPN interne", "L'adresse MAC de CE2", "Le TTL"], a: 1, exp: "L'étiquette VPN (interne) indique la VRF / le client de destination sur PE2." }
+    ],
+    solution: `<pre class="pseudo"># Trajet CE1 -&gt; CE2 (L3VPN)
+CE1  : envoie un paquet IP normal (pas de MPLS)
+PE1  : PUSH 2 labels  [ transport | VPN | IP ]   (ingress)
+P1   : SWAP le label de transport
+P2   : POP le label de transport (PHP)           [ VPN | IP ]
+PE2  : lit le label VPN -&gt; choisit la VRF, POP, route vers CE2
+CE2  : recoit un paquet IP normal</pre>
+<p>Le cœur (P1, P2) n'a jamais consulté l'adresse du client : c'est tout l'intérêt de MPLS. Demain, on donne un sens à cette étiquette VPN avec les VRF, RD, RT et MP-BGP.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j09", title: "Décrire le pipeline d'étiquettes", level: 2,
+    statement: "Sur la topologie <code>CE1 - PE1 - P - PE2 - CE2</code>, décris pour un service L3VPN l'action MPLS (<strong>push</strong>, <strong>swap</strong>, <strong>pop</strong>) réalisée par chaque routeur du cœur, en précisant le nombre d'étiquettes présentes à chaque segment. Indique où intervient le PHP.",
+    hints: [
+      "Le PE d'entrée empile deux étiquettes (transport + VPN).",
+      "Les routeurs P ne touchent qu'à l'étiquette externe (transport).",
+      "Le PHP fait retirer l'étiquette de transport par l'avant-dernier saut."
+    ],
+    solution: "# Pipeline d'etiquettes (L3VPN) :\n# CE1  -> paquet IP simple, aucune etiquette\n# PE1  -> PUSH : ajoute 2 etiquettes [transport | VPN]  (ingress)\n# P    -> SWAP : echange l'etiquette de transport ; l'etiquette VPN reste dessous\n#         (avec PHP, l'avant-dernier P fait POP de l'etiquette de transport)\n# PE2  -> lit l'etiquette VPN, POP, choisit la VRF, route vers CE2 (egress)\n# CE2  -> recoit un paquet IP simple\n#\n# Segments : coeur = 2 etiquettes ; apres PHP = 1 etiquette (VPN) ; acces CE = 0",
+    note: "Le cœur P ne consulte jamais l'IP du client : il ne fait que commuter l'étiquette de transport." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

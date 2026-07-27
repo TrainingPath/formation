@@ -1,0 +1,114 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 08</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 8,
+  title: "Redistribution complexe et contrôle de routage",
+  subtitle: "Redistribution mutuelle, marquage des routes (tags) et prévention des boucles.",
+  theory: `
+<h3>1. Redistribuer : traduire entre protocoles</h3>
+<p>La <strong>redistribution</strong> fait passer des routes d'un protocole de routage à un autre (OSPF vers EIGRP, BGP vers OSPF, etc.). Chaque protocole ayant sa propre métrique, la traduction n'est pas automatique : il faut souvent fournir une <strong>métrique de départ</strong> (seed metric). C'est un point de contrôle stratégique — et un nid à boucles si on n'y prend pas garde.</p>
+<pre class="pseudo"># Redistribuer EIGRP dans OSPF (avec metrique de depart) :
+router ospf 1
+ redistribute eigrp 100 subnets metric 100 metric-type 1
+# Redistribuer OSPF dans EIGRP (metrique EIGRP obligatoire) :
+router eigrp 100
+ redistribute ospf 1 metric 1000000 100 255 1 1500</pre>
+<div class="tip">En OSPF, <strong>metric-type 1</strong> (E1) ajoute le coût interne au coût externe (plus « honnête ») ; <strong>metric-type 2</strong> (E2, défaut) garde un coût externe fixe. Ce choix influence directement la sélection des chemins externes.</p></div>
+<h3>2. La redistribution mutuelle et le risque de boucle</h3>
+<p>La <strong>redistribution mutuelle</strong> (mutual redistribution) redistribue dans les <strong>deux sens</strong> entre deux protocoles, souvent sur <strong>plusieurs points de frontière</strong> pour la redondance. C'est là que naissent les boucles : une route native d'un domaine part dans l'autre, revient par un second point de redistribution, et peut être réinjectée comme « externe » dans son domaine d'origine — avec parfois une <strong>distance administrative</strong> plus favorable que la route native. Sous-optimalité, voire boucle.</p>
+<pre class="pseudo"># Deux points de frontiere R1 et R2 redistribuent OSPF &lt;-&gt; EIGRP :
+#  reseau X (natif OSPF) -&gt; redistribue en EIGRP par R1
+#  -&gt; revient vers R2 -&gt; R2 le reinjecte en OSPF comme EXTERNE
+#  -&gt; risque : la route externe supplante la native = BOUCLE/sous-optimal</pre>
+<div class="warn">Le danger vient du mélange des <strong>distances administratives</strong> et de la perte d'information à la traversée. Ne jamais faire de redistribution mutuelle multipoint <strong>sans mécanisme anti-boucle</strong>.</p></div>
+<h3>3. Le marquage des routes (route tagging)</h3>
+<p>La parade reine est le <strong>route tag</strong> : au moment de redistribuer, on <strong>étiquette</strong> chaque route d'un numéro (tag). À l'autre point de frontière, on <strong>refuse de réinjecter</strong> les routes portant ce tag. Le tag survit à la traversée OSPF/EIGRP/RIP et sert de « laissez-passer » inversé.</p>
+<pre class="pseudo"># R1 : marquer les routes redistribuees OSPF-&gt;EIGRP avec le tag 100
+route-map OSPF-VERS-EIGRP permit 10
+ set tag 100
+router eigrp 100
+ redistribute ospf 1 route-map OSPF-VERS-EIGRP metric 1000000 100 255 1 1500
+# R2 : REFUSER de renvoyer vers OSPF ce qui porte le tag 100
+route-map EIGRP-VERS-OSPF deny 10
+ match tag 100
+route-map EIGRP-VERS-OSPF permit 20
+router ospf 1
+ redistribute eigrp 100 subnets route-map EIGRP-VERS-OSPF</pre>
+<h3>4. Autres leviers de contrôle</h3>
+<p>On complète avec : l'ajustement de la <strong>distance administrative</strong> (commande <strong>distance</strong>) pour rendre la route native toujours préférée ; les <strong>distribute-list</strong> / <strong>prefix-list</strong> pour filtrer finement ce qui est redistribué ; et le contrôle des <strong>metric-type</strong> pour maîtriser la comparaison des externes. Combinés au tagging, ces outils rendent une redistribution multipoint sûre.</p>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Redistribution = traduire entre protocoles ; fournir une SEED METRIC
+# OSPF externe : E1 (ajoute cout interne) vs E2 (cout fixe, defaut)
+# Redistribution MUTUELLE multipoint = risque de BOUCLE / sous-optimal
+#   (routes qui reviennent comme externes, distance admin trompeuse)
+# Parade #1 : ROUTE TAG -&gt; set tag a l'entree, match tag + deny au retour
+# Complements : distance (AD), distribute-list / prefix-list, metric-type</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que fait la redistribution ?", opts: ["Elle chiffre les routes", "Elle fait passer des routes d'un protocole de routage à un autre", "Elle supprime les routes externes", "Elle élit un DR"], a: 1, exp: "La redistribution transfère des routes entre protocoles (OSPF, EIGRP, BGP…)." },
+    { type: "input", q: "Comment appelle-t-on la métrique de départ à fournir lors d'une redistribution ? (deux mots)", a: ["seed metric", "metrique de depart", "métrique de départ", "seed"], ph: "seed …", exp: "La seed metric (métrique de départ) amorce la métrique dans le protocole cible." },
+    { type: "qcm", q: "En OSPF, que fait le metric-type 1 (E1) pour une route externe ?", opts: ["Il garde un coût externe fixe", "Il ajoute le coût interne au coût externe", "Il supprime le coût", "Il double le coût"], a: 1, exp: "E1 additionne le coût interne au coût externe ; E2 (défaut) reste fixe." },
+    { type: "vf", q: "En OSPF, le metric-type 2 (E2) est le type par défaut des routes externes.", a: true, exp: "Vrai : E2 est le défaut ; le coût externe reste constant dans le domaine." },
+    { type: "qcm", q: "Qu'est-ce que la redistribution mutuelle ?", opts: ["Redistribuer dans un seul sens", "Redistribuer dans les deux sens entre deux protocoles", "Supprimer un protocole", "Fusionner deux AS BGP"], a: 1, exp: "La redistribution mutuelle échange des routes dans les deux directions." },
+    { type: "qcm", q: "Pourquoi la redistribution mutuelle multipoint est-elle risquée ?", opts: ["Elle est trop lente", "Une route peut revenir comme externe et créer une boucle / sous-optimalité", "Elle chiffre trop", "Elle désactive OSPF"], a: 1, exp: "Une route redistribuée peut revenir par un autre point et supplanter la native." },
+    { type: "input", q: "Quel mécanisme d'étiquetage est la parade reine contre ces boucles ? (deux mots)", a: ["route tag", "route tagging", "tag", "route-tag"], ph: "route …", exp: "Le route tag : on marque à l'entrée et on refuse au retour." },
+    { type: "qcm", q: "Comment empêcher la réinjection au second point de frontière ?", opts: ["set tag partout", "match tag + deny dans la route-map de retour", "Augmenter le MED", "Activer un virtual-link"], a: 1, exp: "On fait match tag puis deny pour bloquer les routes déjà taguées." },
+    { type: "vf", q: "Un route tag survit à la traversée entre OSPF, EIGRP et RIP.", a: true, exp: "Vrai : le tag est préservé, ce qui en fait un anti-boucle universel." },
+    { type: "qcm", q: "Quel attribut, mal réglé, peut faire préférer une route externe à la native ?", opts: ["La distance administrative", "La MTU", "Le Router-ID", "Le send-community"], a: 0, exp: "Une distance administrative plus faible sur l'externe la rend préférée à tort." },
+    { type: "input", q: "Quelle commande ajuste la distance administrative d'un protocole pour préférer la route native ? (un mot)", a: ["distance", "distance administrative"], ph: "d…", exp: "La commande distance modifie l'AD pour rétablir la préférence native." },
+    { type: "qcm", q: "Quels outils filtrent finement ce qui est redistribué ?", opts: ["distribute-list / prefix-list", "auto-cost", "eigrp stub", "bgp confederation"], a: 0, exp: "distribute-list et prefix-list contrôlent précisément les préfixes redistribués." },
+    { type: "vf", q: "Une redistribution mutuelle multipoint sans mécanisme anti-boucle est sûre.", a: false, exp: "Faux : sans tag/AD/filtrage, elle expose directement aux boucles." },
+    { type: "qcm", q: "Redistribuer OSPF dans EIGRP exige…", opts: ["Rien de particulier", "Une métrique EIGRP complète (bande passante, délai, fiabilité, charge, MTU)", "Uniquement un metric-type", "Un send-community"], a: 1, exp: "EIGRP réclame les cinq composantes de métrique lors de la redistribution." },
+    { type: "qcm", q: "Séquence correcte de la parade par tag ?", opts: ["match tag à l'entrée, set tag au retour", "set tag à la redistribution d'entrée, match tag + deny au point de retour", "deny tout partout", "set community des deux côtés"], a: 1, exp: "On pose le tag en entrant, puis on match+deny ce tag au point de retour." }
+  ],
+  final: {
+    title: "Exercice final — Sécuriser une redistribution mutuelle",
+    intro: `<p>R1 et R2 redistribuent mutuellement OSPF et EIGRP pour la redondance. Des routes reviennent en boucle. Mets en place une redistribution sûre.</p>`,
+    questions: [
+      { type: "qcm", q: "Cause probable du problème ?", opts: ["Trop de bande passante", "Des routes redistribuées reviennent comme externes par l'autre point", "Un DR mal élu", "Un send-community manquant"], a: 1, exp: "Le multipoint renvoie les routes comme externes : boucle/sous-optimalité." },
+      { type: "input", q: "Quel marquage vas-tu appliquer à la redistribution pour tracer l'origine ? (deux mots)", a: ["route tag", "un route tag", "tag", "route tagging"], ph: "route …", exp: "Un route tag identifie les routes déjà redistribuées." },
+      { type: "qcm", q: "Sur R1, la route-map d'entrée fait…", opts: ["match tag", "set tag 100", "deny all", "set community"], a: 1, exp: "R1 pose le tag (set tag 100) sur ce qu'il redistribue." },
+      { type: "qcm", q: "Sur R2, la route-map de retour fait…", opts: ["set tag 100", "match tag 100 puis deny", "permit all sans condition", "auto-cost"], a: 1, exp: "R2 refuse (deny) ce qui porte le tag 100, empêchant le retour." },
+      { type: "vf", q: "Ajuster la distance administrative peut compléter la protection en gardant la native préférée.", a: true, exp: "Vrai : la commande distance renforce la préférence de la route native." }
+    ],
+    solution: `<pre class="pseudo"># Redistribution mutuelle SURE R1 &lt;-&gt; R2 :
+# --- R1 : tague ce qu'il injecte dans EIGRP ---
+route-map O2E permit 10
+ set tag 100
+router eigrp 100
+ redistribute ospf 1 route-map O2E metric 1000000 100 255 1 1500
+
+# --- R2 : refuse de renvoyer vers OSPF ce tag 100 ---
+route-map E2O deny 10
+ match tag 100
+route-map E2O permit 20
+router ospf 1
+ redistribute eigrp 100 subnets route-map E2O
+
+# --- Renfort : garder la route native preferee ---
+!  ajuster la distance administrative si besoin (commande 'distance')
+# Verifs : show ip route ospf | show ip route eigrp | show ip route &lt;prefixe&gt;</pre>
+<p>Boucle neutralisée : le tag bloque le retour et la native reste préférée. Fin du parcours : tu as la carte et la méthode — les heures de labo, à toi de les parcourir.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j08", title: "Synthèse redistribution sûre", level: 3,
+    statement: "En texte brut, explique comment mener une <strong>redistribution mutuelle</strong> multipoint sans boucle : d'où vient le risque, comment le <strong>route tagging</strong> le neutralise (set tag / match tag + deny), et quels <strong>compléments</strong> (distance administrative, filtrage) renforcent la sûreté.",
+    hints: [
+      "Le risque : une route redistribuée revient comme externe par l'autre point de frontière (distance admin trompeuse).",
+      "Parade : set tag à l'injection, match tag + deny au retour ; le tag survit OSPF/EIGRP/RIP.",
+      "Compléments : commande distance pour préférer la native, distribute-list/prefix-list pour filtrer."
+    ],
+    solution: "# Redistribution mutuelle multipoint SANS boucle :\n# RISQUE :\n#   Avec deux points de frontiere (R1, R2) redistribuant dans les deux sens,\n#   une route native d'un domaine part dans l'autre, revient par le 2e point\n#   et peut etre reinjectee comme EXTERNE dans son domaine d'origine.\n#   Une distance administrative plus favorable sur l'externe cree boucle/sous-optimal.\n# PARADE PRINCIPALE - ROUTE TAGGING :\n#   A l'injection : route-map ... set tag 100.\n#   Au point de retour : route-map avec 'match tag 100' -> deny,\n#   puis 'permit' pour le reste. Le tag survit a OSPF/EIGRP/RIP.\n# COMPLEMENTS :\n#   - commande 'distance' : ajuster l'AD pour garder la route NATIVE preferee.\n#   - distribute-list / prefix-list : filtrer finement les prefixes redistribues.\n#   - OSPF metric-type E1 vs E2 : maitriser la comparaison des externes.\n# Toujours fournir une SEED METRIC lors de la redistribution.",
+    note: "Ne jamais faire de redistribution mutuelle multipoint sans mécanisme anti-boucle : le tagging est la première ligne de défense." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

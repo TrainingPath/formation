@@ -1,0 +1,119 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 20</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 20,
+  title: "L'automatisation experte : Python avancé",
+  subtitle: "De la connexion SSH brute à l'orchestration de milliers d'équipements sans effort.",
+  theory: `
+<h3>1. Trois bibliothèques, trois niveaux d'abstraction</h3>
+<p>Au niveau expert, on ne tape plus les commandes une par une : on écrit du <strong>Python</strong> qui pilote le réseau. Trois bibliothèques dominent l'écosystème, et il faut savoir <em>laquelle choisir</em>. <strong>Netmiko</strong> est la plus basse : elle ouvre une session <em>SSH</em> et envoie/récupère du texte brut (la CLI). <strong>NAPALM</strong> monte d'un cran : elle offre une <em>abstraction multi-constructeur</em> qui rend des <em>données structurées</em> et gère la configuration avec commit/rollback. <strong>Nornir</strong> est encore au-dessus : c'est un <em>cadre d'orchestration</em> qui exécute des tâches <strong>en parallèle</strong> sur un inventaire d'équipements. On les combine souvent : Nornir orchestre, en appelant Netmiko ou NAPALM sur chaque nœud.</p>
+<pre class="pseudo"># Empilement mental
+# Netmiko : "parle SSH, envoie du texte"        (bas niveau, CLI brute)
+# NAPALM  : "donne-moi des donnees structurees"  (abstraction + config mgmt)
+# Nornir  : "fais-le sur 5000 machines a la fois" (orchestration parallele)</pre>
+<h3>2. Netmiko : la CLI en Python</h3>
+<p><strong>Netmiko</strong>, bâtie sur Paramiko, masque les subtilités du SSH réseau (invites, pagination, délais). On déclare un dictionnaire d'équipement avec son <code>device_type</code> (par ex. <em>cisco_ios</em>, <em>cisco_xr</em>, <em>cisco_nxos</em>), on se connecte, puis on envoie des commandes d'affichage (<code>send_command</code>) ou de configuration (<code>send_config_set</code>).</p>
+<pre class="pseudo">from netmiko import ConnectHandler
+r1 = {"device_type": "cisco_ios", "host": "10.0.0.1",
+      "username": "admin", "password": "cisco"}
+conn = ConnectHandler(**r1)
+print(conn.send_command("show ip interface brief"))
+conn.send_config_set(["interface Lo0", "ip address 1.1.1.1 255.255.255.255"])
+conn.disconnect()</pre>
+<div class="tip">Netmiko renvoie du <strong>texte brut</strong>. Pour en extraire des champs, on l'associe à un moteur d'analyse (TextFSM/NTC-templates, avec <code>use_textfsm=True</code>) qui transforme la sortie CLI en liste de dictionnaires. C'est le prix de son bas niveau : puissant et universel, mais non structuré par défaut.</p></div>
+<h3>3. NAPALM : abstraction et gestion de configuration</h3>
+<p><strong>NAPALM</strong> (« Network Automation and Programmability Abstraction Layer with Multivendor support ») expose une <strong>API unifiée</strong> par-dessus des pilotes (<em>ios</em>, <em>eos</em>, <em>junos</em>, <em>nxos</em>…). Ses <strong>getters</strong> (<code>get_facts</code>, <code>get_interfaces</code>, <code>get_bgp_neighbors</code>) renvoient des <em>dictionnaires normalisés identiques</em> quel que soit le constructeur — un atout énorme en environnement hétérogène. Surtout, NAPALM gère le cycle de vie de la configuration : chargement en <em>merge</em> ou <em>replace</em>, calcul du <strong>diff</strong>, puis <strong>commit</strong> ou <strong>rollback</strong>.</p>
+<pre class="pseudo">import napalm
+driver = napalm.get_network_driver("ios")
+dev = driver(hostname="10.0.0.1", username="admin", password="cisco")
+dev.open()
+print(dev.get_facts()["os_version"])       # donnees structurees
+dev.load_merge_candidate(filename="add_bgp.cfg")
+print(dev.compare_config())                # diff avant/apres
+dev.commit_config()                        # ou dev.discard_config()
+dev.close()</pre>
+<div class="warn">Le <em>replace</em> (<code>load_replace_candidate</code>) remplace TOUTE la configuration par le fichier fourni : c'est idempotent et puissant, mais un fichier incomplet efface ce qui manque. Toujours vérifier le <code>compare_config()</code> avant de commiter. Le rollback est le filet de sécurité.</p></div>
+<h3>4. Nornir : l'orchestration à grande échelle</h3>
+<p><strong>Nornir</strong> est un cadre d'automatisation <strong>100 % Python</strong> — pas de langage dédié (contrairement à un DSL type YAML de playbook). Il fournit un <strong>inventaire</strong> (hosts, groups, defaults), une <strong>exécution parallèle</strong> (par threads) et un système de <strong>tâches</strong> composables. On écrit sa logique en Python pur, ce qui donne débogage, tests et vitesse. Nornir n'ouvre pas lui-même les sessions : il <em>délègue</em> aux plugins <code>netmiko</code> ou <code>napalm</code>, appelés simultanément sur des centaines ou des milliers d'hôtes.</p>
+<pre class="pseudo">from nornir import InitNornir
+from nornir_netmiko import netmiko_send_command
+nr = InitNornir(config_file="config.yaml")   # charge l'inventaire
+core = nr.filter(role="core")                 # cible un sous-ensemble
+result = core.run(task=netmiko_send_command,
+                  command_string="show version")
+# execute en parallele sur tous les 'core' d'un coup</pre>
+<h3>5. Penser « à grande échelle »</h3>
+<p>Orchestrer mille équipements impose des réflexes d'ingénierie. <strong>Idempotence</strong> : rejouer le script ne doit pas casser un état déjà correct. <strong>Parallélisme maîtrisé</strong> : Nornir gère les threads, mais on borne leur nombre pour ne pas noyer un serveur AAA. <strong>Inventaire comme source de vérité</strong> : les données (IP, rôles, identifiants) vivent dans l'inventaire, pas en dur dans le code. <strong>Gestion des erreurs</strong> : un hôte injoignable ne doit pas arrêter les 999 autres — Nornir isole les échecs par hôte. Enfin, on <strong>teste</strong> et on <strong>versionne</strong> (Git) chaque script, préparant le terrain du CI/CD réseau.</p>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Netmiko : SSH + CLI brute (send_command / send_config_set)
+#           texte brut -> TextFSM/use_textfsm pour structurer
+# NAPALM  : API multi-constructeur, getters structures (get_facts...)
+#           config : merge/replace, compare_config (diff), commit / rollback
+# Nornir  : orchestration 100% Python, inventaire, PARALLELISME par threads
+#           delegue a netmiko / napalm sur chaque hote
+# A l'echelle : idempotence, inventaire = source de verite,
+#               erreurs isolees par hote, versionner (Git)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quelle bibliothèque se connecte en SSH et envoie/récupère de la CLI en texte brut ?", opts: ["NAPALM", "Netmiko", "Nornir", "YANG"], a: 1, exp: "Netmiko, bâtie sur Paramiko, gère la session SSH et renvoie du texte brut." },
+    { type: "qcm", q: "Quelle bibliothèque renvoie des données structurées identiques quel que soit le constructeur ?", opts: ["Netmiko", "NAPALM", "Nornir", "Paramiko"], a: 1, exp: "Les getters de NAPALM (get_facts, get_interfaces…) normalisent la sortie entre constructeurs." },
+    { type: "qcm", q: "Quel est le rôle principal de Nornir ?", opts: ["Ouvrir une session SSH unique", "Orchestrer des tâches en parallèle sur un inventaire d'équipements", "Chiffrer les mots de passe", "Remplacer OSPF"], a: 1, exp: "Nornir est un cadre d'orchestration Python à exécution parallèle ; il délègue les connexions à netmiko/napalm." },
+    { type: "qcm", q: "Comment Netmiko peut-il transformer une sortie CLI brute en dictionnaires exploitables ?", opts: ["Avec use_textfsm=True (TextFSM/NTC-templates)", "En appelant OSPF", "Impossible", "En désactivant SSH"], a: 0, exp: "TextFSM (via use_textfsm) parse la sortie CLI en structures Python." },
+    { type: "qcm", q: "Dans NAPALM, quelle méthode montre le diff entre la config candidate et l'active ?", opts: ["get_facts()", "compare_config()", "disconnect()", "send_command()"], a: 1, exp: "compare_config() affiche le diff avant de commiter ou d'annuler." },
+    { type: "qcm", q: "Quelle particularité distingue Nornir d'un outil à playbook YAML ?", opts: ["Il n'a pas d'inventaire", "Il s'écrit en Python pur, sans langage dédié (DSL)", "Il ne fait pas de parallélisme", "Il ne supporte que Cisco"], a: 1, exp: "Nornir est 100 % Python : débogage, tests et vitesse, sans DSL intermédiaire." },
+    { type: "vf", q: "NAPALM permet de charger une configuration puis de faire un rollback en cas de problème.", a: true, exp: "Vrai : merge/replace, compare_config, commit_config et discard/rollback forment son cycle de gestion de config." },
+    { type: "vf", q: "Netmiko renvoie par défaut des données déjà structurées en dictionnaires.", a: false, exp: "Faux : Netmiko renvoie du texte brut ; il faut TextFSM (use_textfsm) pour structurer." },
+    { type: "vf", q: "Un load_replace_candidate incomplet peut effacer des parties de configuration non présentes dans le fichier.", a: true, exp: "Vrai : le replace remplace TOUTE la config ; d'où l'importance de vérifier compare_config() avant commit." },
+    { type: "vf", q: "À grande échelle, l'inventaire doit être la source de vérité plutôt que des IP codées en dur.", a: true, exp: "Vrai : séparer les données (inventaire) du code est un principe clé de l'automatisation à l'échelle." },
+    { type: "vf", q: "Avec Nornir, un hôte injoignable interrompt forcément le traitement de tous les autres hôtes.", a: false, exp: "Faux : Nornir isole les échecs par hôte ; les autres continuent." },
+    { type: "input", q: "Quelle classe Netmiko ouvre la connexion à un équipement (à partir d'un dictionnaire) ?", a: ["connecthandler", "connect handler"], ph: "Connect…", exp: "ConnectHandler(**device) établit la session SSH." },
+    { type: "input", q: "Quel getter NAPALM renvoie les informations de base (modèle, OS, hostname) d'un équipement ?", a: ["get_facts", "get facts", "get_facts()"], ph: "get_…", exp: "get_facts() renvoie un dictionnaire normalisé (os_version, model, hostname…)." },
+    { type: "input", q: "Quelle propriété (un mot) décrit un script qu'on peut rejouer sans casser un état déjà correct ?", a: ["idempotence", "idempotent", "idempotente"], ph: "idem…", exp: "L'idempotence : rejouer produit le même résultat sans effet de bord." },
+    { type: "input", q: "Quel cadre Python exécute les tâches en parallèle sur tout un inventaire, en déléguant à netmiko/napalm ?", a: ["nornir"], ph: "N…", exp: "Nornir : orchestration parallèle 100 % Python." }
+  ],
+  final: {
+    title: "Exercice final — Choisir le bon outil et l'échelle",
+    intro: `<p>Tu dois : (a) récupérer la version d'OS de 800 routeurs multi-constructeurs pour un rapport homogène, (b) pousser un bloc de config BGP avec possibilité d'annulation, et (c) le faire vite, en parallèle, sur tout le parc. Choisis les bons outils à chaque étape.</p>`,
+    questions: [
+      { type: "qcm", q: "Pour obtenir la version d'OS de façon homogène sur du multi-constructeur, tu utilises…", opts: ["Netmiko + parsing manuel par regex", "Les getters NAPALM (get_facts) qui normalisent la sortie", "Du copier-coller CLI", "SNMPv2c uniquement"], a: 1, exp: "NAPALM rend des données structurées identiques quel que soit le constructeur : idéal pour un rapport homogène." },
+      { type: "qcm", q: "Pour pousser la config BGP avec possibilité d'annulation, tu t'appuies sur…", opts: ["send_config_set sans filet", "NAPALM : load_merge_candidate + compare_config + commit/rollback", "Un reboot", "Telnet"], a: 1, exp: "NAPALM gère merge, diff et commit/rollback : le rollback est le filet de sécurité." },
+      { type: "qcm", q: "Pour exécuter tout cela en parallèle sur 800 équipements, tu orchestres avec…", opts: ["Une boucle for séquentielle", "Nornir (inventaire + exécution parallèle, déléguant à NAPALM)", "Un seul thread manuel", "Un tableur"], a: 1, exp: "Nornir parallélise sur l'inventaire et délègue les opérations à NAPALM/Netmiko." },
+      { type: "vf", q: "Vérifier compare_config() avant commit_config() évite d'appliquer un changement inattendu.", a: true, exp: "Vrai : le diff montre exactement ce qui va changer, avant de valider." },
+      { type: "qcm", q: "Pour ne pas saturer le serveur AAA pendant l'exécution parallèle, tu…", opts: ["Lances tout d'un coup sans limite", "Bornes le nombre de workers/threads de Nornir", "Désactives l'authentification", "Réduis le parc à 10 machines"], a: 1, exp: "On maîtrise le parallélisme (num_workers) pour ne pas noyer l'AAA ou les équipements." }
+    ],
+    solution: `<pre class="pseudo">from nornir import InitNornir
+from nornir_napalm.plugins.tasks import napalm_get, napalm_configure
+nr = InitNornir(config_file="config.yaml")   # inventaire = source de verite
+# (a) versions d'OS homogenes, en parallele
+facts = nr.run(task=napalm_get, getters=["facts"])
+# (b)+(c) pousser BGP avec diff + rollback possible, en parallele
+def push(task):
+    task.run(task=napalm_configure,
+             filename=f"cfg/{task.host.name}_bgp.cfg",
+             replace=False)     # merge ; NAPALM calcule le diff, commit/rollback
+nr.run(task=push)
+# num_workers borne dans config.yaml pour ne pas noyer l'AAA</pre>
+<p>Nornir orchestre en parallèle, NAPALM fournit les données structurées et le commit/rollback, l'inventaire porte la vérité. On tient les 800 équipements avec idempotence, diff et filet de sécurité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j20", title: "Netmiko vs NAPALM vs Nornir", level: 3,
+    statement: "En texte brut, positionne les <strong>trois bibliothèques</strong> les unes par rapport aux autres : pour chacune, son niveau d'abstraction, ce qu'elle renvoie ou fait, et un cas d'usage typique. Termine par une phrase montrant comment on les <strong>combine</strong> à grande échelle.",
+    hints: [
+      "Netmiko = bas niveau (SSH, texte brut).",
+      "NAPALM = abstraction multi-constructeur + gestion de config (commit/rollback).",
+      "Nornir = orchestration parallèle ; il délègue aux deux autres."
+    ],
+    solution: "NETMIKO (bas niveau)\n- Abstraction : session SSH sur la CLI.\n- Renvoie : du TEXTE BRUT (send_command / send_config_set).\n- Cas d'usage : envoyer une commande a un equipement, meme exotique ; parser avec TextFSM.\n\nNAPALM (niveau intermediaire)\n- Abstraction : API unifiee multi-constructeur (pilotes ios/eos/junos/nxos).\n- Fait : getters structures (get_facts...) + gestion de config (merge/replace,\n  compare_config, commit / rollback).\n- Cas d'usage : rapport homogene sur un parc heterogene ; pousser une config avec filet.\n\nNORNIR (haut niveau)\n- Abstraction : cadre d'orchestration 100% Python (inventaire + parallelisme par threads).\n- Fait : execute des taches EN PARALLELE sur des centaines/milliers d'hotes,\n  erreurs isolees par hote.\n- Cas d'usage : appliquer une operation a tout le parc d'un coup.\n\nCOMBINAISON A L'ECHELLE :\n- Nornir ORCHESTRE en parallele et DELEGUE la connexion a Netmiko (CLI) ou\n  a NAPALM (donnees structurees + commit/rollback), l'inventaire servant de source de verite.",
+    note: "Le bon réflexe : Netmiko pour la CLI brute, NAPALM pour la structure et la config sûre, Nornir pour l'échelle." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

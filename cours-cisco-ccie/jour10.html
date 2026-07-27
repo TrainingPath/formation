@@ -1,0 +1,112 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 10</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Les VPN MPLS et le Service Provider",
+  subtitle: "VRF, route distinguisher, route target et MP-BGP : la mécanique fine du L3VPN.",
+  theory: `
+<h3>1. Le problème : des clients aux adresses identiques</h3>
+<p>Un opérateur transporte le trafic de centaines de clients sur le même cœur. Rien n'empêche le client A et le client B d'utiliser tous deux <strong>10.1.1.0/24</strong>. Sur un routeur PE partagé, ces deux préfixes se marcheraient dessus. Le L3VPN résout ce conflit avec trois briques : la <strong>VRF</strong> (isolation locale), le <strong>Route Distinguisher</strong> (unicité globale) et les <strong>Route Targets</strong> (politique d'import/export), le tout véhiculé par <strong>MP-BGP</strong>.</p>
+<h3>2. La VRF : des tables de routage cloisonnées</h3>
+<p>Une <strong>VRF</strong> (<em>Virtual Routing and Forwarding</em>) est une table de routage privée, indépendante de la table globale et des autres VRF. Sur un PE, chaque client obtient sa propre VRF ; les interfaces vers ce client y sont rattachées. Deux VRF peuvent contenir 10.1.1.0/24 sans conflit, car ce sont deux espaces séparés. C'est l'équivalent, pour le routage, de la virtualisation : plusieurs routeurs logiques dans un seul routeur physique.</p>
+<pre class="pseudo">! Definir une VRF (syntaxe VRF-lite / multiprotocole, IOS)
+router(config)# vrf definition CLIENT_A
+router(config-vrf)# rd 65000:100
+router(config-vrf)# address-family ipv4
+router(config-vrf-af)# route-target export 65000:100
+router(config-vrf-af)# route-target import 65000:100
+! Rattacher une interface a la VRF
+router(config)# interface Gi0/2
+router(config-if)# vrf forwarding CLIENT_A
+router(config-if)# ip address 10.1.1.1 255.255.255.0</pre>
+<h3>3. Le Route Distinguisher : rendre un préfixe unique</h3>
+<p>MP-BGP doit transporter tous les préfixes clients dans une même session. Mais 10.1.1.0/24 du client A et du client B sont identiques : lequel garder ? Le <strong>Route Distinguisher</strong> (RD), un champ de 64 bits, se préfixe à l'adresse pour former une <strong>route VPNv4</strong> de 96 bits (64 RD + 32 IPv4) qui, elle, est unique. Le RD s'écrit typiquement <code>ASN:nn</code> ou <code>IP:nn</code>, par exemple <code>65000:100</code>. À retenir : <strong>le RD ne sert QU'À l'unicité</strong> ; il ne décide pas où va la route.</p>
+<div class="warn">Erreur classique en examen : croire que le RD contrôle l'import/export des routes. Non — c'est le rôle des Route Targets. Le RD ne fait qu'assurer l'unicité du préfixe dans MP-BGP.</div>
+<h3>4. Les Route Targets : la politique d'appartenance</h3>
+<p>Le <strong>Route Target</strong> (RT) est une <strong>Extended Community</strong> BGP (64 bits) attachée à la route VPNv4. Il pilote qui reçoit quoi : à l'export, le PE tague chaque route avec un ou plusieurs RT ; à l'import, chaque VRF n'accepte que les routes portant les RT qu'elle importe. Un VPN « full-mesh » simple utilise un RT unique exporté et importé partout. Mais on peut bâtir des topologies riches : un <strong>hub-and-spoke</strong> se fait avec deux RT (le hub exporte un RT que les spokes importent, et importe un RT que les spokes exportent), ou des <strong>extranets</strong> où deux clients partagent volontairement quelques routes.</p>
+<h3>5. MP-BGP : le transporteur des routes VPNv4</h3>
+<p>Le routage inter-PE se fait par <strong>MP-BGP</strong> (<em>Multiprotocol BGP</em>), extension de BGP capable de porter d'autres familles que l'IPv4 unicast classique. La famille utilisée ici est <strong>VPNv4</strong> (AFI 1, SAFI 128). Les PE établissent des sessions iBGP entre eux (souvent via des <em>route reflectors</em> pour éviter le full-mesh), et s'échangent : le préfixe VPNv4 (RD + IP), les RT, et surtout <strong>l'étiquette VPN</strong> associée. C'est ainsi que le PE d'entrée apprend quelle étiquette interne empiler pour atteindre tel préfixe de tel client sur tel PE distant.</p>
+<pre class="pseudo">! Session MP-BGP VPNv4 entre PE (IOS)
+router(config)# router bgp 65000
+router(config-router)# neighbor 10.0.0.2 remote-as 65000
+router(config-router)# address-family vpnv4
+router(config-router-af)# neighbor 10.0.0.2 activate
+router(config-router-af)# neighbor 10.0.0.2 send-community extended
+! Verifications utiles
+router# show ip route vrf CLIENT_A
+router# show bgp vpnv4 unicast all
+router# show ip cef vrf CLIENT_A 10.2.2.0 detail</pre>
+<div class="tip">La chaîne mentale à mémoriser : <strong>CE annonce à PE</strong> (via eBGP, OSPF, statique…) → <strong>PE met en VRF, ajoute RD + RT + label</strong> → <strong>MP-BGP transporte en VPNv4</strong> → <strong>PE distant importe selon RT dans la bonne VRF</strong> → <strong>redistribue vers le CE</strong>.</p></div>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># VRF  = table de routage privee par client (isolation locale)
+# RD   = 64 bits, prefixe l'IPv4 -> route VPNv4 unique (96 bits). UNICITE seulement
+# RT   = extended community BGP, pilote import/export (la vraie politique)
+# MP-BGP VPNv4 (AFI 1 / SAFI 128) transporte prefixe VPNv4 + RT + LABEL VPN
+# Route reflectors evitent le full-mesh iBGP entre PE
+# Topologies : full-mesh (1 RT) / hub-and-spoke (2 RT) / extranet (RT partages)</pre>`,
+  exercises: [
+    { type: "qcm", q: "À quoi sert une VRF sur un PE ?", opts: ["À chiffrer le trafic", "À fournir une table de routage isolée par client", "À distribuer les étiquettes MPLS", "À accélérer OSPF"], a: 1, exp: "La VRF (Virtual Routing and Forwarding) cloisonne le routage d'un client des autres." },
+    { type: "qcm", q: "Quel est le SEUL rôle du Route Distinguisher (RD) ?", opts: ["Contrôler l'import/export des routes", "Rendre le préfixe unique dans MP-BGP", "Choisir le chemin le plus court", "Chiffrer l'étiquette VPN"], a: 1, exp: "Le RD (64 bits) assure l'unicité du préfixe VPNv4. La politique, c'est le RT." },
+    { type: "qcm", q: "Un préfixe VPNv4 fait quelle taille totale ?", opts: ["32 bits", "64 bits", "96 bits", "128 bits"], a: 2, exp: "96 bits = 64 bits de RD + 32 bits d'adresse IPv4." },
+    { type: "qcm", q: "Le Route Target est techniquement…", opts: ["Une adresse IP", "Une Extended Community BGP", "Un numéro d'étiquette MPLS", "Un masque de sous-réseau"], a: 1, exp: "Le RT est une BGP Extended Community (64 bits) qui pilote import/export." },
+    { type: "qcm", q: "Quelle famille d'adresses MP-BGP porte les routes de L3VPN ?", opts: ["IPv4 unicast", "VPNv4 (AFI 1, SAFI 128)", "IPv6 unicast", "L2VPN EVPN"], a: 1, exp: "VPNv4 = AFI 1, SAFI 128, transporte préfixe + RT + label VPN." },
+    { type: "qcm", q: "Comment éviter un full-mesh iBGP entre de nombreux PE ?", opts: ["En utilisant OSPF", "Avec des route reflectors", "En désactivant le split-horizon", "Avec du PHP"], a: 1, exp: "Les route reflectors réfléchissent les routes iBGP et évitent le maillage complet." },
+    { type: "vf", q: "Deux clients peuvent utiliser 10.1.1.0/24 sur le même PE sans conflit grâce aux VRF distinctes.", a: true, exp: "Vrai : chaque VRF est un espace de routage séparé ; le RD assure l'unicité dans MP-BGP." },
+    { type: "vf", q: "Le RD décide dans quelle VRF distante une route sera importée.", a: false, exp: "Faux : c'est le Route Target qui pilote l'import. Le RD ne fait que l'unicité." },
+    { type: "vf", q: "MP-BGP transporte, avec le préfixe VPNv4, l'étiquette VPN à utiliser côté egress.", a: true, exp: "Vrai : le PE apprend ainsi le label interne à empiler pour ce préfixe/PE." },
+    { type: "vf", q: "Une topologie hub-and-spoke se construit typiquement avec deux Route Targets.", a: true, exp: "Vrai : un RT hub->spokes et un RT spokes->hub pour forcer le passage par le hub." },
+    { type: "input", q: "Sigle (3 lettres) de la table de routage privée par client sur un PE ?", a: ["VRF", "vrf"], ph: "sigle", exp: "VRF = Virtual Routing and Forwarding." },
+    { type: "input", q: "Sigle (2 lettres) du champ de 64 bits qui rend le préfixe unique dans MP-BGP ?", a: ["RD", "rd", "route distinguisher"], ph: "2 lettres", exp: "RD = Route Distinguisher." },
+    { type: "input", q: "Sigle (2 lettres) de l'attribut qui pilote l'import/export des routes entre VRF ?", a: ["RT", "rt", "route target"], ph: "2 lettres", exp: "RT = Route Target (Extended Community)." },
+    { type: "input", q: "Quelle commande IOS affiche la table de routage d'une VRF nommée CLIENT_A ?", a: ["show ip route vrf CLIENT_A", "show ip route vrf client_a"], ph: "show ip route ...", exp: "show ip route vrf CLIENT_A affiche la table de la VRF." },
+    { type: "input", q: "Sous quelle address-family active-t-on un voisin BGP pour échanger les routes L3VPN ?", a: ["vpnv4", "address-family vpnv4", "vpnv4 unicast"], ph: "une famille", exp: "address-family vpnv4 : c'est là qu'on active le voisin (send-community extended)." }
+  ],
+  final: {
+    title: "Exercice final — Concevoir un extranet",
+    intro: `<p>Deux clients de l'opérateur, <strong>ACME</strong> et <strong>FOURN</strong>, veulent partager un serveur applicatif : ACME doit joindre le préfixe 192.168.50.0/24 de FOURN, mais le reste de leurs réseaux doit rester isolé. Vous configurez cet extranet avec des Route Targets.</p>`,
+    questions: [
+      { type: "qcm", q: "Quel objet transporte la politique de partage sélectif entre les deux VRF ?", opts: ["Le Route Distinguisher", "Les Route Targets", "Le TTL MPLS", "Le masque"], a: 1, exp: "Les RT décident quelles routes sont importées d'une VRF à l'autre." },
+      { type: "vf", q: "Il faut un RD distinct par VRF, mais le partage se règle uniquement via les RT importés/exportés.", a: true, exp: "Vrai : RD pour l'unicité, RT pour l'appartenance/partage." },
+      { type: "qcm", q: "Pour qu'ACME apprenne 192.168.50.0/24, que doit importer la VRF d'ACME ?", opts: ["Le RD de FOURN", "Le RT que FOURN exporte pour ce préfixe", "L'étiquette de transport", "Le loopback du P"], a: 1, exp: "La VRF ACME importe le RT sous lequel FOURN exporte ce préfixe." },
+      { type: "qcm", q: "Quel protocole/famille propage effectivement ces routes entre PE ?", opts: ["OSPF area 0", "MP-BGP VPNv4", "LDP", "RIPv2"], a: 1, exp: "MP-BGP VPNv4 transporte les préfixes VPNv4 avec leurs RT et labels." },
+      { type: "vf", q: "En n'exportant que le préfixe 192.168.50.0/24 avec un RT partagé, on limite la fuite au strict nécessaire.", a: true, exp: "Vrai : une route-map d'export sélective + RT partagé restreint le partage à ce seul préfixe." }
+    ],
+    solution: `<pre class="pseudo"># Extranet ACME &lt;-&gt; FOURN (partage du seul 192.168.50.0/24)
+vrf definition FOURN
+ rd 65000:200
+ address-family ipv4
+  route-target export 65000:200          ! RT interne FOURN
+  route-target export 65000:999          ! RT extranet (sur le seul prefixe partage via route-map)
+  route-target import 65000:200
+vrf definition ACME
+ rd 65000:100
+ address-family ipv4
+  route-target export 65000:100
+  route-target import 65000:100
+  route-target import 65000:999          ! importe le prefixe partage de FOURN
+# RD = unicite ; RT 65000:999 = colle de l'extranet ; MP-BGP VPNv4 transporte le tout.</pre>
+<p>Le partage reste chirurgical : seuls les préfixes marqués du RT 65000:999 franchissent la frontière. Demain, on quitte le L3VPN pour les overlays modernes : VXLAN et EVPN.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j10", title: "RD contre RT : ne plus confondre", level: 2,
+    statement: "Explique en texte la différence de rôle entre le <strong>Route Distinguisher</strong> et le <strong>Route Target</strong>, puis écris un squelette de configuration IOS d'une VRF nommée <code>CLIENT_A</code> (RD 65000:100, full-mesh) et cite la famille MP-BGP employée.",
+    hints: [
+      "Le RD ne sert qu'à rendre le préfixe unique (96 bits VPNv4).",
+      "Le RT est une extended community qui pilote import/export.",
+      "La famille MP-BGP du L3VPN IPv4 est vpnv4 (AFI 1 / SAFI 128)."
+    ],
+    solution: "# Difference RD vs RT :\n# RD (Route Distinguisher) : 64 bits, prefixe l'IPv4 -> route VPNv4 unique (96 bits).\n#   Sert UNIQUEMENT a l'unicite dans MP-BGP. Ne decide PAS ou va la route.\n# RT (Route Target) : extended community BGP, pilote import/export entre VRF.\n#   C'est lui qui definit l'appartenance au VPN (la vraie politique).\n#\n# Config VRF (IOS) :\nvrf definition CLIENT_A\n rd 65000:100\n address-family ipv4\n  route-target export 65000:100\n  route-target import 65000:100\n#\n# Famille MP-BGP : vpnv4 (AFI 1, SAFI 128), avec send-community extended.",
+    note: "Retenir : RD = unicité, RT = politique. Les confondre est l'erreur la plus fréquente." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

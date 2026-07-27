@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 06</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 6,
+  title: "EIGRP en profondeur",
+  subtitle: "Métrique et K-values, stub, leak-map, résumés et named mode : le protocole Cisco maîtrisé.",
+  theory: `
+<h3>1. La métrique et les K-values</h3>
+<p><strong>EIGRP</strong> (« Enhanced Interior Gateway Routing Protocol ») calcule sa métrique à partir de plusieurs composantes pondérées par des coefficients, les <strong>K-values</strong> (K1 à K5). Par défaut, seuls la <strong>bande passante</strong> (K1) et le <strong>délai</strong> (K3) sont pris en compte :</p>
+<pre class="pseudo"># K-values par defaut :
+K1 = 1  (bande passante)
+K2 = 0  (charge)
+K3 = 1  (delai)
+K4 = 0  (fiabilite)
+K5 = 0  (fiabilite / MTU)
+# Par defaut : seuls K1 et K3 sont actifs (bande passante + delai)
+# Verification :
+show ip protocols   ! affiche les K-values utilises</pre>
+<div class="warn">Les K-values doivent être <strong>identiques</strong> entre voisins, sinon l'adjacence <strong>ne se forme pas</strong>. Ne pas activer K2/K4/K5 à la légère : la charge et la fiabilité sont instables et provoquent des recalculs permanents. C'est un piège de dépannage fréquent.</p></div>
+<h3>2. Le concept DUAL : FD, RD, successor</h3>
+<p>EIGRP s'appuie sur l'algorithme <strong>DUAL</strong>. La <strong>FD</strong> (Feasible Distance) est la meilleure métrique vers une destination ; la <strong>RD</strong> (Reported Distance) est la métrique annoncée par le voisin. Le meilleur chemin est le <strong>successor</strong> ; un chemin de secours pré-validé (qui respecte la condition de faisabilité RD &lt; FD) est un <strong>feasible successor</strong>, garanti sans boucle et immédiatement utilisable.</p>
+<h3>3. EIGRP stub et leak-map</h3>
+<p>Un routeur <strong>stub</strong> (typiquement une agence en bout de réseau) annonce un jeu limité de routes et n'est <strong>pas interrogé</strong> lors des recalculs (pas de requêtes DUAL vers lui) : cela borne le périmètre des <em>queries</em> et stabilise le réseau. La <strong>leak-map</strong> permet de « laisser fuir » certaines routes normalement masquées par le stub.</p>
+<pre class="pseudo"># Routeur stub (agence) : n'annonce que connected + summary
+router eigrp 100
+ eigrp stub connected summary
+# Laisser fuir des prefixes precis malgre le stub :
+router eigrp 100
+ eigrp stub receive-only        ! variante : ne rien annoncer
+! leak-map (mode named, voir plus bas) :
+!  af-interface ... / topology base -&gt; summary-address + leak-map</pre>
+<div class="tip">Le stub est un outil d'<strong>évolutivité</strong> majeur : il empêche les requêtes DUAL de se propager dans les agences, ce qui limite les routes <em>stuck-in-active</em> (SIA).</p></div>
+<h3>4. Summarization</h3>
+<p>Contrairement à OSPF, EIGRP résume <strong>sur n'importe quelle interface</strong> (pas seulement aux frontières). Le résumé crée une route <strong>Null0</strong> anti-boucle vers l'agrégat.</p>
+<pre class="pseudo"># Mode classique (par interface) :
+interface Gi0/0
+ ip summary-address eigrp 100 10.10.0.0 255.255.0.0
+# Effet : une seule route annoncee + route vers Null0 localement</pre>
+<h3>5. Le named mode</h3>
+<p>Le <strong>named mode</strong> (EIGRP nommé) regroupe toute la configuration sous une hiérarchie claire : <strong>address-family</strong>, <strong>af-interface</strong> (réglages par interface), <strong>topology base</strong> (résumés, leak-map, filtrage). C'est le mode recommandé aujourd'hui : plus lisible et seul à exposer certaines fonctions modernes.</p>
+<pre class="pseudo"># Named mode :
+router eigrp MON-AS
+ address-family ipv4 unicast autonomous-system 100
+  af-interface Gi0/0
+   summary-address 10.10.0.0 255.255.0.0
+  exit-af-interface
+  topology base
+  exit-af-topology
+ exit-address-family</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># K-values : K1..K5 ; par DEFAUT seuls K1 (BP) et K3 (delai) actifs
+#   -&gt; doivent etre identiques entre voisins, sinon pas d'adjacence
+# DUAL : FD (meilleure metrique), RD (voisin), successor / feasible successor
+#   condition de faisabilite : RD &lt; FD  -&gt; secours sans boucle
+# Stub : borne les queries DUAL (evolutivite) ; leak-map = laisser fuir
+# Summarization : sur n'importe quelle interface + route Null0
+# Named mode : address-family / af-interface / topology base (recommande)</pre>`,
+  exercises: [
+    { type: "qcm", q: "Par défaut, quelles composantes de la métrique EIGRP sont actives ?", opts: ["Charge et fiabilité", "Bande passante (K1) et délai (K3)", "MTU seul", "Toutes les cinq"], a: 1, exp: "Par défaut seuls K1 (bande passante) et K3 (délai) sont pris en compte." },
+    { type: "input", q: "Quelle valeur ont K2, K4 et K5 par défaut ? (un chiffre)", a: ["0", "zero", "0 (zero)"], ph: "un chiffre", exp: "K2=K4=K5=0 par défaut ; seuls K1 et K3 valent 1." },
+    { type: "vf", q: "Deux voisins EIGRP avec des K-values différentes forment quand même une adjacence.", a: false, exp: "Faux : des K-values discordantes empêchent la formation de l'adjacence." },
+    { type: "qcm", q: "Que désigne la FD (Feasible Distance) ?", opts: ["La métrique annoncée par le voisin", "La meilleure métrique locale vers la destination", "Le nombre de sauts", "La charge du lien"], a: 1, exp: "La FD est la meilleure métrique calculée localement vers la destination." },
+    { type: "qcm", q: "La condition de faisabilité d'un feasible successor est…", opts: ["FD &lt; RD", "RD &lt; FD", "RD = FD toujours", "K1 = K3"], a: 1, exp: "Un feasible successor respecte RD &lt; FD (secours garanti sans boucle)." },
+    { type: "input", q: "Comment nomme-t-on le chemin principal (meilleur) vers une destination en EIGRP ? (un mot)", a: ["successor", "le successor"], ph: "s…", exp: "Le successor est le meilleur chemin ; le feasible successor est le secours." },
+    { type: "qcm", q: "Quel est l'intérêt principal d'un routeur EIGRP stub ?", opts: ["Accélérer le SPF", "Borner la propagation des requêtes DUAL (évolutivité)", "Chiffrer les mises à jour", "Augmenter le nombre de voisins"], a: 1, exp: "Le stub empêche les queries DUAL de se propager, limitant les SIA." },
+    { type: "vf", q: "Un routeur stub n'est pas interrogé (queried) par ses voisins lors des recalculs.", a: true, exp: "Vrai : c'est ce qui borne le périmètre des requêtes DUAL." },
+    { type: "input", q: "Quel outil permet de « laisser fuir » certaines routes malgré la configuration stub ? (deux mots)", a: ["leak-map", "leak map", "la leak-map"], ph: "leak-…", exp: "La leak-map autorise l'annonce de préfixes normalement masqués par le stub." },
+    { type: "qcm", q: "Où EIGRP peut-il résumer les routes ?", opts: ["Seulement aux frontières de zone", "Sur n'importe quelle interface", "Nulle part", "Seulement sur le routeur ASBR"], a: 1, exp: "EIGRP résume par interface, n'importe où (contrairement à OSPF)." },
+    { type: "vf", q: "Un résumé EIGRP installe une route Null0 anti-boucle vers l'agrégat.", a: true, exp: "Vrai : la route de discard vers Null0 protège contre les boucles." },
+    { type: "qcm", q: "Quel mode regroupe la config sous address-family / af-interface / topology base ?", opts: ["Le mode classique", "Le named mode", "Le mode passive", "Le mode stub"], a: 1, exp: "Le named mode (EIGRP nommé) organise la configuration hiérarchiquement." },
+    { type: "qcm", q: "Que signifie EIGRP ?", opts: ["Enhanced Interior Gateway Routing Protocol", "External IP Gateway Routing Protocol", "Enterprise Internet Group Routing Protocol", "Extended IGP Reference Protocol"], a: 0, exp: "EIGRP = Enhanced Interior Gateway Routing Protocol." },
+    { type: "input", q: "Quelle commande d'affichage montre notamment les K-values utilisées ? (trois mots)", a: ["show ip protocols", "show ip protocol"], ph: "show ip …", exp: "show ip protocols affiche les K-values et paramètres EIGRP." },
+    { type: "qcm", q: "Pourquoi éviter d'activer K2/K4/K5 sans raison ?", opts: ["Ils sont interdits", "Charge et fiabilité varient et provoquent des recalculs permanents", "Ils chiffrent les updates", "Ils suppriment le stub"], a: 1, exp: "Ces métriques instables déclenchent des recalculs incessants." }
+  ],
+  final: {
+    title: "Exercice final — Stabiliser et faire évoluer un EIGRP",
+    intro: `<p>Une agence en bout de réseau génère trop de requêtes DUAL et un voisin refuse de s'adjacer. Diagnostique et corrige.</p>`,
+    questions: [
+      { type: "qcm", q: "Un voisin ne forme pas d'adjacence EIGRP. Première hypothèse ?", opts: ["Des K-values différentes entre les deux", "Un câble trop long", "Trop de RAM", "Une leak-map manquante"], a: 0, exp: "Des K-values discordantes bloquent l'adjacence : à vérifier en priorité." },
+      { type: "input", q: "Quelle commande affiche les K-values pour comparer ? (trois mots)", a: ["show ip protocols", "show ip protocol"], ph: "show ip …", exp: "show ip protocols révèle les K-values de chaque routeur." },
+      { type: "qcm", q: "Pour éviter que l'agence propage les requêtes DUAL, tu la configures en…", opts: ["passive-interface", "eigrp stub", "summary-address", "named mode uniquement"], a: 1, exp: "eigrp stub borne les queries vers l'agence." },
+      { type: "vf", q: "Une leak-map permettrait de faire annoncer malgré tout un préfixe précis par ce routeur stub.", a: true, exp: "Vrai : la leak-map laisse fuir des routes ciblées malgré le stub." },
+      { type: "qcm", q: "Pour alléger la table du cœur, sur l'interface de sortie tu ajoutes…", opts: ["ip summary-address eigrp", "area range", "virtual-link", "auto-cost"], a: 0, exp: "ip summary-address eigrp résume les préfixes de l'agence (+ Null0)." }
+    ],
+    solution: `<pre class="pseudo"># 1) Adjacence qui echoue : comparer les K-values
+show ip protocols            ! doivent etre identiques des deux cotes
+! rappel : par defaut K1=1, K3=1, K2=K4=K5=0
+
+# 2) Borner les requetes DUAL depuis l'agence :
+router eigrp 100
+ eigrp stub connected summary
+!  -&gt; l'agence n'est plus interrogee (moins de SIA)
+
+# 3) Resumer vers le coeur (+ route Null0 anti-boucle) :
+interface Gi0/0
+ ip summary-address eigrp 100 10.20.0.0 255.255.0.0
+
+# 4) Besoin d'annoncer un prefixe precis malgre le stub -&gt; leak-map</pre>
+<p>Adjacence rétablie, réseau stabilisé, table allégée. Demain : BGP avancé.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccie-j06", title: "Synthèse EIGRP expert", level: 3,
+    statement: "En texte brut, résume EIGRP niveau expert : les <strong>K-values</strong> par défaut et leur contrainte entre voisins, la logique <strong>DUAL</strong> (FD, RD, successor / feasible successor avec sa condition), l'intérêt du <strong>stub</strong> et de la <strong>leak-map</strong>, et l'apport du <strong>named mode</strong>.",
+    hints: [
+      "Par défaut seuls K1 (BP) et K3 (délai) sont actifs ; K-values identiques obligatoires.",
+      "Feasible successor : condition RD < FD, secours sans boucle.",
+      "Stub borne les queries DUAL ; leak-map laisse fuir des routes ; named mode = address-family/af-interface/topology base."
+    ],
+    solution: "# EIGRP niveau expert :\n# METRIQUE / K-VALUES :\n#   K1..K5 ; par defaut K1=1 (bande passante), K3=1 (delai), K2=K4=K5=0.\n#   Les K-values doivent etre IDENTIQUES entre voisins, sinon pas d'adjacence.\n#   Eviter K2/K4/K5 (charge, fiabilite) : instables, recalculs permanents.\n# DUAL :\n#   FD = meilleure metrique locale ; RD = metrique annoncee par le voisin.\n#   Successor = meilleur chemin ; feasible successor = secours pre-valide.\n#   Condition de faisabilite : RD < FD -> garanti sans boucle.\n# STUB :\n#   un routeur stub (agence) n'est pas interroge par les queries DUAL\n#   -> borne leur propagation, ameliore l'evolutivite, limite les SIA.\n#   LEAK-MAP : laisser fuir certaines routes malgre le stub.\n# SUMMARIZATION : sur n'importe quelle interface + route Null0 anti-boucle.\n# NAMED MODE : config hierarchique address-family / af-interface / topology base\n#   (mode recommande aujourd'hui).",
+    note: "show ip protocols affiche les K-values : c'est le premier réflexe quand une adjacence EIGRP refuse de se former." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

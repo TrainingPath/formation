@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 10</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 10,
+  title: "Le routage inter-VLAN",
+  subtitle: "Faire communiquer des VLAN séparés : router-on-a-stick et SVI.",
+  theory: `
+<h3>1. Pourquoi les VLAN ne se parlent pas</h3>
+<p>Hier, on a séparé le réseau en VLAN étanches. Problème : la Comptabilité (VLAN 10) doit parfois joindre un serveur en Production (VLAN 20). Or deux VLAN sont deux <strong>sous-réseaux IP différents</strong>, et un switch de niveau 2 ne fait que commuter des trames à l'intérieur d'un VLAN. Passer d'un VLAN à un autre, c'est passer d'un réseau IP à un autre : cela relève du <strong>routage</strong> (niveau 3). On appelle cela le <strong>routage inter-VLAN</strong> (<em>inter-VLAN routing</em>).</p>
+<p>Image : chaque VLAN est un pays avec sa propre monnaie (son sous-réseau). Pour échanger, il faut passer par un bureau de change frontalier : c'est le rôle du routeur, qui possède une « passerelle » (default gateway) dans chaque VLAN.</p>
+<h3>2. Méthode 1 : router-on-a-stick</h3>
+<p>La première méthode utilise un routeur relié au switch par <strong>un seul lien trunk</strong> — d'où le surnom « routeur sur un bâton » (<em>router-on-a-stick</em>). Sur ce lien unique, on crée des <strong>sous-interfaces</strong> logiques, une par VLAN, chacune taggée en 802.1Q et portant l'adresse de passerelle de son VLAN.</p>
+<pre class="pseudo">! Cote switch : le port vers le routeur est un trunk
+Switch(config)# interface gi0/1
+Switch(config-if)# switchport mode trunk
+! Cote routeur : une sous-interface par VLAN
+Router(config)# interface gi0/0.10
+Router(config-subif)# encapsulation dot1Q 10
+Router(config-subif)# ip address 192.168.10.1 255.255.255.0
+Router(config)# interface gi0/0.20
+Router(config-subif)# encapsulation dot1Q 20
+Router(config-subif)# ip address 192.168.20.1 255.255.255.0</pre>
+<p>Le mot-clé <strong>encapsulation dot1Q 10</strong> associe la sous-interface au VLAN 10 et lui dit de lire/écrire le tag 802.1Q correspondant. Chaque poste utilise l'adresse de sa sous-interface comme <strong>passerelle par défaut</strong>.</p>
+<div class="warn">Piège : sans le mot-clé <strong>dot1Q</strong> et le bon numéro de VLAN sur la sous-interface, le routeur ne saura pas trier les trames taggées. Le numéro après encapsulation dot1Q doit correspondre exactement au VLAN.</div>
+<h3>3. Méthode 2 : SVI sur un switch de niveau 3</h3>
+<p>La méthode moderne utilise un <strong>switch multicouche</strong> (<em>Layer 3 switch</em>) capable de router. On y crée une <strong>interface virtuelle de VLAN</strong> ou <strong>SVI</strong> (<em>Switched Virtual Interface</em>) : une interface logique portant l'adresse IP de passerelle du VLAN, directement dans le switch. Il faut activer le routage avec <strong>ip routing</strong>.</p>
+<pre class="pseudo">Switch(config)# ip routing
+Switch(config)# interface vlan 10
+Switch(config-if)# ip address 192.168.10.1 255.255.255.0
+Switch(config)# interface vlan 20
+Switch(config-if)# ip address 192.168.20.1 255.255.255.0</pre>
+<p>Avantage : plus de lien trunk goulot d'étranglement vers un routeur externe ; le routage se fait à pleine vitesse dans le switch. C'est la solution privilégiée dans les réseaux d'entreprise d'aujourd'hui.</p>
+<div class="tip">Une SVI ne monte (état « up ») que si le VLAN existe et qu'au moins un port actif y est rattaché. Pense à <strong>no shutdown</strong> et à vérifier avec <strong>show ip interface brief</strong>.</div>
+<h3>4. Choisir la bonne méthode</h3>
+<p>Router-on-a-stick est simple et peu coûteux (un routeur, un lien) mais tout le trafic inter-VLAN passe par un seul câble : cela limite le débit. Le switch L3 avec SVI coûte plus cher mais route bien plus vite et évolue mieux. Sur un petit site, router-on-a-stick suffit ; dès qu'il y a beaucoup de VLAN et de trafic, on préfère le switch de niveau 3.</p>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Inter-VLAN = passer d'un sous-reseau IP a un autre -> routage (L3)
+# Router-on-a-stick : 1 trunk + sous-interfaces
+#   interface g0/0.10 / encapsulation dot1Q 10 / ip address ...
+# Switch L3 : ip routing + interface vlan 10 (SVI)
+#   la SVI porte l'IP de passerelle du VLAN
+# Chaque poste = passerelle par defaut vers son VLAN</pre>`,
+  exercises: [
+    { type: "qcm", q: "Pourquoi faut-il du routage pour relier deux VLAN ?", opts: ["Parce qu'ils partagent la même IP", "Parce que deux VLAN sont deux sous-réseaux IP différents", "Parce que le switch est trop lent", "Parce que le tag 802.1Q l'exige"], a: 1, exp: "Chaque VLAN = un sous-réseau. Changer de réseau IP est une opération de niveau 3 : le routage." },
+    { type: "qcm", q: "Comment surnomme-t-on la méthode « un routeur relié au switch par un seul trunk » ?", opts: ["SVI", "router-on-a-stick", "PortFast", "EtherChannel"], a: 1, exp: "Router-on-a-stick : le routeur est au bout d'un unique lien trunk (« bâton »)." },
+    { type: "input", q: "Sur une sous-interface, quel mot-clé associe l'interface au VLAN 10 en 802.1Q ? (ligne complète)", a: ["encapsulation dot1q 10", "encapsulation dot1Q 10"], ph: "encapsulation …", exp: "encapsulation dot1Q 10 lie la sous-interface au VLAN 10 et à son tag." },
+    { type: "qcm", q: "Comment s'appelle l'interface virtuelle de VLAN sur un switch L3 ?", opts: ["Trunk", "SVI (Switched Virtual Interface)", "Loopback", "Sous-interface"], a: 1, exp: "Une SVI est une interface logique interface vlan X portant l'IP de passerelle du VLAN." },
+    { type: "vf", q: "Sur un switch de niveau 3, il faut activer le routage avec la commande ip routing.", a: true, exp: "Vrai : sans ip routing, le switch reste en pur niveau 2 et ne route pas entre SVI." },
+    { type: "input", q: "Quelle commande crée la SVI du VLAN 20 ? (ligne exacte)", a: ["interface vlan 20"], ph: "interface vlan …", exp: "interface vlan 20 crée l'interface virtuelle du VLAN 20." },
+    { type: "qcm", q: "En router-on-a-stick, combien de sous-interfaces pour router 3 VLAN ?", opts: ["1", "2", "3", "6"], a: 2, exp: "Une sous-interface par VLAN à router, soit 3 pour 3 VLAN." },
+    { type: "vf", q: "Chaque poste doit utiliser l'adresse de la sous-interface (ou de la SVI) de son VLAN comme passerelle par défaut.", a: true, exp: "Vrai : la passerelle par défaut du poste est l'IP L3 configurée pour son VLAN." },
+    { type: "qcm", q: "Quel est le principal inconvénient de router-on-a-stick ?", opts: ["Il ne supporte pas le 802.1Q", "Tout le trafic inter-VLAN passe par un seul lien (goulot)", "Il exige deux routeurs", "Il désactive les VLAN"], a: 1, exp: "Le lien trunk unique limite le débit inter-VLAN, contrairement au switch L3." },
+    { type: "qcm", q: "Quel est l'avantage majeur du switch L3 avec SVI ?", opts: ["Il est gratuit", "Il route à pleine vitesse sans goulot d'étranglement", "Il supprime les VLAN", "Il n'a pas besoin d'adresses IP"], a: 1, exp: "Le routage matériel du switch L3 est bien plus rapide et évolutif." },
+    { type: "input", q: "Quelle commande active le routage IP sur un switch multicouche ? (ligne exacte)", a: ["ip routing"], ph: "ip …", exp: "ip routing bascule le switch en mode routeur pour ses SVI." },
+    { type: "vf", q: "Une SVI monte (up) même si son VLAN n'a aucun port actif.", a: false, exp: "Faux : la SVI reste down tant que le VLAN n'existe pas ou n'a aucun port actif rattaché." },
+    { type: "qcm", q: "Le numéro de la sous-interface (ex. g0/0.10) doit-il correspondre au VLAN ?", opts: ["Non, il est libre", "C'est conseillé, mais c'est le encapsulation dot1Q qui fixe le VLAN", "Il doit toujours être 1", "Il doit être supérieur à 100"], a: 1, exp: "Par convention on numérote comme le VLAN, mais techniquement c'est encapsulation dot1Q qui définit le VLAN." },
+    { type: "input", q: "Quelle commande vérifie l'état et l'IP des interfaces (dont les SVI) ?", a: ["show ip interface brief", "show ip int brief"], ph: "show ip interface …", exp: "show ip interface brief liste les interfaces, leur IP et leur état up/down." },
+    { type: "qcm", q: "Sur quel équipement configure-t-on une SVI ?", opts: ["Un switch de niveau 2 seulement", "Un switch de niveau 3 (multicouche)", "Un hub", "Un point d'accès Wi-Fi"], a: 1, exp: "La SVI et le routage inter-VLAN interne nécessitent un switch L3." }
+  ],
+  final: {
+    title: "Exercice final — Router deux VLAN",
+    intro: `<p>Un site possède le VLAN 10 (192.168.10.0/24) et le VLAN 20 (192.168.20.0/24). Tu disposes d'un routeur relié au switch par le seul port Gi0/0. Mets en place le routage inter-VLAN par router-on-a-stick.</p>`,
+    questions: [
+      { type: "qcm", q: "En quel mode configurer le port du switch vers le routeur ?", opts: ["access", "trunk", "SVI", "loopback"], a: 1, exp: "Le lien unique doit transporter les deux VLAN taggés : c'est un trunk." },
+      { type: "input", q: "Quelle ligne associe la sous-interface g0/0.10 au VLAN 10 ?", a: ["encapsulation dot1q 10", "encapsulation dot1Q 10"], ph: "encapsulation …", exp: "encapsulation dot1Q 10." },
+      { type: "qcm", q: "Quelle IP donner à la sous-interface du VLAN 10 (passerelle) ?", opts: ["192.168.20.1", "192.168.10.1", "10.0.0.1", "255.255.255.0"], a: 1, exp: "La passerelle du VLAN 10 est dans 192.168.10.0/24, typiquement .1." },
+      { type: "vf", q: "Chaque PC du VLAN 20 doit pointer sa passerelle par défaut vers 192.168.20.1.", a: true, exp: "Vrai : la passerelle est l'adresse L3 du routeur dans le VLAN du poste." },
+      { type: "qcm", q: "Avec un switch L3, quelle méthode remplacerait avantageusement router-on-a-stick ?", opts: ["Des hubs", "Des SVI (interface vlan) avec ip routing", "Un trunk supplémentaire", "Un VLAN natif unique"], a: 1, exp: "Sur un switch L3, on crée des SVI et on active ip routing : routage interne rapide." }
+    ],
+    solution: `<pre class="pseudo">! --- Switch ---
+interface gi0/1
+ switchport mode trunk
+! --- Routeur (router-on-a-stick) ---
+interface gi0/0.10
+ encapsulation dot1Q 10
+ ip address 192.168.10.1 255.255.255.0
+interface gi0/0.20
+ encapsulation dot1Q 20
+ ip address 192.168.20.1 255.255.255.0
+! Passerelles postes : .10 -> 192.168.10.1 ; .20 -> 192.168.20.1</pre>
+<p>Variante switch L3 : ip routing puis interface vlan 10 / interface vlan 20 avec les mêmes adresses. Le trafic inter-VLAN devient natif au switch, sans goulot.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j10", title: "Passer au switch L3", level: 2,
+    statement: "Un switch multicouche doit router entre le <strong>VLAN 10</strong> (10.1.10.0/24) et le <strong>VLAN 20</strong> (10.1.20.0/24). Écris les commandes IOS pour activer le routage et créer les deux SVI (passerelle en .1 pour chaque VLAN).",
+    hints: [
+      "Le routage entre SVI exige d'abord une commande globale.",
+      "Une SVI se crée avec interface vlan N.",
+      "L'adresse .1 de chaque sous-réseau sert de passerelle."
+    ],
+    solution: "ip routing\n!\ninterface vlan 10\n ip address 10.1.10.1 255.255.255.0\n no shutdown\n!\ninterface vlan 20\n ip address 10.1.20.1 255.255.255.0\n no shutdown",
+    note: "Sans ip routing, les deux SVI resteraient de simples interfaces de gestion et ne routeraient pas entre elles." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 30</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 30,
+  title: "Pratique : configurer un réseau complet",
+  subtitle: "Assembler VLAN, routage inter-VLAN, OSPF, NAT et SSH sur une vraie topologie.",
+  theory: `
+<h3>1. La topologie de travail</h3>
+<p>Aujourd'hui, on assemble tout ce qu'on a appris en une configuration de bout en bout. Le scénario : un commutateur porte deux VLAN, un routeur assure le routage inter-VLAN et l'accès Internet (OSPF côté interne, NAT côté sortie), et l'administration se fait en SSH. Voici la topologie :</p>
+<pre class="pseudo"># Topologie
+[PC VLAN10]--+
+             |
+[PC VLAN20]--+--[SW1]===trunk===[R1 Gi0/0]---(inter-VLAN)
+                                   [R1 Gi0/1]---&gt;[R2/FAI]---&gt; Internet
+VLAN 10 = VENTES  : 192.168.10.0/24
+VLAN 20 = GESTION : 192.168.20.0/24
+Liaison R1-R2 (WAN) : 203.0.113.0/30  (R1 = .1, R2 = .2)</pre>
+<h3>2. Étape 1 — Les VLAN sur le commutateur</h3>
+<p>On crée les VLAN sur SW1, on affecte les ports d'accès et on configure le lien vers R1 en <strong>trunk</strong> (il transporte plusieurs VLAN).</p>
+<pre class="pseudo">SW1(config)# vlan 10
+SW1(config-vlan)# name VENTES
+SW1(config)# vlan 20
+SW1(config-vlan)# name GESTION
+SW1(config)# interface fa0/1
+SW1(config-if)# switchport mode access
+SW1(config-if)# switchport access vlan 10
+SW1(config)# interface fa0/2
+SW1(config-if)# switchport mode access
+SW1(config-if)# switchport access vlan 20
+SW1(config)# interface gi0/1        # lien vers R1
+SW1(config-if)# switchport mode trunk</pre>
+<h3>3. Étape 2 — Le routage inter-VLAN (router-on-a-stick)</h3>
+<p>Pour que le VLAN 10 parle au VLAN 20, le routeur utilise des <strong>sous-interfaces</strong>, une par VLAN, avec l'encapsulation <strong>802.1Q</strong>. C'est le modèle « router-on-a-stick ».</p>
+<pre class="pseudo">R1(config)# interface gi0/0.10
+R1(config-subif)# encapsulation dot1Q 10
+R1(config-subif)# ip address 192.168.10.1 255.255.255.0
+R1(config)# interface gi0/0.20
+R1(config-subif)# encapsulation dot1Q 20
+R1(config-subif)# ip address 192.168.20.1 255.255.255.0
+R1(config)# interface gi0/0
+R1(config-if)# no shutdown          # activer l'interface physique</pre>
+<div class="tip">Chaque sous-interface .10 / .20 devient la passerelle par défaut des PC de son VLAN. Les PC du VLAN 10 pointent vers 192.168.10.1.</div>
+<h3>4. Étape 3 — OSPF côté interne, interface WAN, NAT</h3>
+<p>On configure l'interface WAN vers le FAI, on annonce les réseaux internes en <strong>OSPF</strong> (aire 0), puis on met en place la <strong>NAT</strong> (traduction d'adresses) avec surcharge (PAT) pour l'accès Internet.</p>
+<pre class="pseudo"># Interface WAN vers R2/FAI
+R1(config)# interface gi0/1
+R1(config-if)# ip address 203.0.113.1 255.255.255.252
+R1(config-if)# no shutdown
+
+# OSPF : annoncer les reseaux internes en aire 0
+R1(config)# router ospf 1
+R1(config-router)# network 192.168.10.0 0.0.0.255 area 0
+R1(config-router)# network 192.168.20.0 0.0.0.255 area 0
+
+# NAT/PAT : traduire les adresses privees vers l'IP publique
+R1(config)# access-list 1 permit 192.168.10.0 0.0.0.255
+R1(config)# access-list 1 permit 192.168.20.0 0.0.0.255
+R1(config)# interface gi0/0.10
+R1(config-subif)# ip nat inside
+R1(config)# interface gi0/0.20
+R1(config-subif)# ip nat inside
+R1(config)# interface gi0/1
+R1(config-if)# ip nat outside
+R1(config)# ip nat inside source list 1 interface gi0/1 overload</pre>
+<div class="warn">Sans <code>ip nat inside</code> sur les interfaces internes ET <code>ip nat outside</code> sur la sortie, la NAT ne traduit rien. Le mot-clé <code>overload</code> active la PAT (plusieurs machines derrière une seule IP publique).</div>
+<h3>5. Étape 4 — Sécuriser l'accès en SSH</h3>
+<p>Enfin, on durcit l'accès administratif de R1 avec SSH (rappel du jour 26) : hostname et domaine, compte local, clé RSA, et lignes VTY réservées à SSH.</p>
+<pre class="pseudo">R1(config)# hostname R1
+R1(config)# ip domain name lab.local
+R1(config)# username admin secret Cisco123
+R1(config)# crypto key generate rsa
+  How many bits in the modulus [512]: 2048
+R1(config)# ip ssh version 2
+R1(config)# line vty 0 15
+R1(config-line)# transport input ssh
+R1(config-line)# login local</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># Ordre logique d'un reseau complet :
+# 1) VLAN + ports d'acces + trunk (switch)
+# 2) Sous-interfaces 802.1Q (router-on-a-stick) = routage inter-VLAN
+# 3) Interface WAN + OSPF (network ... area 0) pour l'interne
+# 4) NAT/PAT : ip nat inside / outside + inside source list ... overload
+# 5) SSH : crypto key generate rsa + transport input ssh + login local
+# Verifs : show vlan brief, show ip route, show ip nat translations, show ip ssh</pre>`,
+  exercises: [
+    { type: "qcm", q: "Sur le switch, quel mode doit avoir le port relié au routeur pour transporter plusieurs VLAN ?", opts: ["access", "trunk", "shutdown", "dynamic desirable"], a: 1, exp: "Le lien vers le routeur est un trunk : il transporte plusieurs VLAN (802.1Q)." },
+    { type: "qcm", q: "Le routage inter-VLAN par sous-interfaces s'appelle…", opts: ["Load-balancing", "Router-on-a-stick", "Spanning-tree", "Port-security"], a: 1, exp: "Router-on-a-stick : une sous-interface par VLAN avec encapsulation 802.1Q." },
+    { type: "input", q: "Quelle encapsulation configure-t-on sur une sous-interface pour un VLAN (mot-clé IOS) ?", a: ["dot1q", "dot1Q", "802.1q", "encapsulation dot1q"], ph: "mot-clé", exp: "encapsulation dot1Q <vlan> marque la sous-interface pour ce VLAN." },
+    { type: "vf", q: "La sous-interface gi0/0.10 (192.168.10.1) sert de passerelle par défaut aux PC du VLAN 10.", a: true, exp: "Oui : chaque sous-interface est la passerelle de son VLAN." },
+    { type: "qcm", q: "Dans « network 192.168.10.0 0.0.0.255 area 0 », que représente 0.0.0.255 ?", opts: ["Le masque de sous-réseau", "Le masque générique (wildcard) OSPF", "La passerelle", "L'adresse de broadcast"], a: 1, exp: "OSPF utilise un masque générique (wildcard), inverse du masque de sous-réseau." },
+    { type: "qcm", q: "Quel mot-clé, ajouté à la commande NAT, active la PAT (surcharge) ?", opts: ["inside", "outside", "overload", "static"], a: 2, exp: "overload active la PAT : plusieurs machines partagent une seule IP publique." },
+    { type: "vf", q: "La NAT fonctionne même si on oublie « ip nat outside » sur l'interface de sortie.", a: false, exp: "Non : il faut ip nat inside sur l'interne ET ip nat outside sur la sortie, sinon rien n'est traduit." },
+    { type: "input", q: "Quelle commande affiche les correspondances de traduction NAT actives ?", a: ["show ip nat translations", "show ip nat translation"], ph: "show ip nat ...", exp: "show ip nat translations liste les traductions NAT/PAT en cours." },
+    { type: "qcm", q: "Dans quelle aire OSPF annonce-t-on ici les réseaux internes ?", opts: ["Area 1", "Area 10", "Area 0", "Area 255"], a: 2, exp: "L'aire 0 est l'aire fédératrice (backbone) d'OSPF." },
+    { type: "qcm", q: "Sur les interfaces internes du routeur (côté VLAN), on applique…", opts: ["ip nat outside", "ip nat inside", "switchport access", "no ip address"], a: 1, exp: "Les interfaces côté réseau interne reçoivent ip nat inside." },
+    { type: "vf", q: "Après avoir créé les sous-interfaces, il faut activer l'interface physique avec no shutdown.", a: true, exp: "Oui : l'interface physique gi0/0 doit être activée (no shutdown) pour que les sous-interfaces fonctionnent." },
+    { type: "input", q: "Quelle commande vérifie l'attribution des VLAN et l'état des ports sur le switch ?", a: ["show vlan brief", "show vlan"], ph: "show vlan ...", exp: "show vlan brief résume les VLAN et les ports associés." },
+    { type: "qcm", q: "Pour réserver l'accès administratif de R1 au seul SSH, on tape sur les VTY…", opts: ["transport input telnet", "transport input ssh", "no login", "switchport mode trunk"], a: 1, exp: "transport input ssh bloque Telnet et n'autorise que SSH." },
+    { type: "qcm", q: "Quel est l'ordre logique correct pour bâtir ce réseau ?", opts: ["OSPF, puis VLAN, puis SSH, puis NAT", "VLAN/trunk, sous-interfaces, OSPF/WAN, NAT, SSH", "NAT d'abord, puis VLAN", "SSH, puis trunk, puis rien d'autre"], a: 1, exp: "On part du LAN (VLAN/trunk), puis routage inter-VLAN, puis OSPF/WAN, NAT et enfin SSH." },
+    { type: "vf", q: "Chaque PC d'un VLAN doit avoir pour passerelle par défaut l'adresse de la sous-interface de SON VLAN.", a: true, exp: "Oui : le VLAN 10 pointe vers 192.168.10.1, le VLAN 20 vers 192.168.20.1." }
+  ],
+  final: {
+    title: "Exercice final — Bâtir le réseau de bout en bout",
+    intro: `<p>Tu configures R1 et SW1 pour deux VLAN (10 VENTES, 20 GESTION), le routage inter-VLAN, OSPF interne, la NAT vers le FAI et l'accès SSH. Remets les étapes et les commandes dans l'ordre.</p>`,
+    questions: [
+      { type: "qcm", q: "Première étape sur SW1 pour séparer VENTES et GESTION ?", opts: ["Configurer OSPF", "Créer les VLAN 10 et 20 et affecter les ports", "Activer la NAT", "Générer la clé RSA"], a: 1, exp: "On commence par créer les VLAN et affecter les ports d'accès, puis le trunk." },
+      { type: "input", q: "Sur R1, quelle commande de sous-interface marque gi0/0.20 pour le VLAN 20 ?", a: ["encapsulation dot1q 20", "encapsulation dot1Q 20"], ph: "encapsulation ...", exp: "encapsulation dot1Q 20 associe la sous-interface au VLAN 20." },
+      { type: "input", q: "Quelle commande NAT active la PAT vers l'interface de sortie gi0/1 ?", a: ["ip nat inside source list 1 interface gi0/1 overload", "ip nat inside source list 1 interface gigabitethernet0/1 overload"], ph: "ip nat inside source ...", exp: "ip nat inside source list 1 interface gi0/1 overload traduit l'interne vers l'IP de sortie (PAT)." },
+      { type: "qcm", q: "Pour que le VLAN 10 atteigne le VLAN 20 sans passer par Internet, il faut…", opts: ["Une route statique par défaut", "Le routage inter-VLAN (sous-interfaces 802.1Q)", "Activer overload", "Un second switch"], a: 1, exp: "Le routage inter-VLAN via router-on-a-stick relie les VLAN entre eux." },
+      { type: "vf", q: "L'accès administratif est sécurisé en générant une clé RSA puis en limitant les VTY à SSH (transport input ssh, login local).", a: true, exp: "Oui : clé RSA + transport input ssh + login local durcissent l'accès." }
+    ],
+    solution: `<pre class="pseudo"># Synthese de la configuration complete
+# --- SW1 : VLAN + trunk ---
+vlan 10 name VENTES ; vlan 20 name GESTION
+int fa0/1 -> switchport access vlan 10
+int fa0/2 -> switchport access vlan 20
+int gi0/1 -> switchport mode trunk
+# --- R1 : routage inter-VLAN (router-on-a-stick) ---
+int gi0/0.10 -> encapsulation dot1Q 10 ; ip address 192.168.10.1 255.255.255.0
+int gi0/0.20 -> encapsulation dot1Q 20 ; ip address 192.168.20.1 255.255.255.0
+int gi0/0 -> no shutdown
+# --- R1 : WAN + OSPF + NAT ---
+int gi0/1 -> ip address 203.0.113.1 255.255.255.252 ; no shutdown
+router ospf 1 -> network 192.168.10.0 0.0.0.255 area 0
+              network 192.168.20.0 0.0.0.255 area 0
+access-list 1 permit 192.168.10.0 0.0.0.255
+access-list 1 permit 192.168.20.0 0.0.0.255
+int gi0/0.10 & gi0/0.20 -> ip nat inside ; int gi0/1 -> ip nat outside
+ip nat inside source list 1 interface gi0/1 overload
+# --- R1 : SSH ---
+ip domain name lab.local ; username admin secret Cisco123
+crypto key generate rsa (2048) ; ip ssh version 2
+line vty 0 15 -> transport input ssh ; login local</pre>
+<p>VLAN, routage inter-VLAN, OSPF, NAT et SSH forment ensemble un réseau fonctionnel, routé, connecté à Internet et administrable en sécurité.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j30", title: "Router-on-a-stick pour deux VLAN", level: 2,
+    statement: "Sur R1, écris la configuration des <strong>sous-interfaces</strong> réalisant le routage inter-VLAN pour le VLAN 10 (réseau <code>192.168.10.0/24</code>, passerelle .1) et le VLAN 20 (<code>192.168.20.0/24</code>, passerelle .1) sur l'interface physique <code>gi0/0</code>, sans oublier d'activer l'interface physique.",
+    hints: [
+      "Une sous-interface par VLAN : gi0/0.10 et gi0/0.20.",
+      "Chaque sous-interface a une commande encapsulation dot1Q <vlan>.",
+      "N'oublie pas no shutdown sur l'interface physique gi0/0."
+    ],
+    solution: "R1(config)# interface gi0/0.10\nR1(config-subif)# encapsulation dot1Q 10\nR1(config-subif)# ip address 192.168.10.1 255.255.255.0\nR1(config-subif)# exit\nR1(config)# interface gi0/0.20\nR1(config-subif)# encapsulation dot1Q 20\nR1(config-subif)# ip address 192.168.20.1 255.255.255.0\nR1(config-subif)# exit\nR1(config)# interface gi0/0\nR1(config-if)# no shutdown",
+    note: "Chaque sous-interface devient la passerelle par défaut des PC de son VLAN." }
+  ],
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

@@ -1,0 +1,113 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 07</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 7,
+  title: "Le protocole BGP",
+  subtitle: "eBGP/iBGP, attributs de chemin et sélection de route.",
+  theory: `
+<h3>1. BGP, le protocole qui tient Internet</h3>
+<p>BGP (« Border Gateway Protocol », version 4) est le protocole de routage <strong>entre systèmes autonomes</strong>. Un <strong>système autonome</strong> (« AS ») est un ensemble de réseaux sous une même administration, identifié par un <strong>numéro d'AS</strong> (ASN). Là où OSPF ou EIGRP routent <em>à l'intérieur</em> d'une organisation (IGP), BGP route <em>entre</em> les organisations (EGP). C'est un protocole à <strong>vecteur de chemin</strong> : il transporte le chemin complet d'AS (l'<strong>AS-PATH</strong>) pour éviter les boucles.</p>
+<p>BGP établit des <strong>sessions</strong> sur <strong>TCP port 179</strong> avec des voisins explicitement configurés (pas de découverte automatique). Il ne diffuse pas toute la table à chaque changement : il envoie des mises à jour incrémentielles.</p>
+<h3>2. eBGP contre iBGP</h3>
+<p>On distingue deux saveurs selon que le voisin est dans un autre AS ou le même :</p>
+<pre class="pseudo"># eBGP vs iBGP
+eBGP : session entre deux AS DIFFÉRENTS   -> AD = 20
+iBGP : session à l'INTÉRIEUR du même AS   -> AD = 200
+# Rappel AD : plus la valeur est basse, plus la source est "digne de confiance".
+# eBGP (20) est préféré à un IGP comme OSPF (110) ; iBGP (200) est moins prioritaire.</pre>
+<div class="warn">Règle iBGP à connaître : une route apprise d'un voisin iBGP n'est PAS réannoncée à un autre voisin iBGP (règle du split-horizon iBGP). D'où le besoin d'un maillage complet (full-mesh) iBGP, ou de mécanismes comme les route reflectors. En eBGP, en revanche, le compteur AS-PATH assure la prévention de boucle et le TTL est à 1 par défaut (voisins directement connectés).</div>
+<h3>3. Les attributs de chemin</h3>
+<p>BGP ne choisit pas sur une simple métrique : il compare des <strong>attributs de chemin</strong> (« path attributes »). Les principaux pour ENCOR :</p>
+<pre class="pseudo"># Attributs BGP essentiels
+Weight      -> propre à Cisco, LOCAL au routeur (non annoncé). Plus haut = préféré.
+Local Pref  -> préférence dans TOUT l'AS (annoncée en iBGP). Plus haut = préféré.
+AS-Path     -> liste des AS traversés. Plus COURT = préféré (et anti-boucle).
+Origin      -> comment la route est entrée dans BGP (IGP &lt; EGP &lt; Incomplete).
+MED         -> Multi-Exit Discriminator : suggère à un AS voisin par où entrer.
+                Plus BAS = préféré. Annoncé en eBGP.
+Next-Hop    -> prochain saut pour atteindre le préfixe.</pre>
+<p>Deux points de vocabulaire : le <strong>Weight</strong> est purement Cisco et ne quitte jamais le routeur ; la <strong>Local Preference</strong>, elle, est partagée dans tout l'AS et sert à choisir la sortie préférée du réseau vers l'extérieur.</p>
+<h3>4. Le processus de sélection de route</h3>
+<p>Quand plusieurs chemins existent vers un même préfixe, BGP les départage par un ordre <strong>strict</strong>. Les premiers critères (mémo « We Love Oranges AS Oranges Mean Pure Refreshment ») :</p>
+<pre class="pseudo"># Ordre de sélection BGP (du plus au moins prioritaire)
+1. Weight     le plus HAUT        (Cisco, local)
+2. Local Pref le plus HAUT        (dans tout l'AS)
+3. Route générée localement        (originée par ce routeur : network/aggregate)
+4. AS-Path le plus COURT
+5. Origin le plus bas               (IGP &lt; EGP &lt; Incomplete)
+6. MED le plus BAS
+7. eBGP préféré à iBGP
+8. Chemin IGP le plus proche vers le next-hop
+... (puis départage : plus vieux, plus bas Router-ID, etc.)</pre>
+<div class="tip">Retiens le podium : d'abord <strong>Weight</strong> (le plus haut), puis <strong>Local Preference</strong> (le plus haut), puis <strong>AS-Path</strong> (le plus court). Ces trois-là tranchent la majorité des cas. Weight et Local Pref sont des leviers de politique interne ; AS-Path est objectif (distance en AS).</div>
+<pre class="pseudo"># Configuration IOS (extraits)
+router bgp 65001
+ neighbor 203.0.113.1 remote-as 65002    ! voisin eBGP (AS différent)
+ neighbor 10.0.0.2   remote-as 65001     ! voisin iBGP (même AS)
+ network 192.0.2.0 mask 255.255.255.0
+# Vérifs : show ip bgp   |   show ip bgp summary   |   show bgp neighbors</pre>
+<h3>5. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># BGP = routage ENTRE AS, vecteur de chemin, TCP/179
+# eBGP (AD 20) entre AS différents ; iBGP (AD 200) dans le même AS
+# Attributs : Weight (local Cisco), Local Pref (dans l'AS),
+#             AS-Path (court=mieux), Origin, MED (bas=mieux)
+# Sélection : Weight haut > Local Pref haut > AS-Path court > Origin > MED bas
+# iBGP ne réannonce pas à iBGP -> full-mesh ou route reflectors.</pre>`,
+  exercises: [
+    { type: "qcm", q: "BGP sert principalement à router…", opts: ["À l'intérieur d'une aire OSPF", "Entre systèmes autonomes (AS)", "Entre VLAN d'un même commutateur", "Entre VM d'un hôte"], a: 1, exp: "BGP est le protocole de routage entre AS (EGP)." },
+    { type: "input", q: "Sur quel port TCP BGP établit-il ses sessions ?", a: ["179", "tcp 179", "port 179"], ph: "un numéro", exp: "BGP utilise TCP port 179." },
+    { type: "qcm", q: "À quelle catégorie de protocole BGP appartient-il ?", opts: ["État de liens", "Vecteur de distance", "Vecteur de chemin", "Statique"], a: 2, exp: "BGP est un protocole à vecteur de chemin (path vector), il transporte l'AS-Path." },
+    { type: "input", q: "Quelle est la distance administrative (AD) d'eBGP ?", a: ["20"], ph: "un nombre", exp: "eBGP a une AD de 20." },
+    { type: "input", q: "Quelle est la distance administrative (AD) d'iBGP ?", a: ["200"], ph: "un nombre", exp: "iBGP a une AD de 200." },
+    { type: "qcm", q: "Quelle affirmation est correcte ?", opts: ["eBGP relie deux AS différents ; iBGP relie deux routeurs du même AS", "eBGP relie le même AS ; iBGP relie deux AS", "eBGP et iBGP sont identiques", "iBGP fonctionne sans TCP"], a: 0, exp: "eBGP = entre AS différents ; iBGP = à l'intérieur du même AS." },
+    { type: "qcm", q: "L'attribut Weight (Cisco) est…", opts: ["Annoncé à tout l'AS", "Local au routeur et jamais annoncé ; plus haut = préféré", "Le plus bas préféré", "Un synonyme du MED"], a: 1, exp: "Le Weight est propriétaire Cisco, local au routeur, non annoncé, plus haut = préféré." },
+    { type: "qcm", q: "L'attribut Local Preference…", opts: ["Est local à un seul routeur", "Est partagé dans tout l'AS ; plus haut = préféré", "Est plus bas = préféré", "N'existe qu'en eBGP"], a: 1, exp: "La Local Pref est diffusée en iBGP dans tout l'AS ; plus haut = préféré." },
+    { type: "vf", q: "Pour l'AS-Path, un chemin plus court est préféré.", a: true, exp: "Oui : AS-Path le plus court gagne (et il sert aussi d'anti-boucle)." },
+    { type: "vf", q: "Pour le MED, une valeur plus haute est préférée.", a: false, exp: "Faux : le MED le plus BAS est préféré." },
+    { type: "qcm", q: "Quel est le tout premier critère de sélection BGP ?", opts: ["AS-Path le plus court", "Weight le plus haut", "MED le plus bas", "Origin"], a: 1, exp: "Le Weight (le plus haut) est le premier critère de sélection." },
+    { type: "qcm", q: "Après le Weight, quel critère départage les routes ?", opts: ["MED", "Local Preference (la plus haute)", "Router-ID", "Origin"], a: 1, exp: "Ordre : Weight, puis Local Preference la plus haute." },
+    { type: "vf", q: "Une route apprise d'un voisin iBGP est réannoncée à un autre voisin iBGP.", a: false, exp: "Faux : règle du split-horizon iBGP ; d'où le full-mesh ou les route reflectors." },
+    { type: "input", q: "Comment appelle-t-on l'identifiant numérique d'un système autonome ?", a: ["asn", "numéro d'as", "numero d'as", "numéro de système autonome"], ph: "sigle ou terme", exp: "L'ASN (Autonomous System Number) identifie un AS." },
+    { type: "qcm", q: "L'ordre de préférence de l'attribut Origin est…", opts: ["Incomplete &lt; EGP &lt; IGP", "IGP &lt; EGP &lt; Incomplete (IGP préféré)", "EGP &lt; IGP &lt; Incomplete", "Tous équivalents"], a: 1, exp: "Origin : IGP est préféré à EGP, lui-même préféré à Incomplete." }
+  ],
+  final: {
+    title: "Exercice final — Qui gagne la sélection ?",
+    intro: `<p>Un routeur Cisco reçoit deux chemins vers le préfixe 198.51.100.0/24. Chemin X : Weight 0, Local Pref 200, AS-Path de 3 AS. Chemin Y : Weight 0, Local Pref 100, AS-Path de 2 AS. Applique l'ordre de sélection.</p>`,
+    questions: [
+      { type: "qcm", q: "Premier critère comparé : les Weights sont égaux (0). On passe donc à…", opts: ["L'AS-Path", "La Local Preference", "Le MED", "L'Origin"], a: 1, exp: "Weights égaux : on compare ensuite la Local Preference." },
+      { type: "qcm", q: "Chemin X a Local Pref 200, chemin Y a 100. Lequel est préféré à ce stade ?", opts: ["Chemin X (200 > 100)", "Chemin Y (100)", "Aucun", "Le plus court AS-Path"], a: 0, exp: "Local Pref la plus haute gagne : X (200) est retenu." },
+      { type: "vf", q: "Bien que Y ait un AS-Path plus court, X l'emporte grâce à sa Local Preference plus haute.", a: true, exp: "Oui : la Local Pref est comparée AVANT l'AS-Path, donc elle tranche d'abord." },
+      { type: "input", q: "Quel chemin (X ou Y) sera finalement installé ?", a: ["x", "le chemin x", "chemin x"], ph: "X ou Y", exp: "X gagne par sa Local Preference supérieure." },
+      { type: "qcm", q: "Si les deux chemins avaient eu la même Local Pref, quel critère les aurait départagés ensuite ?", opts: ["Le MED", "L'AS-Path le plus court", "Le Router-ID", "L'Origin"], a: 1, exp: "À Local Pref égale (et hors route locale), l'AS-Path le plus court départage." }
+    ],
+    solution: `<pre class="pseudo"># Sélection pour 198.51.100.0/24
+Etape 1 Weight     : X=0, Y=0  -> égalité, on continue
+Etape 2 Local Pref : X=200, Y=100 -> X GAGNE (le plus haut)
+=> Chemin X installé, MÊME SI son AS-Path est plus long.
+# Rappel ordre : Weight > Local Pref > (route locale) > AS-Path > Origin > MED
+# La Local Preference l'emporte sur l'AS-Path : politique avant distance.</pre>
+<p>Tu sais dérouler la sélection de route BGP. Demain, dernière leçon : faire cohabiter tous ces protocoles avec la redistribution de routes.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j07", title: "Attributs et sélection BGP", level: 3,
+    statement: "En texte, distingue <strong>eBGP</strong> et <strong>iBGP</strong> (avec leur AD), décris les attributs <strong>Weight, Local Preference, AS-Path et MED</strong> (sens de préférence de chacun), puis donne les <strong>trois premiers critères</strong> de l'ordre de sélection BGP.",
+    hints: [
+      "eBGP = AD 20 (entre AS) ; iBGP = AD 200 (même AS).",
+      "Weight et Local Pref : plus haut = préféré ; AS-Path : plus court ; MED : plus bas.",
+      "Ordre : Weight haut, puis Local Pref haut, puis AS-Path court."
+    ],
+    solution: "# eBGP vs iBGP\n# - eBGP : session entre deux AS DIFFERENTS, AD = 20\n# - iBGP : session dans le MEME AS, AD = 200\n#   (iBGP ne reannonce pas a iBGP -> full-mesh ou route reflectors)\n#\n# Attributs (sens de preference)\n# - Weight    : propre a Cisco, LOCAL au routeur, plus HAUT = prefere\n# - Local Pref: partagee dans tout l'AS, plus HAUT = prefere\n# - AS-Path   : liste des AS traverses, plus COURT = prefere (anti-boucle)\n# - MED       : suggere l'entree a l'AS voisin, plus BAS = prefere\n#\n# Trois premiers criteres de selection\n# 1. Weight le plus HAUT\n# 2. Local Preference la plus HAUTE\n# 3. AS-Path le plus COURT",
+    note: "BGP est un vecteur de chemin sur TCP/179 ; il route entre systèmes autonomes, là où OSPF/EIGRP routent à l'intérieur." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

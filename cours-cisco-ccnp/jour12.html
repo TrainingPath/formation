@@ -1,0 +1,99 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 12</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 12,
+  title: "EtherChannel avancé (LACP, load balancing)",
+  subtitle: "Fusionner plusieurs câbles en un seul lien logique, plus rapide et redondant.",
+  theory: `
+<h3>1. Le principe de l'agrégation de liens</h3>
+<p>Un <strong>EtherChannel</strong> (« agrégation de liens », « link aggregation ») regroupe jusqu'à <strong>8 liens physiques actifs</strong> en un seul <strong>lien logique</strong> (« port-channel »). Avantages : la bande passante s'additionne (8 x 1 Gbit/s ≈ 8 Gbit/s), et si un câble tombe, les autres continuent, sans que le Spanning Tree ne bloque quoi que ce soit — car STP voit UN seul lien logique, pas plusieurs boucles.</p>
+<pre class="pseudo">Switch(config)# interface range gi0/1 - 2
+Switch(config-if-range)# channel-group 1 mode active   ! LACP
+Switch(config-if-range)# exit
+Switch(config)# interface port-channel 1               ! interface logique
+Switch(config-if)# switchport mode trunk</pre>
+<h3>2. Les protocoles de négociation : LACP et PAgP</h3>
+<p>Deux protocoles peuvent négocier l'agrégation. <strong>PAgP</strong> (« Port Aggregation Protocol ») est propriétaire Cisco ; <strong>LACP</strong> (« Link Aggregation Control Protocol », 802.3ad / 802.1AX) est le <strong>standard ouvert</strong>, à privilégier. On peut aussi former un EtherChannel <strong>statique</strong> (mode « on »), sans négociation.</p>
+<pre class="pseudo"># Modes LACP  : active (propose) / passive (attend)
+# Modes PAgP  : desirable (propose) / auto (attend)
+# Statique    : on (force, aucune negociation)
+# Combinaisons qui MONTENT :
+#   LACP : active-active, active-passive        (passive-passive = NON)
+#   PAgP : desirable-desirable, desirable-auto   (auto-auto = NON)
+#   on-on (les deux cotes forces)</pre>
+<div class="warn">On ne mélange jamais les protocoles : un côté LACP face à un côté PAgP ne forme pas de canal. De même, <strong>on</strong> face à <strong>active</strong> échoue : « on » n'envoie aucune trame de négociation.</div>
+<h3>3. Cohérence obligatoire des ports</h3>
+<p>Tous les ports membres doivent partager les <strong>mêmes paramètres</strong> : même vitesse, même duplex, même mode (access/trunk), mêmes VLAN autorisés, même VLAN natif. Un seul écart et le port est écarté du canal (« suspended »).</p>
+<div class="tip">Vérifie l'état avec <strong>show etherchannel summary</strong> : un port en <em>(P)</em> est « bundled » (dans le canal), en <em>(s)</em> il est suspendu, en <em>(D)</em> il est down.</div>
+<h3>4. Le load balancing : répartir les trames</h3>
+<p>EtherChannel ne « coupe » pas une trame sur plusieurs câbles : chaque flux emprunte UN lien choisi par un <strong>algorithme de hachage</strong> (« hash ») appliqué à des champs d'en-tête (adresses MAC, IP ou ports source/destination). Le résultat désigne toujours le même lien pour un flux donné, garantissant l'ordre des paquets.</p>
+<pre class="pseudo">Switch(config)# port-channel load-balance src-dst-ip
+! Options frequentes :
+#   src-mac / dst-mac / src-dst-mac
+#   src-ip  / dst-ip  / src-dst-ip
+#   src-dst-port (couche 4, meilleure repartition)</pre>
+<div class="warn">Si tous tes flux partagent la même IP source et destination (ex : deux serveurs qui se parlent), un hachage sur les IP enverra TOUT sur un seul lien. Choisis un algorithme qui varie : par exemple <strong>src-dst-port</strong> pour distribuer selon les ports de couche 4.</div>
+<h3>5. EtherChannel de couche 2 et de couche 3</h3>
+<p>Un EtherChannel <strong>L2</strong> se comporte comme un port commuté (access ou trunk). Un EtherChannel <strong>L3</strong> (« routed ») porte directement une adresse IP : on passe l'interface port-channel en mode routé avec <strong>no switchport</strong>, puis on lui donne une IP. Utile entre commutateurs de niveau 3 pour une liaison routée agrégée.</p>
+<pre class="pseudo">Switch(config)# interface port-channel 2
+Switch(config-if)# no switchport
+Switch(config-if)# ip address 172.16.0.1 255.255.255.252</pre>
+<h3>6. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># EtherChannel : jusqu'a 8 liens actifs -> 1 lien logique (port-channel), STP voit 1 lien
+# LACP (standard 802.3ad) : active / passive   |   PAgP (Cisco) : desirable / auto
+# Combinaisons OK : active-active, active-passive, desirable-auto, on-on
+# Ports membres : memes vitesse/duplex/mode/VLAN sinon suspendus
+# Load balancing : hachage par flux (mac/ip/port) -> choisir un champ qui VARIE
+# L2 = commute (access/trunk)   |   L3 = no switchport + ip address</pre>`,
+  exercises: [
+    { type: "qcm", q: "Quel est l'intérêt principal d'un EtherChannel ?", opts: ["Chiffrer les liens", "Agréger plusieurs liens physiques en un lien logique plus rapide et redondant", "Créer des VLAN", "Remplacer le routage"], a: 1, exp: "EtherChannel additionne la bande passante et la redondance sur un lien logique unique." },
+    { type: "qcm", q: "Combien de liens physiques actifs un EtherChannel peut-il regrouper ?", opts: ["2", "4", "8", "16"], a: 2, exp: "Jusqu'à 8 liens actifs (d'autres pouvant être en attente selon la plateforme)." },
+    { type: "qcm", q: "Quel protocole d'agrégation est un standard ouvert (802.3ad) ?", opts: ["PAgP", "LACP", "DTP", "HSRP"], a: 1, exp: "LACP est standardisé (802.3ad/802.1AX) ; PAgP est propriétaire Cisco." },
+    { type: "qcm", q: "Quelle combinaison LACP forme un EtherChannel ?", opts: ["passive - passive", "active - passive", "on - active", "auto - auto"], a: 1, exp: "active-passive (ou active-active) monte ; passive-passive et on-active échouent." },
+    { type: "qcm", q: "Comment EtherChannel répartit-il le trafic sur les liens ?", opts: ["Il découpe chaque trame sur tous les liens", "Un algorithme de hachage assigne chaque flux à un lien", "Aléatoirement paquet par paquet", "Toujours sur le premier lien"], a: 1, exp: "Un hachage sur des champs d'en-tête fixe le lien d'un flux, préservant l'ordre." },
+    { type: "qcm", q: "Comment transforme-t-on un port-channel en EtherChannel de couche 3 ?", opts: ["switchport mode trunk", "no switchport puis ip address", "channel-group 1 mode on", "spanning-tree portfast"], a: 1, exp: "no switchport passe l'interface en routé, puis on lui attribue une IP." },
+    { type: "vf", q: "Le Spanning Tree bloque les liens redondants d'un EtherChannel.", a: false, exp: "STP voit UN seul lien logique, donc il ne bloque pas les membres du canal." },
+    { type: "vf", q: "On peut mélanger un côté LACP et un côté PAgP pour former un canal.", a: false, exp: "Les deux extrémités doivent utiliser le même protocole de négociation." },
+    { type: "vf", q: "Tous les ports membres d'un EtherChannel doivent avoir les mêmes vitesse, duplex et configuration VLAN.", a: true, exp: "Un écart de paramètres écarte le port (suspended) du canal." },
+    { type: "vf", q: "Un algorithme de load balancing basé sur les IP source/destination répartit toujours bien même si deux serveurs uniques se parlent.", a: false, exp: "Avec une seule paire src/dst IP, le hash désigne un seul lien ; il faut varier (ex : ports L4)." },
+    { type: "input", q: "Comment s'appelle l'interface logique créée par un EtherChannel ? (deux mots)", a: ["port-channel", "port channel", "portchannel"], ph: "port-...", exp: "L'interface logique est le port-channel." },
+    { type: "input", q: "Quel mode LACP propose activement la négociation ?", a: ["active", "mode active"], ph: "un mot", exp: "Le mode active envoie des trames LACP pour proposer le canal." },
+    { type: "input", q: "Quel mode PAgP attend passivement une proposition ?", a: ["auto", "mode auto"], ph: "un mot", exp: "En PAgP, auto attend ; desirable propose." },
+    { type: "input", q: "Quelle commande IOS montre l'état résumé des EtherChannels ?", a: ["show etherchannel summary", "etherchannel summary"], ph: "show etherchannel ...", exp: "show etherchannel summary affiche l'état (P) bundled, (s) suspended, (D) down." },
+    { type: "input", q: "Quel algorithme de load balancing utilise les ports de couche 4 pour mieux répartir ?", a: ["src-dst-port", "src dst port", "port"], ph: "src-dst-...", exp: "src-dst-port hache sur les ports L4, offrant une meilleure distribution." }
+  ],
+  final: {
+    title: "Exercice final — Un lien agrégé robuste entre deux commutateurs",
+    intro: "<p>Tu relies deux commutateurs par deux liens Gi0/1 et Gi0/2 qui transportent plusieurs VLAN. Tu veux un lien agrégé standard, négocié, en trunk, et un load balancing efficace pour du trafic web varié.</p>",
+    questions: [
+      { type: "qcm", q: "Quel protocole choisis-tu pour rester interopérable ?", opts: ["PAgP", "LACP", "DTP", "GLBP"], a: 1, exp: "LACP est le standard ouvert, recommandé." },
+      { type: "input", q: "Quel mode LACP mets-tu des deux côtés pour une négociation active ? (un mot)", a: ["active"], ph: "un mot", exp: "active des deux côtés (ou active-passive) forme le canal." },
+      { type: "qcm", q: "Sur quelle interface configures-tu le mode trunk ?", opts: ["Sur chaque port physique séparément", "Sur l'interface port-channel 1", "Sur le VLAN 1", "Nulle part, c'est automatique"], a: 1, exp: "On configure le trunk sur l'interface logique port-channel 1." },
+      { type: "vf", q: "Si Gi0/1 est en access et Gi0/2 en trunk, le canal se formera quand même parfaitement.", a: false, exp: "Les membres doivent partager la même config ; sinon un port est suspendu." },
+      { type: "qcm", q: "Pour bien répartir du trafic web entre nombreux clients et serveurs, quel algorithme ?", opts: ["src-mac uniquement", "dst-ip uniquement", "src-dst-port (couche 4)", "on"], a: 2, exp: "src-dst-port varie le plus les flux web, améliorant la répartition." }
+    ],
+    solution: "<pre class=\"pseudo\">! Sur les deux commutateurs\ninterface range gi0/1 - 2\n channel-group 1 mode active        ! LACP\n!\ninterface port-channel 1\n switchport trunk encapsulation dot1q\n switchport mode trunk\n!\n! Load balancing global\nport-channel load-balance src-dst-port\n!\n! Verification\nshow etherchannel summary            ! attendre (P) sur Gi0/1 et Gi0/2</pre><p>LACP en mode active des deux côtés forme le canal ; le trunk se configure sur le port-channel ; src-dst-port distribue les flux web sur les deux liens.</p>"
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccnp-j12", title: "Un EtherChannel LACP en trunk", level: 2,
+    statement: "Configure un EtherChannel <strong>LACP</strong> (mode active) sur les interfaces <code>Gi0/1</code> et <code>Gi0/2</code>, puis fais de l'interface logique <code>port-channel 1</code> un <strong>trunk 802.1Q</strong>. Ajoute la commande globale de <strong>load balancing</strong> basée sur les ports de couche 4.",
+    hints: [
+      "Groupe les deux ports avec channel-group 1 mode active.",
+      "Le trunk se configure sur interface port-channel 1.",
+      "Le load balancing global : port-channel load-balance src-dst-port."
+    ],
+    solution: "interface range Gi0/1 - 2\n channel-group 1 mode active\n!\ninterface port-channel 1\n switchport trunk encapsulation dot1q\n switchport mode trunk\n!\nport-channel load-balance src-dst-port",
+    note: "mode active = LACP proposant ; les deux extrémités doivent utiliser le même protocole (LACP) et une config de port identique." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>

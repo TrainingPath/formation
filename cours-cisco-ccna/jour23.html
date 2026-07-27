@@ -1,0 +1,123 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 23</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 23,
+  title: "La qualité de service (QoS)",
+  subtitle: "Quand le réseau est saturé, décider qui passe en premier : la voix avant le téléchargement.",
+  theory: `
+<h3>1. Pourquoi de la QoS ?</h3>
+<p>Un lien a une capacité finie. En cas de congestion, les paquets s'accumulent dans des files d'attente : certains attendent (<strong>délai</strong>), arrivent en désordre (<strong>gigue</strong>, en anglais <em>jitter</em>) ou sont jetés (<strong>perte</strong>). Pour un téléchargement, ce n'est pas grave. Pour un appel <strong>voix sur IP</strong> ou une <strong>visioconférence</strong>, c'est catastrophique : la conversation devient hachée. La <strong>QoS</strong> (« Quality of Service ») organise le passage pour protéger les trafics sensibles. C'est la voie prioritaire des ambulances au milieu des embouteillages.</p>
+<h3>2. Les trois besoins de la voix</h3>
+<pre class="pseudo"># Recommandations classiques pour la voix (VoIP) :
+# Delai (latence) aller  &lt; 150 ms
+# Gigue (jitter)         &lt; 30 ms
+# Perte de paquets       &lt; 1 %
+# La voix est reguliere et peu gourmande, mais TRES sensible au retard.</pre>
+<h3>3. Classification et marquage</h3>
+<p>La QoS commence par <strong>classer</strong> (classification) le trafic : reconnaître à quelle catégorie appartient un paquet (voix, vidéo, données critiques, best-effort). On le <strong>marque</strong> ensuite (marquage) en inscrivant une valeur dans l'en-tête, pour que tous les équipements suivants le traitent sans avoir à le ré-analyser.</p>
+<pre class="pseudo"># Marquage de COUCHE 2 : champ CoS (Class of Service) dans la trame 802.1Q (3 bits, 0-7)
+# Marquage de COUCHE 3 : champ DSCP dans l'en-tete IP (6 bits, 0-63) -> le plus utilise
+#
+# Valeurs DSCP courantes :
+#   EF  (Expedited Forwarding) = 46  -> VOIX (faible latence, priorite)
+#   CS6 = 48  -> trafic reseau/routage
+#   AF31/AF41 ...              -> video, donnees applicatives
+#   DF (Default) = 0          -> best-effort (par defaut)</pre>
+<div class="tip">On marque idéalement <strong>au plus près de la source</strong>, à la <strong>frontière de confiance</strong> (trust boundary), souvent le commutateur d'accès où se branche le téléphone IP.</div>
+<h3>4. Files d'attente et ordonnancement</h3>
+<p>Quand plusieurs paquets attendent, un <strong>ordonnanceur</strong> décide de l'ordre de sortie. Deux mécanismes clés :</p>
+<pre class="pseudo"># CBWFQ (Class-Based Weighted Fair Queuing) :
+#   garantit une PART de bande passante a chaque classe (bandwidth).
+# LLQ (Low Latency Queuing) :
+#   ajoute une file a PRIORITE STRICTE (priority) servie AVANT les autres.
+#   -> c'est la file ideale pour la VOIX.
+# Une file a priorite stricte est plafonnee (policing) pour ne pas
+# affamer les autres classes.</pre>
+<h3>5. Gérer la saturation : shaping, policing, anti-congestion</h3>
+<pre class="pseudo"># POLICING  : impose un debit maximal ; jette (ou re-marque) ce qui depasse. Pas de retard.
+# SHAPING   : lisse le trafic en le mettant en tampon pour respecter un debit. Ajoute du retard.
+# WRED (Weighted Random Early Detection) : jette preventivement quelques paquets
+#            AVANT la saturation totale, pour eviter que toutes les sessions TCP
+#            ralentissent en meme temps (tail drop / synchronisation globale).</pre>
+<div class="warn">Ne confonds pas <strong>policing</strong> (jette l'excès, pas de mémoire tampon) et <strong>shaping</strong> (retient et lisse, avec tampon donc du délai). Le shaping est plutôt côté sortie client ; le policing plutôt côté entrée opérateur.</div>
+<h3>6. Le modèle DiffServ et un exemple IOS (MQC)</h3>
+<p>Le modèle dominant est <strong>DiffServ</strong> (services différenciés) : chaque paquet est traité selon sa marque DSCP, sans réservation préalable de bout en bout. Sur IOS, on l'applique avec le <strong>MQC</strong> (Modular QoS CLI) : <code>class-map</code> (classer) → <code>policy-map</code> (traiter) → <code>service-policy</code> (appliquer sur une interface).</p>
+<pre class="pseudo">R1(config)# class-map match-all VOIX
+R1(config-cmap)#  match dscp ef
+R1(config)# policy-map SORTIE
+R1(config-pmap)#  class VOIX
+R1(config-pmap-c)#   priority percent 20      # file a priorite stricte (LLQ) pour la voix
+R1(config-pmap)#  class class-default
+R1(config-pmap-c)#   fair-queue
+R1(config)# interface Gi0/1
+R1(config-if)#  service-policy output SORTIE</pre>
+<h3>7. Ce qu'il faut retenir</h3>
+<pre class="pseudo"># QoS combat delai, gigue (jitter) et perte quand le lien est congestionne
+# Voix : delai &lt;150 ms, gigue &lt;30 ms, perte &lt;1 %
+# Etapes : CLASSER (class-map) -> MARQUER (DSCP couche3 / CoS couche2) -> METTRE EN FILE
+# DSCP EF = 46 -> VOIX ; DF = 0 -> best-effort
+# LLQ (priority) = file a priorite stricte pour la voix ; CBWFQ garantit des parts
+# Policing = jette l'exces (pas de tampon) ; Shaping = lisse avec tampon (ajoute du delai)
+# Modele DiffServ ; sur IOS : MQC = class-map + policy-map + service-policy</pre>`,
+  exercises: [
+    { type: "qcm", q: "Que combat principalement la QoS sur un lien congestionné ?", opts: ["Les virus", "Le délai, la gigue (jitter) et la perte de paquets", "Les fautes de câblage", "Les boucles de routage"], a: 1, exp: "La QoS gère délai, gigue et perte pour protéger les trafics sensibles." },
+    { type: "qcm", q: "Quel trafic est le plus sensible au délai et à la gigue ?", opts: ["Un téléchargement de fichier", "La voix sur IP (VoIP)", "La sauvegarde de nuit", "Le courrier électronique"], a: 1, exp: "La voix, en temps réel, tolère très mal le retard et la gigue." },
+    { type: "input", q: "Quel est le seuil de délai (latence) aller recommandé pour la voix ?", a: ["150 ms", "150ms", "150", "moins de 150 ms"], ph: "en ms", exp: "On vise moins de 150 ms de délai aller pour une voix de bonne qualité." },
+    { type: "qcm", q: "Comment appelle-t-on la variation du délai entre paquets ?", opts: ["La perte", "La gigue (jitter)", "Le débit", "Le marquage"], a: 1, exp: "La gigue (jitter) est la variation du délai ; elle doit rester faible (&lt; 30 ms pour la voix)." },
+    { type: "qcm", q: "Où marque-t-on le trafic en couche 3 ?", opts: ["Dans le champ CoS de la trame", "Dans le champ DSCP de l'en-tête IP", "Dans l'adresse MAC", "Dans le préambule Ethernet"], a: 1, exp: "DSCP (6 bits) se trouve dans l'en-tête IP ; CoS (3 bits) est en couche 2." },
+    { type: "input", q: "Quelle valeur DSCP est typiquement utilisée pour la voix ?", a: ["ef", "46", "expedited forwarding"], ph: "nom ou valeur", exp: "EF (Expedited Forwarding), valeur 46, marque la voix prioritaire." },
+    { type: "qcm", q: "Que fait la première étape de la QoS, la classification ?", opts: ["Elle jette les paquets", "Elle reconnaît à quelle catégorie appartient un paquet", "Elle chiffre le trafic", "Elle route les paquets"], a: 1, exp: "Classer = identifier la catégorie du trafic (voix, vidéo, données...)." },
+    { type: "qcm", q: "Quel mécanisme offre une file à priorité stricte, idéale pour la voix ?", opts: ["WRED", "LLQ (Low Latency Queuing)", "Shaping", "CoS"], a: 1, exp: "LLQ ajoute une file servie avant les autres : parfaite pour la voix." },
+    { type: "vf", q: "Le policing jette (ou re-marque) l'excès sans mettre les paquets en tampon.", a: true, exp: "Vrai : le policing ne bufferise pas, il élimine l'excès ; il n'ajoute donc pas de délai." },
+    { type: "qcm", q: "En quoi le shaping diffère-t-il du policing ?", opts: ["Il chiffre les paquets", "Il met les paquets en tampon pour lisser le débit, ajoutant du délai", "Il élit un DR", "Il supprime le marquage"], a: 1, exp: "Le shaping retient et lisse (tampon = délai) ; le policing jette l'excès sans tampon." },
+    { type: "vf", q: "Il vaut mieux marquer le trafic au plus près de la source, à la frontière de confiance.", a: true, exp: "Vrai : marquer tôt (souvent au switch d'accès) évite de ré-analyser le trafic partout ensuite." },
+    { type: "qcm", q: "Quel modèle QoS traite chaque paquet selon sa marque, sans réservation de bout en bout ?", opts: ["IntServ", "DiffServ (services différenciés)", "MPLS", "STP"], a: 1, exp: "DiffServ classe par marque DSCP ; c'est le modèle dominant, scalable." },
+    { type: "input", q: "Sur IOS, quel outil regroupe class-map, policy-map et service-policy (sigle) ?", a: ["mqc", "modular qos cli"], ph: "un sigle", exp: "Le MQC (Modular QoS CLI) : class-map (classer), policy-map (traiter), service-policy (appliquer)." },
+    { type: "qcm", q: "Combien de valeurs le champ DSCP peut-il coder (6 bits) ?", opts: ["8", "16", "64", "256"], a: 2, exp: "6 bits = 64 valeurs possibles (0 à 63)." },
+    { type: "qcm", q: "À quoi sert WRED ?", opts: ["À chiffrer la voix", "À jeter préventivement quelques paquets avant la saturation totale", "À attribuer des adresses IP", "À marquer en couche 2"], a: 1, exp: "WRED prévient la congestion en écartant tôt quelques paquets, évitant la synchronisation globale TCP." }
+  ],
+  final: {
+    title: "Exercice final — Prioriser la voix sur un lien WAN",
+    intro: `<p>Le lien WAN Gi0/1 de R1 sature aux heures de pointe et les appels VoIP deviennent hachés. La voix est marquée <strong>DSCP EF</strong>. Tu dois lui garantir une file à priorité stricte de 20 % de la bande passante, le reste du trafic étant traité équitablement.</p>`,
+    questions: [
+      { type: "qcm", q: "Quelle étape reconnaît le trafic voix marqué EF ?", opts: ["Le shaping", "La classification (class-map match dscp ef)", "Le routage OSPF", "Le NAT"], a: 1, exp: "Une class-map avec « match dscp ef » classe le trafic voix." },
+      { type: "input", q: "Écris la commande qui, dans une class-map, sélectionne le DSCP EF.", a: ["match dscp ef", "match dscp 46"], ph: "match dscp ...", exp: "match dscp ef (ou 46)." },
+      { type: "qcm", q: "Quel mécanisme donne à la voix une file servie avant les autres ?", opts: ["fair-queue", "priority (LLQ)", "shape average", "police"], a: 1, exp: "La commande priority crée la file à priorité stricte (LLQ)." },
+      { type: "vf", q: "Une file à priorité stricte est plafonnée pour ne pas affamer les autres classes.", a: true, exp: "Vrai : la voix est prioritaire mais bornée, sinon elle monopoliserait le lien." },
+      { type: "qcm", q: "Quelle commande applique la politique en sortie de Gi0/1 ?", opts: ["service-policy input SORTIE", "service-policy output SORTIE", "ip access-group SORTIE out", "policy-map SORTIE"], a: 1, exp: "service-policy output SORTIE applique la policy-map au trafic sortant." }
+    ],
+    solution: `<pre class="pseudo">R1(config)# class-map match-all VOIX
+R1(config-cmap)#  match dscp ef
+R1(config)# policy-map WAN
+R1(config-pmap)#  class VOIX
+R1(config-pmap-c)#   priority percent 20        # LLQ : file a priorite stricte
+R1(config-pmap)#  class class-default
+R1(config-pmap-c)#   fair-queue                 # equite pour le reste
+R1(config)# interface Gi0/1
+R1(config-if)#  service-policy output WAN
+R1# show policy-map interface Gi0/1             # verifier</pre>
+<p>La voix (EF) passe désormais en priorité stricte, mais bornée à 20 % : les appels restent fluides sans étouffer les autres trafics.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  placeholder: "Écris ta réponse ici…",
+  items: [
+  { id: "ccna-j23", title: "Classer, marquer, prioriser", level: 2,
+    statement: "Explique les trois grandes étapes de la QoS (<strong>classification</strong>, <strong>marquage</strong>, <strong>mise en file</strong>), précise quelle valeur <strong>DSCP</strong> marque la voix, et indique la différence entre <strong>policing</strong> et <strong>shaping</strong>.",
+    hints: [
+      "Classer = reconnaître la catégorie ; marquer = inscrire une valeur (DSCP en couche 3) ; mettre en file = ordonnancer.",
+      "La voix se marque en DSCP EF (valeur 46).",
+      "Policing jette l'excès sans tampon ; shaping bufferise et lisse, ajoutant du délai."
+    ],
+    solution: "# 1) CLASSIFICATION : reconnaitre a quelle categorie appartient le paquet\n#    (voix, video, donnees, best-effort).\n# 2) MARQUAGE : inscrire une valeur dans l'en-tete (DSCP en couche 3, CoS en couche 2)\n#    pour que la suite du reseau la traite sans re-analyser.\n# 3) MISE EN FILE : l'ordonnanceur choisit l'ordre de sortie (LLQ/CBWFQ).\n#\n# Voix -> DSCP EF (valeur 46).\n#\n# POLICING : impose un debit max, jette (ou re-marque) l'exces, PAS de tampon (pas de retard).\n# SHAPING  : met en tampon et lisse pour respecter un debit, AJOUTE du delai.",
+    note: "On marque idéalement au plus près de la source, à la frontière de confiance (souvent le switch d'accès)." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>
