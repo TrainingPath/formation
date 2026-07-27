@@ -56,9 +56,88 @@ Périmètre : uniquement `cours-python/`. Les autres cours sont inchangés (gén
 - 21/21 leçons : la solution de référence passe **tous** ses tests (`_verify_py.js`).
 - Clés localStorage historiques préservées ; nouvelles clés (`ecrpass-*`) purement additives.
 
-### À vérifier dans un navigateur (nécessite Internet pour le CDN Pyodide)
-1. Ouvrir `cours-python/lecon12.html` → écrire la classe → **▶ Exécuter** → « 3/3 tests passés » + badge.
-2. Recharger une leçon plusieurs fois → l'ordre des options de QCM change, mais la bonne réponse
-   reste correcte.
-3. Faire une leçon, puis ouvrir `cours-python/examen.html` → 10 questions, score à la fin.
-4. Vérifier qu'un ancien score (`py21-l*`) est toujours affiché sur le sommaire.
+### Vérification navigateur — statut honnête
+
+**Non réalisée automatiquement.** L'agent qui a produit ces modifications n'a pas d'accès à un
+navigateur avec Internet ; il ne peut donc pas exécuter réellement Pyodide. Ce qui a été vérifié
+par programme : syntaxe de tous les JS (`node --check`), parsing de `DAY`/`ECRITURE`, intégrité des
+QCM (4 options, index `a` valide), et surtout **exécution des solutions de référence + de leurs tests
+sous Python 3 réel** via `_verify_py.js` (21/21 leçons à `pass:N/N`). Cela prouve que les tests sont
+corrects, mais **pas** que le rendu Pyodide dans un vrai navigateur est parfait.
+
+Reste donc à valider **par un humain, dans un navigateur connecté** (cocher une fois fait) :
+
+- [ ] Ouvrir `cours-python/lecon12.html`, écrire la classe `CompteBancaire`, cliquer **▶ Exécuter**
+      → la sortie s'affiche puis « 3/3 tests passés » et le badge « écriture validée » apparaît.
+- [ ] Le mélange des options de QCM est **stable au rechargement** d'une même leçon (choix assumé :
+      seed = énoncé, donc même question → même ordre). Ce qui doit varier, c'est **la position de la
+      bonne réponse d'une question à l'autre** — vérifier qu'elle n'est plus systématiquement au même rang.
+- [ ] Après avoir validé au moins une leçon, ouvrir `cours-python/examen.html` (en ligne ou via
+      `python -m http.server`) → 10 questions, corrections et score à la fin. En `file://`, un message
+      d'explication doit s'afficher au lieu d'un écran vide.
+- [ ] Un ancien score (`py21-l*`) enregistré avant ces changements est toujours affiché sur le sommaire.
+
+---
+
+## Phase 0 — Correctifs demandés par l'audit du pilote
+
+Corrigés avant toute généralisation.
+
+- **0.1 — Artefact de test.** Suppression de `taches.json` (généré par l'exercice « carnet en JSON »
+  de la leçon 17) du disque et du suivi Git (`git rm --cached`). Ajout au `.gitignore` de motifs pour
+  les artefacts d'exécution (`taches.json`, `carnet.json`, `*.out`, `cours-*/*.json` sauf données de fil rouge).
+- **0.2 — Garde-fou `file://` dans le mode examen.** `cours-python/examen.js` : si `fetch()` échoue
+  (site ouvert en `file://`), un message explique la cause et propose la version en ligne ou
+  `python -m http.server`, au lieu d'un écran vide. À reprendre dans tout futur `examen.js`.
+- **0.3 — README + accueil.** Précisé que le site s'utilise **sans installation**, que **seule**
+  l'exécution du code dans le navigateur nécessite Internet (CDN Pyodide), et que le mode examen en
+  local demande un petit serveur (`python -m http.server`) car `file://` bloque `fetch()`.
+- **0.4 — Correction d'une consigne fausse.** L'ancienne étape « recharger change l'ordre des options »
+  était erronée : le mélange est **déterministe** (seed = énoncé), donc stable au rechargement d'une même
+  question. La consigne a été corrigée (c'est la position de la bonne réponse *entre questions* qui varie).
+- **0.5 — `balanceOpts` désactivé dans `cours-python`.** Ce mécanisme (allongement artificiel du pire
+  distracteur) datait d'avant la réécriture manuelle des distracteurs et pouvait produire des phrases
+  bancales. L'appel est neutralisé dans `cours-python/engine.js` (`var _opts = ex.opts.slice()`). La
+  fonction reste définie mais inerte. `balanceOpts` demeure actif dans les cours **pas encore traités**.
+- **0.6 — Honnêteté de la vérification navigateur.** Voir la section « Vérification navigateur » ci-dessus :
+  l'exécution Pyodide réelle **n'a pas** été testée en navigateur (pas d'accès), c'est explicitement indiqué
+  et laissé en cases à cocher pour un humain. Ce qui est prouvé automatiquement : les solutions de référence
+  passent 100 % de leurs tests sous Python 3 réel.
+
+---
+
+## Généralisation — étapes préparatoires
+
+- **Prep-A — Vérificateur universel `_verify.js`.** Étend `_verify_py.js` à trois langages :
+  Python (via `python3`), JavaScript (via le module `vm` de node, jsdom utilisé si disponible pour les
+  tests DOM), SQL (via le module `sqlite3` intégré de python3, aucune installation requise). Chaque cours
+  exécutable doit afficher `pass:N/N` pour toutes ses solutions de référence avant d'être commité.
+  Testé sur les trois modes (Python sur `lecon12`, SQL et JS sur des cas témoins) : OK.
+- **Prep-B — Mélange QCM porté mécaniquement sur les 80 `engine.js` restants.** Même logique que le pilote
+  (drapeau `correct` par option, seed = énoncé, index recalculé). `balanceOpts` reste **actif** dans ces
+  cours (il ne sera désactivé qu'au lot où leurs distracteurs sont réécrits). Contrôles : `node --check`
+  sur les 81 (0 erreur) ; test fonctionnel sur 10 cours-échantillons → **133/133 QCM** conservent la bonne
+  réponse après mélange, et la position de la bonne réponse est désormais répartie sur les 4 rangs
+  (39/26/38/30) au lieu d'être fixe. Le mélange reste déterministe (stable au rechargement d'une question).
+- **Prep-C — `exo-ecriture.js` canonique déployé sur 76 cours (Phase 6.1).** Nouvelle version qui rend
+  systématiquement une **grille d'auto-relecture** (champ `checklist`, ou 3 critères génériques par défaut)
+  avant le bouton « Voir la solution ». Elle intègre aussi le **runner Python conditionnel** : le bouton
+  ▶ n'apparaît **que** pour un item réellement exécutable (`lang:"python"` + `tests`). Un exercice de
+  pseudocode, de conception ou d'un langage non exécutable n'a donc **pas** de bouton ▶ — aucun faux
+  interpréteur. Les 4 cours à runner spécialisé (`cours-web` en JS, `cours-sql`/`initiation-bdd`/`sgbd-avance`
+  en SQL) sont volontairement exclus de ce déploiement : ils recevront leur runner dédié au lot 2.
+  `node --check` OK sur l'échantillon vérifié.
+
+### Correction de périmètre (Phase 1) constatée par inspection
+Le plan initial supposait `cours-projet-python`, `cours-projet-python-pro` et `cours-algorithmes`
+« exécutables en Python ». **L'inspection du contenu réel contredit cette hypothèse** :
+- `cours-projet-python` / `-pro` sont des projets **Django / architecture / CI-CD** : les exercices
+  d'écriture sont des descriptions de conception (« Décris ton architecture… »), non du Python autonome ;
+- `cours-algorithmes` rédige ses solutions — y compris dans les pages bonus — en **pseudocode français**
+  (`ALGORITHME … DÉBUT … FIN`, `FONCTION … : ENTIER`), non en Python.
+
+Conclusion : le **seul** cours à écriture Python réellement exécutable est le pilote `cours-python`.
+La Phase 1 (exécution réelle) se concentre donc sur `cours-web` (JS) et les cours SQL. Les trois cours
+ci-dessus relèvent des Phases 2 (distracteurs, examen) et 6 (checklist), plus — pour les deux projets —
+des encadrés « 🖥️ À toi de jouer » et de la leçon finale « Publier et faire relire ». Aucun interpréteur
+n'a été inventé pour du pseudocode ou du Django.

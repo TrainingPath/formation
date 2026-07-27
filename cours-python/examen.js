@@ -53,10 +53,11 @@
       return;
     }
     root.appendChild(el("p", "loading", "⏳ Préparation de ton examen à partir de " + lessons.length + " leçon(s) validée(s)…"));
+    var fetchFailed = false;
     Promise.all(lessons.map(function (n) {
       return fetch("lecon" + pad(n) + ".html").then(function (r) { return r.text(); })
         .then(function (t) { return { n: n, day: extractDAY(t) }; })
-        .catch(function () { return { n: n, day: null }; });
+        .catch(function () { fetchFailed = true; return { n: n, day: null }; });
     })).then(function (all) {
       var pool = [];
       all.forEach(function (o) {
@@ -64,6 +65,23 @@
         var qs = (o.day.exercises || []).concat(o.day.final ? o.day.final.questions : []);
         qs.forEach(function (ex) { if (ex && ex.type) pool.push({ ex: ex, lesson: o.n }); });
       });
+      // Garde-fou : si aucune question n'a pu être chargée, c'est presque toujours parce que
+      // la page est ouverte en local (file://), où le navigateur bloque fetch(). On l'explique.
+      if (!pool.length) {
+        root.innerHTML = "";
+        root.appendChild(el("div", "card",
+          "<h2>Le mode examen n'a pas pu charger les questions</h2>" +
+          (fetchFailed
+            ? "<p>Tu as probablement ouvert le site directement depuis un fichier (adresse commençant par <code>file://</code>). " +
+              "Pour des raisons de sécurité, le navigateur y interdit la lecture des autres leçons.</p>" +
+              "<p><strong>Deux solutions :</strong></p>" +
+              "<ul><li>utilise la <strong>version en ligne</strong> (GitHub Pages) ;</li>" +
+              "<li>ou lance un petit serveur local dans le dossier du site : <code>python -m http.server</code>, " +
+              "puis ouvre <code>http://localhost:8000</code>.</li></ul>"
+            : "<p>Aucune question exploitable n'a été trouvée dans tes leçons validées.</p>") +
+          "<p><a href=\"index.html\">← Retour au sommaire</a></p>"));
+        return;
+      }
       // mélange du pool et sélection de NB questions
       for (var i = pool.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
       var chosen = pool.slice(0, Math.min(NB, pool.length));

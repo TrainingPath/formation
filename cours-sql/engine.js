@@ -122,14 +122,25 @@
 
     if (ex.type === "qcm") {
       var _opts = balanceOpts(ex);
-      _opts.forEach(function (opt, k) {
+      // Mélange déterministe des options (seed = énoncé) avec recalcul de l'index correct :
+      // la bonne réponse n'est plus jamais à une position fixe, mais l'ordre reste stable
+      // d'un rechargement à l'autre pour une même question.
+      var _items = _opts.map(function (opt, k) { return { text: opt, correct: k === ex.a }; });
+      var _seed = 0, _q = String(ex.q || "");
+      for (var _s = 0; _s < _q.length; _s++) _seed = (_seed * 31 + _q.charCodeAt(_s)) & 0x7fffffff;
+      function _rnd() { _seed = (_seed * 1103515245 + 12345) & 0x7fffffff; return _seed / 0x7fffffff; }
+      for (var _i = _items.length - 1; _i > 0; _i--) {
+        var _j = Math.floor(_rnd() * (_i + 1));
+        var _tmp = _items[_i]; _items[_i] = _items[_j]; _items[_j] = _tmp;
+      }
+      _items.forEach(function (it, k) {
         var lab = el("label", "opt");
-        lab.innerHTML = '<input type="radio" name="' + name + '" value="' + k + '"> ' + opt;
+        lab.innerHTML = '<input type="radio" name="' + name + '" value="' + k + '"> ' + it.text;
         box.appendChild(lab);
       });
       getAnswer = function () {
         var c = box.querySelector('input[name="' + name + '"]:checked');
-        return c === null ? null : (parseInt(c.value, 10) === ex.a);
+        return c === null ? null : !!_items[parseInt(c.value, 10)].correct;
       };
     } else if (ex.type === "vf") {
       ["Vrai", "Faux"].forEach(function (opt, k) {

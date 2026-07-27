@@ -124,7 +124,9 @@
     var getAnswer, name = "opt_" + id;
 
     if (ex.type === "qcm") {
-      var _opts = balanceOpts(ex);
+      // balanceOpts est DÉSACTIVÉ dans ce cours : les distracteurs ont été réécrits à la main
+      // (plausibles, de longueur comparable), donc l'allongement artificiel n'a plus lieu d'être.
+      var _opts = ex.opts.slice();
       // On associe à chaque option un drapeau "correct", PUIS on mélange l'ordre
       // d'affichage de façon déterministe (seed = énoncé) et on recalcule l'index
       // correct. La bonne réponse n'est donc plus jamais toujours à la même place,

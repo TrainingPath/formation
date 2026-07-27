@@ -14,7 +14,26 @@ Chaque leçon propose de la théorie, des exercices auto-corrigés et des exerci
 
 ## Utilisation
 
-Le site est entièrement statique : aucune installation, aucun serveur, aucune dépendance.
+Le site est entièrement statique : **aucune installation** à faire.
 Ouvre `index.html` dans un navigateur, ou consulte la version en ligne publiée avec GitHub Pages.
 
 La progression (scores des exercices) est enregistrée localement dans le navigateur.
+
+### Connexion Internet : quand est-elle nécessaire ?
+
+Presque tout fonctionne **hors ligne** : lire les leçons, répondre aux exercices auto-corrigés,
+suivre sa progression. **Une seule fonctionnalité a besoin d'Internet** : l'exécution du code
+directement dans le navigateur (bouton ▶ des exercices d'écriture Python), car l'interpréteur
+Pyodide est chargé depuis un CDN au premier clic. Sans connexion, le bouton ▶ affiche un message
+clair et tout le reste continue de marcher normalement.
+
+### Ouvrir le site en local
+
+Ouvrir un simple fichier (`file://`) suffit pour lire les leçons. En revanche, le **mode examen**
+lit les autres leçons via `fetch()`, ce que les navigateurs bloquent en `file://`. Pour l'utiliser
+en local, lance un petit serveur dans le dossier du site puis ouvre l'adresse indiquée :
+
+```
+python -m http.server
+# puis http://localhost:8000
+```

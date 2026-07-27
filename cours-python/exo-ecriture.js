@@ -127,16 +127,20 @@
     exo.appendChild(ta);
 
     /* ---- rangée de boutons ---- */
+    // Le bouton « Exécuter » n'apparaît QUE pour les exercices réellement exécutables en Python
+    // dans le navigateur (item avec des tests Python). Un exercice de pseudocode, de conception
+    // ou d'un langage non exécutable ici n'a pas de bouton ▶ — on n'invente pas d'interpréteur.
+    var isRunnable = !!(x.tests && x.tests.length) && ((x.lang || "python") === "python");
     var btns = el("div", "btnrow");
-    var runBtn = el("button", "check run", "▶ Exécuter mon code");
+    var runBtn = isRunnable ? el("button", "check run", "▶ Exécuter mon code") : null;
     var hintBtn = el("button", "check", "💡 Indice (0/" + x.hints.length + ")");
-    btns.appendChild(runBtn);
+    if (runBtn) btns.appendChild(runBtn);
     btns.appendChild(hintBtn);
     exo.appendChild(btns);
 
     /* ---- zone de sortie d'exécution ---- */
     var out = el("div", "runout");
-    exo.appendChild(out);
+    if (isRunnable) exo.appendChild(out);
 
     function showOut(headHtml, bodyText, isErr) {
       out.className = "runout show";
@@ -148,7 +152,7 @@
       return out;
     }
 
-    runBtn.addEventListener("click", function () {
+    if (runBtn) runBtn.addEventListener("click", function () {
       var code = ta.value;
       if (!code.trim()) { showOut("Sortie", "(rien à exécuter : écris d'abord du code)", true); return; }
       runBtn.disabled = true;
