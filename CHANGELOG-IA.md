@@ -210,3 +210,38 @@ cours-web : 5). Contrôle final : **1303 QCM, tous avec un index de bonne répon
 Ma première boucle de vérification pouvait **masquer** un item en échec quand un autre item du même fichier
 était `disabled`. Boucle refaite pour compter **chaque item** séparément — c'est ainsi que le `sgbd-j31b`
 caché a été retrouvé et corrigé.
+
+---
+
+## Lot 3 — Java / JVM (non exécutables dans le navigateur)
+
+Cours traités : `cours-java` (31 leçons), `cours-projet-java`, `cours-projet-java-pro`, `cours-spring`,
+`cours-hibernate` (21 chacun). Java ne tourne pas dans le navigateur : **aucun interpréteur inventé**.
+
+### Nouveau bloc « 🖥️ À toi de jouer » (runner)
+Le runner canonique rend désormais un champ `atoi: { cmd, expected }` : la **commande locale exacte**
+(ex. `javac X.java && java X`, `./mvnw spring-boot:run`, `docker compose up`, `curl …`) et la **sortie
+attendue exacte** à comparer, plus une `checklist` d'auto-vérification. Déployé sur les 81 cours.
+
+### Vérification réelle des sorties Java attendues
+Le sandbox a `java` (JDK 11) mais pas `javac` ; `_verify.js` gagne un **mode `java`** qui lance la solution
+de référence via `java Fichier.java` (mode fichier unique, JEP 330) et compare sa sortie à `atoi.expected`.
+Ce n'est pas une exécution navigateur : c'est un **contrôle que la sortie annoncée à l'élève est correcte**.
+
+### Résultat vérifié
+- **115 leçons**, toutes parsées (0 fichier invalide) ; **1894 QCM**, tous avec un index de bonne réponse valide.
+- **108 encadrés « À toi de jouer »** ajoutés.
+- **13 programmes Java** de `cours-java` sont réellement exécutés et leur sortie attendue vérifiée
+  (`_verify.js` → `pass:1/1`). Les autres exercices Java (programmes interactifs à `Scanner`, code Spring/JPA
+  non autonome, `record`/JUnit non compilables sous JDK 11) reçoivent un `atoi` descriptif + checklist,
+  sans `lang:"java"` (donc ignorés par le gate, à dessein).
+- Distracteurs réécrits sur les 5 cours (~590 QCM retouchés d'après les rapports) ; `balanceOpts` désactivé
+  dans les 5 `engine.js` ; mode examen + liens Tuteur IA ajoutés aux 5 sommaires. Aucun artefact `.class`/`.java`.
+- **Corrections factuelles : aucune** (les agents n'ont trouvé aucune mauvaise réponse). Un ajustement
+  technique dans `cours-java/lecon14` : réordonnancement des classes pour que celle contenant `main` soit
+  en tête (exigence du mode fichier unique de `java`), sans changer la logique.
+
+### Note de structure
+Les cours du parcours « fil rouge » (Java/Spring…) regroupent `var DAY` et `var ECRITURE` dans un **même
+bloc `<script>`** (+ scripts `fil-rouge`). Le vérificateur et les contrôles d'intégrité ont été ajustés
+pour gérer les deux structures ; `_verify.js` (qui ne lit que `ECRITURE`) n'était pas affecté.

@@ -46,6 +46,12 @@
     ".testsum.ko{background:var(--ko-soft);color:var(--ko)}" +
     ".ecrbadge{display:inline-block;margin-left:10px;padding:2px 10px;border-radius:999px;background:var(--ok-soft);color:var(--ok);font-size:.8em;font-weight:700;vertical-align:middle}" +
     ".sqlnote{background:#fdf6e3;border-left:4px solid #b8860b;padding:8px 12px;border-radius:0 8px 8px 0;margin-top:10px;font-size:.9em}" +
+    ".atoi{margin-top:12px;border:1px solid #cdd8ea;border-radius:10px;overflow:hidden}" +
+    ".atoi .atoi-h{background:#eef3fb;color:#1e2533;font-weight:700;padding:8px 12px;font-size:.92em}" +
+    ".atoi .atoi-b{padding:10px 12px}" +
+    ".atoi .atoi-b p{margin:0 0 4px;font-size:.88em;color:var(--muted)}" +
+    ".atoi pre{margin:0 0 10px;padding:10px;border-radius:8px;background:#1e2533;color:#d8e0f5;white-space:pre-wrap;word-break:break-word;font:.88em/1.45 ui-monospace,Menlo,Consolas,monospace}" +
+    ".atoi pre.cmd{background:#0f1420;color:#9fd0ff}" +
     ".checklist{background:#fff;border:1px solid #e2e7f0;border-radius:10px;padding:10px 14px;margin-top:12px}" +
     ".checklist h4{margin:0 0 6px;font-size:.95em;color:var(--ink)}" +
     ".checklist label{display:flex;gap:8px;align-items:flex-start;font-size:.92em;margin:4px 0;cursor:pointer}" +
@@ -239,6 +245,23 @@
         } catch (e) { out.appendChild(el("div", "testsum ko", "❌ Impossible d'exécuter les tests : " + (e.message || e))); }
         done();
       });
+    }
+
+    /* ---- « À toi de jouer » : commande locale + sortie attendue (langages non exécutables ici) ---- */
+    if (x.atoi && (x.atoi.cmd || x.atoi.expected)) {
+      var adi = el("div", "atoi");
+      adi.appendChild(el("div", "atoi-h", "🖥️ À toi de jouer — exécute-le sur ta machine"));
+      var abody = el("div", "atoi-b");
+      if (x.atoi.cmd) {
+        abody.appendChild(el("p", null, "Compile et lance :"));
+        var pc = el("pre", "cmd"); pc.textContent = x.atoi.cmd; abody.appendChild(pc);
+      }
+      if (x.atoi.expected !== undefined) {
+        abody.appendChild(el("p", null, "Sortie attendue (compare-la avec la tienne, caractère pour caractère) :"));
+        var pe2 = el("pre"); pe2.textContent = x.atoi.expected; abody.appendChild(pe2);
+      }
+      adi.appendChild(abody);
+      exo.appendChild(adi);
     }
 
     /* ---- indices ---- */

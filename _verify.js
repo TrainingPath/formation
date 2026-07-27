@@ -29,6 +29,7 @@ let allOk = true;
   if (lang === "python") res = verifyPython(x);
   else if (lang === "js") res = verifyJs(x);
   else if (lang === "sql") res = verifySql(x);
+  else if (lang === "java") res = verifyJava(x);
   else res = { ok: false, msg: "lang inconnu: " + lang };
   if (res.skip) { console.log(file, x.id, "END_VERIFY " + res.skip); return; }
   if (res.ok) console.log(file, x.id, "END_VERIFY pass:" + res.passed + "/" + res.total);
@@ -230,6 +231,26 @@ print("PASS", passed, len(tests))
 `;
   const r = spawnSync("python3", ["-c", harness], { encoding: "utf8" });
   return parsePass((r.stdout || "") + (r.stderr || ""));
+}
+
+/* ---------- Java (exécution locale via `java Fichier.java`, JDK 11+ en mode fichier unique) ----------
+   Non exécutable dans le navigateur ; ici on VÉRIFIE seulement que la sortie attendue (x.atoi.expected)
+   annoncée à l'élève correspond bien à ce que produit la solution de référence. */
+function verifyJava(x) {
+  if (!x.atoi || x.atoi.expected === undefined) return { skip: "no-atoi" };
+  const os = require("os"), path = require("path"), fs2 = require("fs");
+  const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "jv"));
+  const m = String(x.solution || "").match(/public\s+class\s+(\w+)/);
+  const cls = m ? m[1] : "Main";
+  const file = path.join(dir, cls + ".java");
+  fs2.writeFileSync(file, x.solution || "");
+  const r = spawnSync("java", [file], { encoding: "utf8", timeout: 25000 });
+  try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  const out = (r.stdout || "").replace(/\s+$/g, "");
+  const exp = String(x.atoi.expected).replace(/\s+$/g, "");
+  if (r.error) return { ok: false, msg: "java error: " + r.error.message };
+  if (out === exp) return { ok: true, passed: 1, total: 1 };
+  return { ok: false, msg: "got:\n" + out + "\n--- expected:\n" + exp + (r.stderr ? "\n--- stderr:\n" + r.stderr.trim() : "") };
 }
 
 /* ---------- utilitaires ---------- */
