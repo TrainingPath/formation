@@ -354,3 +354,29 @@ Distracteurs réécrits, `balanceOpts` désactivé, mode examen + Tuteur IA sur 
 pas machine-vérifiées** (comme C#/PHP). Les rédacteurs sont restés sur du sûr (chaîne écrite littérale via
 `write`, code de retour via `exit`/`echo $?`). Les fragments non autonomes reçoivent une petite terminaison
 (`mov rax,60 / syscall`) dans l'`expected` pour rester observables.
+
+---
+
+## Lot 8 — Python-serveur (Django/API) & SGBD-projets (Java/C#)
+
+Cours traités : `cours-django`, `cours-django-orm`, `cours-api` (21 leçons chacun), `cours-projet-sgbd` (Java),
+`cours-projet-sgbd-csharp` (C#) — ces deux derniers sur 31 jours.
+
+### Traitement
+Encadré « 🖥️ À toi de jouer » (`atoi`) avec la commande locale réelle (`python manage.py runserver`+`curl -i`,
+`migrate`, `shell` avec `print(qs.query)`, `test` ; `javac/java` ou `dotnet run`, `mysql`) et sortie/comportement
+attendu, plus une `checklist`. Distracteurs réécrits, `balanceOpts` désactivé, mode examen + Tuteur IA.
+
+### Résultat vérifié
+- **125 leçons**, 0 parse-KO ; **1491 QCM**, tous avec un index valide ; **113 encadrés « À toi de jouer »**,
+  **127 checklists** (0 exercice sans checklist) ; `_verify.js` 0 FAIL ; aucun artefact.
+- **5 items réellement gates** dans `cours-projet-sgbd` : 4 programmes Java autonomes (compilés+exécutés) +
+  1 requête SQL standard (SQLite) → `pass:1/1`. Le reste (Django/DRF, C#/ADO.NET, MySQL-spécifique, conceptuel)
+  est en `atoi` descriptif **non gaté** — honnêtement, faute de Django/dotnet dans le sandbox.
+- **Aucune correction factuelle** dans les bonnes réponses.
+
+### Amélioration de cohérence signalée
+- **`cours-projet-sgbd-csharp`** : plusieurs distracteurs QCM contenaient des résidus de l'écosystème **Java/JavaFX**
+  (JavaFX, `Scanner`, `ResultSet`, `Stage/Scene`, `stage.show()`) inadaptés à un cours **C#/.NET** — remplacés par
+  leurs équivalents .NET (`System.Data.SqlClient`, `StreamReader`, `DataAdapter`, `DataTable`…). Cohérence
+  pédagogique, pas une erreur de corrigé.

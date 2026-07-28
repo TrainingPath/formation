@@ -53,10 +53,10 @@ try {
     { type: "qcm", q: "Pour grouper des requêtes, on appelle d'abord…", opts: ["commit()", "setAutoCommit(false)", "rollback()", "close()"], a: 1, exp: "On désactive la validation automatique." },
     { type: "input", q: "Méthode qui valide définitivement la transaction : _____()", a: ["commit", "commit()", "c.commit"], exp: "commit() rend les changements permanents." },
     { type: "input", q: "Méthode qui annule toute la transaction en cas d'erreur : _____()", a: ["rollback", "rollback()", "c.rollback"], exp: "rollback() ramène la base à l'état initial." },
-    { type: "qcm", q: "Le rollback() se place typiquement dans le bloc…", opts: ["try", "catch", "finally", "main"], a: 1, exp: "Dès qu'une requête échoue." },
+    { type: "qcm", q: "Le rollback() se place typiquement dans le bloc…", opts: ["try", "catch", "finally", "constructeur"], a: 1, exp: "Dès qu'une requête échoue." },
     { type: "vf", q: "Il faut remettre setAutoCommit(true) dans le finally.", a: true, exp: "Sinon les futures requêtes du Singleton restent bloquées." },
-    { type: "qcm", q: "L'Atomicité signifie…", opts: ["Les données sont chiffrées", "Tout ou rien", "La base est rapide", "Les index sont créés"], a: 1, exp: "Aucune étape partielle." },
-    { type: "qcm", q: "L'Isolation garantit que…", opts: ["Les autres ne voient pas l'état intermédiaire", "La base est sauvegardée", "Le prix est validé", "La Vue est rapide"], a: 0, exp: "Pas de fuite d'état transitoire." },
+    { type: "qcm", q: "L'Atomicité signifie…", opts: ["Les données sont isolées", "Tout ou rien", "Les changements sont durables", "La base reste cohérente"], a: 1, exp: "Aucune étape partielle." },
+    { type: "qcm", q: "L'Isolation garantit que…", opts: ["Les autres ne voient pas l'état intermédiaire", "La base est sauvegardée", "Les opérations sont atomiques", "La base reste cohérente"], a: 0, exp: "Pas de fuite d'état transitoire." },
     { type: "vf", q: "En vue d'une IHM, le DAO doit propager (throws) les SQLException plutôt que les avaler.", a: true, exp: "Le contrôleur décide de l'affichage." },
     { type: "qcm", q: "Modifier les auteurs d'un livre (supprimer puis ajouter) doit être…", opts: ["Deux transactions", "Une seule transaction atomique", "Sans transaction", "Dans la Vue"], a: 1, exp: "Éviter un livre sans auteur." },
     { type: "vf", q: "Par défaut, JDBC valide chaque requête immédiatement (auto-commit).", a: true, exp: "On le désactive pour grouper." },
@@ -70,7 +70,7 @@ try {
     questions: [
       { type: "qcm", q: "Avant les deux requêtes, on écrit…", opts: ["c.commit()", "c.setAutoCommit(false)", "c.rollback()", "c.close()"], a: 1, exp: "On ouvre la transaction." },
       { type: "qcm", q: "Après les deux requêtes réussies…", opts: ["c.rollback()", "c.commit()", "rien", "c.close()"], a: 1, exp: "On valide l'ensemble." },
-      { type: "qcm", q: "En cas d'exception…", opts: ["c.commit()", "c.rollback()", "on ignore", "on relance le main"], a: 1, exp: "On annule tout." },
+      { type: "qcm", q: "En cas d'exception…", opts: ["c.commit()", "c.rollback()", "on ignore", "on ferme la base"], a: 1, exp: "On annule tout." },
       { type: "vf", q: "Le finally rétablit setAutoCommit(true).", a: true, exp: "Indispensable avec le Singleton." },
       { type: "vf", q: "Sans transaction, un plantage entre DELETE et INSERT laisse le livre sans auteur.", a: true, exp: "C'est le risque évité." }
     ],
@@ -111,6 +111,8 @@ var ECRITURE = {
       "try { ... c.commit(); } catch(SQLException e){ c.rollback(); throw e; } finally { c.setAutoCommit(true); }"
     ],
     solution: "public void enregistrerVente(int clientId, int livreId, double prixFinal) throws SQLException {\n    Connection c = DatabaseConnection.getInstance().getConnection();  // connexion unique\n    try {\n        c.setAutoCommit(false);                         // debut de la transaction\n        String sql = \"INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (?, ?, ?)\";\n        PreparedStatement p = c.prepareStatement(sql);\n        p.setInt(1, clientId);                          // 1er ? = client\n        p.setInt(2, livreId);                           // 2e ? = livre\n        p.setDouble(3, prixFinal);                      // 3e ? = prix final\n        p.executeUpdate();                              // execute l'INSERT\n        p.close();                                      // ferme l'outil\n        c.commit();                                     // succes : on valide\n    } catch (SQLException e) {                           // une erreur SQL survient\n        c.rollback();                                   // on annule tout\n        throw e;                                         // on propage vers le controleur\n    } finally {\n        c.setAutoCommit(true);                          // on retablit le mode normal (crucial)\n    }\n}",
+    atoi: { cmd: "javac VenteDAO.java (avec DatabaseConnection et le driver JDBC dans le classpath), puis new VenteDAO().enregistrerVente(1, 1, 19.99);", expected: "Necessite la base MySQL library_db. enregistrerVente ouvre une transaction (setAutoCommit(false)), execute l'INSERT INTO ventes (client_id, livre_id, prix_final) VALUES (?, ?, ?), puis commit() en cas de succes ou rollback() si une SQLException survient (la vente et les commissions du trigger restent coherentes), et retablit setAutoCommit(true) dans le finally ; l'exception est propagee au controleur." },
+    checklist: [ "c.setAutoCommit(false) avant l'INSERT pour ouvrir la transaction", "INSERT parametre dans ventes (setInt, setInt, setDouble) puis c.commit() en cas de succes", "catch (SQLException) : c.rollback() puis throw e pour propager", "finally : c.setAutoCommit(true) pour ne pas bloquer la connexion Singleton" ],
     note: "Même pour une seule requête, encadrer par une transaction est une bonne habitude : le déclencheur trg_apres_vente_commission de library_db insère automatiquement les commissions APRES la vente. Si ce trigger échoue, le rollback annule aussi la vente, garantissant que vente et commissions restent cohérentes. Le setAutoCommit(true) du finally évite de bloquer les modules suivants qui partagent la connexion Singleton." }
   ]
 };
