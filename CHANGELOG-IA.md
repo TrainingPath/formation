@@ -304,3 +304,30 @@ les sorties C/C++ sont donc **réellement contrôlées**, comme pour Java et Pyt
 - **`cours-projet-c-pro/lecon20`** : un QCM « Le rollback est possible car… » avait une **incohérence
   `a`/`exp`** (l'explication désignait l'option 0 « images versionnées conservées », mais `a` valait 1
   « on recompile tout »). Corrigé `a: 1 → a: 0`. Aucune autre correction factuelle sur le lot.
+
+---
+
+## Lot 6 — PHP (non exécutables, pas de php CLI dans le sandbox)
+
+Cours traités : `cours-php` (31 leçons), `cours-projet-php`, `cours-projet-php-pro`, `cours-laravel`,
+`cours-eloquent` (21 chacun).
+
+### Traitement
+Comme le C# : encadré « 🖥️ À toi de jouer » (`atoi: {cmd, expected}`) avec la commande locale réelle
+(`php script.php`, `php -S`, `php artisan serve`/`migrate`/`tinker`/`test`, `docker compose up`, `curl`) et
+la sortie/le comportement attendu, plus une `checklist`. Distracteurs réécrits, `balanceOpts` désactivé,
+mode examen + Tuteur IA sur les 5 sommaires.
+
+### Résultat vérifié
+- **105 leçons**, 0 parse-KO ; **1904 QCM**, tous avec un index valide ; **99 encadrés « À toi de jouer »**,
+  **113 checklists** (0 exercice sans checklist) ; `_verify.js` 0 FAIL ; aucun `lang` parasite ; aucun artefact.
+  `balanceOpts` off dans les 5 `engine.js`.
+- Distracteurs : audit complet — cours-php 18 QCM, projet-php 61, projet-php-pro 298, laravel 15, eloquent 9.
+  **Aucune correction factuelle** signalée.
+
+### ⚠️ Limite honnête + reprise après coupures
+Le sandbox **n'a pas de `php`** : les `atoi.expected` **ne sont pas machine-vérifiés** (comme le C#) ; leur
+exactitude repose sur le raisonnement des rédacteurs (sorties `echo` sûres, statuts HTTP, SQL généré par Eloquent).
+Par ailleurs 3 des 5 agents ont été **coupés par la limite de session** : en reprenant, j'ai complété la
+Tâche A manquante (`projet-php-pro` leçons 06-14, `cours-php` leçons 12/15/16/17/24) puis lancé un audit de
+distracteurs dédié sur les 3 cours coupés (`cours-php`, `projet-php`, `projet-php-pro`), le tout re-vérifié item par item.
