@@ -331,3 +331,26 @@ exactitude repose sur le raisonnement des rédacteurs (sorties `echo` sûres, st
 Par ailleurs 3 des 5 agents ont été **coupés par la limite de session** : en reprenant, j'ai complété la
 Tâche A manquante (`projet-php-pro` leçons 06-14, `cours-php` leçons 12/15/16/17/24) puis lancé un audit de
 distracteurs dédié sur les 3 cours coupés (`cours-php`, `projet-php`, `projet-php-pro`), le tout re-vérifié item par item.
+
+---
+
+## Lot 7 — Assembleur (NASM x86-64, non gaté)
+
+Cours traités : `cours-asm` (21 leçons), `cours-projet-asm` (8 leçons — projet « ludostat »).
+
+### Traitement
+Encadré « 🖥️ À toi de jouer » (`atoi`) avec la vraie chaîne d'assemblage/lien/exécution
+(`nasm -felf64 prog.asm -o prog.o && ld prog.o -o prog && ./prog`, parfois `; echo $?` pour le code de
+retour, ou liaison libc via `gcc -no-pie`) et la sortie/valeur attendue, plus une `checklist`.
+Distracteurs réécrits, `balanceOpts` désactivé, mode examen + Tuteur IA sur les 2 sommaires.
+
+### Résultat vérifié
+- **29 leçons**, 0 parse-KO ; **551 QCM**, tous avec un index valide ; **24 encadrés « À toi de jouer »**,
+  **29 checklists** (0 exercice sans checklist) ; `_verify.js` 0 FAIL ; aucun `lang` parasite ; aucun artefact.
+- Distracteurs : cours-asm 37 QCM (61 options), projet-asm 48 QCM. **Aucune correction factuelle**.
+
+### ⚠️ Limite honnête
+`nasm` **n'est pas installé** et je n'ai pas les droits pour l'installer → les sorties assembleur **ne sont
+pas machine-vérifiées** (comme C#/PHP). Les rédacteurs sont restés sur du sûr (chaîne écrite littérale via
+`write`, code de retour via `exit`/`echo $?`). Les fragments non autonomes reçoivent une petite terminaison
+(`mov rax,60 / syscall`) dans l'`expected` pour rester observables.

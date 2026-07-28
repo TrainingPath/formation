@@ -54,16 +54,16 @@ syscall            ; rax recoit le nombre d'octets lus (0 = fin de fichier)</pre
     { type: "qcm", q: "Le descripteur de l'entrée standard est…", opts: ["0", "1", "2", "60"], a: 0, exp: "stdin = 0." },
     { type: "qcm", q: "L'adresse du tampon va dans…", opts: ["rdi", "rsi", "rdx", "rax"], a: 1, exp: "2e argument." },
     { type: "qcm", q: "La taille maximale à lire va dans…", opts: ["rsi", "rdx", "rdi", "rbx"], a: 1, exp: "3e argument." },
-    { type: "qcm", q: "read renvoie dans rax…", opts: ["toujours la taille demandée", "le nombre d'octets réellement lus", "l'adresse", "1"], a: 1, exp: "Peut être < demande." },
+    { type: "qcm", q: "read renvoie dans rax…", opts: ["toujours la taille demandée", "le nombre d'octets réellement lus", "l'adresse de fin du tampon", "le descripteur d'entrée utilisé"], a: 1, exp: "Peut être < demande." },
     { type: "qcm", q: "rax = 0 après read signifie…", opts: ["erreur", "fin de fichier (plus rien à lire)", "un octet lu", "succès partiel"], a: 1, exp: "EOF." },
-    { type: "qcm", q: ".bss sert à…", opts: ["du code", "réserver de la mémoire non initialisée", "des constantes", "afficher"], a: 1, exp: "Tampons." },
-    { type: "qcm", q: "resb 65536 réserve…", opts: ["65536 bits", "65536 octets", "1 octet", "rien"], a: 1, exp: "64 Kio." },
-    { type: "qcm", q: "Pourquoi boucler sur read ?", opts: ["par style", "car read peut renvoyer moins que demandé", "pour ralentir", "sans raison"], a: 1, exp: "Lecture partielle possible." },
-    { type: "qcm", q: "On écrit à la suite dans le tampon avec…", opts: ["[buf]", "[buf + r13] (offset = octets déjà lus)", "[buf + 1]", "rax"], a: 1, exp: "Position courante." },
+    { type: "qcm", q: ".bss sert à…", opts: ["à ranger le code exécutable", "réserver de la mémoire non initialisée", "à stocker des constantes de texte", "à définir le point d'entrée"], a: 1, exp: "Tampons." },
+    { type: "qcm", q: "resb 65536 réserve…", opts: ["65536 bits", "65536 octets", "1 octet", "65536 mots de 64 bits"], a: 1, exp: "64 Kio." },
+    { type: "qcm", q: "Pourquoi boucler sur read ?", opts: ["pour économiser de la mémoire", "car read peut renvoyer moins que demandé", "pour relire deux fois chaque octet", "parce que read échoue toujours au premier appel"], a: 1, exp: "Lecture partielle possible." },
+    { type: "qcm", q: "On écrit à la suite dans le tampon avec…", opts: ["[buf]", "[buf + r13] (offset = octets déjà lus)", "[buf + 1]", "[buf + 65536]"], a: 1, exp: "Position courante." },
     { type: "vf", q: "read peut lire moins d'octets que la taille demandée.", a: true, exp: "D'où la boucle." },
     { type: "qcm", q: "Après la boucle, r13 contient…", opts: ["0", "le total d'octets lus", "l'adresse de fin", "1"], a: 1, exp: "Taille des données." },
-    { type: "qcm", q: "buf[0..r13) contient…", opts: ["des nombres binaires", "le texte brut (chiffres, espaces, sauts de ligne)", "rien", "du code"], a: 1, exp: "Octets ASCII." },
-    { type: "qcm", q: "On garde le total dans r13 car…", opts: ["c'est rapide", "callee-saved : il survit aux appels de routines", "obligatoire", "au hasard"], a: 1, exp: "Persistant." },
+    { type: "qcm", q: "buf[0..r13) contient…", opts: ["des nombres déjà convertis en binaire", "le texte brut (chiffres, espaces, sauts de ligne)", "des adresses mémoire", "du code exécutable"], a: 1, exp: "Octets ASCII." },
+    { type: "qcm", q: "On garde le total dans r13 car…", opts: ["c'est le registre où read renvoie son résultat", "callee-saved : il survit aux appels de routines", "read exige ce registre comme argument", "c'est le seul registre 64 bits disponible"], a: 1, exp: "Persistant." },
     { type: "qcm", q: "Au clavier, la fin de saisie se signale par…", opts: ["Entrée", "Ctrl-D (EOF)", "Échap", "Ctrl-C seulement"], a: 1, exp: "Fin de fichier." }
   ],
   final: {
@@ -114,7 +114,17 @@ var ECRITURE = {
       "add r13, rax ; recommence tant que r13 < 65536."
     ],
     solution: "section .bss\n    buf resb 65536\nsection .text\n    xor r13, r13              ; total d'octets lus\n.read_loop:\n    xor rax, rax             ; read\n    xor rdi, rdi             ; stdin\n    lea rsi, [buf + r13]     ; ecrire a la suite\n    mov rdx, 65536\n    sub rdx, r13             ; place restante\n    syscall\n    cmp rax, 0\n    jle .read_done           ; 0 = EOF, < 0 = erreur\n    add r13, rax             ; avancer le total\n    cmp r13, 65536\n    jl .read_loop\n.read_done:\n    ; buf[0..r13) contient tout le texte lu",
-    note: "read peut rendre moins que demandé (depuis un tube ou le clavier), d'où la boucle : on écrit chaque fois à [buf + r13] et on avance r13. rax = 0 marque la fin de fichier. En gardant le total dans r13 (callee-saved), il survivra aux appels de write et des routines de conversion utilisés ensuite." }
+    note: "read peut rendre moins que demandé (depuis un tube ou le clavier), d'où la boucle : on écrit chaque fois à [buf + r13] et on avance r13. rax = 0 marque la fin de fichier. En gardant le total dans r13 (callee-saved), il survivra aux appels de write et des routines de conversion utilisés ensuite.",
+    atoi: {
+      cmd: "nasm -felf64 readloop.asm -o readloop.o && ld readloop.o -o readloop && printf 'abc' | ./readloop ; echo $?",
+      expected: "3\nComplète la boucle par « mov rax,60 / mov rdi,r13 / syscall » pour transformer le compteur d'octets en code de sortie : avec printf 'abc' (3 octets) en entrée, echo $? affiche 3. Avec printf 'ab cd\\n' (6 octets), il afficherait 6."
+    },
+    checklist: [
+      "r13 est-il initialisé à 0 (xor r13,r13) avant d'entrer dans la boucle ?",
+      "Écris-tu bien à [buf + r13], avec une taille restante de 65536 - r13 ?",
+      "Le test d'arrêt couvre-t-il À LA FOIS l'EOF (rax=0) et l'erreur (rax<0), via « cmp rax,0 / jle » ?",
+      "La boucle s'arrête-t-elle aussi quand le tampon est plein (r13 >= 65536) ?"
+    ] }
   ]
 };
 </script>
