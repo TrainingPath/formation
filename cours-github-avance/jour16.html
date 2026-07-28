@@ -80,7 +80,7 @@ timeout-minutes: 15               # couper un job qui traîne trop (évite les r
 <div class="warn">Sécurité : donne au workflow le <strong>minimum de permissions</strong> nécessaire (<code>permissions:</code>) et ne mets jamais de secret en clair — passe toujours par <code>secrets.*</code>. Un workflow trop permissif est une porte d'entrée.</div>
 <p>Tu as maintenant tout le vocabulaire pour bâtir des pipelines : jobs parallèles reliés par <code>needs</code>, steps en série sur un runner, matrices pour couvrir plusieurs environnements. Ces workflows produisent les status checks qui, adossés à la protection de branche, garantissent la qualité de <code>main</code>. Bravo : tu tiens le socle de GitHub Actions.</p>`,
   exercises: [
-    { type: "qcm", q: "Par défaut, les jobs d'un workflow s'exécutent :", opts: ["En série, un par un", "En PARALLÈLE, chacun sur sa machine", "Jamais", "Sur le même runner"], a: 1, exp: "Parallèle par défaut = rapide." },
+    { type: "qcm", q: "Par défaut, les jobs d'un workflow s'exécutent :", opts: ["En série, un par un", "En PARALLÈLE, chacun sur sa machine", "Seulement après un merge sur main", "Sur le même runner"], a: 1, exp: "Parallèle par défaut = rapide." },
     { type: "input", q: "Quel mot-clé YAML fait qu'un job attend qu'un autre réussisse ?", a: ["needs", "needs:"], ph: "...", exp: "needs: [test, lint]." },
     { type: "vf", q: "Les steps d'un même job s'exécutent en série et partagent le même runner.", a: true, exp: "Même système de fichiers, dans l'ordre." },
     { type: "qcm", q: "Un 'runner hébergé' (ubuntu-latest) est :", opts: ["Ta propre machine", "Une machine fournie et entretenue par GitHub, neuve à chaque run", "Un secret", "Une branche"], a: 1, exp: "GitHub-hosted." },
@@ -101,7 +101,7 @@ timeout-minutes: 15               # couper un job qui traîne trop (évite les r
     intro: `<p>Tu bâtis un workflow à jobs parallèles (test, lint) puis un déploiement dépendant, avec une matrice de versions.</p>`,
     questions: [
       { type: "input", q: "Le mot-clé pour faire dépendre 'deploy' de test et lint :", a: ["needs", "needs:"], ph: "...", exp: "needs: [test, lint]." },
-      { type: "qcm", q: "test et lint sans dépendance entre eux :", opts: ["Tournent en série", "Tournent en PARALLÈLE", "Ne tournent pas", "Sur le même runner"], a: 1, exp: "Parallèle par défaut." },
+      { type: "qcm", q: "test et lint sans dépendance entre eux :", opts: ["Tournent en série", "Tournent en PARALLÈLE", "Démarrent seulement après le deploy", "Sur le même runner"], a: 1, exp: "Parallèle par défaut." },
       { type: "input", q: "Le mot-clé (dans strategy) pour tester plusieurs versions de Node :", a: ["matrix", "matrix:"], ph: "...", exp: "matrix." },
       { type: "input", q: "La valeur de runs-on pour une machine Linux hébergée :", a: ["ubuntu-latest"], ph: "...", exp: "ubuntu-latest." },
       { type: "vf", q: "'deploy' ne démarre que si test ET lint sont verts.", a: true, exp: "needs impose l'ordre et la réussite." }
@@ -147,6 +147,13 @@ var ECRITURE = {
       "Sans needs, test et lint tournent en parallèle.",
       "La matrice se met sous strategy: matrix: et se lit avec ${{ matrix.node }}.",
       "deploy: needs: [test, lint] + un if: sur github.ref pour se limiter à main."
+    ],
+    atoi: { cmd: "git add .github/workflows/ci.yml && git commit -m \"ci\" && git push origin main && gh run watch", expected: "Actions > CI-CD  (push main)\n> test (18)   OK npm ci && npm test\n> test (20)   OK npm ci && npm test\n> lint        OK npm run lint        (en parallele de test)\n> deploy  (needs: [test, lint] ; if main)\n  OK ./deploy.sh" },
+    checklist: [
+      "test et lint n'ont pas de needs entre eux : ils demarrent EN PARALLELE.",
+      "Le job test tourne 2 fois via strategy.matrix.node = [18, 20] (memes steps, versions differentes).",
+      "deploy porte needs: [test, lint] : il n'ouvre qu'apres que TOUT est vert.",
+      "if: github.ref == 'refs/heads/main' reserve le deploiement a main."
     ],
     solution: "# Fichier : .github/workflows/ci.yml\nname: CI-CD\non: [push, pull_request]\n\njobs:\n  test:                             # JOB 1 : tests, démultiplié par matrice\n    runs-on: ${{ matrix.os }}       # le runner dépend de la combinaison\n    strategy:\n      matrix:\n        os: [ubuntu-latest]\n        node: [\"18\", \"20\"]          # deux versions testées EN PARALLÈLE\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: ${{ matrix.node }}\n      - run: npm ci\n      - run: npm test\n\n  lint:                             # JOB 2 : tourne EN PARALLÈLE de test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm run lint\n\n  deploy:                           # JOB 3 : ne démarre qu'après test ET lint\n    needs: [test, lint]             # dépendance : attend leur succès\n    if: ${{ github.ref == 'refs/heads/main' }}   # uniquement sur main\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: ./deploy.sh",
     note: "Ce pipeline illustre les trois leviers de structuration : le parallélisme (test et lint en même temps, pour la vitesse), la matrice (couvrir plusieurs versions sans dupliquer le YAML) et les dépendances (needs, pour n'ouvrir le déploiement qu'une fois tout vert). Le if: sur github.ref réserve le déploiement à main. Ces jobs produisent les status checks qui, avec la protection de branche du jour 12, ferment la boucle : rien d'incorrect n'atteint main." }

@@ -65,11 +65,11 @@ restart: on-failure:3    # relance uniquement en cas d'ÉCHEC (code de sortie no
     { type: "qcm", q: "start_period sert à…", opts: ["Démarrer plus vite", "Un délai de grâce avant de compter les échecs", "Redémarrer", "Chronométrer"], a: 1, exp: "MySQL a le droit d'être lent au boot." },
     { type: "qcm", q: "Faire attendre l'app jusqu'à la santé de bdd :", opts: ["condition: service_healthy", "un sleep 30", "un cron", "rien"], a: 0, exp: "Dans depends_on." },
     { type: "vf", q: "Un sleep 30 dans le CMD de l'app est une solution equivalente et propre.", a: false, exp: "Fragile : 30 s parfois trop, parfois pas assez." },
-    { type: "qcm", q: "L'état de santé se lit dans…", opts: ["docker compose ps", "les emails", "le YAML", "le volume"], a: 0, exp: "starting/healthy/unhealthy." },
-    { type: "qcm", q: "restart: always a un piège :", opts: ["Il ne relance jamais", "Il relance même après un docker stop volontaire", "Il supprime les volumes", "Il est payant"], a: 1, exp: "D'où unless-stopped." },
+    { type: "qcm", q: "L'état de santé se lit dans…", opts: ["docker compose ps", "les logs de l'app", "le YAML", "le volume"], a: 0, exp: "starting/healthy/unhealthy." },
+    { type: "qcm", q: "restart: always a un piège :", opts: ["Il ne relance jamais", "Il relance même après un docker stop volontaire", "Il supprime les volumes", "Il ignore le healthcheck"], a: 1, exp: "D'où unless-stopped." },
     { type: "qcm", q: "Le choix recommandé en production :", opts: ["restart: unless-stopped", "restart: \"no\"", "restart: always partout sans réfléchir", "aucun"], a: 0, exp: "Crash + reboot couverts, arrêt volontaire respecté." },
     { type: "qcm", q: "on-failure:3 :", opts: ["Relance sur échec, 3 essais maximum", "3 conteneurs", "3 secondes", "3 volumes"], a: 0, exp: "Évite la boucle de crash infinie." },
-    { type: "qcm", q: "Le healthcheck de l'app devrait tester…", opts: ["exit 0", "Une URL qui touche la base (ex. /sante/)", "Le CPU", "Le CSS"], a: 1, exp: "Le service réellement rendu." },
+    { type: "qcm", q: "Le healthcheck de l'app devrait tester…", opts: ["exit 0", "Une URL qui touche la base (ex. /sante/)", "Le CPU", "La disponibilité d'un fichier statique"], a: 1, exp: "Le service réellement rendu." },
     { type: "vf", q: "Un healthcheck qui fait exit 0 en permanence est utile.", a: false, exp: "Il ment : toujours healthy." },
     { type: "qcm", q: "L'historique des sondes se lit par…", opts: ["docker inspect (.State.Health)", "docker ps", "cat health.log", "compose down"], a: 0, exp: "Diagnostic des oscillations." },
     { type: "qcm", q: "Après un reboot du serveur, les services repartent grâce à…", opts: ["La politique restart", "La chance", "cron", "systemd obligatoire"], a: 0, exp: "unless-stopped s'en charge." }
@@ -120,6 +120,8 @@ var ECRITURE = {
       "En cas d'exception : JsonResponse({\"statut\": \"ko\"}, status=503).",
       "curl -f échoue (code retour ≠ 0) sur un statut HTTP >= 400 — c'est ce qui fait échouer la sonde."
     ],
+    atoi: { cmd: "docker compose up -d\ncurl -i http://localhost:8000/sante/\ndocker compose ps\ndocker stop bdd\ncurl -i http://localhost:8000/sante/", expected: "Base up : curl /sante/ renvoie « HTTP/1.1 200 » et {\"statut\": \"ok\"} ; compose ps affiche app « (healthy) » ; après docker stop bdd, la vue renvoie « HTTP/1.1 503 » et {\"statut\": \"ko\"}, et après 3 échecs app bascule « (unhealthy) »." },
+    checklist: ["La vue exécute-t-elle SELECT 1 et renvoie-t-elle 200 ok / 503 ko ?", "La route /sante/ est-elle déclarée dans urls.py ?", "Le test du healthcheck utilise-t-il curl -fs ... || exit 1 ?", "As-tu réglé interval 30s, retries 3, start_period 15s (curl présent dans l'image) ?"],
     solution: "# catalogue/views.py\nfrom django.db import connection\nfrom django.http import JsonResponse\n\ndef sante(request):\n    try:\n        with connection.cursor() as c:\n            c.execute(\"SELECT 1\")\n        return JsonResponse({\"statut\": \"ok\"})\n    except Exception:\n        return JsonResponse({\"statut\": \"ko\"}, status=503)\n\n# urls.py\npath(\"sante/\", views.sante, name=\"sante\"),\n\n# compose.yaml — service app\n    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -fs http://localhost:8000/sante/ || exit 1\"]\n      interval: 30s\n      timeout: 5s\n      retries: 3\n      start_period: 15s",
     note: "La sonde traverse TOUT : gunicorn répond, Django route, la base exécute un SELECT — si l'un des trois meurt, l'app devient unhealthy et un orchestrateur peut agir (alerte, redémarrage, retrait du trafic). Le 503 (Service Unavailable) est le bon code : « je suis là mais pas en état de servir ». Attention : curl doit exister dans l'image (slim : RUN apt-get install -y curl, ou une sonde Python)." }
   ]

@@ -164,6 +164,13 @@ var ECRITURE = {
       "La matrice se met sous strategy.matrix.node ; ajoute fail-fast: false.",
       "Le build produit dist/ puis actions/upload-artifact@v4 avec name et path."
     ],
+    atoi: { cmd: "git push origin main && gh run watch", expected: "Actions > CI-CD complet  (push main)\n> lint                       OK npm ci && npm run lint\n> test (18)  (needs: lint)   OK npm ci && npm test\n> test (20)  (needs: lint)   OK npm ci && npm test\n> test (22)  (needs: lint)   OK npm ci && npm test   fail-fast: false\n> build      (needs: test)   OK npm run build (-> ./dist)   OK upload-artifact dist" },
+    checklist: [
+      "Chaine needs : lint -> test -> build ; le lint n'a pas de needs (il demarre en premier).",
+      "test tourne sur strategy.matrix.node = [18, 20, 22] avec fail-fast: false (diagnostic complet).",
+      "cache: 'npm' dans chaque setup-node accelere les installations.",
+      "build produit ./dist et le televerse via upload-artifact (livrable transmis au deploy)."
+    ],
     solution: "name: CI-CD complet\non:\n  push:\n    branches: [ main ]\n  pull_request:\n    branches: [ main ]\npermissions:\n  contents: read                       # moindre privilege\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20, cache: 'npm' }   # cache npm\n      - run: npm ci\n      - run: npm run lint                # 1. qualite : premier filtre\n  test:\n    needs: lint                          # 2. tests apres lint\n    runs-on: ubuntu-latest\n    strategy:\n      fail-fast: false                   # voir TOUS les resultats\n      matrix:\n        node: [18, 20, 22]               # 3 versions en parallele\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: ${{ matrix.node }}, cache: 'npm' }\n      - run: npm ci\n      - run: npm test\n  build:\n    needs: test                          # 3. build apres tests verts\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20, cache: 'npm' }\n      - run: npm ci && npm run build      # produit ./dist\n      - uses: actions/upload-artifact@v4  # artefact = livrable transmis\n        with: { name: dist, path: dist/ }",
     note: "L'ossature du pipeline repose entierement sur needs : lint -> test -> build forment une chaine ou l'echec d'un maillon arrete tout ce qui suit. La matrice (fail-fast: false) donne un diagnostic complet sur chaque version, le cache npm accelere chaque installation, et l'artefact prepare le passage vers le deploiement. Declencher aussi sur pull_request permet de tout valider AVANT le merge, pas seulement apres." },
   { id: "ghadv-j31b", title: "Le job de déploiement protégé", level: 3,
@@ -172,6 +179,13 @@ var ECRITURE = {
       "needs: build, puis if: github.ref == 'refs/heads/main' pour restreindre à main.",
       "environment: name: production (l'approbation se règle dans Settings > Environments, pas dans le YAML).",
       "actions/download-artifact@v4 récupère dist/, et DEPLOY_TOKEN vient de ${{ secrets.DEPLOY_TOKEN }}."
+    ],
+    atoi: { cmd: "git push origin main && gh run watch", expected: "Actions > CI-CD complet  (push main)\n> deploy  (needs: build)   if github.ref == 'refs/heads/main'\n  environment: production   -> en attente d'approbation (UI)\n  [apres approbation]\n  OK download-artifact dist   (-> dist/)\n  OK ./deploy.sh dist/   env DEPLOY_TOKEN=***\n  url https://mon-app.example.com" },
+    checklist: [
+      "(1) needs: build : on ne deploie jamais sans un pipeline vert.",
+      "(2) if: github.ref == 'refs/heads/main' : aucune branche de travail ne part en prod.",
+      "(3) environment: production protege par approbation (reglee dans l'UI, pas dans le YAML).",
+      "(4) DEPLOY_TOKEN injecte via ${{ secrets.DEPLOY_TOKEN }}, jamais en clair ; artefact recupere par download-artifact."
     ],
     solution: "  deploy:\n    needs: build                         # (1) apres tout le pipeline vert\n    if: github.ref == 'refs/heads/main'  # (2) seulement depuis main\n    runs-on: ubuntu-latest\n    environment:\n      name: production                   # (3) environnement PROTEGE (approbation reglee dans l'UI)\n      url: https://mon-app.example.com\n    steps:\n      - uses: actions/download-artifact@v4\n        with: { name: dist, path: dist/ }  # on recupere le livrable du job build\n      - run: ./deploy.sh dist/\n        env:\n          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}   # (4) secret, jamais en clair",
     note: "Le job deploy concentre les quatre garde-fous du cours : (1) needs -> on ne deploie jamais sans un pipeline vert ; (2) if sur main -> aucune branche de travail ne part en prod ; (3) environnement protege -> un humain approuve avant la mise en production, regle inviolable car cote GitHub et non dans le YAML ; (4) secret -> l'identifiant est injecte via env:, jamais ecrit en clair. Assemble avec le premier exercice, c'est un pipeline CI/CD complet, sur et professionnel : l'aboutissement des 31 jours." }

@@ -380,3 +380,27 @@ attendu, plus une `checklist`. Distracteurs réécrits, `balanceOpts` désactiv�
   (JavaFX, `Scanner`, `ResultSet`, `Stage/Scene`, `stage.show()`) inadaptés à un cours **C#/.NET** — remplacés par
   leurs équivalents .NET (`System.Data.SqlClient`, `StreamReader`, `DataAdapter`, `DataTable`…). Cohérence
   pédagogique, pas une erreur de corrigé.
+
+---
+
+## Lot 9 — DevOps & outillage (Docker, CI/CD, Git, GitHub, Tests)
+
+Cours traités : `cours-docker`, `cours-cicd`, `cours-tests` (21 leçons), `cours-git` (10),
+`cours-github-debutant`, `cours-github-avance` (31 jours).
+
+### Traitement
+Encadré « 🖥️ À toi de jouer » (`atoi`) avec les commandes locales réelles (`docker build/run/compose`,
+`git rebase -i/cherry-pick/bisect`, `git init/add/commit/log`, `gh`/workflows GitHub Actions, `pytest`/`mvn test`)
+et la sortie/comportement attendu, plus une `checklist`. Distracteurs réécrits, `balanceOpts` désactivé,
+mode examen + Tuteur IA sur les 6 sommaires.
+
+### Résultat vérifié
+- **135 leçons**, 0 parse-KO ; **1673 QCM**, tous avec un index valide ; **90 encadrés « À toi de jouer »**,
+  **137 checklists** (0 exercice sans checklist) ; `_verify.js` 0 FAIL ; aucun `lang` (non machine-vérifié,
+  comme C#/PHP) ; aucun artefact. **Aucune correction factuelle**.
+
+### Reprise après coupures
+4 des 6 agents ont été **coupés par la limite de session**. En reprenant : `cours-cicd` n'avait **aucun**
+`atoi`/checklist (Tâche A refaite entièrement) ; `cours-github-avance` en manquait sur les jours 16-31
+(complétés) ; les distracteurs de `cours-cicd`, `cours-docker` et `cours-github-avance` ont reçu leur audit
+dédié. Le tout re-vérifié item par item (y compris le second exercice de `github-avance/jour31`).
