@@ -1,0 +1,311 @@
+<!DOCTYPE html><html lang="fr"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jour 19</title><link rel="stylesheet" href="style.css"></head><body>
+<script>
+var DAY = {
+  num: 19,
+  title: "Machine à états (2) : états composites, historique, points de choix",
+  subtitle: "Structurer une machine qui grossit, sans la rendre illisible.",
+  theory: `
+<h3>1. Le problème : la machine qui explose</h3>
+<p>Hier, la machine de l'<code>Exemplaire</code> tenait sur une page. Ajoute maintenant trois sous-situations à l'état <code>Loue</code> (le jeu est sorti, le jeu est signalé perdu, le jeu est en litige), et il te faudra retracer <em>toutes</em> les flèches sortantes trois fois. Une machine à dix états et vingt transitions devient vite illisible.</p>
+<p>UML fournit pour cela un mécanisme unique et puissant : l'<strong>emboîtement</strong>. Un état peut en contenir d'autres. Tout le reste de la leçon découle de cette idée.</p>
+
+<h3>2. L'état composite</h3>
+<p>Un <strong>état composite</strong> est un état qui contient une <strong>sous-machine d'états</strong> : ses propres états, ses propres transitions, son propre état initial. Un état sans sous-machine s'appelle un <strong>état simple</strong>.</p>
+<pre class="pseudo"> .-------------------------------------------------------.
+(  Loue                              # ETAT COMPOSITE      )
+(   .-------------------------------------------------.    )
+(   |   *                                              |   )
+(   |   |                                              |   )
+(   |   v                                              |   )
+(   |  .----------.   signalerPerte()   .----------.   |   )
+(   | ( EnCours    ) -----------------> ( Perdu     )  |   )
+(   |  '----------'                     '----------'   |   )
+(   |       |  ^                                       |   )
+(   |       |  | retrouver()                           |   )
+(   |       v  |                                       |   )
+(   |  .-------------.                                 |   )
+(   | (  EnLitige     )                                |   )
+(   |  '-------------'                                 |   )
+(   '-------------------------------------------------'   )
+ '-------------------------------------------------------'
+             |
+             | rendre()     # UNE SEULE transition sortante,
+             v              # valable depuis N'IMPORTE QUEL sous-etat
+    .------------------.
+   (    Disponible      )
+    '------------------'</pre>
+<p>C'est là tout l'intérêt : une transition qui part de la <strong>bordure du composite</strong> vaut <strong>pour tous ses sous-états</strong>. Au lieu de tracer trois flèches <code>rendre()</code>, on en trace une seule. On dit qu'elle est <strong>factorisée</strong>.</p>
+<p>Quand la machine entre dans le composite par sa bordure, elle démarre à l'<strong>état initial de la sous-machine</strong> — ici <code>EnCours</code>. Quand elle en sort par la bordure, elle exécute le <code>exit</code> du sous-état courant, <em>puis</em> le <code>exit</code> du composite : la sortie se propage de l'intérieur vers l'extérieur.</p>
+<div class="tip">Symétriquement, l'<code>entry</code> du composite s'exécute <strong>avant</strong> l'<code>entry</code> du sous-état. Ordre général : on entre du plus extérieur vers le plus intérieur, on sort du plus intérieur vers le plus extérieur. Comme des poupées russes.</div>
+
+<h3>3. Points d'entrée et points de sortie</h3>
+<p>Entrer par la bordure, c'est bien, mais parfois on veut entrer <strong>à un endroit précis</strong> de la sous-machine, sans passer par son état initial. UML fournit pour cela des <strong>points d'entrée</strong> et des <strong>points de sortie</strong> : de petits <strong>cercles dessinés sur la bordure</strong> du composite.</p>
+<pre class="pseudo">                     .------------------------------------.
+                    (  Loue                                 )
+   reprise()   (o)---(--> EnLitige                           )   # POINT D'ENTREE
+   ------------>     (                                       )   # petit cercle VIDE
+                    (    EnCours --> Perdu                   )   # sur la bordure
+                    (                          litige --(x)--)---> Contentieux
+                     '------------------------------------'      # POINT DE SORTIE
+                                                                 # cercle barre d'une croix
+
+# Point d'ENTREE : on entre dans le composite DIRECTEMENT sur EnLitige,
+#                  sans passer par l'etat initial de la sous-machine.
+# Point de SORTIE : on quitte le composite depuis un sous-etat precis,
+#                  vers une cible precise a l'exterieur.</pre>
+<p>Ces points portent un nom, ce qui rend le composite réutilisable : de l'extérieur, on voit une « prise » nommée, sans avoir besoin de connaître le détail de l'intérieur. C'est l'équivalent, pour un état, de l'encapsulation d'une classe.</p>
+
+<h3>4. Point de jonction et point de choix</h3>
+<p>Voici la distinction la plus fine — et la plus souvent ratée — de toute la leçon. Les deux symboles servent à faire un branchement, mais <strong>pas au même moment</strong>.</p>
+<pre class="pseudo"># POINT DE JONCTION (junction) : petit disque PLEIN
+# Choix STATIQUE : les gardes sont evaluees AVANT d'entrer
+# dans la transition. Rien n'a encore ete execute.
+
+   Disponible ---- louer(m) ---->(*)---- [stock_location > 0] ---> Loue
+                                  |
+                                  '---- [stock_location = 0] ---> Refuse
+   # Le moteur regarde les gardes AVANT de bouger.
+   # Si aucune n'est vraie, la transition ENTIERE ne se declenche pas.
+
+
+# POINT DE CHOIX (choice) : un LOSANGE (diamant)
+# Choix DYNAMIQUE : la garde est evaluee APRES l'execution
+# d'un effet, donc sur des valeurs FRAICHES.
+
+   Loue ---- rendre() / calculerPenalite() ---->/ \\---- [penalite = 0] ---> Disponible
+                                                \\ /
+                                                 |
+                                                 '--- [penalite > 0] ---> EnRecouvrement
+   # calculerPenalite() a DEJA tourne quand les gardes sont evaluees :
+   # elles portent sur son resultat.</pre>
+<p>La règle pratique : si la décision dépend d'un calcul qu'il faut d'abord effectuer, c'est un <strong>choice</strong>. Si elle dépend d'informations déjà disponibles, c'est une <strong>junction</strong>.</p>
+<pre class="pseudo"># Deux consequences importantes
+
+JUNCTION : si aucune garde n'est vraie, la transition entiere est
+           bloquee -> l'objet reste dans son etat, rien n'a change.
+
+CHOICE   : si aucune garde n'est vraie, on est COINCE au milieu
+           d'une transition deja commencee (l'effet a tourne).
+           -> il faut TOUJOURS prevoir une branche [else].</pre>
+<div class="warn"><strong>Écart avec ton cours d'école.</strong> Le support du PAC présente le point de jonction et le point de choix côte à côte, <strong>sans faire la distinction statique / dynamique</strong> — alors que c'est précisément ce qui les sépare dans UML 2.5.1. Retiens : <strong>junction = gardes évaluées avant, disque plein ; choice = gardes évaluées après un effet, losange</strong>. Et sur un <code>choice</code>, prévois systématiquement une branche <code>[else]</code>.</div>
+
+<h3>5. L'état historique : H et H*</h3>
+<p>Un objet quitte un composite en cours de route (une panne, une interruption) puis y revient. Doit-il repartir de l'état initial de la sous-machine, ou reprendre là où il en était ? L'<strong>état historique</strong> répond à cette question.</p>
+<pre class="pseudo">(H)   HISTORIQUE SUPERFICIEL (shallow history)
+      -> on revient au dernier SOUS-ETAT DIRECT visite du composite.
+      -> si ce sous-etat etait lui-meme composite, il redemarre a
+         SON etat initial.
+
+(H*)  HISTORIQUE PROFOND (deep history)
+      -> on revient a la configuration exacte, A TOUS LES NIVEAUX
+         d'emboitement. La machine reprend precisement ou elle en etait.</pre>
+<pre class="pseudo"># Exemple concret : un Exemplaire Loue part EnReparation, puis revient.
+ .------------------------------------------------.
+(  Loue                                             )
+(   .------------.        .--------------------.    )
+(  ( EnCours      ) ---> (  Signale             )   )
+(   '------------'        '--------------------'    )
+(                                                   )
+(   (H)   <---------------------------------.       )   # retour par l'historique
+ '------------------------------------------|------'
+             |                              |
+             | tomberEnPanne()              | reparer()
+             v                              |
+      .------------------.------------------'
+     (   EnReparation     )
+      '------------------'
+
+# Sans historique : au retour, on repart de EnCours (etat initial).
+# Avec (H)        : on revient sur Signale, le dernier sous-etat visite.</pre>
+<div class="warn"><strong>Écart avec ton cours d'école.</strong> Le support du PAC parle d'« état historique » <strong>sans distinguer H de H*</strong>. La différence est pourtant nette et tombe régulièrement en examen : <strong>H = un seul niveau</strong> (le dernier sous-état direct) ; <strong>H* = tous les niveaux</strong> (la configuration complète, aussi profonde soit-elle). Si le composite n'a qu'un seul niveau d'emboîtement, les deux sont équivalents — c'est sans doute pourquoi le support ne s'en préoccupe pas.</div>
+
+<h3>6. Les régions orthogonales</h3>
+<p>Jusqu'ici, l'objet était dans exactement un état. Voici la seule exception : un état composite peut être divisé en <strong>régions orthogonales</strong>, séparées par des <strong>traits pointillés</strong>. Chaque région possède son propre état initial et <strong>évolue en parallèle</strong> des autres.</p>
+<pre class="pseudo"> .-----------------------------------------------------------.
+(  Exemplaire actif                                            )
+(                                                              )
+(   REGION 1 : disponibilite                                   )
+(     *  -->  Disponible  <-->  Loue  <-->  EnRetard           )
+(                                                              )
+(  - - - - - - - - - - - - - - - - - - - - - - - - - - - - -   )   # TRAIT POINTILLE
+(                                                              )
+(   REGION 2 : etat physique                                   )
+(     *  -->  Neuf  -->  Bon  -->  Use  -->  Abime             )
+(                                                              )
+ '-----------------------------------------------------------'
+
+# L'objet est dans UN etat de CHAQUE region, simultanement :
+#   (Loue, Bon)   puis   (EnRetard, Bon)   puis   (Disponible, Use)
+# Les deux dimensions evoluent INDEPENDAMMENT l'une de l'autre.</pre>
+<p>Sans régions, il faudrait modéliser le produit cartésien des deux dimensions : 3 x 4 = 12 états, avec toutes leurs transitions. Les régions orthogonales ramènent cela à 3 + 4 = 7 états. Le gain est spectaculaire dès que les dimensions se multiplient.</p>
+<div class="tip">Les régions orthogonales sont <strong>absentes du support de l'école</strong> — c'est un complément standard, parfaitement normatif (UML 2.5.1). Sache les reconnaître : dès que tu vois un état coupé par un trait pointillé, c'est cela. En pratique, on les emploie surtout dans l'embarqué et les interfaces graphiques.</div>
+
+<h3>7. Transition interne et auto-transition</h3>
+<p>Dernière subtilité, et elle est concrète. Que se passe-t-il quand un événement survient et que l'objet <strong>ne change pas d'état</strong> ? Deux notations existent, et elles ne font <em>pas</em> la même chose.</p>
+<pre class="pseudo"># AUTO-TRANSITION (self-transition) : une fleche qui sort de l'etat
+# et y revient. On QUITTE l'etat, puis on y RE-ENTRE.
+#   -> exit est rejoue, PUIS entry est rejoue.
+
+        .-------------.
+    .---(  EnRetard     )---.
+    |    '-------------'    |
+    '-----------------------'
+        relancer() -> exit / ... puis entry / notifierMembre()
+                      # le membre est NOTIFIE A NOUVEAU
+
+
+# TRANSITION INTERNE : ecrite A L'INTERIEUR du rectangle, comme
+# une activite interne. On ne quitte PAS l'etat.
+#   -> ni exit ni entry ne sont rejoues.
+
+ .-------------------------------------.
+(  EnRetard                             )
+(  entry / notifierMembre()             )
+(  relancer() / incrementerCompteur()   )   # TRANSITION INTERNE
+ '-------------------------------------'
+        relancer() -> SEUL incrementerCompteur() s'execute.
+                      # le membre n'est PAS renotifie</pre>
+<p>La question à te poser est donc : « ai-je besoin de rejouer l'entrée dans l'état ? ». Pour une relance de courriel, oui, l'auto-transition a du sens. Pour un simple compteur, non : la transition interne évite un effet de bord indésirable.</p>
+
+<h3>8. Tout ensemble : l'Exemplaire structuré</h3>
+<pre class="pseudo">                *
+                |
+                v
+       .------------------.
+      (    Disponible      )
+       '------------------'
+             |         ^
+   louer(m)  |         |  rendre()      # transition FACTORISEE :
+   [stock_location > 0] |               # elle vaut pour TOUS les
+             v         |               # sous-etats de Sorti
+ .-----------------------------------------------.
+(  Sorti                        # ETAT COMPOSITE   )
+(   .-----------------------------------------.    )
+(   |  *                                       |   )
+(   |  |                                       |   )
+(   |  v                                       |   )
+(   | .----------.  after(7 jours)  .--------. |   )
+(   |( EnCours    )---------------->( EnRetard )|  )
+(   | '----------'                  '--------' |   )
+(   |                                    |     |   )
+(   |  (H)  <--------------------------.  |    |   )
+(   '----------------------------------|--|----'   )
+ '-------------------------------------|--|-------'
+             |                          |  |
+             | signalerPanne()          |  | reparer()
+             v                          '--'
+      .------------------.
+     (   EnReparation     )
+      '------------------'
+
+# Trois mecanismes du jour, sur un seul dessin :
+# 1. COMPOSITE Sorti : factorise la transition rendre()
+# 2. HISTORIQUE (H)  : au retour de reparation, on revient dans
+#                      le sous-etat quitte (EnCours ou EnRetard),
+#                      pas au debut de la sous-machine
+# 3. La sous-machine a son PROPRE etat initial : sans historique,
+#    toute entree par la bordure demarre sur EnCours</pre>`,
+  exercises: [
+    { type: "qcm", q: "Qu'est-ce qu'un état composite ?", opts: ["Un état qui contient une sous-machine d'états", "Un état qui possède plusieurs transitions sortantes", "Un état partagé par deux objets", "Un état qui combine un entry et un exit"], a: 0, exp: "Un état composite contient une sous-machine : ses propres états, transitions et état initial." },
+    { type: "qcm", q: "Quel est le principal intérêt d'un état composite ?", opts: ["Il accélère l'exécution de la machine", "Il factorise : une transition sortant du composite vaut pour tous ses sous-états", "Il permet à l'objet d'être dans deux états à la fois", "Il remplace l'état final"], a: 1, exp: "La factorisation évite de retracer la même flèche depuis chaque sous-état." },
+    { type: "vf", q: "Quand la machine entre dans un composite par sa bordure, elle démarre à l'état initial de la sous-machine.", a: true, exp: "Sauf si l'on entre par un point d'entrée nommé ou par un état historique." },
+    { type: "qcm", q: "Dans quel ordre s'exécutent les entry lors de l'entrée dans un sous-état d'un composite ?", opts: ["entry du sous-état, puis entry du composite", "les deux en parallèle", "entry du composite, puis entry du sous-état", "seul l'entry du sous-état s'exécute"], a: 2, exp: "On entre du plus extérieur vers le plus intérieur ; à la sortie, c'est l'inverse." },
+    { type: "qcm", q: "Comment se dessinent un point d'entrée et un point de sortie ?", opts: ["Par des losanges à l'intérieur du composite", "Par des barres épaisses", "Par des flèches en pointillés", "Par de petits cercles placés sur la bordure du composite"], a: 3, exp: "Ce sont de petits cercles sur la bordure, qui permettent d'entrer ou de sortir à un endroit précis de la sous-machine." },
+    { type: "qcm", q: "Un point de jonction (junction) réalise un choix…", opts: ["Dynamique : les gardes sont évaluées après un effet", "Aléatoire, décidé par le moteur d'exécution", "Statique : les gardes sont évaluées avant d'entrer dans la transition", "Différé jusqu'à l'événement suivant"], a: 2, exp: "La junction est un choix statique : rien n'a encore été exécuté quand les gardes sont testées." },
+    { type: "qcm", q: "Un point de choix (choice) réalise un choix…", opts: ["Statique, avant toute exécution", "Dynamique : la garde est évaluée après l'exécution d'un effet", "Uniquement à l'intérieur d'un état composite", "Uniquement sur un événement temporel"], a: 1, exp: "Le choice est dynamique : les gardes portent sur des valeurs fraîchement calculées par l'effet de la transition." },
+    { type: "vf", q: "Le support de l'école présente la jonction et le choix sans mentionner la distinction statique / dynamique.", a: true, exp: "C'est pourtant l'essentiel de leur différence dans UML 2.5.1 : junction = avant, choice = après l'effet." },
+    { type: "qcm", q: "Pourquoi faut-il toujours prévoir une branche [else] après un point de choix ?", opts: ["Parce que la norme l'exige pour tous les branchements", "Parce que l'effet a déjà été exécuté : si aucune garde n'est vraie, la machine reste bloquée en cours de transition", "Parce que sinon le point de choix devient une jonction", "Parce que l'état final ne serait plus atteignable"], a: 1, exp: "Sur une junction, l'absence de garde vraie bloque simplement la transition ; sur un choice, l'effet a déjà tourné, on est coincé au milieu." },
+    { type: "input", q: "Quel symbole note l'historique profond, celui qui restaure la configuration à tous les niveaux d'emboîtement ?", a: ["H*", "(H*)", "h*", "[H*]"], ph: "un symbole", exp: "H* = historique profond ; H seul = historique superficiel, un seul niveau." },
+    { type: "qcm", q: "Que fait un état historique superficiel (H) ?", opts: ["Il restaure la configuration complète, à tous les niveaux", "Il ramène toujours à l'état initial de la sous-machine", "Il mémorise les valeurs des attributs de l'objet", "Il ramène au dernier sous-état direct visité du composite"], a: 3, exp: "H revient au dernier sous-état direct ; si celui-ci est lui-même composite, il redémarre à son propre état initial." },
+    { type: "qcm", q: "Comment se dessinent des régions orthogonales dans un état composite ?", opts: ["Par des rectangles empilés", "Par des couloirs verticaux comme dans un diagramme d'activités", "Par des traits pointillés séparant le composite en régions", "Par des doubles bordures"], a: 2, exp: "Le trait pointillé sépare les régions ; chacune a son état initial et évolue en parallèle des autres." },
+    { type: "vf", q: "Avec des régions orthogonales, l'objet se trouve simultanément dans un état de chaque région.", a: true, exp: "C'est la seule exception à la règle « un objet est dans exactement un état » — et cela évite de modéliser le produit cartésien des dimensions." },
+    { type: "qcm", q: "Quelle est la différence entre une auto-transition et une transition interne ?", opts: ["Aucune, ce sont deux notations du même comportement", "L'auto-transition rejoue exit puis entry ; la transition interne ne les rejoue pas", "La transition interne rejoue exit mais pas entry", "L'auto-transition est réservée aux états composites"], a: 1, exp: "L'auto-transition quitte l'état et y ré-entre (exit puis entry) ; la transition interne, écrite dans le rectangle, ne quitte pas l'état." },
+    { type: "qcm", q: "L'état EnRetard porte « entry / notifierMembre() ». Tu veux compter les relances SANS renotifier le membre. Que choisis-tu ?", opts: ["Un point de choix", "Une auto-transition relancer() / incrementerCompteur()", "Un état historique H", "Une transition interne relancer() / incrementerCompteur()"], a: 3, exp: "La transition interne n'exécute ni exit ni entry : le compteur avance sans que notifierMembre() soit rejoué." }
+  ],
+  final: {
+    title: "Exercice final — Structurer la machine de l'Exemplaire",
+    intro: `<p>La machine de l'<code>Exemplaire</code> a grossi. Quand il est <strong>sorti</strong> de la ludothèque, il peut être <code>EnCours</code>, <code>EnRetard</code> ou <code>Signale perdu</code> — et dans les trois cas, <code>rendre()</code> le ramène à <code>Disponible</code>. À tout moment il peut partir <strong>en réparation</strong> ; une fois réparé, il doit revenir <strong>là où il en était</strong>, et non au début. Enfin, au retour, la ludothèque calcule une pénalité : si elle est nulle, l'exemplaire redevient disponible ; sinon, le dossier part <strong>en recouvrement</strong>. Structurons tout cela.</p>`,
+    questions: [
+      { type: "qcm", q: "Comment éviter de tracer trois fois la transition rendre(), une par sous-état ?", opts: ["En dupliquant l'état Disponible", "En regroupant les trois sous-états dans un état composite Sorti, et en faisant partir rendre() de sa bordure", "En utilisant un point de choix", "En ajoutant une garde sur chaque transition"], a: 1, exp: "C'est la factorisation : une transition partant de la bordure du composite vaut pour tous ses sous-états." },
+      { type: "qcm", q: "Au retour de réparation, l'exemplaire doit reprendre dans le sous-état qu'il occupait. Quel mécanisme ?", opts: ["Un point d'entrée nommé", "Un point de jonction", "Une transition interne", "Un état historique"], a: 3, exp: "L'état historique mémorise le dernier sous-état visité et y ramène à l'entrée suivante dans le composite." },
+      { type: "vf", q: "Si le composite Sorti n'a qu'un seul niveau d'emboîtement, H et H* donnent le même résultat.", a: true, exp: "La différence n'apparaît qu'avec des sous-états eux-mêmes composites : H restaure un niveau, H* tous les niveaux." },
+      { type: "qcm", q: "La pénalité est calculée par l'effet calculerPenalite() de la transition, puis on teste si elle est nulle. Quel symbole ?", opts: ["Un point de jonction (disque plein)", "Un point de sortie", "Un point de choix (losange)", "Une région orthogonale"], a: 2, exp: "La garde porte sur le résultat d'un effet déjà exécuté : c'est un choix dynamique, donc un point de choix." },
+      { type: "input", q: "Quelle branche faut-il impérativement ajouter au point de choix pour ne pas rester bloqué en cours de transition ? (un mot entre crochets)", a: ["[else]", "else", "[ else ]", "[sinon]"], ph: "[ … ]", exp: "La branche [else] garantit qu'une sortie existe toujours, puisque l'effet de la transition a déjà été exécuté." }
+    ],
+    solution: `<pre class="pseudo"># La machine de l'Exemplaire, structuree
+                       *
+                       |
+                       v
+              .------------------.
+             (    Disponible      )<-----------------.
+              '------------------'                    |
+                       |                              |
+   louer(m) [stock_location > 0]                      | [penalite = 0]
+                       v                              |
+ .--------------------------------------------.       |
+(  Sorti                    # COMPOSITE         )     |
+(   .--------------------------------------.    )     |
+(   |  *                                    |   )     |
+(   |  |                                    |   )     |
+(   |  v                                    |   )     |
+(   | EnCours --after(7 jours)--> EnRetard   |   )    |
+(   |    |                            |      |   )    |
+(   |    '--signalerPerte()--> Perdu <'      |   )    |
+(   |                                        |   )    |
+(   |  (H)  # historique : retour au dernier |   )    |
+(   |       # sous-etat visite               |   )    |
+(   '--------------------------------------'    )     |
+ '--------------------------------------------'       |
+      |                 |                             |
+      | rendre()        | signalerPanne()             |
+      | / calculerPenalite()                          |
+      v                 v                             |
+     / \\        .------------------.                  |
+    /   \\ ---->(   EnReparation     )                 |
+    \\   /       '------------------'                  |
+     \\ /              |                               |
+      |               | reparer()  --> revient par (H)|
+      |                                               |
+      '--- [penalite = 0] ----------------------------'
+      |
+      '--- [else] ---> EnRecouvrement
+
+# Les quatre mecanismes mobilises
+COMPOSITE Sorti   -> factorise rendre() : UNE fleche pour trois sous-etats
+HISTORIQUE (H)    -> au retour de reparation, on reprend dans EnCours,
+                     EnRetard ou Perdu selon l'etat quitte.
+                     H et H* sont ici equivalents : un seul niveau.
+POINT DE CHOIX    -> losange : la garde porte sur penalite, calculee
+                     PAR l'effet de la transition -> choix DYNAMIQUE.
+BRANCHE [else]    -> obligatoire sur un choice : l'effet a deja tourne,
+                     sans elle la machine resterait bloquee.</pre>
+<p>Tu sais maintenant structurer une machine complexe. Il reste une question à laquelle aucune machine à états ne répond : <em>combien de temps</em> l'objet passe-t-il dans chaque état ? Demain, le diagramme de temps.</p>`
+  }
+};
+</script>
+<script src="engine.js"></script>
+<script>
+var ECRITURE = {
+  items: [
+  { id: "uml-j19", title: "Un état composite avec historique pour l'Exemplaire", level: 3,
+    statement: "Reprends la machine de l'<code>Exemplaire</code> et structure-la. Regroupe <code>EnCours</code>, <code>EnRetard</code> et <code>Perdu</code> dans un <strong>état composite</strong> nommé <code>Sorti</code>, dont l'état initial est <code>EnCours</code>. Depuis <code>EnCours</code>, <code>after(7 jours)</code> mène à <code>EnRetard</code> ; <code>signalerPerte()</code> mène à <code>Perdu</code> depuis l'un ou l'autre. Une <strong>seule</strong> transition <code>rendre()</code> doit sortir du composite : elle exécute l'effet <code>calculerPenalite()</code> puis, selon le résultat, ramène à <code>Disponible</code> (pénalité nulle) ou mène à <code>EnRecouvrement</code> — utilise le bon symbole de branchement. Enfin, à tout moment <code>signalerPanne()</code> envoie l'exemplaire en <code>EnReparation</code> ; <code>reparer()</code> doit le ramener <strong>dans le sous-état qu'il occupait</strong>.<br><br><strong>Produis cette machine en syntaxe PlantUML</strong>, en commentant chaque mécanisme employé.",
+    hints: [
+      "En PlantUML, un état composite s'écrit state Sorti { ... } et son état initial se note [*] --> EnCours À L'INTÉRIEUR des accolades.",
+      "Le branchement porte sur une pénalité que l'effet vient de calculer : les gardes sont donc évaluées APRÈS l'exécution de l'effet. C'est un choix dynamique, pas une jonction — et il lui faut une branche [else].",
+      "Pour revenir dans le sous-état quitté, PlantUML note l'historique [H] (superficiel) ou [H*] (profond) à l'intérieur du composite. Ici un seul niveau d'emboîtement : [H] suffit, mais dis pourquoi."
+    ],
+    checklist: [
+      "L'état composite Sorti contient bien les trois sous-états et possède son propre état initial pointant vers EnCours.",
+      "Une SEULE transition rendre() part du composite (pas une par sous-état) : la factorisation est visible.",
+      "Le branchement sur la pénalité utilise un point de CHOIX (choice, losange) et non une jonction, et il comporte une branche [else].",
+      "Un état historique [H] ou [H*] est présent dans le composite et la transition reparer() y aboutit, avec un commentaire justifiant le choix entre superficiel et profond."
+    ],
+    solution: "@startuml\n' Machine a etats structuree de l'Exemplaire (Ludotheque)\n' Mecanismes du jour : composite, historique, point de choix\n\n[*] --> Disponible\n\n' ---------- ETAT COMPOSITE ----------\n' Regrouper les trois situations de sortie permet de FACTORISER :\n' une seule transition rendre() vaudra pour les trois sous-etats.\nstate Sorti {\n  [*] --> EnCours\n  ' etat initial PROPRE a la sous-machine : toute entree par la\n  ' bordure du composite demarre ici\n\n  EnCours : entry / enregistrerSortie()\n  EnCours : do / surveillerEcheance()\n\n  EnCours --> EnRetard : after(7 jours)\n  ' evenement temporel relatif a l'entree dans EnCours\n\n  EnCours --> Perdu : signalerPerte()\n  EnRetard --> Perdu : signalerPerte()\n\n  EnRetard : entry / notifierMembre()\n  EnRetard : relancer() / incrementerCompteur()\n  ' TRANSITION INTERNE : elle ne rejoue NI exit NI entry,\n  ' donc le membre n'est pas renotifie a chaque relance.\n  ' Une auto-transition, elle, aurait rejoue notifierMembre().\n\n  [H]\n  ' HISTORIQUE SUPERFICIEL : memorise le dernier sous-etat DIRECT\n  ' visite. H suffit ici car Sorti n'a qu'un seul niveau\n  ' d'emboitement ; avec des sous-etats eux-memes composites,\n  ' il faudrait [H*] (historique PROFOND) pour restaurer la\n  ' configuration a tous les niveaux.\n}\n\nDisponible --> Sorti : louer(m) [stock_location > 0] / decrementerStock()\n' on entre par la BORDURE -> la sous-machine demarre sur EnCours\n\n' ---------- POINT DE CHOIX ----------\nstate retour <<choice>>\n' losange = choix DYNAMIQUE : les gardes sont evaluees APRES\n' l'execution de l'effet, donc sur des valeurs fraiches.\n' (Un point de jonction, disque plein, evaluerait AVANT.)\n\nSorti --> retour : rendre() / calculerPenalite()\n' UNE SEULE transition sortante pour les trois sous-etats :\n' c'est tout l'interet du composite.\n\nretour --> Disponible : [penalite = 0] / restituerCaution()\nretour --> EnRecouvrement : [else] / retenirCaution()\n' la branche [else] est OBLIGATOIRE sur un choice : l'effet\n' calculerPenalite() a deja tourne, sans issue la machine\n' resterait bloquee au milieu d'une transition commencee.\n\n' ---------- REPARATION ET HISTORIQUE ----------\nSorti --> EnReparation : signalerPanne()\nEnReparation --> Sorti[H] : reparer()\n' retour PAR L'HISTORIQUE : l'exemplaire reprend dans EnCours,\n' EnRetard ou Perdu selon l'etat qu'il occupait avant la panne.\n' Sans [H], il repartirait de l'etat initial EnCours et le\n' retard accumule serait perdu.\n\nEnRecouvrement --> Disponible : regler() / restituerCaution()\nEnRecouvrement --> Retire : declarerPerteDefinitive()\nRetire --> [*]\n\n@enduml\n\n' --- Ce que la structuration a fait gagner ---\n' AVANT : rendre() tracee 3 fois, signalerPanne() tracee 3 fois,\n'         soit 6 fleches redondantes et un dessin illisible.\n' APRES : 2 fleches partant de la bordure du composite.\n' Le composite ne change pas la semantique, il change la LISIBILITE\n' -- et une machine lisible est une machine qu'on peut relire,\n' donc corriger.",
+    note: "Des variantes sont acceptables sur les noms et sur le placement de EnRecouvrement. Ce qui est évalué : le composite avec son état initial propre, la factorisation (une seule transition sortante), l'emploi d'un point de choix et non d'une jonction pour un branchement post-effet, la présence de la branche [else], et un historique correctement placé avec la justification H contre H*." }
+  ]
+};
+</script>
+<script src="exo-ecriture.js"></script>
+</body></html>
