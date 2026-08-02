@@ -259,7 +259,7 @@
       adi.appendChild(el("div", "atoi-h", "🖥️ À toi de jouer — exécute-le sur ta machine"));
       var abody = el("div", "atoi-b");
       if (x.atoi.cmd) {
-        abody.appendChild(el("p", null, "Compile et lance :"));
+        abody.appendChild(el("p", null, "Pour l'essayer :"));
         var pc = el("pre", "cmd"); pc.textContent = x.atoi.cmd; abody.appendChild(pc);
       }
       if (x.atoi.expected !== undefined) {
