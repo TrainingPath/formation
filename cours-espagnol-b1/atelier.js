@@ -17,6 +17,16 @@
   }
   var PREFIX = ATELIER.prefix || "atelier";
 
+  // Mélange déterministe des options de QCM (graine = énoncé) : la bonne réponse
+  // n'est plus jamais à une position fixe, mais l'ordre reste stable au rechargement.
+  function _hash(s){ var h=2166136261; s=String(s); for(var i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+  function shuffledQcm(ex){
+    var opts=(ex.opts||[]).slice(), order=opts.map(function(_,i){return i;}), seed=_hash(ex.q)||1;
+    function rnd(){ seed=(Math.imul(seed,1103515245)+12345)&0x7fffffff; return seed/0x7fffffff; }
+    for(var i=order.length-1;i>0;i--){ var j=Math.floor(rnd()*(i+1)); var t=order[i]; order[i]=order[j]; order[j]=t; }
+    return { opts: order.map(function(k){return opts[k];}), a: order.indexOf(ex.a) };
+  }
+
   /* ---------- styles propres a l'atelier ---------- */
   var css = document.createElement("style");
   css.textContent =
@@ -111,14 +121,15 @@
     var getAnswer, name = "opt_" + id;
 
     if (ex.type === "qcm") {
-      (ex.opts || []).forEach(function (opt, k) {
+      var _sh = shuffledQcm(ex);
+      _sh.opts.forEach(function (opt, k) {
         var lab = el("label", "opt");
         lab.innerHTML = '<input type="radio" name="' + name + '" value="' + k + '"> ' + opt;
         box.appendChild(lab);
       });
       getAnswer = function () {
         var c = box.querySelector('input[name="' + name + '"]:checked');
-        return c === null ? null : (parseInt(c.value, 10) === ex.a);
+        return c === null ? null : (parseInt(c.value, 10) === _sh.a);
       };
     } else if (ex.type === "vf") {
       ["Vrai", "Faux"].forEach(function (opt, k) {
