@@ -654,3 +654,179 @@ la solution était visible sans cliquer sur « Voir la solution ».
   (scénario et adresses différents de la solution de l'ECRITURE) — les étapes sont la consigne du TP, pas la
   réponse de l'exercice. Vérifié (ex. CCNA jour05 : lab sur 192.168.1.x, solution de l'exercice sur 192.168.20.0/24).
 - Aucun changement de moteur (`exo-ecriture.js`) : correctif de **contenu** (`lab.steps`) uniquement.
+
+## Cohérence & véracité (audits permanents)
+
+### Mission 3.2 — Sondage aléatoire de véracité : 1 leçon par cours (81 leçons)
+
+Tirage **réellement aléatoire et reproductible** : pour chaque cours, graine = `SHA-256("veracite-2026-08-02|" + nom_du_cours)`, puis `random.choice` sur la liste triée des fichiers de leçon. La liste tirée est consignée **ci-dessous avant toute lecture** (pas de sélection a posteriori). Fact-check en cours ; verdict et corrections ajoutés ensuite.
+
+- `cours-ad-interface` → `jour29.html`
+- `cours-ad-scripts` → `jour09.html`
+- `cours-algorithmes` → `jour10.html`
+- `cours-allemand-a1` → `jour25.html`
+- `cours-allemand-a2` → `jour03.html`
+- `cours-allemand-b1` → `jour30.html`
+- `cours-allemand-b2` → `jour11.html`
+- `cours-anglais-a1` → `jour03.html`
+- `cours-anglais-a2` → `jour25.html`
+- `cours-anglais-b1` → `jour25.html`
+- `cours-anglais-b2` → `jour12.html`
+- `cours-api` → `lecon15.html`
+- `cours-asm` → `lecon17.html`
+- `cours-c` → `lecon17.html`
+- `cours-cicd` → `lecon03.html`
+- `cours-cisco-ccie` → `jour10.html`
+- `cours-cisco-ccna` → `jour02.html`
+- `cours-cisco-ccnp` → `jour19.html`
+- `cours-cisco-ccst` → `jour12.html`
+- `cours-cpp-bas` → `lecon12.html`
+- `cours-cpp-moderne` → `lecon19.html`
+- `cours-csharp` → `lecon22.html`
+- `cours-django` → `lecon09.html`
+- `cours-django-orm` → `lecon20.html`
+- `cours-docker` → `lecon19.html`
+- `cours-dotnet` → `lecon21.html`
+- `cours-efcore` → `lecon11.html`
+- `cours-eloquent` → `lecon12.html`
+- `cours-espagnol-a1` → `jour14.html`
+- `cours-espagnol-a2` → `jour15.html`
+- `cours-espagnol-b1` → `jour15.html`
+- `cours-espagnol-b2` → `jour03.html`
+- `cours-excel` → `jour11.html`
+- `cours-excel-pro` → `jour16.html`
+- `cours-git` → `lecon01.html`
+- `cours-github-avance` → `jour04.html`
+- `cours-github-debutant` → `jour31.html`
+- `cours-hibernate` → `lecon16.html`
+- `cours-initiation-bdd` → `jour19.html`
+- `cours-java` → `lecon17.html`
+- `cours-laravel` → `lecon06.html`
+- `cours-linux` → `lecon06.html`
+- `cours-merise` → `lecon16.html`
+- `cours-mysql` → `lecon10.html`
+- `cours-neerlandais-a1` → `jour25.html`
+- `cours-neerlandais-a2` → `jour04.html`
+- `cours-neerlandais-b1` → `jour02.html`
+- `cours-neerlandais-b2` → `jour18.html`
+- `cours-php` → `lecon13.html`
+- `cours-powerpoint` → `jour06.html`
+- `cours-projet-asm` → `lecon04.html`
+- `cours-projet-c` → `lecon14.html`
+- `cours-projet-c-pro` → `lecon04.html`
+- `cours-projet-cpp` → `lecon11.html`
+- `cours-projet-cpp-pro` → `lecon06.html`
+- `cours-projet-csharp` → `lecon07.html`
+- `cours-projet-csharp-pro` → `lecon08.html`
+- `cours-projet-java` → `lecon12.html`
+- `cours-projet-java-pro` → `lecon11.html`
+- `cours-projet-php` → `lecon01.html`
+- `cours-projet-php-pro` → `lecon16.html`
+- `cours-projet-python` → `lecon02.html`
+- `cours-projet-python-pro` → `lecon13.html`
+- `cours-projet-sgbd` → `jour08.html`
+- `cours-projet-sgbd-csharp` → `jour02.html`
+- `cours-python` → `lecon05.html`
+- `cours-reseau-avance` → `jour10.html`
+- `cours-reseau-fondamentaux` → `jour14.html`
+- `cours-reseau-ip-routage` → `jour16.html`
+- `cours-reseau-securite` → `jour18.html`
+- `cours-reseau-services-admin` → `jour13.html`
+- `cours-reseau-transport-app` → `jour11.html`
+- `cours-securite` → `lecon18.html`
+- `cours-sgbd-avance` → `jour07.html`
+- `cours-spring` → `lecon19.html`
+- `cours-sql` → `lecon10.html`
+- `cours-sqlserver` → `lecon15.html`
+- `cours-terminal` → `jour04.html`
+- `cours-tests` → `lecon18.html`
+- `cours-web` → `lecon16.html`
+- `cours-word` → `jour19.html`
+
+
+**Verdict du sondage (81 leçons lues intégralement) : 78 propres / 3 corrigées.**
+Chaque trouvaille de sous-agent a été contre-vérifiée par moi dans le code avant correction.
+
+Corrigées :
+- **`cours-eloquent/lecon12.html`** — `withCount()` était compté comme une requête SQL séparée. En réalité il
+  ajoute une **sous-requête COUNT à l'intérieur** de la requête principale (0 requête en plus), comme l'affirme
+  la théorie de la leçon elle-même. La requête `Jeu::with('editeur')->withCount('avis')->get()` fait donc
+  **2 requêtes, pas 3**. Corrigé aux 3 endroits contradictoires (explication du QCM final, solution d'écriture,
+  et bilan « → 8 » devenu « → 7 »). L'`atoi.expected` disait déjà « 2 requêtes » : la contradiction interne est levée.
+- **`cours-neerlandais-b1/jour02.html`** — l'exercice imposait « Ze **hadden** het uur vergeten » (auxiliaire
+  *hebben*) alors que le texte de la leçon écrit « Ze **waren** … vergeten » (auxiliaire *zijn*). Au sens « ne plus
+  se souvenir », *vergeten* prend *zijn* (et admet les deux auxiliaires selon le sens). Exercice réaligné sur le
+  texte (`waren`) avec une explication de la nuance ; plus de contradiction interne.
+- **`cours-initiation-bdd/jour19.html`** — la théorie affirmait « `LENGTH(s)` retourne le nombre de caractères ».
+  En MySQL, `LENGTH` compte les **octets** (`LENGTH('été')`=5 en UTF-8), `CHAR_LENGTH` compte les caractères.
+  Théorie corrigée, et l'exercice qui acceptait `LENGTH` comme réponse à « compte correct des accents » n'accepte
+  plus que `CHAR_LENGTH`.
+
+Observations examinées mais **non retenues** comme erreurs (jugées correctes ou acceptables après vérification) :
+`cours-merise/lecon16` note les cardinalités à regard croisé (inverse de la convention Merise « classique » mais
+**cohérent dans toute la leçon** et produisant des schémas justes — convention, pas erreur) ; `cours-spring/lecon19`
+appelle SLF4J une « bibliothèque de journalisation » (c'est une façade, simplification admissible) ;
+`cours-projet-python-pro/lecon13` teste l'anti-XSS via `assertContains(r, "<script>")` (interprétable selon le
+niveau d'encodage, non tranchable avec certitude) ; `cours-cisco-*` IPsec parle de « phase 1/2 » avec IKEv2
+(terminologie IKEv1, mais présentation pédagogique courante et concept juste).
+
+### Mission 2 — Cohérence sémantique (angle mort des audits automatiques)
+**2.1 — Prérequis : ~138 mentions recensées, 0 incohérence.** Balayage de tous les `cours-*/index.html`, des
+7 `parcours-*.html` et d'`orientation.html`. Vérifié pour chaque mention : le cours désigné existe, le niveau est
+le bon, et l'ordre est cohérent (un prérequis vient avant dans les niveaux). Les deux pièges cherchés sont absents :
+aucun « le cours SQL » ne renvoie par erreur vers MySQL/SQL Server (les trois sont bien distingués, et le parcours C#
+utilise SQL Server de bout en bout), et aucun projet n'est donné comme prérequis de son propre cours de base.
+
+**2.2 — Ateliers de langues (16 cours) :**
+- **Clés localStorage propres au cours** : chaque `atelier.html` définit un préfixe unique (`at-en-a1`, `at-de-a1`,
+  … `at-nl-b2`) → aucune collision de progression entre cours. Conforme.
+- **1 erreur de contenu corrigée** — `cours-espagnol-a1/atelier.html` : le QCM « Es un ___ chico » marquait
+  « grande » correct devant le nom (agrammatical : *grande* s'apocope en *gran* devant un nom singulier). Trou
+  déplacé après le nom (« Es un chico ___ » → *grande* = grand par la taille), explication clarifiée.
+- **Réponses non devinables** — l'audit a montré que le moteur `atelier.js` **ne mélangeait pas** les options :
+  de nombreux onglets avaient toutes les bonnes réponses au même rang (souvent la 1re), donc devinables sans lire.
+  Ajout d'un **mélange déterministe** (graine = énoncé, comme le moteur des leçons) : la bonne réponse est
+  répartie sur toutes les positions, l'ordre restant stable au rechargement. Déployé sur les **16** cours.
+- Liens internes des 16 ateliers : tous valides.
+
+**2.3 — Orthographe (passe conservatrice) :** balayage heuristique du contenu français (mots doublés, coquilles
+fréquentes) sur toutes les leçons. **0 faute indiscutable** : tous les mots doublés détectés sont légitimes (labels
+de crontab « jour-du-mois mois », variables shell `$lignes lignes`, gabarit CSS `"pied pied"`, ou tournures valides
+« le reste reste… »). Cohérent avec le sondage des 81 leçons et les audits de langues, qui n'ont relevé aucune
+faute d'orthographe. Aucune réécriture de style (respect de la consigne « conservateur »).
+
+### Mission 3.3/3.4 — Inventaire d'obsolescence + dates de révision
+- **`_veille.md`** créé (racine) : carte des affirmations **périssables**. Une section transverse (Pyodide `v0.26.4`,
+  sql.js, `bleach`→`nh3`, dates « Août 2026 », watchlist d'outils dépréciés) + un tableau **par cours** (81 cours,
+  5 familles) donnant la techno couverte, les versions citées (scan automatique, signalé comme indicatif) et les
+  chiffres datés. Le scan de la watchlist d'outils dépréciés n'a trouvé **aucun** cas dormant en plus de `bleach`.
+- **Dates de révision** : les 81 sommaires portaient déjà « 🗓️ Dernière révision : Août 2026 » + la techno couverte
+  (phase 5). La campagne se déroulant en août 2026, les cours modifiés restent correctement datés — aucune date à
+  corriger.
+
+### Mission 4 — Armer le lecteur
+- **Lien « ⚠️ Signaler une erreur »** ajouté en pied des **81** sommaires (section Sources) : ouvre une **issue GitHub
+  préremplie** (`github.com/TrainingPath/formation/issues/new`) avec le **nom du cours** dans le titre et le corps, et
+  le label `erreur-contenu`. Suppose le dépôt public avec issues activées ; sinon, remplacer l'URL par un `mailto:`.
+- **`tuteur-ia.html`** : ajout d'un encadré **« réflexe anti-hallucination »** — si l'exécution contredit le cours
+  alors que le code semble juste, croire l'exécution, vérifier sur la source officielle, puis signaler l'écart via le
+  lien de signalement du cours.
+
+### Bilan « Cohérence & véracité » et ce qui reste non couvert
+**Fait :** scanner de cohérence permanent vert et branché en CI (liens, compteurs, structure, orphelins) ; `bleach`
+remplacée par `nh3` partout ; sondage aléatoire d'1 leçon/cours (81) documenté avant lecture, **78 propres / 3
+corrigées** ; prérequis (~138 mentions) sans incohérence ; ateliers de langues audités (1 erreur corrigée + mélange
+des QCM ajouté aux 16) ; passe orthographique conservatrice (0 faute indiscutable) ; `_veille.md` construit ;
+signalement d'erreur en deux clics sur les 81 sommaires ; règle anti-hallucination publiée.
+
+**Ce qui reste non couvert (honnêtement) :**
+- La cohérence **sémantique** n'est pas vérifiée par la CI : `_coherence.js` garantit la structure (liens/compteurs/
+  fichiers), pas l'exactitude d'une phrase. Seule une relecture humaine ou un nouveau sondage l'étend.
+- Le **fact-check reste un échantillon** : 81 leçons sur ~2 080 (1 par cours). Le taux d'erreur observé est faible
+  (~4 % des leçons tirées, erreurs mineures), mais les ~1 999 leçons non tirées n'ont pas été relues cette fois.
+- Le **rendu navigateur réel** (Pyodide/sql.js en conditions Internet) n'est toujours pas exécuté par la CI (pas
+  d'accès navigateur) — cases à cocher humaines, déjà documentées.
+- L'**orthographe** a été balayée par heuristique, sans correcteur orthographique français (indisponible dans
+  l'environnement) : une passe outillée reste souhaitable pour une garantie exhaustive.
+- Les **versions/outils** vieilliront : `_veille.md` en est la carte, mais la revérification demande une action
+  humaine périodique (la CI ne peut pas juger qu'une version est « périmée »).
