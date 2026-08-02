@@ -7,6 +7,12 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
 - **Pyodide `v0.26.4`** (CDN jsdelivr) chargé par `exo-ecriture.js` dans tous les cours à exécution Python : vérifier que la version existe encore sur le CDN et reste compatible.
 - **sql.js** (WASM) pour les cours SQL exécutables : idem, dépendance CDN versionnée.
 - **`bleach` → `nh3`** (cours-securite) : `bleach` dépréciée depuis 2023, remplacée par `nh3` maintenue. Revérifier que `nh3` reste la recommandation vivante.
+- **UML 2.5.1 (OMG)** — version enseignée par `cours-uml`. C'est la version en vigueur depuis 2017 ; si l'OMG publie
+  une révision (UML 2.6 / 3.x), revérifier : le **nombre de diagrammes (14)**, la notation des contraintes de
+  généralisation, et la liste des opérateurs de fragment combiné. Le cours affirme aussi que le support du PAC
+  annonce **13 diagrammes** (il omet le diagramme de profils) : cette comparaison est datée du support 2025-2026.
+- **Outils de diagrammes cités par `cours-uml`** : PlantUML (plantuml.com), draw.io / diagrams.net. Vérifier
+  qu'ils restent gratuits et accessibles en ligne ; la syntaxe PlantUML des solutions dépend de leur maintien.
 - **Dates « Dernière révision : Août 2026 »** sur les 81 sommaires : à faire glisser à chaque vraie révision.
 - **Watchlist d'outils dépréciés** (scan automatique passé) : aucun autre que `bleach` détecté (les occurrences de « nose » dans les cours d'anglais sont le mot anglais, pas l'outil de test Python).
 

@@ -830,3 +830,112 @@ signalement d'erreur en deux clics sur les 81 sommaires ; règle anti-hallucinat
   l'environnement) : une passe outillée reste souhaitable pour une garantie exhaustive.
 - Les **versions/outils** vieilliront : `_veille.md` en est la carte, mais la revérification demande une action
   humaine périodique (la CI ne peut pas juger qu'une version est « périmée »).
+
+---
+
+## Catégorie « Analyse » et formation UML (31 jours)
+
+### Mission A — La catégorie Analyse
+- **`analyse.html`** (racine) : nouveau hub à deux cartes — 🧩 **Merise** (`cours-merise`, **inchangé**) et 📐 **UML**
+  (`cours-uml`, nouveau). Intro : analyser et concevoir avant de coder ; deux écoles complémentaires (Merise = les
+  données, école française ; UML = l'objet, standard international), plus une section « laquelle choisir ».
+- **`index.html`** : nouvelle tuile « 🧠 Analyse — 2 cours ».
+- **Comptage, règle « un cours = une seule catégorie »** : `cours-merise` **déménage** de Programmation vers Analyse.
+  Compteur Programmation **41 → 40** dans `index.html`, `programmation.html` et `README.md`. Les `parcours-*.html`
+  ne sont pas des catégories : **Merise y reste à sa place (niveau 4), rien n'y a été touché**.
+- **`_coherence.js` non affaibli** : aucune attente n'était codée en dur. Le scanner attribue un cours au hub qui le
+  **liste directement** ; `analyse.html` listant Merise et UML, l'arithmétique se vérifie d'elle-même.
+  Run final : **82 dossiers = somme des compteurs**, 82/82 atteignables, **750 liens vérifiés, 0 écart**.
+
+### Mission B.1 — Les sources : inventaire du dossier PAC (lu intégralement)
+16 PDF, ~180 pages, convertis en texte et lus : `1 - Cours d'analyse et de conception` (7 p) · `Cahier des charges V2`
+(13 p) · `User_stories - ET` (11 p) · `Chapitre 4-2 — Le MCD avec UML` (**61 p**) · `2 - Les diagrammes structurels —
+ClasseObjet` (28 p) · `3 - Composant` (6 p) · `4 - Déploiement` (5 p) · `5 - Paquetage` (4 p) · `6 - Structure
+composite` (2 p) · `7 - Use case` (15 p) · `8 - État-transition` (8 p) · `9 - Activité` (10 p) · `10 - Séquence`
+(13 p) · `11 - Communication` (3 p) · `12 - Global d'interaction` (2 p) · `13 - Temps` (2 p).
+
+**Dialecte de l'école repris dans le cours** : sigles DCU/DCL/DOB/DCP/DPL/DPA/DSC/DET/DAC/DSE/DCO/DGI/DTP ;
+« multiplicité » (jamais « cardinalité ») ; « paquetage », « nœud », « couloir d'activités », « point de jonction /
+de choix » ; gabarit de description textuelle en 3 blocs **IDENTIFICATION / SÉQUENCEMENT / RUBRIQUES OPTIONNELLES**.
+
+**Écarts école ↔ UML 2.5.1** — le standard est enseigné, la variante de l'école signalée dans un encadré `warn` :
+1. le support annonce **13 diagrammes** (il omet le **diagramme de profils**) — la norme en compte **14** ;
+2. l'identifiant est noté **`{Unique}`**, non normatif (l'usage est le soulignement) ;
+3. « la super-classe est par définition une classe abstraite » — **faux** en UML ;
+4. la généralisation est décrite avec une « pointe triangulaire **pleine** » — elle est **creuse** ;
+5. le sens de `<<extend>>` est formulé de façon contradictoire ;
+6. le **diagramme de structure composite** est réduit aux collaborations de rôles (ni parts, ni ports, ni connecteurs) ;
+7. « **treize** opérateurs » de séquence — UML en définit **12** (`ref` est une InteractionUse ; `weak` s'appelle `seq`
+   et conserve l'ordre sur chaque ligne de vie) ;
+8. le diagramme d'activités garde le vocabulaire « transition / état initial » d'**UML 1.x** ;
+9. `junction` (statique) et `choice` (dynamique) présentés sans leur distinction ; H et H\* non distingués ;
+10. contraintes traduites en français (`{interdit}`, `{chevauchement}`…) au lieu des mots-clés normatifs.
+
+### Mission B.2-B.4 — La formation `cours-uml/`
+**31 jours**, préfixe localStorage propre **`uml31-j*`** (aucune clé existante touchée), moteur du gabarit
+(borne 31, mélange des options actif, `balanceOpts` neutralisé), `examen.html`/`examen.js` avec garde-fou `file://`.
+
+Squelette livré : **S1 Comprendre et cadrer** (pourquoi modéliser ; UML vs Merise ; cas d'utilisation ×2 ; activités
+×2 ; cahier des charges et user stories) · **S2 La structure** (classes ×3 ; objets ; paquetages ; classes → code ;
+classes → base de données) · **S3 Le comportement** (séquence ×2 ; communication ; machine à états ×2 ; temps ; vue
+d'ensemble des interactions) · **S4 Architecture et synthèse** (composants ; déploiement ; structure composite ;
+profils ; cohérence entre diagrammes ; étude de cas ×2 ; modélisation avancée des données ; révision ; examen final).
+
+**Les 14 diagrammes ont chacun au moins une leçon dédiée**, profils compris (jour 25) — celui que le support de
+l'école omet.
+
+**Fil rouge** : la **vraie** Ludothèque du site (Jeu, Catégorie, Membre, Employé, Exemplaire, Location, Vente,
+Achat, Réservation, Avis, Éditeur ; `stock_location`, `stock_vente`, `prix_location`, `prix_vente`, `date_debut`,
+`date_fin`, `caution` ; service `louer(client, jeu_id, nb_jours=7)`). Le diagramme de classes du jour 14 correspond
+au MCD Merise, et les tables SQL générées sont en **MySQL** (`AUTO_INCREMENT`, `ENGINE=InnoDB`), comme `cours-merise`
+et `cours-mysql`.
+
+**Rendu des diagrammes** : chaque solution est donnée en **syntaxe PlantUML commentée ligne par ligne** (texte que
+l'élève peut retaper et comparer). **Aucun rendu Mermaid n'a été intégré** : plusieurs types au programme (temps,
+structure composite, profils, communication, vue d'ensemble) ne sont pas rendus par Mermaid, et le cours ne promet
+donc nulle part une prévisualisation qui n'existerait pas. Le dossier `cours-uml/img/` est créé mais **vide** : les
+diagrammes sont décrits en art ASCII commenté dans la théorie et en PlantUML dans les solutions — **aucun SVG n'a
+été produit à ce stade** (voir « reste à faire »).
+
+**Pas de champ `tests`** dans les exercices d'écriture : un diagramme ne s'auto-corrige pas. C'est la **grille de
+relecture renforcée** (4 critères observables par jour) qui joue ce rôle, comme pour les leçons HTML/CSS.
+
+### Mission B.5 — Qualité
+- **Contrôle structurel automatisé sur les 31 jours** : `DAY` et `ECRITURE` parsent, **exactement 15 exercices**,
+  QCM à **4 options** avec index valide, `exp` partout, `final` à 5 questions, `ECRITURE` avec 3 indices +
+  checklist de 4 critères, **aucun champ `tests`**. Résultat : **31/31 conformes**.
+- **`_check_qcm.js`** sur tout le dépôt : 0 index invalide, 0 mélange cassé.
+- **Code exécuté, pas seulement relu** : le Python du jour 13 passe `ast.parse` ; les `CREATE TABLE` du jour 14 ont
+  été **réellement exécutés** (5/5 tables créées : `categorie`, `jeu`, `exemplaire`, `membre`, `location`, avec
+  clés primaires, clés étrangères et `ON DELETE CASCADE` pour la composition).
+- **Relecture de 3 jours tirés au hasard** (graine `relecture-uml-2026-08-02` → **jours 10, 12 et 20**), consignée
+  avant lecture. Verdict : **2 propres / 1 corrigé**.
+  - `jour12` — **deux incohérences réelles corrigées** : (a) le schéma d'architecture de la §9 dessinait deux
+    `«import»` vers `Persistance` alors que sa propre légende annonçait un `«access»`, ce qui **ruinait la
+    démonstration de non-transitivité** enseignée par la leçon ; (b) la démonstration de l'exercice d'écriture était
+    invalidée par son propre découpage (elle accordait un accès direct à `Persistance` puis affirmait que ce
+    paquetage ne la voyait pas). Schéma redressé, accès directs retirés, et « (un stéréotype) » supprimé —
+    `«import»`/`«access»`/`«merge»` sont des **mots-clés**, pas des stéréotypes.
+  - `jour10` et `jour20` : propres (notation, index des QCM et cohérence des explications vérifiés).
+
+### Mission C — Intégrations
+- **`README.md`** : ligne « 🧠 Analyse | Merise · UML (31 jours, les 14 diagrammes, fil rouge Ludothèque) ».
+- **`orientation.html`** : section « Et l'analyse dans tout ça ? » — Merise est déjà une étape des parcours ;
+  **UML est optionnel** (avant ou pendant un parcours) et **recommandé si l'école enseigne l'analyse**. Le
+  questionnaire n'est pas modifié.
+- **Carte UML « 🧭 optionnel »** ajoutée à côté de Merise dans les **6 parcours** qui contiennent Merise
+  (`java, python, csharp, php, c, cpp`) — conforme au marquage 🎯/🧭 existant. Les pieds de page comportant un
+  décompte sont passés de **16 à 17 cours** (4 fichiers) ; `parcours-asm/c/cpp` ont un pied descriptif sans
+  décompte, donc inchangé.
+- **`_veille.md`** : entrées ajoutées pour **UML 2.5.1** (revérifier le nombre de diagrammes et la notation si l'OMG
+  publie une révision ; la comparaison « 13 vs 14 » est datée du support 2025-2026) et pour les **outils cités**
+  (PlantUML, draw.io).
+
+### Ce qui reste à faire, honnêtement
+- **Les SVG de `cours-uml/img/` ne sont pas produits.** Le dossier existe mais est vide : les diagrammes vivent
+  aujourd'hui en art ASCII (théorie) et en PlantUML (solutions), ce qui est lisible et comparable, mais moins
+  confortable qu'une image. Le prompt demandait aussi des SVG rendus — ils restent à générer.
+- **Le PlantUML n'a pas été rendu réellement** (pas d'accès à un serveur PlantUML depuis l'environnement) : la
+  syntaxe a été relue et vérifiée manuellement, pas compilée. À passer une fois dans plantuml.com pour confirmation.
+- **Le fact-check ne couvre que 3 jours sur 31** (le tirage aléatoire demandé). Les 28 autres ont été validés
+  structurellement et sur les points de notation sensibles, pas relus ligne à ligne.
