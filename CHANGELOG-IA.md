@@ -640,3 +640,17 @@ Les 5 finitions demandées sont livrées, dans l'ordre 1 → 5 → 2 → 3 → 4
 
 **Aucune fausse affirmation** dans ce fichier : ce qui est vérifié par programme est décrit comme tel ; ce qui ne
 peut pas l'être (rendu Pyodide en navigateur, sorties C#/PHP) est signalé explicitement.
+
+### Correctif — l'encadré « Lab / À reproduire » ne divulgue plus la formule (fait)
+Même problème que pour « À toi de jouer » : dans les cours Office, l'encadré **Lab — À reproduire** listait
+les étapes 1) 2) 3) et **l'étape « tape : =SI(...) » donnait la formule exacte** demandée par l'exercice, donc
+la solution était visible sans cliquer sur « Voir la solution ».
+- **32 labs corrigés** dans **31 leçons** (`cours-excel` 15, `cours-excel-pro` 15, `cours-word` 2). La formule
+  est remplacée par « **saisis ta formule (voir la consigne)** » ; on **conserve** la mise en place des données,
+  la cellule cible, la recopie, et le **résultat vérifiable** (qui est la cible à atteindre, pas la formule).
+- Détection programmatique : toute formule `=FONCTION(...)` (parenthèses équilibrées) ou `tape/Formule : =…`
+  dans `lab.steps`. Après passe : **0 formule résiduelle**, **0 lab cassé** (JSON revalidé sur les 108 labs Office).
+- **Cours réseau/Cisco non modifiés** : là, le Lab est un TP Packet Tracer **distinct** de l'exercice écrit
+  (scénario et adresses différents de la solution de l'ECRITURE) — les étapes sont la consigne du TP, pas la
+  réponse de l'exercice. Vérifié (ex. CCNA jour05 : lab sur 192.168.1.x, solution de l'exercice sur 192.168.20.0/24).
+- Aucun changement de moteur (`exo-ecriture.js`) : correctif de **contenu** (`lab.steps`) uniquement.
