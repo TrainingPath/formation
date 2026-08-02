@@ -16,6 +16,9 @@
   if (!wrap) return;
 
   var PYODIDE_BASE = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/";
+  // Mis à true dans les cours dont les sorties « À toi de jouer » n'ont PAS été certifiées par une
+  // exécution réelle (C#/PHP : pas d'outil disponible lors de la génération). Ajoute une note honnête.
+  var ATOI_UNCERTIFIED = true;
   var SQLJS_BASE = "https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/";
 
   var css = document.createElement("style");
@@ -268,6 +271,11 @@
       if (x.atoi.expected !== undefined) {
         abody.appendChild(el("p", null, "Sortie attendue (compare-la avec la tienne, caractère pour caractère) :"));
         var pe2 = el("pre"); pe2.textContent = x.atoi.expected; abody.appendChild(pe2);
+      }
+      if (ATOI_UNCERTIFIED) {
+        var anote = el("p", null, "ℹ️ Sortie relue mais non certifiée par une exécution réelle (outil indisponible ici) : si la tienne diffère alors que ton code te semble juste, fie-toi à ton exécution.");
+        anote.style.cssText = "font-style:italic;color:#7a6a3a";
+        abody.appendChild(anote);
       }
       adi.appendChild(abody);
       exo.appendChild(adi);

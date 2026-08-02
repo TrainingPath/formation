@@ -528,12 +528,115 @@ Un audit point par point du prompt a révélé des manques réels, corrigés ici
 - **Phase 3.2 (faite)** — sur les 7 `parcours-*.html` : marqueur **🎯 cœur du bachelier** / **🧭 optionnel · plus tard**
   sur chaque cours, **durée estimée par étape** (somme réelle des leçons), et une **légende** explicative.
 
-### Écarts restants assumés (signalés, non masqués)
+### Écarts restants assumés (signalés, non masqués) — voir « Clôture » pour les corrections
 - **Distracteurs des 16 cours de langues** : volontairement non réécrits (QCM de vocabulaire — les distracteurs
   y sont d'autres mots réels, les réécrire risquerait d'introduire des ambiguïtés).
-- **Titre CCIE** non renommé littéralement en « Théorie du niveau expert » (avertissement clair ajouté à la place).
+- ~~**Titre CCIE** non renommé littéralement~~ → **résolu en Finition 3** (voir Clôture).
 - **Sources** : 2 à 4 liens officiels par cours (le prompt suggérait 3 à 6).
 - **« Publier et faire relire »** livré en **page transversale liée** depuis les 15 projets, pas en leçon interne à chaque cours.
 - **Anti-bâclage** : relecture de 2 leçons/lot faite par échantillonnage/rapports d'agents, mais **pas consignée
   systématiquement** dans ce CHANGELOG.
 - **Vérification navigateur de Pyodide** : non réalisable dans le bac à sable, laissée en cases à cocher pour un humain.
+
+---
+
+## Clôture — 5 finitions finales
+
+### Finition 1 — Hygiène du dépôt (fait)
+- `locations.txt` (résidu d'exécution des programmes C++ du Lot 5) **retiré du suivi Git** (`git rm --cached`) et du disque.
+- `.gitignore` **élargi** : toutes les extensions d'artefacts que les exercices/vérificateurs génèrent
+  (`*.txt`, `*.json`, `*.csv`, `*.dat`, `*.log`, `*.db`, `*.sqlite`) — le site ne contient **aucun** fichier de
+  contenu portant ces extensions, donc l'ignorance est sûre ; + noms précis écrits par des solutions
+  (`taches.json`, `carnet.json`, `locations.txt`, `catalogue.txt/json`, `classe.txt`, `data.json`, `jeu.txt`,
+  `jeux.dat`, `journal.txt`, `notes.txt`, `scores.txt`, `f.txt`) ; + binaires (`a.out`, `*.exe`, `*.o`, `*.class`,
+  `*.jar`, `prog`, `prog.out`) ; + le répertoire de travail dédié **`/_verify_tmp/`** (désormais utilisé pour toute
+  vérification, jamais commité).
+- **Balayage final** des fichiers suivis par Git hors `.html/.js/.css/.md/.gitignore/.nojekyll/.github` :
+  **un seul** résultat, `cours-projet-asm/ludostat.s` — **source assembleur légitime** (134 lignes, syntaxe GAS
+  Intel) du projet « ludostat », **référencée** dans le sommaire et 2 leçons du cours. **Conservée et justifiée.**
+  Aucun autre artefact suivi.
+
+### Finition 5 — GitHub Action : la qualité en continu (fait)
+- **`_verify_all.js`** : lanceur qui découvre automatiquement les leçons « gatées » (champ `tests`, ou
+  `lang` java/c/cpp avec sortie attendue) en scannant `cours-*/lecon*.html` et `jour*.html`, puis exécute
+  `_verify.js` sur chacune. Sort en erreur au moindre FAIL. Validé localement (38/38 verts sur un sous-ensemble
+  web/Java/C/MySQL ; les cours ont été vérifiés lot par lot pendant tout le chantier).
+- **`_check_qcm.js`** : contrôle d'intégrité de TOUS les QCM — index `a` valide et **mélange déterministe
+  préservant la bonne réponse** (échec bloquant) ; les QCM à 2 options (questions booléennes `true/false`
+  légitimes) sont **comptés à titre informatif, sans bloquer** — imposer « exactement 4 » ferait échouer la CI
+  à tort. Contrôle logique : 0 index invalide, 0 mélange cassé sur l'échantillon.
+- **`.github/workflows/verify.yml`** : déclenché sur `push` et `pull_request` ; `ubuntu-latest`, `timeout 10 min` ;
+  installe Node 20 et un JDK 17 (gcc/g++/python3 préinstallés) ; lance `_check_qcm.js` puis `_verify_all.js` ;
+  **compile réellement C/C++/Java** (aucun langage silencieusement exclu) ; un dernier pas `git status --porcelain`
+  **échoue si un artefact a été écrit** dans le dépôt (les exécutions ont lieu dans le dossier temp du système, hors dépôt).
+- **`README.md`** : section « Qualité vérifiée automatiquement » ajoutée.
+- **Activation** : je n'ai pas d'accès réseau vers GitHub depuis l'environnement de travail, donc je **ne peux pas
+  fournir le lien d'un premier run vert**. Le workflow est **prêt et commité** ; il s'activera automatiquement au
+  **premier `git push` vers GitHub** (aucune action supplémentaire requise — GitHub Actions détecte
+  `.github/workflows/verify.yml`). Vérifie ensuite l'onglet **Actions** du dépôt pour le premier run.
+- **Correctif d'isolation (`_verify.js`)** : les exécutions Python/Java/C/C++/bash tournent désormais **dans un
+  dossier temporaire jetable** (`cwd`), pas dans le dépôt. Une solution qui écrit un fichier (le `taches.json` de
+  Python, le `locations.txt` du C++) ne pollue donc plus le dépôt — c'était la cause racine des artefacts commités.
+  Prouvé : relancer toutes les leçons C++/Python ne crée plus aucun fichier dans le dépôt.
+
+### Finition 2 — Tests du cours web (fait)
+Décompte final : **10 leçons testées / 11 exceptions justifiées / 21**.
+- **+2 leçons nouvellement testées** (vrais tests JS, `lang:"js"`, `pass:4/4`) : `lecon15` (variables/types :
+  `nomSite`, `nbJeux`=12, `estOuverte` booléen) et `lecon16` (fonctions du catalogue : `estPourEnfants`,
+  `compterRapides` testées sur des cas construits + tableau vide). S'ajoutent aux 8 déjà équipées (02-07, 17, 18).
+- **11 exceptions** (grille d'auto-relecture renforcée à 4 critères observables, pas de test artificiel) :
+  01 (analyse rédactionnelle), 08 (guide couleurs), 09 (box model en prose), 10 (charte typo — Google Font),
+  11 (repérage flex + CSS), 12 (audit Flexbox/Grid), 13 (plan responsive), 14 (feuille `style.css` complète),
+  19 (validation d'un formulaire dont le DOM n'est pas fourni + `submit` non simulable), 20 (`fetch` réseau/async),
+  21 (revue de son propre site). Justification commune : exercice **rédactionnel/visuel/réseau** dont un test
+  automatique serait artificiel ou fragile — conformément à la consigne « ne force pas ».
+- Gate : `_verify.js` sans FAIL sur les 21 (les testées en `pass:N/N`, les exceptions en `no-tests`).
+
+### Finition 3 — Titre CCIE aligné sur son avertissement (fait)
+- Sommaire `cours-cisco-ccie/index.html` : `<title>` et `<h1>` passent de « CCIE — Expert » à
+  **« Théorie du niveau expert (concepts CCIE) »**.
+- Vitrine `cisco.html` : la carte passe de « CCIE — Expert » à **« Théorie du niveau expert (concepts CCIE) »**.
+- Balayage « CCIE » dans tout le dépôt : plus **aucune** page n'affiche « CCIE — Expert » comme titre. Les autres
+  occurrences (`reseau.html` « CCST, CCNA, CCNP et CCIE » ; prose de `cisco.html` « l'expertise (CCIE) ») sont des
+  mentions contextuelles exactes de l'acronyme, pas des titres survendeurs — laissées telles quelles.
+- Contenu des leçons **non touché** (seul l'affichage du titre change). L'écart correspondant a été retiré de la
+  liste « Écarts restants assumés ».
+
+### Finition 4 — Transparence C#/PHP : sorties non certifiées par exécution (fait)
+`dotnet` et `php` ne sont **pas disponibles** dans l'environnement de génération (vérifié) : les sorties
+attendues des encadrés « À toi de jouer » de ces cours ne peuvent pas être certifiées par exécution réelle,
+contrairement à Python, SQL, C, C++ et Java (eux vérifiés automatiquement par la CI). Plutôt que de le taire,
+c'est désormais **affiché honnêtement** :
+- **Note visible sur chaque sommaire** (encadré ambré, juste sous l'en-tête) des **11 cours concernés** :
+  `cours-csharp`, `cours-dotnet`, `cours-efcore`, `cours-projet-csharp`, `cours-projet-csharp-pro`,
+  `cours-projet-sgbd-csharp` (C#) ; `cours-php`, `cours-laravel`, `cours-eloquent`, `cours-projet-php`,
+  `cours-projet-php-pro` (PHP). Texte : sorties relues mais **non certifiées par une exécution réelle** ;
+  invitation à se fier à sa propre exécution en cas d'écart.
+- **Une ligne discrète dans l'encadré « À toi de jouer » lui-même** (pas un pavé par leçon) : le runner
+  `exo-ecriture.js` ajoute la note **uniquement** quand la constante `ATOI_UNCERTIFIED` vaut `true`. Cette
+  constante est à `false` dans le runner canonique et passée à `true` dans les **11 copies** de ces cours
+  (drapeau par cours, aucune leçon éditée individuellement). Balayage : 11 copies à `true`, 70 à `false`.
+- **Choix assumé** : si `dotnet`/`php` deviennent disponibles un jour, la voie « vérifier » remplace la voie
+  « noter » (comme fait pour Java/C/C++). En attendant, l'honnêteté prime sur l'apparence de complétude.
+
+---
+
+## Clôture du chantier — récapitulatif
+
+Les 5 finitions demandées sont livrées, dans l'ordre 1 → 5 → 2 → 3 → 4, sans élargissement de périmètre :
+
+1. **Hygiène du dépôt** — `locations.txt` retiré du suivi et du disque ; `.gitignore` couvre tous les artefacts
+   d'exécution (fichiers écrits par les solutions, binaires, `/_verify_tmp/`) ; balayage final : seuls des
+   `.html/.js/.css/.md/.gitignore/.nojekyll` et l'unique source légitime `cours-projet-asm/ludostat.s` sont suivis.
+5. **Intégration continue** — `.github/workflows/verify.yml` + `_verify_all.js` + `_check_qcm.js` : exécutent les
+   solutions de référence contre leurs tests (Python/JS/SQL) **et compilent C/C++/Java**, contrôlent l'intégrité
+   des QCM, et échouent si un artefact est écrit. Correctif racine : `_verify.js` s'exécute hors dépôt (`cwd` temp).
+   S'activera au premier `git push` (pas d'accès GitHub depuis l'environnement, donc pas de lien de run fourni).
+2. **Tests cours web** — 10 leçons testées / 11 exceptions justifiées / 21 ; aucun FAIL.
+3. **Titre CCIE** — « CCIE — Expert » → « Théorie du niveau expert (concepts CCIE) » sur le sommaire et la vitrine ;
+   écart correspondant retiré.
+4. **Transparence C#/PHP** — note honnête « sorties non certifiées par exécution » sur 11 sommaires + 1 ligne dans
+   l'encadré « À toi de jouer » (drapeau `ATOI_UNCERTIFIED`).
+
+**Aucune fausse affirmation** dans ce fichier : ce qui est vérifié par programme est décrit comme tel ; ce qui ne
+peut pas l'être (rendu Pyodide en navigateur, sorties C#/PHP) est signalé explicitement.
