@@ -61,7 +61,10 @@
     ".checklist{background:#fff;border:1px solid #e2e7f0;border-radius:10px;padding:10px 14px;margin-top:12px}" +
     ".checklist h4{margin:0 0 6px;font-size:.95em;color:var(--ink)}" +
     ".checklist label{display:flex;gap:8px;align-items:flex-start;font-size:.92em;margin:4px 0;cursor:pointer}" +
-    ".checklist input{margin-top:3px}";
+    ".checklist input{margin-top:3px}" +
+    ".checklist .cl-note{margin:0 0 8px;font-size:.85em;color:var(--muted)}" +
+    ".checklist .cl-items{margin-bottom:8px}" +
+    ".checklist .clbtn{font-size:.9em}";
   document.head.appendChild(css);
 
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
@@ -290,10 +293,25 @@
       if (shown >= x.hints.length) { hintBtn.textContent = "💡 Tous les indices affichés"; hintBtn.disabled = true; } else { hintBtn.textContent = "💡 Indice (" + shown + "/" + x.hints.length + ")"; }
     });
 
-    /* ---- grille d'auto-relecture ---- */
+    /* ---- grille d'auto-relecture, révélée point par point (un clic = un critère) ---- */
     var checks = (x.checklist && x.checklist.length) ? x.checklist : DEFAULT_CHECKLIST;
-    var cl = el("div", "checklist"); cl.appendChild(el("h4", null, "🔍 Avant de regarder la solution — relis ton travail :"));
-    checks.forEach(function (crit) { var lab = document.createElement("label"); lab.innerHTML = '<input type="checkbox"> <span>' + crit + "</span>"; cl.appendChild(lab); });
+    var cl = el("div", "checklist");
+    cl.appendChild(el("h4", null, "🔍 Avant de regarder la solution — relis ton travail :"));
+    cl.appendChild(el("p", "cl-note", "Ne dévoile un point que si tu bloques : essaie d'abord de le trouver toi-même."));
+    var clItems = el("div", "cl-items");
+    cl.appendChild(clItems);
+    var clBtn = el("button", "check clbtn", "💡 Révéler un point de relecture (0/" + checks.length + ")");
+    cl.appendChild(clBtn);
+    var clShown = 0;
+    clBtn.addEventListener("click", function () {
+      if (clShown >= checks.length) return;
+      var lab = document.createElement("label");
+      lab.innerHTML = '<input type="checkbox"> <span>' + checks[clShown] + "</span>";
+      clItems.appendChild(lab);
+      clShown++;
+      if (clShown >= checks.length) { clBtn.textContent = "💡 Tous les points sont affichés"; clBtn.disabled = true; }
+      else { clBtn.textContent = "💡 Révéler un point de relecture (" + clShown + "/" + checks.length + ")"; }
+    });
     exo.appendChild(cl);
 
     /* ---- solution ---- */
