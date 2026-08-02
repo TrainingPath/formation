@@ -511,3 +511,29 @@ exercices d'écriture du site**, et **`tuteur-ia.html`** liée depuis chaque som
   le site n'octroie **aucun diplôme** ; les vraies validations sont les examens du bachelier, les certifications
   officielles et le jugement d'humains.
 - Liée par un bouton « 🚀 Étape finale » depuis les **15 sommaires `cours-projet-*`**.
+
+---
+
+## Correctifs post-audit (comblement des trous relevés)
+
+Un audit point par point du prompt a révélé des manques réels, corrigés ici :
+
+- **5 cours passés entre les mailles** — `cours-algorithmes`, `cours-projet-python`, `cours-projet-python-pro`,
+  `cours-projet-cpp`, `cours-projet-cpp-pro` : ils avaient le mélange QCM (Prep-B) et la checklist par défaut
+  (Prep-C), mais **pas** d'examen, de lien tuteur, de distracteurs audités ni de `balanceOpts` désactivé.
+  Comblé : **mode examen + lien Tuteur IA + `balanceOpts` off** sur les 5, et **audit des distracteurs**
+  (algorithmes 4 QCM, projet-python×2 177 options, projet-cpp×2 542 QCM). **1889 QCM, 0 index invalide, 0 FAIL.**
+  Une **correction factuelle** : `cours-projet-cpp/lecon02` avait un mauvais index `a` (la bonne réponse était
+  `target_link_libraries`, pas l'include) — corrigé `a:1 → a:0`. Nettoyage de caractères parasites (projet-cpp-pro).
+- **Phase 3.2 (faite)** — sur les 7 `parcours-*.html` : marqueur **🎯 cœur du bachelier** / **🧭 optionnel · plus tard**
+  sur chaque cours, **durée estimée par étape** (somme réelle des leçons), et une **légende** explicative.
+
+### Écarts restants assumés (signalés, non masqués)
+- **Distracteurs des 16 cours de langues** : volontairement non réécrits (QCM de vocabulaire — les distracteurs
+  y sont d'autres mots réels, les réécrire risquerait d'introduire des ambiguïtés).
+- **Titre CCIE** non renommé littéralement en « Théorie du niveau expert » (avertissement clair ajouté à la place).
+- **Sources** : 2 à 4 liens officiels par cours (le prompt suggérait 3 à 6).
+- **« Publier et faire relire »** livré en **page transversale liée** depuis les 15 projets, pas en leçon interne à chaque cours.
+- **Anti-bâclage** : relecture de 2 leçons/lot faite par échantillonnage/rapports d'agents, mais **pas consignée
+  systématiquement** dans ce CHANGELOG.
+- **Vérification navigateur de Pyodide** : non réalisable dans le bac à sable, laissée en cases à cocher pour un humain.
