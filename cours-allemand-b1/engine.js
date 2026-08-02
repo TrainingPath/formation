@@ -124,7 +124,7 @@
     var getAnswer, name = "opt_" + id;
 
     if (ex.type === "qcm") {
-      var _opts = balanceOpts(ex);
+      var _opts = ex.opts.slice();
       // Mélange déterministe des options (seed = énoncé) avec recalcul de l'index correct :
       // la bonne réponse n'est plus jamais à une position fixe, mais l'ordre reste stable
       // d'un rechargement à l'autre pour une même question.

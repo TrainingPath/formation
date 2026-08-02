@@ -12,6 +12,16 @@ Chaque leçon propose de la théorie, des exercices auto-corrigés et des exerci
 | 📊 Office | Excel (débutant et avancé/pro), Word, PowerPoint |
 | 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices |
 
+## Par où commencer ? (un parcours à la fois)
+
+Le site contient des milliers de leçons : **n'essaie pas de tout faire.** La bonne méthode est de suivre
+**un seul parcours à la fois** (par exemple le parcours Python, de l'algorithmique jusqu'au projet outillé),
+et de traiter tout le reste — réseau, Cisco, langues, Office, les autres langages — comme une **bibliothèque**
+dans laquelle tu piocheras selon tes besoins ponctuels.
+
+La page **`orientation.html`** (lien « Trouver mon parcours » sur l'accueil) pose 3 questions et recommande
+un parcours unique avec un planning réaliste. Reviens-y quand ton objectif change.
+
 ## Utilisation
 
 Le site est entièrement statique : **aucune installation** à faire.

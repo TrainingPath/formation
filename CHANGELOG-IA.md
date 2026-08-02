@@ -426,10 +426,44 @@ commandes Linux.
 - Adaptations de portabilité SQL signalées : `cours-mysql/lecon05` (`REGEXP` → `LIKE` portable) et calibrage des
   jeux de données de test pour rester déterministes. **Aucune correction factuelle** de corrigé.
 
-### ⚠️ Reste à finir : distracteurs des 4 cours de la 2ᵉ vague
-Les agents de la 2ᵉ vague (`cours-securite`, `cours-merise`, `cours-ad-scripts`, `cours-ad-interface`) ont été
-**coupés par la limite hebdomadaire** pendant/avant la Tâche B. Leur Tâche A (atoi + checklist) et C (balanceOpts,
-y compris un correctif manuel sur `cours-ad-interface`) sont **terminées et vérifiées**, mais la **réécriture des
-distracteurs** de ces 4 cours **n'est pas terminée** (audit dédié à relancer quand la limite se réinitialise).
-Rappel : les QCM restent **imprévisibles** partout (mélange Prep-B), donc ce n'est pas un défaut bloquant, mais
-un raffinement de qualité en attente. Signalé plutôt que masqué.
+### Distracteurs de la 2ᵉ vague — audit terminé
+Les 4 cours de la 2ᵉ vague (`cours-securite`, `cours-merise`, `cours-ad-scripts`, `cours-ad-interface`) avaient
+leur Tâche B interrompue par la limite hebdomadaire ; elle a été **reprise et achevée** par un audit dédié
+(un agent par cours). Distracteurs réécrits : sécurité 225 QCM, Merise 10, AD-scripts 17, AD-interface 23.
+Contrôle final : **1250 QCM sur ces 4 cours, 0 index invalide, `_verify.js` 0 FAIL**. Aucune correction factuelle.
+Le Lot 10 est donc **entièrement terminé et vérifié**.
+
+---
+
+## Phase 2 — cours sans code (réseau, Cisco, Office, langues)
+
+Ces cours n'ont pas d'exécution de code : Phase 2 seulement (le mélange des QCM et les checklists y étaient déjà
+en place via Prep-B/C).
+
+### Infra mécanique (30 cours)
+Sur les 6 cours réseau, 4 Cisco, 4 Office et 16 langues : **mode examen** (`examen.html`/`examen.js`, préfixe
+localStorage auto-détecté par cours) + **lien Tuteur IA** ajoutés au sommaire, et **`balanceOpts` désactivé**
+dans les 30 `engine.js`. Vérifié : 0 problème sur les 30.
+
+### Distracteurs réseau + Cisco
+Audit des 10 cours (réseau 6 + Cisco 4, soit 310 leçons, 3134 QCM). Distracteurs absurdes/hors-sujet
+(« la couleur du câble », « Photoshop », « la météo du datacenter »…) réécrits en erreurs de compréhension
+plausibles et cohérentes (mauvais protocole/port/couche, commande IOS crédible mais fausse, etc.). Les QCM déjà
+solides ont été laissés intacts. **0 index invalide, `_verify.js` 0 FAIL, aucune correction factuelle.**
+Distracteurs **Office (4)** audités ensuite (Excel/Excel-pro/Word/PowerPoint, 1265 QCM, 0 invalide, 0 FAIL,
+aucune correction factuelle). Les **langues (16)** sont laissées telles quelles : leurs QCM testent du
+vocabulaire/de la grammaire, où les distracteurs sont d'autres mots réels — les réécrire risquerait
+d'introduire des ambiguïtés (choix assumé, signalé).
+
+---
+
+## Phase 3 — Orientation et priorisation
+
+- **`orientation.html`** (nouvelle page, liée en évidence depuis l'accueil) : mini-questionnaire de 3 questions
+  (niveau, objectif, centre d'intérêt) qui recommande **un seul parcours** parmi les 7 (Python, Java, C#, PHP,
+  C, C++) et affiche un **planning honnête** (leçons totales réelles du parcours, semaines/mois selon un rythme
+  choisi de 3 à 10 leçons/semaine). 100 % statique, logique de reco testée sur plusieurs cas.
+- **Règle « un parcours à la fois »** ajoutée à l'accueil (encadré + bouton) et au `README.md` : le reste du
+  site est présenté comme une **bibliothèque** où l'on pioche selon ses besoins, pas une liste à tout faire.
+- Totaux réels par parcours (pour un planning non trompeur) : Python 335, Java 345, C# 345, PHP 345, C 293,
+  C++ 314 leçons.
