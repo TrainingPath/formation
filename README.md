@@ -22,6 +22,20 @@ dans laquelle tu piocheras selon tes besoins ponctuels.
 La page **`orientation.html`** (lien « Trouver mon parcours » sur l'accueil) pose 3 questions et recommande
 un parcours unique avec un planning réaliste. Reviens-y quand ton objectif change.
 
+## Qualité vérifiée automatiquement (intégration continue)
+
+À **chaque push et chaque pull request**, une **GitHub Action** (`.github/workflows/verify.yml`) vérifie le site :
+
+- **Les solutions de référence sont réellement exécutées contre leurs propres tests** — Python, JavaScript et
+  SQL, mais aussi **C, C++ et Java compilés** sur le runner (`gcc`/`g++`/`javac`). Un exercice dont la solution
+  ne passe plus ses tests fait **échouer le build**.
+- **L'intégrité des QCM** est contrôlée : index de bonne réponse valide, et le mélange déterministe des options
+  préserve bien la bonne réponse.
+- Un **filet anti-artefact** vérifie qu'aucune exécution n'a laissé de fichier dans le dépôt.
+
+Autrement dit, `_verify.js` n'est plus un audit manuel : c'est un garde-fou. Un commit qui casse une solution
+est bloqué avant d'atteindre le site en ligne.
+
 ## Utilisation
 
 Le site est entièrement statique : **aucune installation** à faire.

@@ -1,0 +1,59 @@
+name: Vérification qualité (fable 5)
+
+# Garde-fou automatique : à chaque push et pull request, on exécute les solutions de
+# référence contre leurs propres tests et on contrôle l'intégrité des QCM.
+# Un push qui casse une solution ou un QCM fait échouer le build.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # gcc, g++ et python3 (avec le module sqlite3) sont préinstallés sur ubuntu-latest.
+      # java (mode fichier unique de _verify.js) nécessite un JDK : on l'installe.
+      - name: Installer un JDK (pour la vérification Java)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Afficher les versions des outils
+        run: |
+          node --version
+          python3 --version
+          gcc --version | head -1
+          g++ --version | head -1
+          java --version | head -1
+
+      - name: Intégrité des QCM (4 options, index valide, mélange préservant la bonne réponse)
+        run: node _check_qcm.js
+
+      # Ce lanceur découvre automatiquement les leçons « gatées » (champ tests, ou lang java/c/cpp
+      # avec sortie attendue) et exécute _verify.js sur chacune : Python (python3), JS (vm node),
+      # SQL (sqlite3 de python3), Java (javac/java via le JDK), C/C++ (gcc/g++). Aucun langage
+      # n'est silencieusement exclu : ce qui est vérifiable dans cet environnement l'est réellement.
+      - name: Exécuter les solutions de référence contre leurs tests
+        run: node _verify_all.js
+
+      # Filet de sécurité : aucune exécution ne doit avoir écrit un artefact dans le dépôt.
+      # _verify.js compile/exécute dans le dossier temporaire du système (hors dépôt) ; on le prouve.
+      - name: Vérifier qu'aucun artefact n'a été écrit dans le dépôt
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "❌ Des fichiers ont été créés/modifiés pendant la vérification :"
+            git status --porcelain
+            exit 1
+          fi
+          echo "✅ Dépôt propre après vérification."

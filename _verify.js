@@ -73,7 +73,12 @@ for _t in _tests:
         print("  FAIL:", _t['label'], "->", repr(e))
 print("PASS", _passed, len(_tests))
 `;
-  const r = spawnSync("python3", ["-c", harness], { encoding: "utf8" });
+  // Exécution dans un dossier temporaire jetable : si une solution écrit un fichier
+  // (ex. taches.json), il atterrit là et non dans le dépôt.
+  const os = require("os"), path = require("path"), fs2 = require("fs");
+  const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "pyv"));
+  const r = spawnSync("python3", ["-c", harness], { encoding: "utf8", cwd: dir });
+  try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   return parsePass((r.stdout || "") + (r.stderr || ""));
 }
 
@@ -232,7 +237,12 @@ for t in tests:
         con.close()
 print("PASS", passed, len(tests))
 `;
-  const r = spawnSync("python3", ["-c", harness], { encoding: "utf8" });
+  // Exécution dans un dossier temporaire jetable : si une solution écrit un fichier
+  // (ex. taches.json), il atterrit là et non dans le dépôt.
+  const os = require("os"), path = require("path"), fs2 = require("fs");
+  const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "pyv"));
+  const r = spawnSync("python3", ["-c", harness], { encoding: "utf8", cwd: dir });
+  try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   return parsePass((r.stdout || "") + (r.stderr || ""));
 }
 
@@ -247,7 +257,7 @@ function verifyJava(x) {
   const cls = m ? m[1] : "Main";
   const file = path.join(dir, cls + ".java");
   fs2.writeFileSync(file, x.solution || "");
-  const r = spawnSync("java", [file], { encoding: "utf8", timeout: 25000 });
+  const r = spawnSync("java", [file], { encoding: "utf8", timeout: 25000, cwd: dir });
   try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   const out = (r.stdout || "").replace(/\s+$/g, "");
   const exp = String(x.atoi.expected).replace(/\s+$/g, "");
@@ -272,7 +282,7 @@ function verifyCompiled(x, lang) {
   const c = spawnSync(compiler, args, { encoding: "utf8", timeout: 40000 });
   if (c.status !== 0) { try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {} return { ok: false, msg: "compile error:\n" + (c.stderr || "").trim() }; }
   const stdin = (x.stdin && x.stdin.length) ? (x.stdin.join("\n") + "\n") : "";
-  const r = spawnSync(bin, [], { encoding: "utf8", timeout: 15000, input: stdin });
+  const r = spawnSync(bin, [], { encoding: "utf8", timeout: 15000, input: stdin, cwd: dir });
   try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   if (r.error) return { ok: false, msg: "run error: " + r.error.message };
   const got = (r.stdout || "").replace(/\s+$/g, "");
