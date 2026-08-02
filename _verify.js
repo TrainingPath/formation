@@ -32,6 +32,7 @@ let allOk = true;
   else if (lang === "java") res = verifyJava(x);
   else if (lang === "c") res = verifyCompiled(x, "c");
   else if (lang === "cpp") res = verifyCompiled(x, "cpp");
+  else if (lang === "bash") res = verifyBash(x);
   else res = { ok: false, msg: "lang inconnu: " + lang };
   if (res.skip) { console.log(file, x.id, "END_VERIFY " + res.skip); return; }
   if (res.ok) console.log(file, x.id, "END_VERIFY pass:" + res.passed + "/" + res.total);
@@ -274,6 +275,24 @@ function verifyCompiled(x, lang) {
   const r = spawnSync(bin, [], { encoding: "utf8", timeout: 15000, input: stdin });
   try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
   if (r.error) return { ok: false, msg: "run error: " + r.error.message };
+  const got = (r.stdout || "").replace(/\s+$/g, "");
+  const exp = String(x.atoi.expected).replace(/\s+$/g, "");
+  if (got === exp) return { ok: true, passed: 1, total: 1 };
+  return { ok: false, msg: "got:\n" + got + "\n--- expected:\n" + exp + (r.stderr ? "\n--- stderr:\n" + r.stderr.trim() : "") };
+}
+
+/* ---------- Bash (exécution d'un script shell autonome ; contrôle de la sortie attendue) ----------
+   Pour les commandes Linux déterministes et auto-portantes. x.stdin fournit l'entrée éventuelle. */
+function verifyBash(x) {
+  if (!x.atoi || x.atoi.expected === undefined) return { skip: "no-atoi" };
+  const os = require("os"), path = require("path"), fs2 = require("fs");
+  const dir = fs2.mkdtempSync(path.join(os.tmpdir(), "sh"));
+  const src = path.join(dir, "prog.sh");
+  fs2.writeFileSync(src, "cd " + JSON.stringify(dir) + "\n" + (x.solution || ""));
+  const stdin = (x.stdin && x.stdin.length) ? (x.stdin.join("\n") + "\n") : "";
+  const r = spawnSync("bash", [src], { encoding: "utf8", timeout: 15000, input: stdin, cwd: dir });
+  try { fs2.rmSync(dir, { recursive: true, force: true }); } catch (e) {}
+  if (r.error) return { ok: false, msg: "bash error: " + r.error.message };
   const got = (r.stdout || "").replace(/\s+$/g, "");
   const exp = String(x.atoi.expected).replace(/\s+$/g, "");
   if (got === exp) return { ok: true, passed: 1, total: 1 };

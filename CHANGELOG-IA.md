@@ -404,3 +404,32 @@ mode examen + Tuteur IA sur les 6 sommaires.
 `atoi`/checklist (Tâche A refaite entièrement) ; `cours-github-avance` en manquait sur les jours 16-31
 (complétés) ; les distracteurs de `cours-cicd`, `cours-docker` et `cours-github-avance` ont reçu leur audit
 dédié. Le tout re-vérifié item par item (y compris le second exercice de `github-avance/jour31`).
+
+---
+
+## Lot 10 — Système (Linux, terminal, sécurité, Merise, MySQL, SQL Server, Active Directory ×2)
+
+Cours traités : `cours-linux` (31), `cours-terminal` (31), `cours-securite` (21), `cours-merise` (21),
+`cours-mysql` (21), `cours-sqlserver` (21), `cours-ad-scripts` (31), `cours-ad-interface` (31).
+
+### Nouveau mode de vérification : `bash`
+`_verify.js` gagne un mode **`bash`** : il exécute un script shell autonome et déterministe (le script crée
+lui-même ses fichiers d'exemple) dans un dossier jetable et compare la sortie à `atoi.expected`. Pour les
+commandes Linux.
+
+### Résultat vérifié (structure)
+- **208 leçons**, 0 parse-KO ; **2736 QCM**, tous avec un index valide ; **148 encadrés « À toi de jouer »**,
+  **209 checklists** (0 exercice sans checklist) ; `_verify.js` 0 FAIL ; `balanceOpts` off partout.
+- **28 items réellement gates** : `cours-linux` 10 (bash), `cours-mysql` 11 (SQLite), `cours-sqlserver` 7 (SQLite).
+  Le reste (terminal multi-shell, PowerShell/AD, Merise conceptuel, T-SQL/MySQL-spécifique) est descriptif,
+  souvent avec un `sqlnote` expliquant la spécificité (MySQL/T-SQL vs SQLite).
+- Adaptations de portabilité SQL signalées : `cours-mysql/lecon05` (`REGEXP` → `LIKE` portable) et calibrage des
+  jeux de données de test pour rester déterministes. **Aucune correction factuelle** de corrigé.
+
+### ⚠️ Reste à finir : distracteurs des 4 cours de la 2ᵉ vague
+Les agents de la 2ᵉ vague (`cours-securite`, `cours-merise`, `cours-ad-scripts`, `cours-ad-interface`) ont été
+**coupés par la limite hebdomadaire** pendant/avant la Tâche B. Leur Tâche A (atoi + checklist) et C (balanceOpts,
+y compris un correctif manuel sur `cours-ad-interface`) sont **terminées et vérifiées**, mais la **réécriture des
+distracteurs** de ces 4 cours **n'est pas terminée** (audit dédié à relancer quand la limite se réinitialise).
+Rappel : les QCM restent **imprévisibles** partout (mélange Prep-B), donc ce n'est pas un défaut bloquant, mais
+un raffinement de qualité en attente. Signalé plutôt que masqué.
