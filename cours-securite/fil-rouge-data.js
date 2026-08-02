@@ -75,7 +75,7 @@ Jeu.objects.filter(titre__icontains=q)
       objectif: "Explique le XSS stocké (un script dans la description s'exécute chez les autres visiteurs), retire le |safe injustifié, et ajoute une Content Security Policy qui bloque les scripts en ligne comme deuxième rempart.",
       hints: [
         "{{ description }} échappe ; {{ description|safe }} ne l'affiche PAS échappé -> danger.",
-        "Si du HTML riche est vraiment nécessaire : nettoyer avec une bibliothèque de sanitisation (bleach), pas |safe.",
+        "Si du HTML riche est vraiment nécessaire : nettoyer avec une bibliothèque de sanitisation maintenue (nh3 ; bleach n'est plus maintenue depuis 2023), pas |safe.",
         "CSP : en-tête Content-Security-Policy: default-src 'self'; script-src 'self'"
       ],
       solution: `# VULNÉRABLE
@@ -86,9 +86,10 @@ Jeu.objects.filter(titre__icontains=q)
 {{ jeu.description }}        {# le <script> s'affiche en texte, inoffensif #}
 
 # CORRIGÉ 2 — si le HTML riche est requis : sanitiser, pas |safe
-import bleach
-description_sure = bleach.clean(saisie,
-    tags=["b", "i", "p", "a"], attributes={"a": ["href"]})
+# nh3 (maintenue) remplace bleach, dépréciée depuis 2023 — même principe de liste blanche
+import nh3
+description_sure = nh3.clean(saisie,
+    tags={"b", "i", "p", "a"}, attributes={"a": {"href"}})
 
 # CORRIGÉ 3 — deuxième rempart : Content-Security-Policy
 # Content-Security-Policy: default-src 'self'; script-src 'self'
