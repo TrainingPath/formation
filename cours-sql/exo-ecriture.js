@@ -52,6 +52,12 @@
     ".atoi .atoi-b p{margin:0 0 4px;font-size:.88em;color:var(--muted)}" +
     ".atoi pre{margin:0 0 10px;padding:10px;border-radius:8px;background:#1e2533;color:#d8e0f5;white-space:pre-wrap;word-break:break-word;font:.88em/1.45 ui-monospace,Menlo,Consolas,monospace}" +
     ".atoi pre.cmd{background:#0f1420;color:#9fd0ff}" +
+    ".lab{margin-top:12px;border:1px solid #bfe3cf;border-radius:10px;overflow:hidden}" +
+    ".lab .lab-h{background:#e3f6ec;color:#0f6e56;font-weight:700;padding:8px 12px;font-size:.92em}" +
+    ".lab .lab-b{padding:10px 12px}" +
+    ".lab .lab-b p{margin:0 0 8px;font-size:.92em}" +
+    ".lab pre{margin:0 0 10px;padding:10px;border-radius:8px;background:#0f1a14;color:#c7f0d8;white-space:pre-wrap;word-break:break-word;font:.88em/1.5 ui-monospace,Menlo,Consolas,monospace}" +
+    ".lab .lab-check{background:var(--ok-soft,#e3f6ec);border-left:4px solid var(--ok,#1a9a5c);padding:8px 12px;border-radius:0 8px 8px 0;color:#0f6e56;font-weight:600}" +
     ".checklist{background:#fff;border:1px solid #e2e7f0;border-radius:10px;padding:10px 14px;margin-top:12px}" +
     ".checklist h4{margin:0 0 6px;font-size:.95em;color:var(--ink)}" +
     ".checklist label{display:flex;gap:8px;align-items:flex-start;font-size:.92em;margin:4px 0;cursor:pointer}" +
@@ -262,6 +268,18 @@
       }
       adi.appendChild(abody);
       exo.appendChild(adi);
+    }
+
+    /* ---- « 🔬 Lab » : mise en pratique guidée (Packet Tracer / VM / logiciel), avec résultat vérifiable ---- */
+    if (x.lab && (x.lab.intro || x.lab.steps || x.lab.check)) {
+      var lab = el("div", "lab");
+      lab.appendChild(el("div", "lab-h", "🔬 Lab — " + (x.lab.title || "à faire en pratique")));
+      var lb = el("div", "lab-b");
+      if (x.lab.intro) lb.appendChild(el("p", null, x.lab.intro));
+      if (x.lab.steps) { var ps = el("pre"); ps.textContent = x.lab.steps; lb.appendChild(ps); }
+      if (x.lab.check) { lb.appendChild(el("p", "lab-check", "✅ Résultat vérifiable : " + x.lab.check)); }
+      lab.appendChild(lb);
+      exo.appendChild(lab);
     }
 
     /* ---- indices ---- */

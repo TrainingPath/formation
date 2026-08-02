@@ -467,3 +467,47 @@ d'introduire des ambiguïtés (choix assumé, signalé).
   site est présenté comme une **bibliothèque** où l'on pioche selon ses besoins, pas une liste à tout faire.
 - Totaux réels par parcours (pour un planning non trompeur) : Python 335, Java 345, C# 345, PHP 345, C 293,
   C++ 314 leçons.
+
+---
+
+## Phase 5 — Sources et promesses recalibrées
+
+- **Section « 📚 Sources et références »** ajoutée en bas des **81 sommaires** de cours : 2 à 4 liens
+  **officiels** adaptés à chaque famille (docs.python.org, MDN, docs Oracle Java, Microsoft Learn .NET,
+  cppreference, php.net/laravel, docs Django/DRF, docs Docker/Git/GitHub, RFC Editor, Cisco NetAcad,
+  support.microsoft.com pour Office, dictionnaires de référence pour les langues, OWASP pour la sécurité…).
+- **Version des technologies + date de dernière révision** affichées sur chaque sommaire
+  (ex. « Python 3.14 · Août 2026 », « Java 21 (LTS) », « Laravel 11 », « .NET 8 »…).
+- **Intitulés recalibrés** : `cours-securite` est déjà « **Sécurité applicative** » (pas de pentest) ;
+  avertissements explicites ajoutés en tête des sommaires **CCNP** et **CCIE** (« ce cours couvre les
+  concepts et la méthode ; la certification réelle exige des années de pratique et du labo, ce n'est pas
+  un raccourci »).
+
+---
+
+## Phase 4 — Labs pratiques
+
+- Nouveau champ **`lab: {title, intro, steps, check}`** rendu par le runner en encadré **« 🔬 Lab »**
+  (étapes concrètes + **résultat vérifiable** : ping OK/KO, sortie d'un `show`, valeur d'une cellule…).
+- **Réseau (6) + Cisco (4)** : un lab **Packet Tracer / GNS3 / CML** par leçon (topologie + config IOS réelle +
+  résultat vérifiable), avec la mention d'installation de l'outil une seule fois par cours. Sujets non
+  simulables (SD-WAN, SD-Access, automatisation) → lab alternatif réaliste (sandbox DevNet, Netmiko/Ansible…).
+- **Office (Excel, Excel-pro, Word, PowerPoint)** : un mini-exercice **« À reproduire »** par leçon (manip
+  précise + **résultat attendu exact** : valeur de cellule, apparence, nombre d'éléments).
+- **Linux, terminal, Active Directory** : déjà couverts par les encadrés « À toi de jouer » à commandes
+  vérifiables ajoutés au Lot 10 (dont 10 labs Linux réellement exécutés via bash).
+- Contrôle : **429/429 leçons réseau/Cisco/Office ont un lab**, 0 sans lab, `_verify.js` 0 FAIL.
+
+---
+
+## Phase 6 — Feedback humain approximé (complément)
+
+Le gros de la Phase 6 était déjà livré au fil des lots : **grille d'auto-relecture (`checklist`) sur tous les
+exercices d'écriture du site**, et **`tuteur-ia.html`** liée depuis chaque sommaire de cours traité. Complément final :
+
+- **`publier-et-faire-relire.html`** (nouvelle page capstone) : les 4 étapes pour qu'un projet fini « compte »
+  vraiment — le pousser sur **GitHub**, écrire un **README** qui donne envie, le faire **relire** par un pair
+  (Pull Request, revue), et savoir le **présenter en 2 minutes en entretien**. Avec un rappel de transparence :
+  le site n'octroie **aucun diplôme** ; les vraies validations sont les examens du bachelier, les certifications
+  officielles et le jugement d'humains.
+- Liée par un bouton « 🚀 Étape finale » depuis les **15 sommaires `cours-projet-*`**.
