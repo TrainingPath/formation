@@ -29,6 +29,10 @@ un parcours unique avec un planning réaliste. Reviens-y quand ton objectif chan
 - **Les solutions de référence sont réellement exécutées contre leurs propres tests** — Python, JavaScript et
   SQL, mais aussi **C, C++ et Java compilés** sur le runner (`gcc`/`g++`/`javac`). Un exercice dont la solution
   ne passe plus ses tests fait **échouer le build**.
+- **La cohérence structurelle** est contrôlée par `_coherence.js` : tout lien interne pointe vers une page qui
+  existe, les compteurs de l'accueil et des parcours correspondent aux dossiers réels, et pour chaque cours le
+  nombre de leçons se recoupe (titres = fichiers = borne de navigation = semaines). Un lien mort, un compteur faux
+  ou une structure de cours incohérente fait **échouer le build**.
 - **L'intégrité des QCM** est contrôlée : index de bonne réponse valide, et le mélange déterministe des options
   préserve bien la bonne réponse.
 - Un **filet anti-artefact** vérifie qu'aucune exécution n'a laissé de fichier dans le dépôt.
