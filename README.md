@@ -7,7 +7,8 @@ Chaque leçon propose de la théorie, des exercices auto-corrigés et des exerci
 
 | Catégorie | Contenu |
 | --- | --- |
-| 💻 Programmation | 41 cours : algorithmique, langages (Java, C#, PHP, Python, C, C++, assembleur), frameworks, bases de données, projets full-stack, outillage et sécurité |
+| 💻 Programmation | 40 cours : algorithmique, langages (Java, C#, PHP, Python, C, C++, assembleur), frameworks, bases de données, projets full-stack, outillage et sécurité |
+| 🧠 Analyse | Merise · UML (31 jours, les 14 diagrammes, fil rouge Ludothèque) |
 | 🖥️ Système d'exploitation | Linux · Active Directory (interface graphique et scripts PowerShell) |
 | 📊 Office | Excel (débutant et avancé/pro), Word, PowerPoint |
 | 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices |
