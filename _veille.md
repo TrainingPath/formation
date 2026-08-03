@@ -13,6 +13,10 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
   annonce **13 diagrammes** (il omet le diagramme de profils) : cette comparaison est datée du support 2025-2026.
 - **Outils de diagrammes cités par `cours-uml`** : PlantUML (plantuml.com), draw.io / diagrams.net. Vérifier
   qu'ils restent gratuits et accessibles en ligne ; la syntaxe PlantUML des solutions dépend de leur maintien.
+- **Banques du test de placement ↔ syllabus des langues** : `test-niveau-<langue>.js` calibre ses questions sur
+  les TITLES réels des 16 cours de langue. **Si un syllabus de langue change** (leçon ajoutée, point de grammaire
+  déplacé d'un palier à l'autre), la banque correspondante doit suivre, sinon le test place à côté. Le champ
+  `point` de chaque question nomme le point de syllabus visé : c'est par là qu'il faut entrer pour la mise à jour.
 - **Dates « Dernière révision : Août 2026 »** sur les 81 sommaires : à faire glisser à chaque vraie révision.
 - **Watchlist d'outils dépréciés** (scan automatique passé) : aucun autre que `bleach` détecté (les occurrences de « nose » dans les cours d'anglais sont le mot anglais, pas l'outil de test Python).
 
