@@ -939,3 +939,112 @@ relecture renforcée** (4 critères observables par jour) qui joue ce rôle, com
   syntaxe a été relue et vérifiée manuellement, pas compilée. À passer une fois dans plantuml.com pour confirmation.
 - **Le fact-check ne couvre que 3 jours sur 31** (le tirage aléatoire demandé). Les 28 autres ont été validés
   structurellement et sur les points de notation sensibles, pas relus ligne à ligne.
+
+---
+
+## Test de placement par langue (4 langues)
+
+### M1 — Le référentiel, extrait des 16 syllabus réels
+Lecture des `TITLES` des 16 `cours-<langue>-<niveau>/index.html` (30 leçons chacun) et des lexiques
+thématiques. Principe directeur : le test mesure l'adéquation avec **ces cours-ci**, pas un niveau CECRL
+abstrait. Les 4 langues ont une **architecture parallèle** (mêmes thèmes aux mêmes paliers), d'où un moteur
+unique et 4 banques symétriques.
+
+- **A1** — alphabet, se présenter, pronoms sujets, les deux verbes piliers (*to be/have got* · *zijn/hebben* ·
+  *ser/estar/tener* · *sein/haben*), articles, pluriel, nombres et âge, possessifs, présent des réguliers,
+  négation et questions, heure/jours/dates, famille, nourriture et goûts, capacité, *there is/er is/hay/es gibt*,
+  prépositions de lieu, routine, courses, chemin, passé d'être/avoir.
+  Spécifiques : **NL** ordre V2, particules séparables · **ES** ser/estar, diphtongues, *ir a* ·
+  **DE** accusatif, datif, verbes forts · **EN** présent simple vs continu.
+- **A2** — passés (composé, prétérit, *Perfekt*, *indefinido/imperfecto*), auxiliaire avoir/être, futur,
+  comparatif et superlatif, adverbes de fréquence, quantifieurs, pronoms compléments, prépositions de temps,
+  connecteurs, conditionnel simple ; thèmes corps, vêtements, voyage, restaurant, ville, météo, loisirs.
+  Spécifiques : **EN** present perfect vs prétérit, modaux · **NL** subordonnées *omdat/dat/als*, *er* +
+  préposition · **ES** *por/para*, impératif affirmatif · **DE** déclinaison de l'adjectif, *Wechselpräpositionen*.
+- **B1** — temps composés avancés, passif, discours indirect, relatives, conditionnel irréel, connecteurs
+  avancés, registre ; thèmes travail/CV, entretien, émotions, environnement, médias, opinion.
+  Spécifiques : **EN** past perfect, conditionnels 2-3, gérondif/infinitif, phrasal verbs · **NL** *om…te*,
+  *waarmee*, particules modales, diminutifs · **ES** **subjonctif présent**, impératif négatif ·
+  **DE** **génitif**, *Relativsätze*, Konjunktiv I et II.
+- **B2** — aspect, hypothèses complexes, passif avancé, modaux au passé, inversion et mise en relief, style
+  nominal, collocations, idiomes, registre, argumentation, implicite et ironie.
+  Spécifiques : **EN** conditionnels mixtes, *wish*, clivées · **NL** *als/wanneer/toen*, participes adjectivaux ·
+  **ES** **subjonctif imparfait**, concordance des temps · **DE** *Konjunktiv II* du passé, *Zustandspassiv*.
+
+### M2 — Un moteur, quatre banques
+**`test-niveau.js`** (racine) — escalier adaptatif, utilisable sans DOM (donc testable en CI).
+- **Bloc = 6 questions** : 4 QCM (1 pt) + **2 saisies libres (2 pts)** = 8 points. Les QCM ne pèsent que 4 pts :
+  **un bloc ne peut pas être réussi par les seuls QCM**, et une saisie juste est **éliminatoire** pour monter.
+- **Seuils** : `>= 7/8` et `>= 1` saisie juste → on monte ; `= 6/8` → **on s'arrête** (règle du doute) ;
+  sinon → échec. Documentés en commentaire au-dessus du code.
+- **Départ au bloc A2** (on teste d'abord si l'élève dépasse le débutant).
+- **Sortie rapide** : 3 erreurs consécutives dans le premier bloc **et aucune bonne réponse jusque-là** → arrêt,
+  résultat A1, message chaleureux. *La condition « aucune bonne réponse » a été ajoutée après que la CI a montré
+  qu'un élève maîtrisant A1 mais butant sur A2 était renvoyé en A1 sans jamais voir le bloc A1 — voir M3.*
+- **Mapping** : le palier recommandé est celui du **premier bloc non franchement réussi**. Réussir A2 signifie
+  que A2 est acquis → entrée B1 ; échouer B1 confirme B1 comme point de départ.
+- Longueur réelle : **12 à 18 questions**, ≤ 6 en sortie rapide (plafond de 25 jamais approché).
+- Résultat mémorisé dans **`placement-<langue>`** (palier + date) — **clé additive**, aucune clé existante touchée.
+  Bouton « refaire le test » ; le moteur relit la clé pour afficher le dernier résultat.
+- Mélange des options : **exactement le mécanisme déterministe des engines du site** (graine = énoncé, LCG,
+  index recalculé). Normalisation des saisies : le même `norm()` (minuscules, accents, espaces).
+- **Pas d'audio ni de synthèse vocale** : périmètre fermé, conformément à l'avis du Conseil.
+
+**Les 4 banques** (`test-niveau-<langue>.js`) : **48 questions par langue**, soit **12 par palier**
+(8 QCM + 4 saisies), chacune étiquetée par son `palier` et par le `point` de syllabus qu'elle vise.
+Saisies libres = **conjugaison** (forme à produire) et **traduction** depuis le français, avec réponses
+acceptées multiples. Distracteurs = erreurs réelles de francophones (*seid/seit*, ser/estar, *de/het*, mauvais
+auxiliaire, verbe non rejeté après *weil*/*omdat*, faux amis).
+
+**Les 4 pages** : `test-anglais.html`, `test-neerlandais.html`, `test-espagnol.html`, `test-allemand.html` —
+intro d'une phrase, avertissement de périmètre affiché **avant** le test, le test, le résultat.
+
+### M3 — La logique de placement, testée en CI
+**`_verify_placement.js`** (famille `_verify`, branché dans `.github/workflows/verify.yml`). Personas simulés
+sur les 4 langues, résultats du run final :
+
+| Persona | Attendu | Obtenu |
+|---|---|---|
+| Débutante complète (0 bonne réponse) | A1, sortie rapide, ≤ 8 q | **A1 en 3 questions** ✔ |
+| A1 solide, A2 échoué | A2 | **A2 (12 q)** ✔ |
+| 1 bonne réponse puis échec total | pas de sortie rapide | **pas de sortie rapide** ✔ |
+| A2 solide, B1 échoué | B1 | **B1 (12 q)** ✔ |
+| A2+B1 acquis, B2 échoué | B2 | **B2 (18 q)** ✔ |
+| Réussit tout | B2 + mention plafond | **B2 + mention (18 q)** ✔ |
+| A2 réussi de justesse (6/8) | A2 (pas de montée) | **A2** ✔ |
+| B1 réussi de justesse | B1 (pas de montée) | **B1** ✔ |
+| QCM seuls, aucune saisie | ne doit pas passer | **A1** ✔ |
+
+Contrôle des banques : ≥ 10 questions par palier, ≥ 6 QCM et ≥ 3 saisies (de quoi varier le tirage), 4 options
+par QCM, index valides, pas de doublon d'énoncé, mélange préservant la bonne réponse.
+**Non-contamination** : les 192 questions sont confrontées aux **~14 000 énoncés** extraits des leçons, ateliers
+et examens des 16 cours → **0 recouvrement**.
+
+**Deux défauts trouvés par la CI et corrigés** (c'est précisément pourquoi ces tests existent) :
+1. **Sortie rapide trop large** — un élève maîtrisant A1 mais ratant les 3 premières questions A2 était placé en
+   A1 sans jamais voir le bloc A1, alors que le mapping le destine à A2. Correctif : la sortie rapide exige
+   désormais qu'**aucune** réponse juste n'ait été donnée (signature de la vraie débutante).
+2. **3 énoncés contaminés** — deux formulations génériques (« Choisis la phrase correcte. », « Quelle phrase est
+   correcte ? ») coïncidaient avec des questions des cours, et l'idiome espagnol « estar en las nubes » est
+   réellement enseigné en B2. Énoncés rendus spécifiques, idiome remplacé par « estar como una cabra » (absent
+   des cours, vérifié).
+
+### M4 — Intégrations
+- **`langue.html`** : encadré « Tu connais déjà un peu la langue ? » avec les 4 boutons de test.
+- **Les 4 pages de langue** (`anglais.html`, `neerlandais.html`, `espagnol.html`, `allemand.html`) : bouton
+  « 🧭 Je ne sais pas par où commencer — teste ton niveau », et **rappel du résultat mémorisé** s'il existe
+  (« Ton point de départ conseillé : A2 (test du JJ/MM) »).
+- **`orientation.html`** : la section « Et tout le reste ? » renvoie vers les tests de langue. Le questionnaire
+  existant n'est pas modifié.
+- **Boucle de sortie** : ligne ajoutée sur les **16 sommaires** — « Palier terminé ? L'examen du cours te sert de
+  test de sortie ; réussi confortablement → passe au palier suivant. » Aucun nouvel exercice : l'examen existe déjà.
+- **`README.md`** : mention du test de placement dans la ligne Langues.
+- **`_veille.md`** : dépendance **banque ↔ syllabus** notée (si un syllabus change, la banque doit suivre ; le
+  champ `point` de chaque question sert de point d'entrée pour la mise à jour).
+
+**Validation finale** : `_coherence.js` **783 liens, 82 cours, 0 écart** · `_verify_placement.js` **conforme** ·
+`_check_qcm.js` **0 échec**.
+
+**Périmètre assumé, affiché à l'élève** : « Ce test est une boussole, pas un diplôme : il évalue la lecture et la
+grammaire sur le contenu de ces cours ; il ne mesure ni l'oral ni l'expression. En cas d'hésitation, commence au
+palier en dessous. » Le mot « CECRL » ne sert qu'à nommer les paliers des cours, jamais à qualifier l'élève.
