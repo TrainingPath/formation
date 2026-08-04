@@ -17,6 +17,17 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
   les TITLES réels des 16 cours de langue. **Si un syllabus de langue change** (leçon ajoutée, point de grammaire
   déplacé d'un palier à l'autre), la banque correspondante doit suivre, sinon le test place à côté. Le champ
   `point` de chaque question nomme le point de syllabus visé : c'est par là qu'il faut entrer pour la mise à jour.
+- **Banques de vocabulaire ↔ lexiques des cours** : `vocab-data-<langue>.js` est **généré** depuis les quatre
+  `lexique.html` de chaque langue par `_outils/vocabulaire/vocabgen2.py`. **Si un lexique change** (mot ajouté,
+  traduction corrigée), il faut relancer le générateur, sinon `_verify_vocab.js` fait échouer le build — c'est
+  voulu : le cours et le QCM ne doivent jamais diverger. Ne jamais corriger le `.js` à la main.
+- **~980 mots d'extension non vérifiés** (`source: "non-verifie"` : 167 nl, 264 en, 281 es, 266 de). Écrits sans
+  source externe, l'environnement de build n'ayant accès à aucun dictionnaire. À faire relire par un humain :
+  `vocab-echantillon.md` en tire 50 par langue. **C'est le point le plus fragile du site en l'état.**
+- **`vocab-synonymes.js` — table volontairement incomplète.** Elle empêche deux traductions synonymes d'apparaître
+  dans le même QCM (« salaire » / « paie »). Elle ne couvre que les collisions constatées : **chaque signalement
+  d'une question à deux réponses défendables doit s'y traduire par une famille ajoutée.** Le vérificateur partage
+  cette table avec le moteur, il ne peut donc pas révéler ce qui lui manque.
 - **Dates « Dernière révision : Août 2026 »** sur les 81 sommaires : à faire glisser à chaque vraie révision.
 - **Watchlist d'outils dépréciés** (scan automatique passé) : aucun autre que `bleach` détecté (les occurrences de « nose » dans les cours d'anglais sont le mot anglais, pas l'outil de test Python).
 

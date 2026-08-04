@@ -11,7 +11,7 @@ Chaque leçon propose de la théorie, des exercices auto-corrigés et des exerci
 | 🧠 Analyse | Merise · UML (31 jours, les 14 diagrammes, fil rouge Ludothèque) |
 | 🖥️ Système d'exploitation | Linux · Active Directory (interface graphique et scripts PowerShell) |
 | 📊 Office | Excel (débutant et avancé/pro), Word, PowerPoint |
-| 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices. Un **test de placement** par langue conseille le palier d'entrée (`test-<langue>.html`) |
+| 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices. Un **test de placement** par langue conseille le palier d'entrée (`test-<langue>.html`). Un onglet **Vocabulaire** (`vocabulaire-<langue>.html`) interroge sur ~560 à 680 mots par langue, en QCM générés, avec révision espacée à trois boîtes |
 
 ## Par où commencer ? (un parcours à la fois)
 
@@ -36,6 +36,11 @@ un parcours unique avec un planning réaliste. Reviens-y quand ton objectif chan
   ou une structure de cours incohérente fait **échouer le build**.
 - **L'intégrité des QCM** est contrôlée : index de bonne réponse valide, et le mélange déterministe des options
   préserve bien la bonne réponse.
+- **Les banques de vocabulaire** sont contrôlées par `_verify_vocab.js`. Chaque mot des lexiques des cours doit
+  se retrouver dans la banque **avec la même traduction** : le cours et le QCM ne peuvent pas diverger. Puis le
+  vérificateur fait tourner le vrai moteur et **génère les ~5 100 questions possibles**, dans les deux sens, pour
+  s'assurer qu'aucune n'a deux réponses défendables — ni par traduction identique, ni par **synonymie**
+  (« salaire » et « paie » sont deux chaînes différentes mais une seule bonne réponse ; voir `vocab-synonymes.js`).
 - Un **filet anti-artefact** vérifie qu'aucune exécution n'a laissé de fichier dans le dépôt.
 
 Autrement dit, `_verify.js` n'est plus un audit manuel : c'est un garde-fou. Un commit qui casse une solution

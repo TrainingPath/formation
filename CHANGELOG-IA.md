@@ -1141,3 +1141,107 @@ Ludothèque du schéma, et aucun backtick ne traîne dans le code. **3 leçons p
 `cours-uml/index.html` : bandeau « 🧪 Nouveau : chaque diagramme décrit se visualise en un clic » + mention du bloc
 dans la section « Avant de commencer ». Le cours n'a pas de page fil-rouge distincte : les diagrammes récapitulatifs
 sont dans les leçons 26 et 31, qui ont reçu leurs blocs.
+
+---
+
+## Onglet « Vocabulaire » (4 langues)
+
+Le lexique d'un cours **montre** les mots. L'onglet Vocabulaire **interroge** : sessions de 20 QCM générés,
+filtrables par niveau, catégorie et sens (langue → français, ou l'inverse), avec révision espacée à trois boîtes.
+Pages `vocabulaire-<langue>.html`, moteur unique `vocab.js`, une banque par langue.
+
+### Le risque identifié dès le départ, et la parade
+Le danger de ce module n'est pas technique : c'est **une banque de mots générée de mémoire — des traductions
+inventées, apprises par cœur par une élève confiante**. La parade est structurelle plutôt que déclarative.
+
+**La banque est DÉRIVÉE des lexiques du site.** `_outils/vocabulaire/vocabgen2.py` lit les quatre `lexique.html`
+de chaque langue et en extrait mot, traduction et phrase d'exemple **tels quels**. Aucune traduction n'est créée
+à cette étape, donc aucune ne peut être fausse d'une façon dont le cours ne le serait pas déjà. Et
+`_verify_vocab.js` reconfronte chaque mot du lexique à la banque : **400 entrées par langue, 0 absente,
+0 divergente** — une divergence d'un seul mot fait échouer le build.
+
+**Le reste est marqué comme non vérifié.** Pour atteindre un volume utile, une extension a été écrite à la main
+(`_outils/vocabulaire/vocab_ext_<code>.py`), limitée au vocabulaire concret et fréquent dont la traduction est
+stable. Les mots à double sens ont été écartés exprès : `bank`, `letter`, `right`, `still` en anglais ;
+`die Decke` (couverture/plafond), `das Gericht` (tribunal/plat), `die Tasche` (poche/sac) en allemand. Ces mots
+portent `source: "non-verifie"`, un repère **⚠** dans la question, et sont comptés séparément sur la page d'accueil
+du module.
+
+| Langue | Total | Des lexiques (vérifiés) | Extension (⚠ non vérifiée) |
+|---|---|---|---|
+| Néerlandais | 563 | 396 | 167 |
+| Anglais | 664 | 400 | 264 |
+| Espagnol | 678 | 397 | 281 |
+| Allemand | 666 | 400 | 266 |
+
+Les intitulés de thèmes diffèrent d'une langue à l'autre (« Nourriture & boisson » / « La nourriture » /
+« Au restaurant »…). La classification en 19 catégories se fait donc **par mots-clés du titre de thème**, pas par
+table figée. Un bug attrapé au passage : sans limite de mot, le motif `verbe` matchait `adverbes`, et le thème
+allemand « Nuances & adverbes de modalité » atterrissait chez les verbes.
+
+### Le défaut le plus sérieux trouvé pendant ce chantier : les QCM à deux bonnes réponses
+Le moteur excluait déjà tout distracteur partageant une traduction **identique** avec le mot visé. Un audit a
+montré que ça ne suffisait pas. **22 paires** de traductions synonymes cohabitaient dans le même vivier — dont
+plusieurs **venant des lexiques eux-mêmes**, donc antérieures à ce chantier :
+
+- `salary` = salaire et `wage` = paie (anglais) — deux chaînes différentes, une seule bonne réponse ;
+- `spreken` et `praten`, tous deux « parler » (néerlandais) ;
+- `laufen` et `rennen`, tous deux « courir » (allemand) ;
+- `het huis` = la maison et `de woning` = le logement ;
+- `el enfado` et `la ira`, tous deux « la colère » (espagnol).
+
+L'élève qui coche « paie » a raison, et le site lui compte une erreur. Nouveau fichier **`vocab-synonymes.js`** :
+une table de familles de mots français interchangeables, partagée par le moteur et le vérificateur. Deux entrées
+dont les traductions tombent dans la même famille ne peuvent plus se retrouver dans le même QCM.
+
+Deux limites, dites franchement. **La table est incomplète** — le français a plus de synonymes qu'elle n'en liste ;
+elle couvre les collisions effectivement constatées et se complètera au fil des signalements. Et **le vérificateur
+partage cette table avec le moteur** : il ne peut donc pas détecter une paire absente de la table. Ce n'est pas un
+oracle, c'est un filet dont on connaît la maille.
+
+### Ce que la CI vérifie désormais (`_verify_vocab.js`, branché dans `verify.yml`)
+1. Schéma, niveaux et catégories connus, aucun mot en double.
+2. Concordance lexiques ↔ banque (400 entrées par langue confrontées).
+3. **Épreuve du feu** : le vrai moteur produit **les 5 136 questions possibles**, dans les deux sens, et chacune
+   est inspectée — exactement une bonne réponse, aucune option en double, aucune paire synonyme. 6 questions sont
+   *refusées* par le moteur faute de distracteurs sûrs : c'est le comportement voulu, pas de question plutôt
+   qu'une mauvaise.
+4. **Contrôle du vivier, pas seulement du tirage.** Première version du test : inspecter les 3 distracteurs tirés.
+   Elle passait **même avec l'exclusion des synonymes désactivée** — le distracteur dangereux restait admissible
+   sans jamais sortir dans l'échantillon. Le test a donc été refait pour interroger le moteur sur **l'ensemble des
+   distracteurs qu'il s'autorise** (`Vocab.vivierPour`). Contre-test : exclusion désactivée → **13 alertes**,
+   exclusion active → **0**.
+5. Personas Leitner (mot raté → boîte 1, révision servant les boîtes basses).
+
+### Correctif de fond : la normalisation ignorait les parenthèses
+Les lexiques écrivent « bonjour (le matin) » à côté de « bonjour, salut ». `norm()` ne retirait pas les
+parenthèses : le moteur voyait deux réponses distinctes et pouvait proposer les deux. Retrait ajouté dans
+`vocab.js`, `_verify_vocab.js` et `vocab-synonymes.js` — les trois doivent normaliser à l'identique, sans quoi le
+vérificateur ne teste pas ce que le moteur fait.
+
+### Signalement d'erreur : le lien GitHub retiré
+Le module affichait « ⚠️ Signaler une traduction douteuse » pointant vers une issue GitHub. **Le site est public** :
+un visiteur aurait eu besoin d'un compte GitHub, et le dépôt était exposé. Le lien est maintenant piloté par une
+constante unique en tête de `vocab.js` (`URL_SIGNALEMENT`), à remplir avec l'URL d'un formulaire hébergé. **Tant
+qu'elle est vide, aucun lien n'est affiché** — rien plutôt qu'un lien mort. *(Les mêmes liens GitHub subsistent en
+pied des 82 sommaires de cours : même problème, pas encore traité.)*
+
+### Ce qui n'est PAS vérifié — à lire avant de faire confiance à ce module
+- **Les ~980 mots de l'extension n'ont été confrontés à aucune source externe.** L'environnement de build n'a accès
+  à aucun dictionnaire (`web_fetch` expire). Ces traductions viennent de moi, pas d'un ouvrage. C'est exactement le
+  risque annoncé au début de cette section : il est **réduit** (mots concrets, sens uniques, repère ⚠, comptage
+  séparé, source visible sur la page) mais **pas éliminé**.
+- **☐ Relecture humaine — reste à faire.** `vocab-echantillon.md` consigne **50 mots par langue** tirés au sort
+  parmi les non-vérifiés (graine fixe, donc reproductible), en tableau à cocher. À faire relire par un professeur
+  ou un locuteur, dictionnaire en main. Les corrections se portent sur `_outils/vocabulaire/vocab_ext_<code>.py`,
+  jamais sur le `.js` généré.
+- **☐ Vérification navigateur — reste à faire.** Les quatre pages n'ont pas été ouvertes dans un navigateur :
+  le moteur a été testé en Node. Reste à vérifier l'affichage réel des compteurs à trois boîtes et le repère ⚠.
+
+### Stockage
+Nouvelles clés `vocab-<langue>-boxes` uniquement. **Aucune clé localStorage existante n'a été touchée** : les
+scores des cours et des tests de placement sont intacts.
+
+### Intégration
+Bouton « 📚 Vocabulaire — se faire interroger » sur les 4 pages de langue et bloc dédié sur `langue.html`.
+`README.md` : ligne Langues complétée et section CI enrichie. `.gitignore` : ajout de `__pycache__/`.
