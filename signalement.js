@@ -33,7 +33,12 @@
 (function (global) {
   "use strict";
 
-  var URL_SIGNALEMENT = "";
+  // Formulaire Google Forms « Signaler une erreur — Mes formations », publié en
+  // accès « toute personne disposant du lien » : ni compte, ni connexion, et
+  // l'adresse e-mail du visiteur n'est pas collectée.
+  // {cours} est pré-rempli dans le premier champ via entry.1187902726.
+  // Lien court équivalent, sans pré-remplissage : https://forms.gle/6ZULGXmhYyMDn68UA
+  var URL_SIGNALEMENT = "https://docs.google.com/forms/d/e/1FAIpQLSdmtCAHBxXG5INw3BD7uAbaGOnVDIH8BpbhdW5LiwwF9YKM8Q/viewform?usp=pp_url&entry.1187902726={cours}";
 
   /* ------------------------------------------------------------------ */
 
@@ -61,6 +66,10 @@
     var gris = " style=\"color:#7a8699\"";
     var rappel = (cours && URL_SIGNALEMENT.indexOf("{cours}") === -1)
       ? " <span class=\"signal-cours\"" + gris + ">(cours : " + cours + ")</span>" : "";
+    // L'URL contient « & » (paramètres de pré-remplissage) : dans un attribut
+    // HTML il doit être écrit &amp;, sinon un analyseur strict tente d'y lire
+    // une entité. Les navigateurs pardonnent ; le validateur, non.
+    u = u.replace(/&/g, "&amp;");
     return "<a href=\"" + u + "\" target=\"_blank\" rel=\"noopener\" " +
            "style=\"color:#b3541e;text-decoration:none\">" + texte + "</a>" + rappel +
            " <span class=\"signal-note\"" + gris + ">— formulaire, aucun compte requis</span>";
