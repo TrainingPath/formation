@@ -1048,3 +1048,96 @@ et examens des 16 cours → **0 recouvrement**.
 **Périmètre assumé, affiché à l'élève** : « Ce test est une boussole, pas un diplôme : il évalue la lecture et la
 grammaire sur le contenu de ces cours ; il ne mesure ni l'oral ni l'expression. En cas d'hésitation, commence au
 palier en dessous. » Le mot « CECRL » ne sert qu'à nommer les paliers des cours, jamais à qualifier l'élève.
+
+---
+
+## Blocs « Visualiser ce diagramme » (cours UML)
+
+Chaque diagramme décrit dans `cours-uml/` a désormais son **jumeau visuel** ouvrable en un clic. Les schémas
+ASCII restent : ils enseignent la structure, le bloc visuel la confirme.
+
+### Le composant
+**`cours-uml/mermaid-bloc.js`** — injecté par le moteur, **aucun code dupliqué dans les 31 leçons**. Chaque bloc
+contient : le code du diagramme, un bouton **📋 Copier le code**, un lien **▶ Ouvrir dans Mermaid Live / PlantUML**
+déjà chargé avec le diagramme, un bouton **👁 Afficher le rendu ici** (Mermaid chargé depuis le CDN **à la demande**,
+comme Pyodide — hors ligne, le bloc reste utile), et l'encadré d'honnêteté :
+« Mermaid t'aide à VOIR le diagramme ; à l'examen, tu dessines la notation UML officielle montrée dans la théorie. »
+
+**Le piège des backticks a été contourné, pas affronté.** `DAY.theory` est une template literal : y insérer du code
+de diagramme aurait imposé d'échapper backticks et `${...}`, avec un risque réel de casser le parsing. Les diagrammes
+vivent donc dans un tableau **`DIAGRAMMES` séparé**, où `code` est une chaîne JS ordinaire. **`DAY.theory` n'est pas
+modifié du tout.** Chaque bloc s'ancre par index sur le `<pre class="pseudo">` qu'il illustre.
+
+Les **URL sont pré-calculées hors ligne** (deflate + base64url pour Mermaid, deflate brut + alphabet PlantUML) :
+aucune bibliothèque de compression dans le navigateur, et la CI peut vérifier lien ↔ code.
+
+### Couverture : 28 leçons / 31 · 36 blocs
+Non couvertes, **volontairement** : **jour 1** (pourquoi modéliser — cadrage, MOA/MOE, cycle de vie : aucun
+diagramme décrit), **jour 7** (cahier des charges et user stories — méthodologie rédactionnelle), **jour 30**
+(révision : catalogue de pièges en prose « à tort / pourquoi / il faut »). Aucun bloc décoratif n'a été ajouté.
+
+### Tableau type de diagramme → outil → justification
+
+| Diagramme UML | Outil | Justification |
+|---|---|---|
+| Classes | **Mermaid** `classDiagram` | type natif et fidèle ; rendu inline |
+| Séquence | **Mermaid** `sequenceDiagram` | natif, y compris `alt/opt/loop/par` |
+| Machine à états | **Mermaid** `stateDiagram-v2` | natif, états composites compris |
+| Activités | **Mermaid** `flowchart` | représentation standard des activités |
+| Schéma relationnel (jour 14) | **Mermaid** `erDiagram` | natif |
+| **Cas d'utilisation** | **PlantUML** | Mermaid n'a pas ce type. PlantUML connaît `actor`/`usecase`/`rectangle` : l'étudiante voit la **notation officielle** (bonshommes, ellipses), pas une approximation. *Choix validé explicitement.* |
+| Objets | **PlantUML** `object` | Mermaid ne le connaît pas |
+| Paquetages | **PlantUML** `package` | idem |
+| Communication | **PlantUML** | idem |
+| Temps (timing) | **PlantUML** `robust`/`concise` | idem |
+| Vue d'ensemble des interactions | **PlantUML** | idem |
+| Composants | **PlantUML** `component` + interfaces | idem |
+| Déploiement | **PlantUML** `node`/`artifact` | idem |
+| Structure composite | **PlantUML** ports/parts | idem |
+| Profils | **PlantUML** `<<Profile>>` | idem |
+
+**Aucun bloc « Mermaid-approximation » ne subsiste** : soit le type est natif chez Mermaid, soit c'est PlantUML.
+Répartition finale : **19 Mermaid natif · 17 PlantUML · 0 approximation**.
+
+### Vérification — `_verify_mermaid.js` (branché dans la CI)
+Contrôle : les 31 leçons parsent toujours (DAY + DIAGRAMMES) ; chaque bloc a un outil connu, un titre et un code
+non vide ; l'ancre `apres` désigne un `<pre class="pseudo">` existant ; **chaque lien se décode exactement vers le
+code affiché à côté** (aucun lien désynchronisé) ; validité du code.
+Dernier run : **36 blocs, 0 problème**. Le script sait aussi recalculer les URL (`--fix-urls`).
+
+**Il a trouvé trois vraies erreurs pendant le chantier**, ce qui justifie son existence :
+1. un `re.sub` de mon générateur réinterprétait les `\n` de la chaîne de remplacement et **corrompait le JSON
+   injecté** — leçon cassée, détectée immédiatement ;
+2. `/valeurStock : Real` (attribut dérivé UML) n'est **pas** de la syntaxe Mermaid valide — notation déportée
+   dans une note ;
+3. un faux positif de mon propre contrôle (la patte-d'oie `||--o{` d'un `erDiagram` contient une accolade qui
+   n'ouvre rien) — le **contrôle** a été corrigé, pas le contenu, et un contre-test confirme qu'il mord toujours
+   sur un vrai déséquilibre et sur un lien désynchronisé.
+
+### Ce qui est prouvé, et ce qui ne l'est pas — à lire avant de croire ce chantier
+- **Encodage PlantUML : prouvé de bout en bout.** J'ai encodé un diagramme, appelé l'endpoint `/txt/` du serveur
+  officiel, et il a renvoyé le diagramme attendu (séquence, puis acteur + cas d'utilisation). L'encodage est donc
+  réellement accepté par le serveur, pas seulement auto-cohérent.
+- **Rendu Mermaid : vu pour 4 types sur 4 utilisés.** `classDiagram`, `sequenceDiagram`, `stateDiagram-v2` et
+  `erDiagram` ont été **réellement rendus** et regardés (Mermaid 11 via CDN), ainsi que les `flowchart` d'activités.
+- **Parseur Mermaid officiel : NON utilisé.** `npm install mermaid` est refusé (403) dans l'environnement de
+  génération. Le contrôle de `_verify_mermaid.js` est donc **structurel** (en-tête reconnu, délimiteurs équilibrés,
+  syntaxe par type), pas un passage par le parseur. Un diagramme peut être structurellement correct et mal rendre.
+- **Syntaxe PlantUML des types rares : non rendue.** L'endpoint `/txt/` ne produit de l'ASCII que pour les
+  séquences ; il renvoie vide aussi bien pour du bon que du mauvais code sur les diagrammes de temps, de structure
+  composite ou de profil. Ces syntaxes sont écrites d'après la documentation PlantUML mais **n'ont pas été rendues**.
+
+**☐ Vérification visuelle humaine — reste à faire.** Ouvrir quelques leçons dans un navigateur connecté et cliquer
+« Afficher le rendu ici » puis « Ouvrir dans PlantUML », en particulier **jour 20** (temps), **jour 24** (structure
+composite) et **jour 25** (profils), dont la syntaxe n'a pas pu être rendue ici.
+
+### Relecture de 3 leçons tirées au sort
+Graine `relecture-mermaid-2026-08-04` → **jours 3, 20 et 26**, tirés parmi les 28 couvertes. Vérifié pour chacune :
+le bloc est ancré sous le bon schéma ASCII (jour 3 : frontière / généralisation / récapitulatif ; jour 20 : la
+frise de l'Exemplaire n°42 ; jour 26 : la machine à états de `Location`), le contenu reprend les entités
+Ludothèque du schéma, et aucun backtick ne traîne dans le code. **3 leçons propres.**
+
+### Intégration
+`cours-uml/index.html` : bandeau « 🧪 Nouveau : chaque diagramme décrit se visualise en un clic » + mention du bloc
+dans la section « Avant de commencer ». Le cours n'a pas de page fil-rouge distincte : les diagrammes récapitulatifs
+sont dans les leçons 26 et 31, qui ont reçu leurs blocs.
