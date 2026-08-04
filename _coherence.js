@@ -275,11 +275,62 @@ function checkOrphans() {
   notes.push("Cours atteignables depuis l'accueil : " + reachable.size + " / " + courseDirs().length);
 }
 
+// ---------- E. Canal de signalement ----------
+// Le site est PUBLIC. Un lien « signaler une erreur » qui pointe vers une issue
+// GitHub oblige le visiteur à se créer un compte et expose le dépôt : il a été
+// retiré partout au profit d'un formulaire configuré en UN seul endroit
+// (signalement.js). Ce contrôle empêche sa réapparition, et vérifie que chaque
+// sommaire a bien son emplacement ET le script qui le remplit — un emplacement
+// sans script resterait vide pour toujours, sans que rien ne l'indique.
+function checkSignalement() {
+  const dirs = courseDirs();
+  let slots = 0, scripts = 0, github = 0;
+
+  const tousHtml = [];
+  for (const f of fs.readdirSync(ROOT)) {
+    if (f.endsWith(".html")) tousHtml.push(f);
+  }
+  for (const d of dirs) for (const f of listHtml(path.join(ROOT, d))) tousHtml.push(path.join(d, f));
+
+  for (const rel of tousHtml) {
+    const s = read(path.join(ROOT, rel));
+    if (s === null) continue;
+    if (/github\.com\/[^"']*\/issues/.test(s)) {
+      github++;
+      if (github <= 5) fail("SIGNALEMENT", rel + " : lien vers une issue GitHub — le site est public, " +
+        "le canal doit passer par le formulaire de signalement.js");
+    }
+  }
+  for (const d of dirs) {
+    const f = path.join(ROOT, d, "index.html");
+    const s = read(f);
+    if (s === null) continue;
+    const aSlot = s.indexOf('data-signalement="' + d + '"') !== -1;
+    const aScript = /src="\.\.\/signalement\.js"/.test(s);
+    if (aSlot) slots++;
+    if (aScript) scripts++;
+    if (!aSlot) fail("SIGNALEMENT", d + "/index.html : pas d'emplacement data-signalement=\"" + d + "\"");
+    else if (!aScript) fail("SIGNALEMENT", d + "/index.html : emplacement présent mais signalement.js " +
+      "n'est pas chargé — l'emplacement resterait vide indéfiniment");
+  }
+
+  const sig = read(path.join(ROOT, "signalement.js"));
+  if (sig === null) fail("SIGNALEMENT", "signalement.js introuvable");
+  // `= "[^"]` et non `= "\S` : avec \S, la chaîne vide "" matchait son propre
+  // guillemet fermant et le rapport annonçait « CONFIGURÉ » alors que rien ne
+  // l'était. Le ^\s*var évite par ailleurs de matcher l'exemple en commentaire.
+  const configure = sig !== null && /^\s*var URL_SIGNALEMENT = "[^"]/m.test(sig);
+  notes.push("Signalement : " + slots + "/" + dirs.length + " sommaires équipés, " +
+    scripts + " chargent le script, " + github + " lien(s) GitHub résiduel(s) · formulaire " +
+    (configure ? "CONFIGURÉ" : "PAS ENCORE CONFIGURÉ (aucun lien affiché — voulu)"));
+}
+
 // ---------- exécution ----------
 checkLinks();
 checkCounters();
 checkStructure();
 checkOrphans();
+checkSignalement();
 
 console.log("=== _coherence.js — rapport ===");
 for (const n of notes) console.log("· " + n);
