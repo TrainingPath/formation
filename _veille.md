@@ -21,9 +21,12 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
   `lexique.html` de chaque langue par `_outils/vocabulaire/vocabgen2.py`. **Si un lexique change** (mot ajouté,
   traduction corrigée), il faut relancer le générateur, sinon `_verify_vocab.js` fait échouer le build — c'est
   voulu : le cours et le QCM ne doivent jamais diverger. Ne jamais corriger le `.js` à la main.
-- **~980 mots d'extension non vérifiés** (`source: "non-verifie"` : 167 nl, 264 en, 281 es, 266 de). Écrits sans
-  source externe, l'environnement de build n'ayant accès à aucun dictionnaire. À faire relire par un humain :
-  `vocab-echantillon.md` en tire 50 par langue. **C'est le point le plus fragile du site en l'état.**
+- **~940 mots d'extension** (`source: "revu"` : 157 nl, 257 en, 270 es, 255 de). Écrits à la main, puis relus un
+  par un : 44 mots retirés et 12 traductions corrigées (compte rendu dans `vocab-revue.md`, règles appliquées dans
+  `_outils/vocabulaire/revue_extension.py`). **Mais la relecture a été faite par le même auteur que les listes** —
+  aucun dictionnaire n'est atteignable depuis l'environnement de génération (PyPI 403, `apt` sans droits, web
+  expiré). C'est un durcissement du critère d'admission, pas une vérification indépendante : **le point le plus
+  fragile du site reste ici.** Une relecture par un professeur ou un locuteur est la seule chose qui la lèverait.
 - **`vocab-synonymes.js` — table volontairement incomplète.** Elle empêche deux traductions synonymes d'apparaître
   dans le même QCM (« salaire » / « paie »). Elle ne couvre que les collisions constatées : **chaque signalement
   d'une question à deux réponses défendables doit s'y traduire par une famille ajoutée.** Le vérificateur partage

@@ -1,7 +1,7 @@
 /* Banque de vocabulaire — VOCAB_NEERLANDAIS
-   563 mots : 396 repris TELS QUELS des lexique.html du site
-   (cours-neerlandais-a1..b2) et 167 ajoutés pour le volume, marqués
-   source="non-verifie" et signalés par un ⚠ dans les questions.
+   553 mots : 396 repris TELS QUELS des lexique.html du site
+   (cours-neerlandais-a1..b2) et 157 ajoutés pour le volume, passés un par un
+   par la revue de _outils/vocabulaire/revue_extension.py.
    Les mots issus des lexiques ne peuvent pas diverger du cours :
    _verify_vocab.js confronte les deux à chaque mise à jour.
    Généré par _outils/vocabulaire/vocabgen2.py — ne pas éditer à la main. */
@@ -4814,7 +4814,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de oom",
@@ -4824,7 +4824,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de tante",
@@ -4834,27 +4834,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "de neef",
-  "traductions": [
-   "le cousin"
-  ],
-  "niveau": "A2",
-  "categorie": "famille",
-  "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "de nicht",
-  "traductions": [
-   "la cousine"
-  ],
-  "niveau": "A2",
-  "categorie": "famille",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de ouders",
@@ -4864,27 +4844,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "de man",
-  "traductions": [
-   "l'homme"
-  ],
-  "niveau": "A1",
-  "categorie": "famille",
-  "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "de vrouw",
-  "traductions": [
-   "la femme"
-  ],
-  "niveau": "A1",
-  "categorie": "famille",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de buurman",
@@ -4894,7 +4854,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vriend",
@@ -4904,7 +4864,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vriendin",
@@ -4914,7 +4874,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het vlees",
@@ -4924,17 +4884,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "het fruit",
-  "traductions": [
-   "le fruit"
-  ],
-  "niveau": "A1",
-  "categorie": "nourriture",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de aardappel",
@@ -4944,7 +4894,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de groente",
@@ -4954,7 +4904,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de boter",
@@ -4964,7 +4914,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de suiker",
@@ -4974,7 +4924,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het zout",
@@ -4984,7 +4934,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de rijst",
@@ -4994,7 +4944,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het ontbijt",
@@ -5004,7 +4954,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het avondeten",
@@ -5014,7 +4964,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de honger",
@@ -5024,7 +4974,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de dorst",
@@ -5034,7 +4984,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het bed",
@@ -5044,17 +4994,17 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de keuken",
   "traductions": [
-   "la cuisine"
+   "la cuisine (pièce)"
   ],
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de kamer",
@@ -5064,7 +5014,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de tuin",
@@ -5074,7 +5024,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de badkamer",
@@ -5084,7 +5034,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de muur",
@@ -5094,7 +5044,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het dak",
@@ -5104,7 +5054,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de trap",
@@ -5114,7 +5064,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de lamp",
@@ -5124,7 +5074,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de kast",
@@ -5134,17 +5084,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "het bad",
-  "traductions": [
-   "le bain"
-  ],
-  "niveau": "A2",
-  "categorie": "maison",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vloer",
@@ -5154,7 +5094,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de woning",
@@ -5164,7 +5104,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het hart",
@@ -5174,7 +5114,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de rug",
@@ -5184,7 +5124,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de buik",
@@ -5194,7 +5134,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het ziekenhuis",
@@ -5204,7 +5144,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de tand",
@@ -5214,7 +5154,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het bloed",
@@ -5224,7 +5164,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de behandeling",
@@ -5234,17 +5174,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "het onderzoek",
-  "traductions": [
-   "l'examen"
-  ],
-  "niveau": "B1",
-  "categorie": "corps-sante",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de rok",
@@ -5254,7 +5184,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de riem",
@@ -5264,7 +5194,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de handschoen",
@@ -5274,7 +5204,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de stad",
@@ -5284,7 +5214,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het dorp",
@@ -5294,7 +5224,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het park",
@@ -5304,7 +5234,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de bibliotheek",
@@ -5314,7 +5244,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het museum",
@@ -5324,7 +5254,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de hoek",
@@ -5334,7 +5264,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de wijk",
@@ -5344,7 +5274,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de bus",
@@ -5354,7 +5284,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de boot",
@@ -5364,7 +5294,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de weg",
@@ -5374,7 +5304,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de bestemming",
@@ -5384,7 +5314,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vertraging",
@@ -5394,7 +5324,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de halte",
@@ -5404,7 +5334,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het onweer",
@@ -5414,7 +5344,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de mist",
@@ -5424,7 +5354,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de lente",
@@ -5434,7 +5364,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de zomer",
@@ -5444,7 +5374,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de herfst",
@@ -5454,7 +5384,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de winter",
@@ -5464,7 +5394,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "donderdag",
@@ -5474,7 +5404,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vrijdag",
@@ -5484,7 +5414,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zaterdag",
@@ -5494,7 +5424,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zondag",
@@ -5504,7 +5434,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het jaar",
@@ -5514,7 +5444,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de maand",
@@ -5524,7 +5454,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de minuut",
@@ -5534,7 +5464,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nombres-dates",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "altijd",
@@ -5544,7 +5474,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nooit",
@@ -5554,7 +5484,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nombres-dates",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "soms",
@@ -5564,7 +5494,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nombres-dates",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vaak",
@@ -5574,7 +5504,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nombres-dates",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de boom",
@@ -5584,7 +5514,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de bloem",
@@ -5594,7 +5524,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het bos",
@@ -5604,7 +5534,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de zee",
@@ -5614,7 +5544,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de rivier",
@@ -5624,7 +5554,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de berg",
@@ -5634,7 +5564,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de hond",
@@ -5644,7 +5574,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de kat",
@@ -5654,7 +5584,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het paard",
@@ -5664,7 +5594,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vogel",
@@ -5674,7 +5604,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het dier",
@@ -5684,17 +5614,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "de lucht",
-  "traductions": [
-   "l'air"
-  ],
-  "niveau": "A2",
-  "categorie": "nature-environnement",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het klimaat",
@@ -5704,7 +5624,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het spel",
@@ -5714,7 +5634,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de sport",
@@ -5724,7 +5644,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de wandeling",
@@ -5734,7 +5654,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vrije tijd",
@@ -5744,7 +5664,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het werk",
@@ -5754,7 +5674,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de school",
@@ -5764,7 +5684,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de leraar",
@@ -5774,7 +5694,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de student",
@@ -5784,27 +5704,27 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de les",
   "traductions": [
-   "le cours"
+   "la leçon"
   ],
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "het kantoor",
   "traductions": [
-   "le bureau"
+   "le bureau (lieu de travail)"
   ],
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vergadering",
@@ -5814,7 +5734,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de stage",
@@ -5824,7 +5744,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "moe",
@@ -5834,7 +5754,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "sentiments",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "verrast",
@@ -5844,7 +5764,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nerveus",
@@ -5854,7 +5774,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "rustig",
@@ -5864,7 +5784,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "sentiments",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "doen",
@@ -5874,7 +5794,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "weten",
@@ -5884,7 +5804,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zeggen",
@@ -5894,7 +5814,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "werken",
@@ -5904,7 +5824,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "slapen",
@@ -5914,17 +5834,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "lopen",
-  "traductions": [
-   "marcher"
-  ],
-  "niveau": "A2",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "praten",
@@ -5934,7 +5844,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "kopen",
@@ -5944,7 +5854,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "betalen",
@@ -5954,7 +5864,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vragen",
@@ -5964,7 +5874,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "antwoorden",
@@ -5974,7 +5884,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "leren",
@@ -5984,7 +5894,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "spelen",
@@ -5994,7 +5904,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wachten",
@@ -6004,7 +5914,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zoeken",
@@ -6014,7 +5924,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "openen",
@@ -6024,7 +5934,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sluiten",
@@ -6034,7 +5944,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "brengen",
@@ -6044,7 +5954,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "kiezen",
@@ -6054,7 +5964,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "proberen",
@@ -6064,7 +5974,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "beslissen",
@@ -6074,7 +5984,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "veranderen",
@@ -6084,7 +5994,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "verliezen",
@@ -6094,7 +6004,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "winnen",
@@ -6104,7 +6014,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bouwen",
@@ -6114,7 +6024,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "groeien",
@@ -6124,7 +6034,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nieuw",
@@ -6134,7 +6044,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "oud",
@@ -6144,7 +6054,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "slecht",
@@ -6154,7 +6064,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "makkelijk",
@@ -6164,7 +6074,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sterk",
@@ -6174,7 +6084,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zwak",
@@ -6184,7 +6094,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hoog",
@@ -6194,7 +6104,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "laag",
@@ -6204,7 +6114,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vol",
@@ -6214,7 +6124,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "leeg",
@@ -6224,17 +6134,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "schoon",
-  "traductions": [
-   "propre"
-  ],
-  "niveau": "A2",
-  "categorie": "adjectifs",
-  "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vuil",
@@ -6244,7 +6144,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "gevaarlijk",
@@ -6254,17 +6154,17 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "veilig",
   "traductions": [
-   "sûr"
+   "sûr (sans danger)"
   ],
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "mogelijk",
@@ -6274,7 +6174,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nog",
@@ -6284,7 +6184,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "al",
@@ -6294,7 +6194,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "waarom",
@@ -6304,7 +6204,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hoe",
@@ -6314,7 +6214,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wanneer",
@@ -6324,7 +6224,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wie",
@@ -6334,7 +6234,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wat",
@@ -6344,7 +6244,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bijna",
@@ -6354,7 +6254,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "genoeg",
@@ -6364,7 +6264,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "samen",
@@ -6374,7 +6274,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "tegen",
@@ -6384,7 +6284,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zonder",
@@ -6394,7 +6294,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de regering",
@@ -6404,7 +6304,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de wet",
@@ -6414,7 +6314,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de verkiezing",
@@ -6424,7 +6324,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de belasting",
@@ -6434,7 +6334,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de bevolking",
@@ -6444,7 +6344,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de veiligheid",
@@ -6454,7 +6354,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de vrijheid",
@@ -6464,7 +6364,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "de armoede",
@@ -6474,7 +6374,7 @@ var VOCAB_NEERLANDAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  }
 ];
 if (typeof module !== "undefined" && module.exports) module.exports = VOCAB_NEERLANDAIS;

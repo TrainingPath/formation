@@ -11,7 +11,7 @@ Chaque leçon propose de la théorie, des exercices auto-corrigés et des exerci
 | 🧠 Analyse | Merise · UML (31 jours, les 14 diagrammes, fil rouge Ludothèque) |
 | 🖥️ Système d'exploitation | Linux · Active Directory (interface graphique et scripts PowerShell) |
 | 📊 Office | Excel (débutant et avancé/pro), Word, PowerPoint |
-| 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices. Un **test de placement** par langue conseille le palier d'entrée (`test-<langue>.html`). Un onglet **Vocabulaire** (`vocabulaire-<langue>.html`) interroge sur ~560 à 680 mots par langue, en QCM générés, avec révision espacée à trois boîtes |
+| 🗣️ Langues | Anglais, néerlandais, espagnol, allemand — de A1 à B2, avec lexiques et ateliers d'exercices. Un **test de placement** par langue conseille le palier d'entrée (`test-<langue>.html`). Un onglet **Vocabulaire** (`vocabulaire-<langue>.html`) interroge sur 553 à 667 mots par langue, en QCM générés, avec révision espacée à trois boîtes |
 
 ## Par où commencer ? (un parcours à la fois)
 

@@ -1,7 +1,7 @@
 /* Banque de vocabulaire — VOCAB_ALLEMAND
-   666 mots : 400 repris TELS QUELS des lexique.html du site
-   (cours-allemand-a1..b2) et 266 ajoutés pour le volume, marqués
-   source="non-verifie" et signalés par un ⚠ dans les questions.
+   655 mots : 400 repris TELS QUELS des lexique.html du site
+   (cours-allemand-a1..b2) et 255 ajoutés pour le volume, passés un par un
+   par la revue de _outils/vocabulaire/revue_extension.py.
    Les mots issus des lexiques ne peuvent pas diverger du cours :
    _verify_vocab.js confronte les deux à chaque mise à jour.
    Généré par _outils/vocabulaire/vocabgen2.py — ne pas éditer à la main. */
@@ -4898,7 +4898,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Tante",
@@ -4908,7 +4908,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Cousin",
@@ -4918,7 +4918,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Cousine",
@@ -4928,7 +4928,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Ehemann",
@@ -4938,7 +4938,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Ehefrau",
@@ -4948,7 +4948,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Nachbar",
@@ -4958,7 +4958,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Neffe",
@@ -4968,7 +4968,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Nichte",
@@ -4978,7 +4978,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Junge",
@@ -4988,7 +4988,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Mädchen",
@@ -4998,17 +4998,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "der Erwachsene",
-  "traductions": [
-   "l'adulte"
-  ],
-  "niveau": "B1",
-  "categorie": "famille",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Paar",
@@ -5018,7 +5008,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Sohn",
@@ -5028,7 +5018,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Tochter",
@@ -5038,7 +5028,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Reis",
@@ -5048,7 +5038,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Salz",
@@ -5058,7 +5048,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Butter",
@@ -5068,7 +5058,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Öl",
@@ -5078,7 +5068,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Salat",
@@ -5088,7 +5078,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Hähnchen",
@@ -5098,7 +5088,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Tee",
@@ -5108,7 +5098,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Saft",
@@ -5118,7 +5108,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Wein",
@@ -5128,7 +5118,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Bier",
@@ -5138,7 +5128,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Kuchen",
@@ -5148,7 +5138,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Schokolade",
@@ -5158,7 +5148,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Kartoffel",
@@ -5168,7 +5158,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gemüse",
@@ -5178,7 +5168,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Frühstück",
@@ -5188,7 +5178,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Mittagessen",
@@ -5198,7 +5188,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Abendessen",
@@ -5208,7 +5198,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Mahlzeit",
@@ -5218,7 +5208,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Teller",
@@ -5228,7 +5218,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Gabel",
@@ -5238,7 +5228,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Messer",
@@ -5248,7 +5238,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Löffel",
@@ -5258,7 +5248,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Flasche",
@@ -5268,7 +5258,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Hunger",
@@ -5278,7 +5268,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Durst",
@@ -5288,7 +5278,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Fleisch",
@@ -5298,7 +5288,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Haus",
@@ -5308,7 +5298,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Küche",
@@ -5318,7 +5308,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Schlafzimmer",
@@ -5328,7 +5318,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Garten",
@@ -5338,7 +5328,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Wand",
@@ -5348,7 +5338,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Dach",
@@ -5358,7 +5348,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Treppe",
@@ -5368,7 +5358,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Lampe",
@@ -5378,7 +5368,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Spiegel",
@@ -5388,7 +5378,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Handtuch",
@@ -5398,7 +5388,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Schublade",
@@ -5408,7 +5398,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Wohnung",
@@ -5418,7 +5408,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gebäude",
@@ -5428,7 +5418,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Schrank",
@@ -5438,7 +5428,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Kühlschrank",
@@ -5448,17 +5438,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "der Boden",
-  "traductions": [
-   "le sol"
-  ],
-  "niveau": "A2",
-  "categorie": "maison",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Herz",
@@ -5468,7 +5448,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Rücken",
@@ -5478,7 +5458,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Zahn",
@@ -5488,7 +5468,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Haut",
@@ -5498,7 +5478,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Blut",
@@ -5508,7 +5488,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Knochen",
@@ -5518,7 +5498,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Finger",
@@ -5528,7 +5508,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Knie",
@@ -5538,7 +5518,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Schulter",
@@ -5548,7 +5528,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Husten",
@@ -5558,7 +5538,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Wunde",
@@ -5568,7 +5548,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Krankenschwester",
@@ -5578,7 +5558,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Tablette",
@@ -5588,7 +5568,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Krankenhaus",
@@ -5598,7 +5578,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Rock",
@@ -5608,7 +5588,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Socke",
@@ -5618,7 +5598,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Hut",
@@ -5628,7 +5608,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Gürtel",
@@ -5638,7 +5618,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Handschuh",
@@ -5648,7 +5628,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Schal",
@@ -5658,7 +5638,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Stiefel",
@@ -5668,7 +5648,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Dorf",
@@ -5678,7 +5658,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Brücke",
@@ -5688,17 +5668,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "das Schloss",
-  "traductions": [
-   "le château"
-  ],
-  "niveau": "B1",
-  "categorie": "ville",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Museum",
@@ -5708,7 +5678,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Bibliothek",
@@ -5718,7 +5688,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Park",
@@ -5728,7 +5698,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Bäckerei",
@@ -5738,17 +5708,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "das Viertel",
-  "traductions": [
-   "le quartier"
-  ],
-  "niveau": "B1",
-  "categorie": "ville",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Bürgersteig",
@@ -5758,7 +5718,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Auto",
@@ -5768,7 +5728,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Fahrrad",
@@ -5778,7 +5738,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Schiff",
@@ -5788,7 +5748,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Autobahn",
@@ -5798,7 +5758,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gepäck",
@@ -5808,7 +5768,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Fahrer",
@@ -5818,7 +5778,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Fahrgast",
@@ -5828,7 +5788,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Verspätung",
@@ -5838,7 +5798,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Hafen",
@@ -5848,7 +5808,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Bahnsteig",
@@ -5858,7 +5818,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Nebel",
@@ -5868,7 +5828,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Hitze",
@@ -5878,7 +5838,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Himmel",
@@ -5888,7 +5848,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Jahreszeit",
@@ -5898,7 +5858,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Frühling",
@@ -5908,7 +5868,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Sommer",
@@ -5918,7 +5878,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Herbst",
@@ -5928,7 +5888,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Winter",
@@ -5938,7 +5898,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Baum",
@@ -5948,7 +5908,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Blume",
@@ -5958,7 +5918,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gras",
@@ -5968,7 +5928,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Wald",
@@ -5978,7 +5938,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Berg",
@@ -5988,7 +5948,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Fluss",
@@ -5998,7 +5958,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Meer",
@@ -6008,7 +5968,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der See",
@@ -6018,7 +5978,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Strand",
@@ -6028,7 +5988,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Insel",
@@ -6038,7 +5998,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Stein",
@@ -6048,7 +6008,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Sand",
@@ -6058,7 +6018,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Tier",
@@ -6068,7 +6028,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Vogel",
@@ -6078,7 +6038,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Hund",
@@ -6088,7 +6048,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Katze",
@@ -6098,7 +6058,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Pferd",
@@ -6108,7 +6068,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Kuh",
@@ -6118,7 +6078,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Mannschaft",
@@ -6128,7 +6088,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Spieler",
@@ -6138,7 +6098,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Ball",
@@ -6148,7 +6108,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Schwimmen",
@@ -6158,7 +6118,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Spaziergang",
@@ -6168,7 +6128,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Ferien",
@@ -6178,7 +6138,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Fest",
@@ -6188,7 +6148,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Lied",
@@ -6198,7 +6158,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Tanz",
@@ -6208,7 +6168,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Zeichnung",
@@ -6218,7 +6178,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Publikum",
@@ -6228,7 +6188,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Stadion",
@@ -6238,7 +6198,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Schule",
@@ -6248,7 +6208,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Lehrer",
@@ -6258,7 +6218,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Schüler",
@@ -6268,7 +6228,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Student",
@@ -6278,7 +6238,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Lektion",
@@ -6288,7 +6248,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Hausaufgaben",
@@ -6298,7 +6258,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Prüfung",
@@ -6308,7 +6268,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Klassenzimmer",
@@ -6318,7 +6278,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Fabrik",
@@ -6328,7 +6288,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Arbeiter",
@@ -6338,7 +6298,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Lohn",
@@ -6348,17 +6308,17 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Frist",
   "traductions": [
-   "l'échéance"
+   "le délai"
   ],
   "niveau": "B2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Werkstatt",
@@ -6368,17 +6328,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "die Trauer",
-  "traductions": [
-   "la tristesse"
-  ],
-  "niveau": "B1",
-  "categorie": "sentiments",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Hoffnung",
@@ -6388,7 +6338,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Liebe",
@@ -6398,7 +6348,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Scham",
@@ -6408,7 +6358,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Stolz",
@@ -6418,7 +6368,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Langeweile",
@@ -6428,7 +6378,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Eifersucht",
@@ -6438,7 +6388,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Vertrauen",
@@ -6448,7 +6398,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Erleichterung",
@@ -6458,7 +6408,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Wort",
@@ -6468,7 +6418,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Satz",
@@ -6478,7 +6428,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Antwort",
@@ -6488,17 +6438,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "die Nachricht",
-  "traductions": [
-   "le message"
-  ],
-  "niveau": "A1",
-  "categorie": "communication",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Bedeutung",
@@ -6508,7 +6448,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Fehler",
@@ -6518,7 +6458,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Geschichte",
@@ -6528,7 +6468,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Rede",
@@ -6538,7 +6478,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Stille",
@@ -6548,7 +6488,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gerücht",
@@ -6558,7 +6498,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "rennen",
@@ -6568,7 +6508,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "kaufen",
@@ -6578,7 +6518,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "verkaufen",
@@ -6588,7 +6528,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bezahlen",
@@ -6598,7 +6538,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "kochen",
@@ -6608,7 +6548,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "waschen",
@@ -6618,7 +6558,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "putzen",
@@ -6628,7 +6568,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "öffnen",
@@ -6638,7 +6578,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bauen",
@@ -6648,7 +6588,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "reparieren",
@@ -6658,7 +6598,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "werfen",
@@ -6668,7 +6608,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schieben",
@@ -6678,7 +6618,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ziehen",
@@ -6688,17 +6628,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "leihen",
-  "traductions": [
-   "prêter"
-  ],
-  "niveau": "B1",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wählen",
@@ -6708,7 +6638,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "entscheiden",
@@ -6718,7 +6648,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "versuchen",
@@ -6728,7 +6658,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "gewinnen",
@@ -6738,7 +6668,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "verlieren",
@@ -6748,7 +6678,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vergessen",
@@ -6758,7 +6688,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lachen",
@@ -6768,7 +6698,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "weinen",
@@ -6778,7 +6708,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "singen",
@@ -6788,7 +6718,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zeichnen",
@@ -6798,7 +6728,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "unterrichten",
@@ -6808,7 +6738,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "erklären",
@@ -6818,7 +6748,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zuhören",
@@ -6828,7 +6758,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ankommen",
@@ -6838,7 +6768,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "warten",
@@ -6848,7 +6778,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "verbieten",
@@ -6858,7 +6788,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wachsen",
@@ -6868,7 +6798,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schicken",
@@ -6878,7 +6808,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bekommen",
@@ -6888,17 +6818,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "tragen",
-  "traductions": [
-   "porter"
-  ],
-  "niveau": "B1",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schreiben",
@@ -6908,7 +6828,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "arbeiten",
@@ -6918,7 +6838,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lernen",
@@ -6928,7 +6848,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "groß",
@@ -6938,7 +6858,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "klein",
@@ -6948,7 +6868,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "neu",
@@ -6958,7 +6878,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "alt",
@@ -6968,7 +6888,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schlecht",
@@ -6978,7 +6898,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schön",
@@ -6988,7 +6908,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hässlich",
@@ -6998,7 +6918,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "heiß",
@@ -7008,7 +6928,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "stark",
@@ -7018,7 +6938,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schwach",
@@ -7028,7 +6948,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hoch",
@@ -7038,7 +6958,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "niedrig",
@@ -7048,7 +6968,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "voll",
@@ -7058,7 +6978,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "leer",
@@ -7068,7 +6988,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sauber",
@@ -7078,7 +6998,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "schmutzig",
@@ -7088,7 +7008,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "gefährlich",
@@ -7098,37 +7018,17 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sicher",
   "traductions": [
-   "sûr"
+   "sûr (sans danger)"
   ],
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "schwer",
-  "traductions": [
-   "lourd"
-  ],
-  "niveau": "A2",
-  "categorie": "adjectifs",
-  "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "leicht",
-  "traductions": [
-   "léger"
-  ],
-  "niveau": "A2",
-  "categorie": "adjectifs",
-  "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "breit",
@@ -7138,7 +7038,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "eng",
@@ -7148,7 +7048,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "tief",
@@ -7158,7 +7058,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "laut",
@@ -7168,7 +7068,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "müde",
@@ -7178,7 +7078,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "glücklich",
@@ -7188,7 +7088,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "traurig",
@@ -7198,7 +7098,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fertig",
@@ -7208,7 +7108,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "beschäftigt",
@@ -7218,7 +7118,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nützlich",
@@ -7228,7 +7128,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nutzlos",
@@ -7238,7 +7138,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "jung",
@@ -7248,7 +7148,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "warum",
@@ -7258,17 +7158,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
- },
- {
-  "mot": "wie",
-  "traductions": [
-   "comment"
-  ],
-  "niveau": "A1",
-  "categorie": "mots-outils",
-  "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wann",
@@ -7278,7 +7168,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wo",
@@ -7288,7 +7178,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fast",
@@ -7298,7 +7188,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "genug",
@@ -7308,7 +7198,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zusammen",
@@ -7318,7 +7208,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "gegen",
@@ -7328,7 +7218,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ohne",
@@ -7338,7 +7228,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "zwischen",
@@ -7348,27 +7238,27 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vorher",
   "traductions": [
-   "avant"
+   "auparavant"
   ],
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nachher",
   "traductions": [
-   "après"
+   "ensuite"
   ],
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "immer",
@@ -7378,7 +7268,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nie",
@@ -7388,7 +7278,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "oft",
@@ -7398,7 +7288,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "manchmal",
@@ -7408,7 +7298,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "überall",
@@ -7418,7 +7308,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nichts",
@@ -7428,7 +7318,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "alles",
@@ -7438,7 +7328,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "jemand",
@@ -7448,7 +7338,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "niemand",
@@ -7458,7 +7348,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "viel",
@@ -7468,7 +7358,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Freiheit",
@@ -7478,7 +7368,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Sicherheit",
@@ -7488,7 +7378,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Krieg",
@@ -7498,7 +7388,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Frieden",
@@ -7508,7 +7398,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "das Gefängnis",
@@ -7518,7 +7408,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "der Streik",
@@ -7528,7 +7418,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Umfrage",
@@ -7538,7 +7428,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "die Armut",
@@ -7548,7 +7438,7 @@ var VOCAB_ALLEMAND = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  }
 ];
 if (typeof module !== "undefined" && module.exports) module.exports = VOCAB_ALLEMAND;

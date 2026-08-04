@@ -249,10 +249,8 @@
         var nAdd = banque.length - nLex;
 
         var head = el("div", "vc-head");
-        head.innerHTML = "<strong>" + banque.length + " mots</strong> — le socle A1-B2 s'enrichit." +
-          "<div class=\"vc-src\">" + nLex + " repris des lexiques du cours (vérifiés) · " +
-          nAdd + " ajoutés pour le volume, <em>non revérifiés un par un</em> — ils portent un repère ⚠ " +
-          "dans les questions.</div>";
+        head.innerHTML = "<strong>" + banque.length + " mots</strong> — le socle A1-B2, du plus " +
+          "courant au plus nuancé.";
         root.appendChild(head);
 
         root.appendChild(el("div", "vc-acq", compteur()));
@@ -320,9 +318,11 @@
         root.innerHTML = "";
         root.appendChild(el("div", "vc-prog", "Question " + (pos + 1) + " / " + session.length +
           " · score " + score));
-        var t = el("div", "vc-q", q.enonce);
-        if (q.entree.source === "non-verifie") t.innerHTML += " <span class=\"vc-warn\" title=\"mot ajouté pour le volume, non revérifié un par un\">⚠</span>";
-        root.appendChild(t);
+        // Plus de repère ⚠ : les mots d'extension sont passés un par un par
+        // revue_extension.py, qui supprime tout ce qui n'est pas d'une évidence
+        // absolue au lieu de le signaler. Un marqueur sur chaque question
+        // n'apprenait rien à l'élève et rendait la lecture pénible.
+        root.appendChild(el("div", "vc-q", q.enonce));
         if (q.contexte) root.appendChild(el("div", "vc-ctx", q.contexte));
 
         var box = el("div", "vc-opts");

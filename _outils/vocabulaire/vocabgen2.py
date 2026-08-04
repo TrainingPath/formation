@@ -5,15 +5,18 @@ DEUX SOURCES, TOUJOURS DISTINGUÉES :
   · source="lexique"     -> repris TEL QUEL des lexique.html du site. Aucune
                             traduction créée ici : la banque ne peut donc pas
                             diverger du cours (contrôle automatique).
-  · source="non-verifie" -> extension de volume, écrite à la main, limitée au
-                            vocabulaire concret et fréquent dont la traduction
-                            est stable. Marquée ⚠ dans l'interface.
+  · source="revu"        -> extension de volume, écrite à la main puis passée
+                            au crible de revue_extension.py, qui retire tout ce
+                            qui n'est pas d'une évidence absolue (polysémie,
+                            glose ambiguë, variante régionale). Ce qui reste est
+                            du vocabulaire élémentaire et concret.
 
 Les thèmes de lexique n'ont pas le même intitulé d'une langue à l'autre : la
 classification est donc faite par MOTS-CLÉS du titre de thème, pas par table
 d'équivalence figée.
 """
 import re, html, json, os, unicodedata, importlib, sys
+import revue_extension
 
 # Racine du site : deux niveaux au-dessus de ce script (_outils/vocabulaire/).
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -139,19 +142,24 @@ def depuis_lexiques(langue):
 
 
 def ajouter_extension(langue, entrees, vus):
-    """Charge vocab_ext_<langue>.py si présent. Les mots déjà couverts par un
-    lexique sont IGNORÉS : le lexique fait toujours foi."""
+    """Charge vocab_ext_<langue>.py si présent, APRÈS passage par la revue mot à
+    mot (revue_extension.py) qui retire tout ce qui n'est pas d'une évidence
+    absolue. Les mots déjà couverts par un lexique sont IGNORÉS : le lexique
+    fait toujours foi."""
+    code = CODE[langue]
     try:
-        mod = importlib.import_module("vocab_ext_" + CODE[langue])
+        mod = importlib.import_module("vocab_ext_" + code)
     except ImportError:
         return 0
+    liste, nsup, ncor = revue_extension.appliquer(code, mod.EXT)
+    print("   revue %s : %d retiré(s), %d corrigé(s)" % (code, nsup, ncor))
     ajoutes = 0
-    for mot, trads, niveau, cat, cls in mod.EXT:
+    for mot, trads, niveau, cat, cls in liste:
         k = norm(mot)
         if k in vus:
             continue
         e = {"mot": mot, "traductions": list(trads), "niveau": niveau,
-             "categorie": cat, "classe": cls, "source": "non-verifie"}
+             "categorie": cat, "classe": cls, "source": "revu"}
         entrees.append(e)
         vus[k] = e
         ajoutes += 1
@@ -170,8 +178,8 @@ def ecrire(langue, entrees):
     tete = (
         "/* Banque de vocabulaire — %s\n"
         "   %d mots : %d repris TELS QUELS des lexique.html du site\n"
-        "   (cours-%s-a1..b2) et %d ajoutés pour le volume, marqués\n"
-        "   source=\"non-verifie\" et signalés par un ⚠ dans les questions.\n"
+        "   (cours-%s-a1..b2) et %d ajoutés pour le volume, passés un par un\n"
+        "   par la revue de _outils/vocabulaire/revue_extension.py.\n"
         "   Les mots issus des lexiques ne peuvent pas diverger du cours :\n"
         "   _verify_vocab.js confronte les deux à chaque mise à jour.\n"
         "   Généré par _outils/vocabulaire/vocabgen2.py — ne pas éditer à la main. */\n"

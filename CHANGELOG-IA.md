@@ -1160,19 +1160,17 @@ de chaque langue et en extrait mot, traduction et phrase d'exemple **tels quels*
 `_verify_vocab.js` reconfronte chaque mot du lexique à la banque : **400 entrées par langue, 0 absente,
 0 divergente** — une divergence d'un seul mot fait échouer le build.
 
-**Le reste est marqué comme non vérifié.** Pour atteindre un volume utile, une extension a été écrite à la main
-(`_outils/vocabulaire/vocab_ext_<code>.py`), limitée au vocabulaire concret et fréquent dont la traduction est
-stable. Les mots à double sens ont été écartés exprès : `bank`, `letter`, `right`, `still` en anglais ;
-`die Decke` (couverture/plafond), `das Gericht` (tribunal/plat), `die Tasche` (poche/sac) en allemand. Ces mots
-portent `source: "non-verifie"`, un repère **⚠** dans la question, et sont comptés séparément sur la page d'accueil
-du module.
+**Le reste est écrit à la main, puis passé au crible.** Pour atteindre un volume utile, une extension a été
+écrite (`_outils/vocabulaire/vocab_ext_<code>.py`), limitée au vocabulaire concret et fréquent. Les mots à double
+sens ont été écartés dès l'écriture : `bank`, `letter`, `right`, `still` en anglais ; `die Decke`
+(couverture/plafond), `das Gericht` (tribunal/plat), `die Tasche` (poche/sac) en allemand.
 
-| Langue | Total | Des lexiques (vérifiés) | Extension (⚠ non vérifiée) |
+| Langue | Total | Des lexiques | Extension (relue) |
 |---|---|---|---|
-| Néerlandais | 563 | 396 | 167 |
-| Anglais | 664 | 400 | 264 |
-| Espagnol | 678 | 397 | 281 |
-| Allemand | 666 | 400 | 266 |
+| Néerlandais | 553 | 396 | 157 |
+| Anglais | 657 | 400 | 257 |
+| Espagnol | 667 | 397 | 270 |
+| Allemand | 655 | 400 | 255 |
 
 Les intitulés de thèmes diffèrent d'une langue à l'autre (« Nourriture & boisson » / « La nourriture » /
 « Au restaurant »…). La classification en 19 catégories se fait donc **par mots-clés du titre de thème**, pas par
@@ -1227,14 +1225,12 @@ qu'elle est vide, aucun lien n'est affiché** — rien plutôt qu'un lien mort. 
 pied des 82 sommaires de cours : même problème, pas encore traité.)*
 
 ### Ce qui n'est PAS vérifié — à lire avant de faire confiance à ce module
-- **Les ~980 mots de l'extension n'ont été confrontés à aucune source externe.** L'environnement de build n'a accès
-  à aucun dictionnaire (`web_fetch` expire). Ces traductions viennent de moi, pas d'un ouvrage. C'est exactement le
-  risque annoncé au début de cette section : il est **réduit** (mots concrets, sens uniques, repère ⚠, comptage
-  séparé, source visible sur la page) mais **pas éliminé**.
-- **☐ Relecture humaine — reste à faire.** `vocab-echantillon.md` consigne **50 mots par langue** tirés au sort
-  parmi les non-vérifiés (graine fixe, donc reproductible), en tableau à cocher. À faire relire par un professeur
-  ou un locuteur, dictionnaire en main. Les corrections se portent sur `_outils/vocabulaire/vocab_ext_<code>.py`,
-  jamais sur le `.js` généré.
+- **Les ~940 mots de l'extension n'ont été confrontés à aucune source externe.** Vérifié pendant ce chantier :
+  PyPI répond **403**, `apt` n'a pas les droits, `web_fetch` expire. Aucun dictionnaire n'est atteignable. La revue
+  décrite ci-dessus a donc été faite **par le même auteur que les listes** : c'est un durcissement du critère
+  d'admission, pas une vérification indépendante.
+- **☐ Relecture humaine — reste à faire.** C'est la seule chose qui lèverait le point précédent. Les corrections se
+  portent sur `_outils/vocabulaire/vocab_ext_<code>.py` et `revue_extension.py`, jamais sur le `.js` généré.
 - **☐ Vérification navigateur — reste à faire.** Les quatre pages n'ont pas été ouvertes dans un navigateur :
   le moteur a été testé en Node. Reste à vérifier l'affichage réel des compteurs à trois boîtes et le repère ⚠.
 
@@ -1245,3 +1241,40 @@ scores des cours et des tests de placement sont intacts.
 ### Intégration
 Bouton « 📚 Vocabulaire — se faire interroger » sur les 4 pages de langue et bloc dédié sur `langue.html`.
 `README.md` : ligne Langues complétée et section CI enrichie. `.gitignore` : ajout de `__pycache__/`.
+
+### Suite — revue mot à mot, et retrait du repère ⚠
+Le repère ⚠ posé sur chaque mot d'extension gênait plus qu'il n'aidait : il s'affichait aussi bien sur `adult` =
+adulte que sur un mot réellement douteux, donc il n'informait de rien. Demande explicite de retirer le repère et
+l'encadré « D'où viennent ces mots ? ». Ce qui ne peut pas se faire en cachant l'incertitude : il fallait la
+supprimer.
+
+**Recherche préalable d'une source externe — échec.** `pip` : proxy **403 Forbidden** sur PyPI. `apt-get update` :
+pas de droits sur `/var/lib/apt/lists`. `web_fetch` sur un dictionnaire : **expiration à 180 s**. Aucune
+vérification indépendante n'est possible depuis cet environnement, et il fallait le dire avant de promettre quoi
+que ce soit.
+
+**Revue appliquée** (`_outils/vocabulaire/revue_extension.py`, appelée par le générateur) : les 978 mots
+d'extension relus un par un, avec suppression — et non signalement — de tout ce qui n'est pas d'une évidence
+absolue. **44 mots retirés, 12 traductions corrigées.** Trois motifs, portés par chaque entrée :
+
+- **Polysémie source** — `de neef` (cousin ET neveu), `esperar` (attendre ET espérer), `das Schloss` (château ET
+  serrure), `leihen` (prêter ET emprunter), `la estación` (gare ET saison).
+- **Glose française ambiguë** — `to carry` = « porter » recouvre aussi *to wear* ; `sicher`/`seguro`/`veilig` =
+  « sûr » se comprend aussi comme « certain » (corrigés en « sûr (sans danger) »).
+- **Variante régionale** — décisif ici, l'élève est en Belgique : `lopen` = marcher aux Pays-Bas mais **courir**
+  en Belgique ; `schoon` = propre aux Pays-Bas mais **beau** en Flandre ; `pavement` = trottoir au Royaume-Uni mais
+  **chaussée** aux États-Unis.
+
+Le générateur **échoue** si un mot listé dans la revue est absent des extensions : sans ce garde-fou, une faute de
+frappe passerait pour une suppression effectuée. Compte rendu complet et reproductible dans `vocab-revue.md`,
+généré depuis la revue elle-même — il ne peut pas raconter autre chose que ce qui est appliqué.
+
+**Conséquences dans l'interface** : `source` passe de `non-verifie` à `revu` ; le ⚠ disparaît des questions ;
+l'encadré « D'où viennent ces mots ? » et la ligne de comptage « N ajoutés pour le volume » sont retirés des
+4 pages. Volumes après revue : 553 nl, 657 en, 667 es, 655 de. `_verify_vocab.js` reste vert : 5 060 questions
+générées, 0 défaut, 0 divergence avec les lexiques.
+
+**Ce que ce retrait ne signifie pas.** Le site n'affirme plus « non vérifié », mais il n'affirme pas non plus
+« vérifié ». La transparence a été déplacée de l'interface vers `vocab-revue.md` et `_veille.md`, où elle est plus
+complète — et non supprimée. L'élève voit un module propre ; la personne qui maintient le site sait exactement ce
+qui a été relu, par qui, et ce que ça vaut.

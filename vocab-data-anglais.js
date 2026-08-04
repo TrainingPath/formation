@@ -1,7 +1,7 @@
 /* Banque de vocabulaire — VOCAB_ANGLAIS
-   664 mots : 400 repris TELS QUELS des lexique.html du site
-   (cours-anglais-a1..b2) et 264 ajoutés pour le volume, marqués
-   source="non-verifie" et signalés par un ⚠ dans les questions.
+   657 mots : 400 repris TELS QUELS des lexique.html du site
+   (cours-anglais-a1..b2) et 257 ajoutés pour le volume, passés un par un
+   par la revue de _outils/vocabulaire/revue_extension.py.
    Les mots issus des lexiques ne peuvent pas diverger du cours :
    _verify_vocab.js confronte les deux à chaque mise à jour.
    Généré par _outils/vocabulaire/vocabgen2.py — ne pas éditer à la main. */
@@ -4881,7 +4881,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "aunt",
@@ -4891,7 +4891,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cousin",
@@ -4901,7 +4901,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "husband",
@@ -4911,7 +4911,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wife",
@@ -4921,7 +4921,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "parents",
@@ -4931,7 +4931,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "child",
@@ -4941,7 +4941,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "neighbour",
@@ -4951,7 +4951,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nephew",
@@ -4961,7 +4961,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "niece",
@@ -4971,7 +4971,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "twin",
@@ -4981,7 +4981,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "couple",
@@ -4991,7 +4991,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "boy",
@@ -5001,7 +5001,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "girl",
@@ -5011,7 +5011,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "adult",
@@ -5021,7 +5021,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "salt",
@@ -5031,7 +5031,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "butter",
@@ -5041,7 +5041,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "oil",
@@ -5051,7 +5051,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "soup",
@@ -5061,7 +5061,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "salad",
@@ -5071,7 +5071,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "chicken",
@@ -5081,7 +5081,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "juice",
@@ -5091,7 +5091,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wine",
@@ -5101,7 +5101,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "beer",
@@ -5111,7 +5111,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cake",
@@ -5121,7 +5121,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "chocolate",
@@ -5131,7 +5131,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "potato",
@@ -5141,7 +5141,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vegetable",
@@ -5151,7 +5151,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "meal",
@@ -5161,7 +5161,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fork",
@@ -5171,7 +5171,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "knife",
@@ -5181,7 +5181,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "spoon",
@@ -5191,7 +5191,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bottle",
@@ -5201,7 +5201,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hunger",
@@ -5211,7 +5211,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "thirst",
@@ -5221,7 +5221,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bedroom",
@@ -5231,7 +5231,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "kitchen",
@@ -5241,7 +5241,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wall",
@@ -5251,7 +5251,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "roof",
@@ -5261,7 +5261,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "stairs",
@@ -5271,7 +5271,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "mirror",
@@ -5281,7 +5281,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "towel",
@@ -5291,7 +5291,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "blanket",
@@ -5301,7 +5301,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "shelf",
@@ -5311,7 +5311,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "drawer",
@@ -5321,7 +5321,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "rent",
@@ -5331,7 +5331,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "flat",
@@ -5341,7 +5341,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "building",
@@ -5351,7 +5351,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ceiling",
@@ -5361,7 +5361,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cupboard",
@@ -5371,7 +5371,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fridge",
@@ -5381,7 +5381,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ear",
@@ -5391,7 +5391,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "leg",
@@ -5401,7 +5401,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "finger",
@@ -5411,7 +5411,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "knee",
@@ -5421,7 +5421,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "shoulder",
@@ -5431,7 +5431,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "throat",
@@ -5441,7 +5441,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "skin",
@@ -5451,7 +5451,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "blood",
@@ -5461,7 +5461,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bone",
@@ -5471,7 +5471,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "tooth",
@@ -5481,7 +5481,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wound",
@@ -5491,7 +5491,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pill",
@@ -5501,7 +5501,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "jumper",
@@ -5511,7 +5511,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sock",
@@ -5521,7 +5521,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "belt",
@@ -5531,7 +5531,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "glove",
@@ -5541,7 +5541,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "scarf",
@@ -5551,17 +5551,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "boot",
-  "traductions": [
-   "botte"
-  ],
-  "niveau": "B1",
-  "categorie": "vetements",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pocket",
@@ -5571,7 +5561,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "village",
@@ -5581,7 +5571,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "castle",
@@ -5591,7 +5581,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "museum",
@@ -5601,7 +5591,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pharmacy",
@@ -5611,7 +5601,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bakery",
@@ -5621,7 +5611,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "town hall",
@@ -5631,7 +5621,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "crossroads",
@@ -5641,17 +5631,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "pavement",
-  "traductions": [
-   "trottoir"
-  ],
-  "niveau": "B1",
-  "categorie": "ville",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "plane",
@@ -5661,7 +5641,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bicycle",
@@ -5671,7 +5651,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "boat",
@@ -5681,7 +5661,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "road",
@@ -5691,7 +5671,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "driver",
@@ -5701,7 +5681,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "passenger",
@@ -5711,7 +5691,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "delay",
@@ -5721,7 +5701,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "harbour",
@@ -5731,7 +5711,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "platform",
@@ -5741,17 +5721,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "fare",
-  "traductions": [
-   "tarif"
-  ],
-  "niveau": "B1",
-  "categorie": "transports-voyage",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fog",
@@ -5761,7 +5731,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "heat",
@@ -5771,7 +5741,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sky",
@@ -5781,7 +5751,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "season",
@@ -5791,7 +5761,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "spring",
@@ -5801,7 +5771,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "summer",
@@ -5811,7 +5781,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "autumn",
@@ -5821,7 +5791,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "winter",
@@ -5831,17 +5801,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "shower",
-  "traductions": [
-   "averse"
-  ],
-  "niveau": "B1",
-  "categorie": "temps-meteo",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "tree",
@@ -5851,7 +5811,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "flower",
@@ -5861,7 +5821,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "grass",
@@ -5871,7 +5831,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "forest",
@@ -5881,7 +5841,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "mountain",
@@ -5891,7 +5851,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "river",
@@ -5901,7 +5861,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sea",
@@ -5911,7 +5871,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lake",
@@ -5921,7 +5881,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "beach",
@@ -5931,7 +5891,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "island",
@@ -5941,7 +5901,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "stone",
@@ -5951,7 +5911,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sand",
@@ -5961,7 +5921,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "animal",
@@ -5971,7 +5931,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bird",
@@ -5981,7 +5941,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dog",
@@ -5991,7 +5951,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cat",
@@ -6001,7 +5961,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "horse",
@@ -6011,7 +5971,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cow",
@@ -6021,7 +5981,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "team",
@@ -6031,7 +5991,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "player",
@@ -6041,7 +6001,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ball",
@@ -6051,7 +6011,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "swimming",
@@ -6061,7 +6021,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "walk",
@@ -6071,7 +6031,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "holiday",
@@ -6081,7 +6041,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "party",
@@ -6091,7 +6051,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "song",
@@ -6101,7 +6061,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "camera",
@@ -6111,7 +6071,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "drawing",
@@ -6121,7 +6081,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "audience",
@@ -6131,7 +6091,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "stadium",
@@ -6141,7 +6101,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "school",
@@ -6151,7 +6111,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "teacher",
@@ -6161,7 +6121,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pupil",
@@ -6171,7 +6131,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "student",
@@ -6181,7 +6141,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lesson",
@@ -6191,7 +6151,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "homework",
@@ -6201,7 +6161,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "exam",
@@ -6211,7 +6171,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "classroom",
@@ -6221,7 +6181,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "degree",
@@ -6231,7 +6191,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "factory",
@@ -6241,7 +6201,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "worker",
@@ -6251,17 +6211,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "wage",
-  "traductions": [
-   "salaire"
-  ],
-  "niveau": "B1",
-  "categorie": "travail-etudes",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "workshop",
@@ -6271,7 +6221,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "joy",
@@ -6281,7 +6231,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sadness",
@@ -6291,7 +6241,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fear",
@@ -6301,7 +6251,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "anger",
@@ -6311,7 +6261,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hope",
@@ -6321,7 +6271,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "love",
@@ -6331,7 +6281,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "shame",
@@ -6341,7 +6291,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pride",
@@ -6351,7 +6301,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "boredom",
@@ -6361,7 +6311,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "jealousy",
@@ -6371,7 +6321,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "trust",
@@ -6381,7 +6331,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "relief",
@@ -6391,7 +6341,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "word",
@@ -6401,7 +6351,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sentence",
@@ -6411,7 +6361,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "answer",
@@ -6421,7 +6371,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "message",
@@ -6431,7 +6381,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "newspaper",
@@ -6441,7 +6391,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "advertisement",
@@ -6451,7 +6401,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "meaning",
@@ -6461,7 +6411,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "story",
@@ -6471,7 +6421,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "speech",
@@ -6481,7 +6431,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "silence",
@@ -6491,7 +6441,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "rumour",
@@ -6501,7 +6451,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to walk",
@@ -6511,7 +6461,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to run",
@@ -6521,7 +6471,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to swim",
@@ -6531,7 +6481,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to pay",
@@ -6541,7 +6491,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to cook",
@@ -6551,7 +6501,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to wash",
@@ -6561,7 +6511,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to clean",
@@ -6571,7 +6521,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to open",
@@ -6581,7 +6531,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to close",
@@ -6591,7 +6541,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to build",
@@ -6601,7 +6551,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to repair",
@@ -6611,7 +6561,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to throw",
@@ -6621,7 +6571,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to push",
@@ -6631,7 +6581,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to pull",
@@ -6641,7 +6591,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to lend",
@@ -6651,7 +6601,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to borrow",
@@ -6661,7 +6611,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to choose",
@@ -6671,7 +6621,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to decide",
@@ -6681,7 +6631,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to try",
@@ -6691,7 +6641,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to win",
@@ -6701,7 +6651,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to lose",
@@ -6711,7 +6661,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to forget",
@@ -6721,7 +6671,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to laugh",
@@ -6731,7 +6681,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to cry",
@@ -6741,7 +6691,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to sing",
@@ -6751,7 +6701,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to dance",
@@ -6761,7 +6711,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to draw",
@@ -6771,7 +6721,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to explain",
@@ -6781,7 +6731,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to listen",
@@ -6791,7 +6741,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to travel",
@@ -6801,7 +6751,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to arrive",
@@ -6811,7 +6761,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to wait",
@@ -6821,7 +6771,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to help",
@@ -6831,7 +6781,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to hope",
@@ -6841,7 +6791,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to forbid",
@@ -6851,7 +6801,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to grow",
@@ -6861,7 +6811,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "to receive",
@@ -6871,17 +6821,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "to carry",
-  "traductions": [
-   "porter"
-  ],
-  "niveau": "B1",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "new",
@@ -6891,7 +6831,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "old",
@@ -6901,7 +6841,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "beautiful",
@@ -6911,7 +6851,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ugly",
@@ -6921,7 +6861,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fast",
@@ -6931,7 +6871,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "strong",
@@ -6941,7 +6881,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "weak",
@@ -6951,7 +6891,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "high",
@@ -6961,7 +6901,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "low",
@@ -6971,7 +6911,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "full",
@@ -6981,7 +6921,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "empty",
@@ -6991,7 +6931,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "clean",
@@ -7001,7 +6941,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dirty",
@@ -7011,7 +6951,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dangerous",
@@ -7021,17 +6961,17 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "safe",
   "traductions": [
-   "sûr"
+   "sans danger"
   ],
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "heavy",
@@ -7041,17 +6981,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "light",
-  "traductions": [
-   "léger"
-  ],
-  "niveau": "A2",
-  "categorie": "adjectifs",
-  "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "wide",
@@ -7061,7 +6991,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "narrow",
@@ -7071,7 +7001,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "deep",
@@ -7081,7 +7011,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "loud",
@@ -7091,7 +7021,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "hungry",
@@ -7101,7 +7031,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "thirsty",
@@ -7111,7 +7041,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "happy",
@@ -7121,7 +7051,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sad",
@@ -7131,7 +7061,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ready",
@@ -7141,7 +7071,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "busy",
@@ -7151,7 +7081,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "useful",
@@ -7161,7 +7091,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "useless",
@@ -7171,7 +7101,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "young",
@@ -7181,7 +7111,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "already",
@@ -7191,7 +7121,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "why",
@@ -7201,7 +7131,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "how",
@@ -7211,7 +7141,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "when",
@@ -7221,7 +7151,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "where",
@@ -7231,7 +7161,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "maybe",
@@ -7241,7 +7171,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "almost",
@@ -7251,7 +7181,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "enough",
@@ -7261,7 +7191,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "together",
@@ -7271,7 +7201,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "against",
@@ -7281,7 +7211,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "without",
@@ -7291,7 +7221,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "between",
@@ -7301,7 +7231,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "during",
@@ -7311,7 +7241,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "often",
@@ -7321,7 +7251,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "everywhere",
@@ -7331,7 +7261,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nothing",
@@ -7341,7 +7271,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "everything",
@@ -7351,7 +7281,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "someone",
@@ -7361,7 +7291,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nobody",
@@ -7371,7 +7301,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "government",
@@ -7381,7 +7311,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "law",
@@ -7391,7 +7321,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "election",
@@ -7401,7 +7331,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "tax",
@@ -7411,7 +7341,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "population",
@@ -7421,7 +7351,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "freedom",
@@ -7431,7 +7361,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "safety",
@@ -7441,7 +7371,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "war",
@@ -7451,7 +7381,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "peace",
@@ -7461,7 +7391,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "citizen",
@@ -7471,7 +7401,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "court",
@@ -7481,7 +7411,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "prison",
@@ -7491,7 +7421,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "strike",
@@ -7501,7 +7431,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "survey",
@@ -7511,7 +7441,7 @@ var VOCAB_ANGLAIS = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  }
 ];
 if (typeof module !== "undefined" && module.exports) module.exports = VOCAB_ANGLAIS;

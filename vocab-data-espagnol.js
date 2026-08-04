@@ -1,7 +1,7 @@
 /* Banque de vocabulaire — VOCAB_ESPAGNOL
-   678 mots : 397 repris TELS QUELS des lexique.html du site
-   (cours-espagnol-a1..b2) et 281 ajoutés pour le volume, marqués
-   source="non-verifie" et signalés par un ⚠ dans les questions.
+   667 mots : 397 repris TELS QUELS des lexique.html du site
+   (cours-espagnol-a1..b2) et 270 ajoutés pour le volume, passés un par un
+   par la revue de _outils/vocabulaire/revue_extension.py.
    Les mots issus des lexiques ne peuvent pas diverger du cours :
    _verify_vocab.js confronte les deux à chaque mise à jour.
    Généré par _outils/vocabulaire/vocabgen2.py — ne pas éditer à la main. */
@@ -4820,7 +4820,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la tía",
@@ -4830,7 +4830,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el primo",
@@ -4840,7 +4840,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la prima",
@@ -4850,7 +4850,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el marido",
@@ -4860,7 +4860,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la esposa",
@@ -4870,7 +4870,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "los padres",
@@ -4880,7 +4880,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el niño",
@@ -4890,7 +4890,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el sobrino",
@@ -4900,7 +4900,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la sobrina",
@@ -4910,7 +4910,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el chico",
@@ -4920,7 +4920,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la chica",
@@ -4930,7 +4930,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el adulto",
@@ -4940,7 +4940,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la pareja",
@@ -4950,7 +4950,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "famille",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el arroz",
@@ -4960,7 +4960,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la sal",
@@ -4970,7 +4970,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el azúcar",
@@ -4980,7 +4980,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la mantequilla",
@@ -4990,7 +4990,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el aceite",
@@ -5000,7 +5000,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la sopa",
@@ -5010,7 +5010,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la ensalada",
@@ -5020,7 +5020,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pollo",
@@ -5030,7 +5030,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el té",
@@ -5040,7 +5040,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el zumo",
@@ -5050,7 +5050,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el vino",
@@ -5060,7 +5060,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cerveza",
@@ -5070,7 +5070,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pastel",
@@ -5080,7 +5080,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el chocolate",
@@ -5090,7 +5090,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la patata",
@@ -5100,7 +5100,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la verdura",
@@ -5110,7 +5110,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el desayuno",
@@ -5120,17 +5120,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "la comida",
-  "traductions": [
-   "le repas"
-  ],
-  "niveau": "A2",
-  "categorie": "nourriture",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cena",
@@ -5140,7 +5130,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el tenedor",
@@ -5150,7 +5140,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el cuchillo",
@@ -5160,7 +5150,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cuchara",
@@ -5170,7 +5160,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la botella",
@@ -5180,7 +5170,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el hambre",
@@ -5190,7 +5180,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la sed",
@@ -5200,7 +5190,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el tomate",
@@ -5210,7 +5200,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nourriture",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cama",
@@ -5220,7 +5210,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cocina",
@@ -5230,7 +5220,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el dormitorio",
@@ -5240,7 +5230,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el jardín",
@@ -5250,7 +5240,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la pared",
@@ -5260,17 +5250,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "el techo",
-  "traductions": [
-   "le toit"
-  ],
-  "niveau": "A2",
-  "categorie": "maison",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la escalera",
@@ -5280,7 +5260,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la lámpara",
@@ -5290,7 +5270,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el espejo",
@@ -5300,7 +5280,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la toalla",
@@ -5310,7 +5290,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la manta",
@@ -5320,7 +5300,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el cajón",
@@ -5330,17 +5310,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "el piso",
-  "traductions": [
-   "l'appartement"
-  ],
-  "niveau": "A2",
-  "categorie": "maison",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el edificio",
@@ -5350,7 +5320,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el armario",
@@ -5360,7 +5330,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la nevera",
@@ -5370,7 +5340,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el suelo",
@@ -5380,7 +5350,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "maison",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el corazón",
@@ -5390,7 +5360,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la espalda",
@@ -5400,7 +5370,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el diente",
@@ -5410,7 +5380,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la piel",
@@ -5420,7 +5390,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la sangre",
@@ -5430,7 +5400,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el hueso",
@@ -5440,7 +5410,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el dedo",
@@ -5450,7 +5420,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la rodilla",
@@ -5460,7 +5430,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el hombro",
@@ -5470,7 +5440,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la garganta",
@@ -5480,7 +5450,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la tos",
@@ -5490,7 +5460,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la herida",
@@ -5500,7 +5470,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el enfermero",
@@ -5510,7 +5480,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la pastilla",
@@ -5520,7 +5490,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "corps-sante",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pantalón",
@@ -5530,7 +5500,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el jersey",
@@ -5540,7 +5510,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el calcetín",
@@ -5550,7 +5520,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el sombrero",
@@ -5560,7 +5530,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el cinturón",
@@ -5570,7 +5540,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el guante",
@@ -5580,7 +5550,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la bufanda",
@@ -5590,7 +5560,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la chaqueta",
@@ -5600,7 +5570,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la bota",
@@ -5610,7 +5580,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el bolsillo",
@@ -5620,7 +5590,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el zapato",
@@ -5630,7 +5600,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "vetements",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pueblo",
@@ -5640,7 +5610,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la tienda",
@@ -5650,7 +5620,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el puente",
@@ -5660,7 +5630,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la iglesia",
@@ -5670,7 +5640,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el castillo",
@@ -5680,7 +5650,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el museo",
@@ -5690,7 +5660,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la biblioteca",
@@ -5700,7 +5670,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el parque",
@@ -5710,7 +5680,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la panadería",
@@ -5720,7 +5690,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el ayuntamiento",
@@ -5730,7 +5700,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la acera",
@@ -5740,7 +5710,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "ville",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el avión",
@@ -5750,7 +5720,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la bicicleta",
@@ -5760,7 +5730,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el barco",
@@ -5770,7 +5740,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la carretera",
@@ -5780,7 +5750,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el conductor",
@@ -5790,7 +5760,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pasajero",
@@ -5800,7 +5770,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el retraso",
@@ -5810,7 +5780,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el puerto",
@@ -5820,7 +5790,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el andén",
@@ -5830,7 +5800,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el tren",
@@ -5840,7 +5810,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la frontera",
@@ -5850,7 +5820,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "transports-voyage",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la niebla",
@@ -5860,7 +5830,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el cielo",
@@ -5870,17 +5840,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "la estación del año",
-  "traductions": [
-   "la saison"
-  ],
-  "niveau": "A2",
-  "categorie": "temps-meteo",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la primavera",
@@ -5890,7 +5850,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el verano",
@@ -5900,7 +5860,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el otoño",
@@ -5910,7 +5870,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el invierno",
@@ -5920,7 +5880,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "temps-meteo",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el árbol",
@@ -5930,7 +5890,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la flor",
@@ -5940,7 +5900,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la hierba",
@@ -5950,7 +5910,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la montaña",
@@ -5960,7 +5920,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el río",
@@ -5970,7 +5930,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el mar",
@@ -5980,7 +5940,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el lago",
@@ -5990,7 +5950,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la isla",
@@ -6000,7 +5960,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la piedra",
@@ -6010,7 +5970,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la arena",
@@ -6020,7 +5980,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el animal",
@@ -6030,7 +5990,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el pájaro",
@@ -6040,7 +6000,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el perro",
@@ -6050,7 +6010,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el gato",
@@ -6060,7 +6020,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el caballo",
@@ -6070,7 +6030,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la vaca",
@@ -6080,7 +6040,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "nature-environnement",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el equipo",
@@ -6090,7 +6050,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el jugador",
@@ -6100,7 +6060,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la pelota",
@@ -6110,7 +6070,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la natación",
@@ -6120,7 +6080,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el paseo",
@@ -6130,7 +6090,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "las vacaciones",
@@ -6140,7 +6100,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la fiesta",
@@ -6150,7 +6110,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la canción",
@@ -6160,7 +6120,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el baile",
@@ -6170,7 +6130,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el dibujo",
@@ -6180,7 +6140,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el público",
@@ -6190,7 +6150,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el estadio",
@@ -6200,7 +6160,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la película",
@@ -6210,7 +6170,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "loisirs-sport",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la escuela",
@@ -6220,7 +6180,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el profesor",
@@ -6230,7 +6190,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el alumno",
@@ -6240,7 +6200,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el estudiante",
@@ -6250,7 +6210,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la lección",
@@ -6260,7 +6220,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "los deberes",
@@ -6270,7 +6230,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el examen",
@@ -6280,7 +6240,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el aula",
@@ -6290,17 +6250,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "el título",
-  "traductions": [
-   "le diplôme"
-  ],
-  "niveau": "B1",
-  "categorie": "travail-etudes",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la fábrica",
@@ -6310,7 +6260,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el obrero",
@@ -6320,17 +6270,17 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el plazo",
   "traductions": [
-   "l'échéance"
+   "le délai"
   ],
   "niveau": "B2",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el taller",
@@ -6340,7 +6290,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "travail-etudes",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la ira",
@@ -6350,7 +6300,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la esperanza",
@@ -6360,7 +6310,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el amor",
@@ -6370,7 +6320,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la vergüenza",
@@ -6380,7 +6330,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el orgullo",
@@ -6390,7 +6340,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el aburrimiento",
@@ -6400,7 +6350,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "los celos",
@@ -6410,7 +6360,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la confianza",
@@ -6420,7 +6370,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el alivio",
@@ -6430,7 +6380,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "sentiments",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la palabra",
@@ -6440,7 +6390,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la frase",
@@ -6450,7 +6400,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la respuesta",
@@ -6460,7 +6410,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el mensaje",
@@ -6470,17 +6420,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
- },
- {
-  "mot": "el anuncio",
-  "traductions": [
-   "la publicité"
-  ],
-  "niveau": "B1",
-  "categorie": "communication",
-  "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el significado",
@@ -6490,7 +6430,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el error",
@@ -6500,7 +6440,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la historia",
@@ -6510,7 +6450,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el discurso",
@@ -6520,7 +6460,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el silencio",
@@ -6530,7 +6470,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el rumor",
@@ -6540,7 +6480,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "communication",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "caminar",
@@ -6550,7 +6490,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "correr",
@@ -6560,7 +6500,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dormir",
@@ -6570,7 +6510,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "comprar",
@@ -6580,7 +6520,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vender",
@@ -6590,7 +6530,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pagar",
@@ -6600,7 +6540,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cocinar",
@@ -6610,7 +6550,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lavar",
@@ -6620,7 +6560,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "limpiar",
@@ -6630,7 +6570,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "abrir",
@@ -6640,7 +6580,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cerrar",
@@ -6650,7 +6590,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "construir",
@@ -6660,7 +6600,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "reparar",
@@ -6670,17 +6610,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "tirar",
-  "traductions": [
-   "jeter"
-  ],
-  "niveau": "B1",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "empujar",
@@ -6690,7 +6620,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "prestar",
@@ -6700,7 +6630,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "elegir",
@@ -6710,7 +6640,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "decidir",
@@ -6720,7 +6650,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ganar",
@@ -6730,7 +6660,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "perder",
@@ -6740,7 +6670,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "olvidar",
@@ -6750,7 +6680,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "reír",
@@ -6760,7 +6690,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "llorar",
@@ -6770,7 +6700,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cantar",
@@ -6780,7 +6710,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dibujar",
@@ -6790,7 +6720,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "enseñar",
@@ -6800,7 +6730,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "explicar",
@@ -6810,7 +6740,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "escuchar",
@@ -6820,7 +6750,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "llegar",
@@ -6830,17 +6760,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "esperar",
-  "traductions": [
-   "attendre"
-  ],
-  "niveau": "A2",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ayudar",
@@ -6850,7 +6770,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "prohibir",
@@ -6860,7 +6780,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "crecer",
@@ -6870,7 +6790,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "enviar",
@@ -6880,7 +6800,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "recibir",
@@ -6890,17 +6810,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
- },
- {
-  "mot": "llevar",
-  "traductions": [
-   "porter"
-  ],
-  "niveau": "B1",
-  "categorie": "verbes",
-  "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "leer",
@@ -6910,7 +6820,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "escribir",
@@ -6920,7 +6830,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "trabajar",
@@ -6930,7 +6840,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "estudiar",
@@ -6940,7 +6850,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "verbes",
   "classe": "verbe",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "grande",
@@ -6950,7 +6860,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pequeño",
@@ -6960,7 +6870,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nuevo",
@@ -6970,7 +6880,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "viejo",
@@ -6980,7 +6890,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bueno",
@@ -6990,7 +6900,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "malo",
@@ -7000,7 +6910,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bonito",
@@ -7010,7 +6920,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "feo",
@@ -7020,7 +6930,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "caliente",
@@ -7030,7 +6940,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "frío",
@@ -7040,7 +6950,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "fuerte",
@@ -7050,7 +6960,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "débil",
@@ -7060,7 +6970,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "alto",
@@ -7070,7 +6980,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bajo",
@@ -7080,7 +6990,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "lleno",
@@ -7090,7 +7000,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "vacío",
@@ -7100,17 +7010,17 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "seguro",
   "traductions": [
-   "sûr"
+   "sûr (sans danger)"
   ],
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "pesado",
@@ -7120,7 +7030,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ligero",
@@ -7130,7 +7040,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ancho",
@@ -7140,7 +7050,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "estrecho",
@@ -7150,7 +7060,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "profundo",
@@ -7160,7 +7070,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ruidoso",
@@ -7170,7 +7080,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cansado",
@@ -7180,7 +7090,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "contento",
@@ -7190,7 +7100,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "triste",
@@ -7200,17 +7110,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "listo",
-  "traductions": [
-   "prêt"
-  ],
-  "niveau": "A2",
-  "categorie": "adjectifs",
-  "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "ocupado",
@@ -7220,7 +7120,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "útil",
@@ -7230,7 +7130,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "inútil",
@@ -7240,7 +7140,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "joven",
@@ -7250,17 +7150,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "adjectifs",
   "classe": "adjectif",
-  "source": "non-verifie"
- },
- {
-  "mot": "ya",
-  "traductions": [
-   "déjà"
-  ],
-  "niveau": "A2",
-  "categorie": "mots-outils",
-  "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "allí",
@@ -7270,7 +7160,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "por qué",
@@ -7280,7 +7170,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cómo",
@@ -7290,7 +7180,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "cuándo",
@@ -7300,7 +7190,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "dónde",
@@ -7310,7 +7200,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "quizás",
@@ -7320,7 +7210,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "casi",
@@ -7330,7 +7220,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "bastante",
@@ -7340,7 +7230,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "juntos",
@@ -7350,7 +7240,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "contra",
@@ -7360,7 +7250,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "sin",
@@ -7370,7 +7260,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "entre",
@@ -7380,7 +7270,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "durante",
@@ -7390,7 +7280,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "antes",
@@ -7400,7 +7290,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "siempre",
@@ -7410,7 +7300,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nunca",
@@ -7420,7 +7310,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "a menudo",
@@ -7430,7 +7320,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "a veces",
@@ -7440,7 +7330,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "en todas partes",
@@ -7450,7 +7340,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nada",
@@ -7460,7 +7350,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "todo",
@@ -7470,7 +7360,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A1",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "alguien",
@@ -7480,7 +7370,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "nadie",
@@ -7490,7 +7380,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "A2",
   "categorie": "mots-outils",
   "classe": "mot-outil",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "las elecciones",
@@ -7500,7 +7390,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el impuesto",
@@ -7510,7 +7400,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la población",
@@ -7520,7 +7410,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la libertad",
@@ -7530,7 +7420,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la seguridad",
@@ -7540,7 +7430,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la guerra",
@@ -7550,7 +7440,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la paz",
@@ -7560,7 +7450,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B1",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el ciudadano",
@@ -7570,7 +7460,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "el tribunal",
@@ -7580,7 +7470,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la cárcel",
@@ -7590,7 +7480,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la huelga",
@@ -7600,7 +7490,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la encuesta",
@@ -7610,7 +7500,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  },
  {
   "mot": "la pobreza",
@@ -7620,7 +7510,7 @@ var VOCAB_ESPAGNOL = [
   "niveau": "B2",
   "categorie": "societe-actualite",
   "classe": "nom",
-  "source": "non-verifie"
+  "source": "revu"
  }
 ];
 if (typeof module !== "undefined" && module.exports) module.exports = VOCAB_ESPAGNOL;
