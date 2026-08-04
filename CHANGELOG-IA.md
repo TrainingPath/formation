@@ -1278,3 +1278,26 @@ générées, 0 défaut, 0 divergence avec les lexiques.
 « vérifié ». La transparence a été déplacée de l'interface vers `vocab-revue.md` et `_veille.md`, où elle est plus
 complète — et non supprimée. L'élève voit un module propre ; la personne qui maintient le site sait exactement ce
 qui a été relu, par qui, et ce que ça vaut.
+
+### Suite — le formulaire de signalement existe
+Créé dans Google Forms et publié : **« Signaler une erreur — Mes formations »**.
+
+- **Accès « toute personne disposant du lien »** : ni compte Google, ni connexion. Le paramètre *Collecter les
+  adresses e-mail* est sur « Ne pas collecter » et *Limiter à une réponse* est désactivé — les deux forceraient
+  une connexion, ce qui recréerait exactement le problème du lien GitHub qu'on venait de retirer.
+- **Quatre champs** : cours ou page concernée (obligatoire), ce qui est affiché (obligatoire), ce qui semble
+  juste, où ça a été vu.
+- **Pré-remplissage vérifié** : `URL_SIGNALEMENT` contient `{cours}`, substitué par `signalement.js` dans le
+  paramètre `entry.1187902726`. Testé en ouvrant l'URL avec `cours-uml` : le champ arrive rempli. Le visiteur n'a
+  donc pas à recopier l'identifiant du cours, et la mention « (cours : …) » disparaît automatiquement du lien
+  puisqu'elle ne sert plus à rien.
+- Le `&` de l'URL est échappé en `&amp;` dans l'attribut `href` — correct pour un analyseur strict, indifférent
+  pour un navigateur.
+- `_coherence.js` rapporte désormais **« formulaire CONFIGURÉ »** : 82/82 sommaires équipés, 82 chargent le
+  script, 0 lien GitHub résiduel.
+
+**☐ Vérification navigateur — toujours à faire.** L'extension Chrome ne peut pas ouvrir d'URL `file://` : le rendu
+réel du lien sur un sommaire et sur une page de vocabulaire n'a pas été vu. Le HTML produit a été contrôlé en Node
+(les trois états : non configuré, configuré simple, configuré avec pré-remplissage), ce qui n'est pas la même chose
+que l'avoir regardé.
+
