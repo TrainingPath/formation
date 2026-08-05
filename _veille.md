@@ -31,6 +31,13 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
   dans le même QCM (« salaire » / « paie »). Elle ne couvre que les collisions constatées : **chaque signalement
   d'une question à deux réponses défendables doit s'y traduire par une famille ajoutée.** Le vérificateur partage
   cette table avec le moteur, il ne peut donc pas révéler ce qui lui manque.
+- **`cours-algorithmes` : corrigés NON vérifiés, décision assumée du 5 août 2026.** Le cours est en
+  pseudocode, donc rien n'y est exécutable : ses exercices d'entraînement portent des checklists renforcées mais
+  **aucun champ `tests`**. Or le taux de faute mesuré sur `cours-python` est d'environ **une erreur pour trois
+  exercices** — calculs posés de tête, longueurs comptées à l'œil — et ces fautes ne sont détectables que par
+  exécution. Il faut donc s'attendre à ce que ces corrigés en contiennent, et **ils sont en ligne sans filet**.
+  Remède prévu et reporté : transcrire chaque corrigé pseudocode en Python, faire exécuter la transcription par
+  `_verify_entrainement.js`, n'afficher que le pseudocode. **À faire une fois tous les langages écrits.**
 - **Dates « Dernière révision : Août 2026 »** sur les 81 sommaires : à faire glisser à chaque vraie révision.
 - **Watchlist d'outils dépréciés** (scan automatique passé) : aucun autre que `bleach` détecté (les occurrences de « nose » dans les cours d'anglais sont le mot anglais, pas l'outil de test Python).
 

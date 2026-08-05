@@ -258,7 +258,11 @@ function verifierLecon(fichier, E) {
       // Une mini-série a le droit de garder son domaine plusieurs jours ; les
       // exercices 1 et 2, non.
       if (!x.serie) {
-        const recent = domainesRecents.find(r => r.domaine === dom && Math.abs(r.jour - E.jour) <= 4);
+        // `r.cours === E.cours` est indispensable : sans lui, le jour 1
+        // d'algorithmes se compare au jour 2 de python et déclenche à tort.
+        // La monotonie se juge à l'intérieur d'un parcours, pas entre deux.
+        const recent = domainesRecents.find(r =>
+          r.domaine === dom && r.cours === E.cours && Math.abs(r.jour - E.jour) <= 4);
         if (recent) {
           ko(id + " : domaine « " + x.domaine + " » déjà servi au jour " + recent.jour +
              " — quatre leçons d'écart au minimum (voir _outils/entrainement/plan-domaines.md)");

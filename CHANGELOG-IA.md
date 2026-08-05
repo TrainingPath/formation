@@ -1494,3 +1494,25 @@ désormais exclues du contrôle ; **la logique du corps reste protégée**. Cont
 Le rythme se confirme : sur ce chantier, **une faute sur trois exercices environ** est attrapée par l'exécution
 des corrigés ou par le contrôle anti-fuite. Aucune n'aurait été visible à la relecture.
 
+### `cours-algorithmes` — démarrage, sans tests, décision assumée
+Le cours est en pseudocode : rien n'y est exécutable. **Décision de l'élève, prise en connaissance du taux
+d'erreur mesuré** (une faute pour trois exercices sur `cours-python`, toutes détectées par exécution) : écrire
+ces exercices **sans champ `tests`**, et remettre à plus tard la parade — transcrire chaque corrigé en Python,
+faire exécuter la transcription, n'afficher que le pseudocode. Motif invoqué : ne pas épuiser le quota
+hebdomadaire trop vite. La décision et son risque sont consignés dans `_veille.md` pour qu'ils ne se perdent pas :
+**ces corrigés sont en ligne sans filet, et il faut s'attendre à ce qu'ils contiennent des erreurs.**
+
+En compensation, les checklists passent de quatre à **cinq critères** et deviennent le seul garde-fou : elles
+portent sur des propriétés vérifiables à la lecture (« chaque ligne contient-elle une seule action ? », « le
+client récupère-t-il sa carte dans tous les cas ? ») plutôt que sur des impressions.
+
+Leçon 1 écrite : la marche à suivre du distributeur · l'algorithme du café dans le désordre, à corriger en
+justifiant chaque déplacement par une dépendance · le protocole du refuge (1/3). Le fil conducteur des trois
+exercices est le même : **un ordre erroné ne provoque presque jamais d'erreur visible, il produit un résultat
+faux en silence** — la machine à café ne proteste pas si le réservoir est vide.
+
+**Bug du vérificateur corrigé au passage.** La règle « pas deux fois le même domaine à moins de quatre leçons
+d'écart » comparait les numéros de jour **sans distinguer les cours** : le jour 1 d'algorithmes se heurtait au
+jour 2 de python. La monotonie se juge à l'intérieur d'un parcours, pas entre deux. Corrigé et contre-testé —
+onzième contre-test.
+
