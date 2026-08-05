@@ -1533,3 +1533,23 @@ pas la vérification à chaque build : le risque reste consigné dans `_veille.m
 
 Domaines servis : banque, cuisine, randonnée, musique, transports, astronomie, commerce de quartier.
 
+### `cours-algorithmes` leçons 4 et 5 — et une exception ajoutée au contrôle anti-fuite
+**42 exercices** au total (27 python + 15 algorithmes), 210 indices. Deuxième mini-série lancée : la borne de
+péage d'autoroute (2 jours sur 4). Elle progresse comme le cours : calcul pur au jour 4, saisies au jour 5, et
+elle bute volontairement sur ce qui manque — au jour 5, la borne doit choisir un tarif selon la classe du
+véhicule et n'a pas encore les conditions. La solution provisoire (demander le tarif au conducteur) est écrite
+**avec le commentaire qui dit en quoi elle ne tient pas**, et la question de réflexion demande de formuler
+l'instruction manquante : « il me faudrait une instruction qui… ». La leçon du lendemain y répond.
+
+**Nouvelle exception au contrôle anti-fuite, déclarée et bornée.** L'exercice 5.2 donne trois versions d'un même
+dialogue et demande laquelle est correcte : le code y est le **sujet** de l'énoncé, pas une fuite. Le contrôle le
+refusait. Plutôt que de dénaturer l'exercice, un champ `analyseDeCode` permet de lever le contrôle — mais
+**uniquement sur l'énoncé**, et seulement s'il porte une justification écrite, que le vérificateur exige non
+vide. Indices, principe et checklist restent couverts : c'est là qu'une fuite serait un cadeau et non un sujet.
+Contre-test : en glissant la formule des plaques dans un indice de ce même exercice, le refus tombe toujours.
+Douzième contre-test.
+
+**Vérification des nombres, à défaut de tests.** IMC 22,9 · moyenne 45 · `42 + 58 + 31 + 49 / 4` = 143,25 ·
+distance 153 km · total 17,03 € contre 17,04 € si l'on arrondit la TVA trop tôt · 21 jours DIV 2 = 10 jours
+d'amende · 61 graines pour 6 plaques. Tous calculés avec `python3` avant rédaction.
+

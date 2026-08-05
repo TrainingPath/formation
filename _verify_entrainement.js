@@ -232,8 +232,20 @@ function verifierLecon(fichier, E) {
       }
     }
 
-    /* 4. anti-fuite : LE contrôle central */
-    const zones = [["énoncé", x.enonce], ["principe", x.principe], ["remarque", x.remarque]];
+    /* 4. anti-fuite : LE contrôle central.
+       EXCEPTION DÉCLARÉE — certains exercices consistent à ANALYSER du code
+       fourni (« voici trois versions, laquelle est correcte ? »). Le code est
+       alors dans l'énoncé par construction, et l'y interdire supprimerait tout
+       un type d'exercice. L'exception doit être demandée explicitement par le
+       champ `analyseDeCode`, qui porte sa justification — et elle ne lève le
+       contrôle QUE sur l'énoncé : indices, principe et checklist restent
+       couverts, car c'est là que la fuite serait un cadeau et non un sujet. */
+    if (x.analyseDeCode !== undefined && !String(x.analyseDeCode).trim()) {
+      ko(id + " : `analyseDeCode` présent mais sans justification écrite");
+    }
+    const zones = x.analyseDeCode
+      ? [["principe", x.principe], ["remarque", x.remarque]]
+      : [["énoncé", x.enonce], ["principe", x.principe], ["remarque", x.remarque]];
     (x.indices || []).forEach((h, k) => zones.push(["indice " + (k + 1), h]));
     (x.checklist || []).forEach((c, k) => zones.push(["checklist " + (k + 1), c]));
     lignesCode(x.solution).forEach(ligne => {
