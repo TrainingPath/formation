@@ -1797,3 +1797,63 @@ La règle qui en sort : **après tout commit, lire le décompte des lignes ajout
 à l'intention.** C'est trois secondes, cela ne demande aucun outil, et c'est le seul contrôle qui aurait pu voir
 celui-ci. Corollaire : ne jamais faire confiance à la taille et à la date d'un fichier pour juger de sa
 fraîcheur — les deux étaient exactes, et le contenu ne l'était pas.
+
+### `cours-algorithmes` jours 16 à 19 — la mini-série « Le fichier des adhérents »
+**120 exercices** au total (63 python + 57 algorithmes), 600 indices. `cours-algorithmes` : **19 jours sur 31**.
+
+La série suit le fichier d'un club sportif sur quatre jours, et chaque jour lui fait franchir un seuil :
+recherche d'un adhérent par numéro (16), statistiques d'âge pour un dossier de subvention (17), grille de
+présences à deux dimensions (18), noms saisis par des bénévoles différents et donc sales (19). La réflexion du
+dernier jour demande à quel moment le fichier a cessé d'être une liste pour devenir une base de données — la
+réponse est le jour 18, quand la grille a cessé de porter des valeurs pour porter une **relation** entre deux
+ensembles, adhérents et séances. Le jour 19 n'a rien ajouté à cela : il a seulement rendu les données réelles,
+c'est-à-dire sales, et montré que la première chose que fait un système d'information est de nettoyer ce qu'on
+lui donne.
+
+**Trois questions de réflexion attaquent le même angle mort : l'indicateur qui répond très bien à une question
+qui n'est pas la bonne.**
+- **Le dossier de subvention (17.3).** « Le nombre de membres qui s'écartent de plus de dix ans de la moyenne »
+  récompense la *polarisation* autant que la diversité : un club de quinze enfants et quinze retraités obtient
+  le score maximal, alors qu'un club régulièrement réparti de 10 à 70 ans — le plus mixte des deux — obtient
+  moins. Le corrigé propose la mesure qui répond vraiment : compter les tranches d'âge occupées.
+- **Le tableau de bord du restaurant (18.2).** Le plat le plus vendu n'est pas le meilleur plat : il manque la
+  marge, et surtout le nombre de portions *préparées* — un plat épuisé chaque jour est un succès qu'on étouffe,
+  un plat surproduit est un gâchis qui paraît rentable.
+- **La séance la mieux suivie (18.3).** Un numéro de colonne n'est pas une cause. Sans le jour, l'heure et le
+  contexte de chaque séance, le taux de remplissage mesure une corrélation avec un indice de tableau.
+
+**Deux règles générales dégagées, qui resserviront.**
+- **Le raccourci n'est pas une propriété de l'algorithme, c'est une propriété de la question** (16.3). Un
+  parcours peut s'arrêter tôt si la réponse est *décidée* par le premier élément qui la satisfait. Le test
+  pratique : peut-on imaginer une donnée plus loin qui changerait la réponse ? Si oui, il faut tout voir.
+- **Normaliser pour comparer, jamais pour stocker** (19.2 et 19.3). La normalisation jette de l'information —
+  casse et espaces — et cette perte est le but recherché tant qu'il s'agit de retrouver quelqu'un. Elle devient
+  grave dès que la distinction jetée portait du sens : *de Vries* et *De Vries* sont deux familles différentes
+  aux Pays-Bas, *MacDonald* n'est pas *Macdonald* pour l'état civil écossais.
+
+**Le piège construit exprès (17.2).** Les dix relevés de dérive d'une pendule sont **tous négatifs** — de −1 à
+−11 secondes. C'est le seul jeu de données qui rende l'initialisation d'un maximum à zéro visiblement fausse :
+le maximum resterait 0, une valeur jamais observée, et l'amplitude vaudrait 11 au lieu de 10. Le corrigé fait
+remarquer que le minimum, lui, serait correct — il s'autocorrige à la première case — et que sur des relevés
+tous positifs la situation s'inverserait exactement. D'où la formulation robuste de la règle : **l'extremum
+s'initialise sur la première case**, pas sur une constante « assez petite » ou « assez grande », qui ne fait que
+déplacer l'hypothèse.
+
+**Le même exercice piège aussi le vocabulaire.** « Le plus grand retard » n'est pas le maximum : un retard de
+11 secondes est plus grand qu'un retard de 1 seconde, mais −11 est plus petit que −1. La langue parle de
+l'intensité d'un défaut, la comparaison porte sur la valeur signée, et les deux vont en sens inverse dès que
+les nombres sont négatifs. Le réflexe consigné : avant d'écrire une comparaison, se donner deux valeurs
+concrètes de l'énoncé et vérifier laquelle doit gagner.
+
+**Trois fuites d'indice attrapées** — `SI tarif[d][c] > max ALORS` au jour 18, `TANT QUE i < j ET
+estPalindrome FAIRE` au jour 19, et une au jour 16 corrigée avant contrôle. Aucune paraphrase sur ce lot : les
+indices ③ et ⑤ ont été écrits d'emblée sur deux registres différents — la démarche d'un côté, la seule forme du
+fichier de l'autre — après les deux refus du lot précédent.
+
+**Vérifications.** `_verify_entrainement.js` : 40 leçons équipées, 120 exercices, onze mini-séries closes,
+aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire mis à jour : jours 1 à 19.
+
+**☐ Reste à faire.** `cours-algorithmes` jours 20 à 31 — 36 exercices : fonctions et procédures, paramètres et
+retour, décomposition, dichotomie, tri à bulles, tris par sélection et insertion, récursivité en deux jours,
+complexité, piles et files, résolution de A à Z, examen. Les jours 26 et 27 reprendront les exercices du
+chapitre 5 du PDF de l'école avec la démarche en trois étapes du contrat C7.
