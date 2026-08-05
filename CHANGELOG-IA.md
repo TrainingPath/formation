@@ -1553,3 +1553,22 @@ Douzième contre-test.
 distance 153 km · total 17,03 € contre 17,04 € si l'on arrondit la TVA trop tôt · 21 jours DIV 2 = 10 jours
 d'amende · 61 graines pour 6 plaques. Tous calculés avec `python3` avant rédaction.
 
+### `cours-algorithmes` leçons 6 et 7 — mini-série « La borne de péage » achevée
+**48 exercices** (27 python + 21 algorithmes), 240 indices. La borne est complète en quatre jours : calcul pur,
+saisies, déduction du tarif par classe, statuts d'usager. Elle illustre volontairement le manque avant l'outil —
+au jour 5 elle demandait son tarif au conducteur faute de conditions, au jour 6 elle le déduit.
+
+Trois pièges classiques traités de front, chacun par une question de réflexion :
+- **L'intervalle qui franchit minuit.** « Entre 22 h et 6 h » s'écrit avec un OU, jamais avec un ET — la forme
+  spontanée `heure ≥ 22 ET heure < 6` est *toujours* fausse. Règle dégagée : dès que la borne basse dépasse la
+  borne haute, l'intervalle boucle et le ET devient un OU.
+- **La négation d'une conjonction.** Le contraire de « densité correcte ET température correcte » est
+  « NON l'une **OU** NON l'autre ». Le test qui sépare les deux écritures est celui où *une seule* condition est
+  fausse — c'est le seul cas qui les distingue.
+- **L'explosion combinatoire.** Deux facteurs donnent 4 cas, trois en donnent 8, quatre en donnent 16. La
+  réflexion demande à quel moment on cesse d'écrire des conditions pour changer d'approche.
+
+**Deux fuites d'indice attrapées** (`SI statut = "exonere" ALORS` et sa jumelle), et tous les montants vérifiés
+au préalable avec `python3` : le déroulé manuel de l'abonné de classe 3 passant à 2 h du matin donne bien
+43,50 €.
+
