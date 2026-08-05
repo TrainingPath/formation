@@ -1919,3 +1919,75 @@ aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire 
 insertion, récursivité en deux jours, complexité, piles et files, résolution de A à Z, examen. Les jours 26 et
 27 reprendront les exercices du chapitre 5 du PDF de l'école — factorielle, carré par la méthode des impairs,
 puissance, tours de Hanoï, PGCD avec sa relation de récurrence — avec la démarche en trois étapes du contrat C7.
+
+### `cours-algorithmes` jours 24 à 27 — tris, récursivité, et le chapitre 5 du PDF
+**144 exercices** au total (63 python + 81 algorithmes), 720 indices. `cours-algorithmes` : **27 jours sur 31**.
+
+Quatre jours qui reprennent, pour la première fois du chantier, des **énoncés du PDF de l'école presque mot pour
+mot** — c'est le bloc pour lequel le contrat de style avait été extrait, et il valait la peine d'attendre :
+
+- **§ 5.2.6, le tri bulle** devient l'exercice 24.2, avec ses deux contraintes d'origine : saisie s'arrêtant sur
+  zéro *ou* sur le tableau plein, et une procédure de tri qui doit elle-même appeler une **seconde procédure**
+  chargée uniquement de permuter deux cases. C'est exactement la forme « saisie + tableau + procédure +
+  permutation » que le prompt donnait comme modèle de l'exercice n° 2.
+- **§ 5.1, la méthode des impairs et la puissance** deviennent l'exercice 26.2, avec la **démarche en trois
+  étapes imposée** — expression commune, point d'arrêt, rapprochement — rédigée avant tout code et reprise en
+  commentaire dans le corrigé. C'est le contrat C7 appliqué à la lettre.
+- **§ 5.2.4, l'addition d'une série** devient l'exercice 26.1 : lecture récursive, zéro comme condition d'arrêt,
+  aucune boucle nulle part.
+- **§ 5.2.1, la traduction en binaire** devient l'exercice 27.1, énoncé repris tel quel.
+- **§ 5.2.3, le PGCD** devient l'exercice 27.2, avec sa relation de récurrence **fournie dans le champ
+  `principe`** — c'est précisément l'usage prévu par le contrat C2 : le principe mathématique est donné, la
+  traduction en code reste entièrement à faire.
+- **§ 5.2.2, les tours de Hanoï** deviennent l'exercice 27.3, avec les quatre arguments imposés par l'énoncé
+  d'origine.
+
+**Le fil de ces quatre jours est le coût, et la distinction entre correct et utilisable.**
+- **La stabilité d'un tri** (24.3) tient à un seul caractère — comparaison stricte ou large. Deux joueurs à
+  égalité s'échangeraient à chaque passage où ils se croisent, et le podium dépendrait alors du désordre du
+  reste du tableau : deux tournois avec les mêmes ex æquo donneraient deux vainqueurs différents.
+- **Le banc d'essai des tris** (25.2) mesure trois jeux de données et non un seul. L'insertion passe de 6 à 21
+  comparaisons selon le désordre, la sélection reste à 21 quoi qu'il arrive — et le corrigé sépare deux
+  questions qu'on confond : *laquelle est la meilleure* et *laquelle est la plus prévisible*.
+- **Compter « des opérations » sans distinguer lesquelles** est un raccourci trompeur : l'insertion fait 29
+  opérations contre 26 pour la sélection, et gagne pourtant — parce qu'une comparaison et un déplacement ne
+  coûtent pas la même chose, et que leur rapport dépend de ce qu'on trie.
+- **Fibonacci naïf** (27.2) : **177 appels** pour un résultat de 55, et plusieurs centaines de millions au rang
+  40. Premier algorithme du cours qui soit correct et inutilisable — la distinction que le jour 28 formalisera.
+  Le corrigé nomme la parade sans renoncer à la récursion : mémoriser les termes déjà calculés.
+- **Hanoï à dix secondes par déplacement** (27.3) : cinq minutes pour 5 disques, trois heures pour 10, et
+  **121 jours** pour 20. Chaque disque double la durée.
+
+**Deux règles que ces jours dégagent et qui n'avaient pas encore été dites.**
+- **Un tableau passé en paramètre n'est pas recopié** (24.2). La garantie du jour 21 — « un sous-programme ne
+  peut rien casser chez son appelant » — *ne s'applique plus*. C'est ce qui rend la procédure de permutation
+  possible et c'est ce qui la rend dangereuse : un sous-programme qui reçoit un tableau doit annoncer dans son
+  nom s'il le modifie, et le banc d'essai du jour 25 doit recopier avant chaque tri, sous peine de mesurer le
+  second tri sur un tableau déjà trié par le premier.
+- **Une récursion à un appel se réécrit toujours en boucle ; une récursion à deux appels, non** (26.3). Avec
+  deux appels, il faut mémoriser les travaux en attente — c'est-à-dire gérer soi-même une pile, donc réécrire à
+  la main ce que la récursion fait gratuitement.
+
+**La certitude sans le déroulé** (27.3). La réflexion demande d'essayer de dérouler Hanoï à trois disques, de
+constater qu'on perd le fil au deuxième niveau, puis de dire ce qu'on peut affirmer *sans* avoir déroulé. C'est
+le seul endroit du cours où l'on demande explicitement d'accepter une preuve à la place d'une observation — et
+c'est ce que la démarche en trois étapes du chapitre 5 permet.
+
+**Une paraphrase attrapée** (25.2, indices ③ et ⑤ à **86 %**) et huit fuites d'indice. La paraphrase est la
+troisième du chantier, et toujours la même faute : un indice ③ écrit en pseudocode et un indice ⑤ en fragments
+de code disent la même chose. Réécrit en français sans notation — « on retire la carte du tableau en la
+mémorisant, ce qui libère sa case » — il retombe sous le seuil. **Le procédé qui marche est désormais établi :
+l'indice ③ ne doit contenir aucune notation.**
+
+**Un faux positif du vérificateur, assumé sans le contourner.** Le contrôle anti-fuite ne reconnaît que les
+commentaires `#` et prend donc les commentaires `/* */` du pseudocode pour des lignes de code. Trois de mes
+en-têtes de démarche en trois étapes ont ainsi été signalés contre le `principe` qui les résume. Plutôt que
+d'ajouter une exception au vérificateur, les commentaires ont été reformulés : une exception ouverte pour un cas
+anodin finit toujours par servir à un cas qui ne l'est pas.
+
+**Vérifications.** `_verify_entrainement.js` : 48 leçons équipées, 144 exercices, treize mini-séries closes,
+aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire : jours 1 à 27.
+
+**☐ Reste à faire.** `cours-algorithmes` jours 28 à 31 — 12 exercices : complexité, piles et files, résolution
+de A à Z, examen final. Puis les sept cours de langages restants : java, csharp, php (31 leçons chacun), c,
+cpp-bas, cpp-moderne, asm (21 chacun) — soit 543 exercices.
