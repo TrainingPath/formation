@@ -1474,3 +1474,23 @@ Aucune de ces trois n'aurait été visible à la relecture : deux erreurs de cal
 correcte, et une fuite dans un indice qui semblait générique. C'est l'exécution réelle des solutions et la
 comparaison mécanique indice/solution qui les ont trouvées, pas l'attention.
 
+### Lot suivant — `cours-python` leçons 8 et 9
+**27 exercices, 135 indices, 133 tests rejoués, tous verts.** Troisième mini-série engagée : le carnet
+d'entraînement du coureur (2 jours sur 4). Il pose d'abord un outillage de fonctions — allure, vitesse,
+appréciation — puis apprend à lire des séances écrites au format texte, en ignorant les lignes mal formées sans
+s'interrompre. Domaines ajoutés : apiculture, horlogerie, archéologie, randonnée.
+
+**Assouplissement du contrôle anti-fuite, et sa justification.** Le contrôle refusait les indices contenant une
+ligne de `def` reprise de la solution. C'était un faux positif : l'énoncé lui-même écrit « écris
+`allure(distance, duree)` », donc la signature n'est pas la réponse mais l'interface, et la masquer dans les
+indices n'aurait protégé personne tout en les rendant flous. Les lignes de déclaration (`def`, `class`) sont
+désormais exclues du contrôle ; **la logique du corps reste protégée**. Contre-test à l'appui : en glissant
+`return round(kilos / ruches, 1)` dans un indice, le vérificateur refuse toujours. Dixième contre-test.
+
+**Cinq fautes attrapées sur ce lot.** Deux longueurs de chaîne annoncées de tête et fausses (43 et 35 au lieu de
+40 et 36) ; une séance de 21 km en 115 minutes classée « allure rapide » alors qu'elle donne 11 km/h, soit
+« endurance » — les données de test ont été changées, pas le seuil ; et deux fuites de logique dans des indices 5.
+
+Le rythme se confirme : sur ce chantier, **une faute sur trois exercices environ** est attrapée par l'exécution
+des corrigés ou par le contrôle anti-fuite. Aucune n'aurait été visible à la relecture.
+

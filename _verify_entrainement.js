@@ -72,6 +72,12 @@ function lignesCode(solution) {
   const vues = new Set();
   return String(solution).split("\n")
     .map(l => l.replace(/#.*$/, "").trim())
+    // Les lignes de DÉCLARATION sont exclues : une signature n'est pas la
+    // réponse, c'est l'interface — et l'énoncé la donne déjà lui-même quand il
+    // écrit « écris allure(distance, duree) ». Les signaler comme fuite pousse
+    // à écrire des indices volontairement flous, ce qui dessert l'élève sans
+    // rien protéger. Ce qui doit rester caché, c'est la LOGIQUE du corps.
+    .filter(l => !/^(def |class )/.test(l))
     .filter(l => {
       // Dédoublonnage : une ligne répétée dans la solution ne doit pas produire
       // deux fois le même reproche.
