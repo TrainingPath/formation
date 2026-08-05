@@ -2230,3 +2230,42 @@ jour à « leçons 1 à 8 », liste des domaines complétée.
 
 **☐ Reste à faire.** `cours-java` leçons 9 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
 **519 exercices**.
+
+---
+
+## Entraînement du jour — cours-java, leçon 9 (3 exercices)
+
+**Commit intermédiaire volontaire, d'une seule leçon.** La règle « un cours ne se commite que complet » a été
+assouplie sur autorisation ; ce commit-ci va plus loin et n'attend même pas le lot de quatre, parce que la
+leçon était vérifiée et qu'une leçon vérifiée non commitée est une leçon qui peut disparaître.
+
+**La classe String, et son piège central : l'immuabilité.** Certifié par exécution — `t.toUpperCase();` seul
+laisse `t` inchangé, `t = t.toUpperCase();` le change. Le corrigé explique aussi pourquoi le compilateur ne
+prévient pas : il faudrait pour cela interdire d'appeler une méthode pour son seul effet, ce qui condamnerait
+tous les affichages. Et il retourne l'argument — l'immuabilité offre en échange trois garanties, dont la mise
+en commun des chaînes identiques, qui explique rétroactivement le comportement de `==` vu à la leçon 5.
+
+- **9.1 — le philatéliste** découpe par positions fixes, et l'énoncé fait afficher la saisie brute encadrée de
+  crochets : un espace en fin de ligne est invisible, fait échouer les comparaisons, et coûte une soirée.
+- **9.2 — la radio associative** découpe par séparateurs. Le motif `" +"` plutôt que `" "` : avec un seul
+  espace comme séparateur, deux espaces consécutifs produisent un mot vide, le compte est faux d'une unité, et
+  l'acronyme lève une exception en cherchant la première lettre d'un mot qui n'en a pas. La note de fin porte
+  sur `-1` comme valeur d'échec de `indexOf` — traiter un échec comme une réussite en position zéro est le bug
+  classique de la méthode.
+- **9.3 — La grainothèque 1/4** valide un code `ESP-VARIETE-ANNEE`. Quatre verdicts affichés **séparément**,
+  parce qu'un bénévole qui lit « année sur 4 chiffres : false » sait quoi corriger, et que celui qui lit
+  « code invalide » ne sait rien. *Un message d'erreur qui ne dit pas quoi réparer n'est pas un message
+  d'erreur, c'est un refus.* Les verdicts partent de « faux » et l'on n'accorde que ce qu'on a pu vérifier.
+
+**La réflexion du jour oppose les deux exercices l'un à l'autre.** Positions fixes contre séparateurs : sur un
+code trop court, la première méthode lève une `StringIndexOutOfBoundsException` et le programme s'arrête sur
+une saisie que l'utilisateur avait le droit de faire ; la seconde rend simplement moins de morceaux que prévu,
+une information testable. La conclusion est posée comme un critère de choix et non comme une préférence de
+style : *le confort d'écriture des positions fixes n'est réel que sur les données bien formées, c'est-à-dire
+exactement là où le choix n'a pas d'importance.*
+
+**Cinq fuites d'indice attrapées**, toutes du même type que les lots précédents — enchaînements de méthodes et
+en-têtes de boucle recopiés à l'identique dans l'indice ⑤. Corrigées par masquage.
+
+**Vérifications.** `_verify_entrainement.js` : 61 leçons équipées, 183 exercices, 27 corrigés Java compilés et
+exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 9 ».
