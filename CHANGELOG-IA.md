@@ -1572,3 +1572,57 @@ Trois pièges classiques traités de front, chacun par une question de réflexio
 au préalable avec `python3` : le déroulé manuel de l'abonné de classe 3 passant à 2 h du matin donne bien
 43,50 €.
 
+### `cours-python` leçons 10 à 14 — mini-séries « carnet d'entraînement » et « station météo »
+**63 exercices** au total (42 python + 21 algorithmes), 315 indices, 227 tests rejoués. `cours-python` est à
+14 leçons sur 21.
+
+Le carnet d'entraînement s'achève en montrant l'intérêt des structures apprises : au jour 7 il tenait deux listes
+parallèles dont la question de réflexion pointait la fragilité ; au jour 10 il devient une liste de tuples, et le
+problème disparaît. La station météo suit la même logique sur trois jours — classe simple, puis constructeur et
+encapsulation, puis héritage — chaque jour corrigeant un défaut que la veille avait fait constater.
+
+Quatre questions de réflexion portent sur le même sujet, celui qui sépare un programme qui marche d'un programme
+sur lequel on peut construire : **quand faut-il interroger le type d'un objet ?** Réponse dégagée au jour 14 :
+jamais quand seul le comportement varie — le polymorphisme s'en charge — et légitimement quand la *capacité*
+varie, d'où `hasattr(r, "pluie")` plutôt que `isinstance(r, RelevePluvio)`. On demande à un objet ce qu'il sait
+faire, pas ce qu'il est.
+
+**Quatre fautes attrapées sur ce lot.** Une valeur de stock à 505,80 € au lieu de 529,80 €. Un total pondéré
+annoncé à 91 pour un jeu de coefficients qui donne 98 — et j'ai reproduit l'erreur *deux fois* en tentant de la
+corriger de tête, avant de me résoudre à calculer les quatre jeux possibles et à choisir celui qui tombe juste.
+Un prix au mètre de 18,50 € rendant impossible le jeu de données à 100 € pile exigé par la réflexion, corrigé en
+passant à 20,00 €. Et un test écrit avec un opérateur d'affectation dans une expression, qui ne compile pas.
+
+Ce lot illustre exactement le constat du chantier : **les erreurs viennent des affirmations non calculées**, et
+la seule parade qui tienne est de calculer avant d'écrire, puis de faire rejouer les corrigés.
+
+### `cours-python` leçon 15 — modules, et la mini-série « journal d'observation »
+**66 exercices** (45 python + 21 algorithmes), 330 indices, 239 tests rejoués. `cours-python` : 15 leçons sur 21.
+
+La leçon insiste sur ce que la bibliothèque standard dispense d'écrire : `math.gcd`, `math.lcm`, `math.dist`,
+`math.atan2`, `math.log10`. Trois questions de réflexion, toutes sur des erreurs qui ne se signalent pas :
+- **Radians contre degrés.** Oublier `math.degrees` donne 0,6 au lieu de 36,9 — un angle parfaitement plausible
+  pour un relevé de terrain, et faux d'un facteur cinquante-sept.
+- **Millimètres contre centimètres.** La formule de magnitude limite attend des centimètres ; la conversion est
+  placée *dans* la fonction plutôt que laissée à l'appelant, précisément pour que personne ne l'oublie.
+- **Le hasard reproductible.** `random.seed` ne rend pas le tirage moins aléatoire, il le rend rejouable — ce qui
+  est indispensable dès qu'un test porte dessus, sans quoi il passerait un jour et échouerait le lendemain.
+
+Toutes les valeurs ont été calculées avec `python3` avant rédaction : PGCD 6, PPCM 72, périmètre 75,4 mm,
+distances 150 / 100 / 202,24 m, angle 36,87°, magnitude limite 14,0 pour un 200 mm, et la sélection produite par
+la graine 42.
+
+### `cours-python` leçon 16 — les exceptions
+**69 exercices** (48 python + 21 algorithmes), 345 indices, 251 tests rejoués. `cours-python` : 16 sur 21.
+
+Le fil de la leçon est la répartition des rôles : **la fonction constate, l'appelant décide.** `lire_ligne`
+lève une exception, la boucle la rattrape et choisit d'ignorer et de compter — un autre programme pourrait
+choisir de s'arrêter au premier rejet sans qu'on touche à la fonction. Les trois questions de réflexion
+développent la même idée sous trois angles : pourquoi lever plutôt qu'afficher, pourquoi ne jamais renvoyer
+`None` en cas de problème, et les deux dangers concrets d'un `except` sans type — la `NameError` avalée en
+silence, et le Ctrl-C qui n'arrête plus rien.
+
+L'exercice 16.3 illustre aussi qu'on n'a pas à tout prévoir : le champ vide de `"M104;"` passe le contrôle du
+nombre de champs et échoue à la conversion, ce qui est le comportement voulu — vérifier d'avance qu'un texte
+« ressemble à un nombre » finirait par refuser des valeurs valides que `float` accepte.
+
