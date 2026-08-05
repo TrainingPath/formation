@@ -2155,3 +2155,78 @@ Java sont compilés et exécutés avant publication.
 asm (21 chacun) — soit **531 exercices**. Pour C et C++, la même extension du vérificateur qu'aujourd'hui
 (`gcc`, `g++` sont présents). C# et PHP relèveront de la mention d'honnêteté standard, `dotnet` étant absent ;
 l'assembleur demandera NASM.
+
+---
+
+## Entraînement du jour — cours-java, leçons 5 à 8 (12 exercices)
+
+**Un lot sans nouvelle mécanique : toute l'attention est passée dans le contenu.** L'outillage posé au lot
+précédent — corrigés écrits en vrais fichiers `.java`, compilés et exécutés avant intégration, bloc assemblé
+par `mkblock.py` sans échappement manuel — a tourné sans incident sur les douze exercices.
+
+**La contrainte de progression a coûté trois exercices réécrits.** Le cours n'enseigne `charAt` nulle part
+avant la leçon 9, et son `switch` ne porte que sur des entiers : le bulletin météo, qui lisait d'abord la
+saison sous forme de lettre, a dû passer à un chiffre de 1 à 4. Vérifié dans le cours plutôt que supposé —
+`grep` sur `charAt` donne zéro occurrence aux leçons 4 et 5, et les `case` de la leçon 5 sont tous numériques.
+Même méthode pour `printf` (leçon 19) au lot précédent. La règle est désormais explicite : **avant d'utiliser
+une construction, on vérifie dans le fichier de la leçon qu'elle y est enseignée.**
+
+**Les pièges du lot, tous certifiés par exécution.**
+
+- **5.2 — `==` sur les String « qui marche chez lui ».** Certifié dans les trois cas : deux littéraux
+  identiques comparés par `==` donnent `true` (réserve commune des littéraux), une chaîne saisie au clavier
+  comparée au même littéral donne `false`, et un `new String("SENIOR")` donne `false` lui aussi. D'où la
+  formulation de la réflexion : le programme du camarade *marche vraiment*, tant qu'il ne teste qu'avec des
+  valeurs écrites dans le code.
+- **5.2 — l'ordre des bornes d'une cascade.** Un enfant de dix ans paie 16,80 € au lieu de 12,00 € si la borne
+  des 26 ans est écrite avant celle des 12 ans. Aucune erreur, aucun avertissement : juste le mauvais tarif,
+  tous les jours.
+- **5.2 — remises composées contre remises additionnées.** 24 × 0,70 × 0,75 = 12,60 €, contre 10,80 € si l'on
+  additionne 30 % et 25 %. Près de deux euros par billet.
+- **6.2 — zéro divisé par zéro.** Les deux comportements relevés : `ArithmeticException: / by zero` entre
+  entiers, `NaN` silencieux entre nombres à virgule. Le corrigé défend l'exception (bruyante, datée, localisée)
+  contre le NaN, qui traverse un rapport entier sans que personne le remarque.
+- **7.2 — `ArrayIndexOutOfBoundsException: Index 7 out of bounds for length 7`**, relevé mot pour mot. Le
+  corrigé note que c'est une *bonne* nouvelle comparée au C, où la même faute lirait la mémoire voisine sans
+  rien signaler.
+- **8.2 — le passage par valeur.** Démonstration complète : 199,50 € avant l'appel, 179,55 € affichés *à
+  l'intérieur* de la méthode, 199,50 € après. Le calcul a bien lieu — sur une copie.
+- **8.2 — une marche dans le barème.** 80 exemplaires coûtent 48,00 € et 100 exemplaires 44,00 € : commander
+  plus coûte moins cher. Le corrigé le signale comme un défaut de *barème*, pas de programme — un exercice
+  scolaire n'est pas obligé de faire semblant que les règles commerciales sont cohérentes.
+
+**La mini-série « La ressourcerie du quartier » (5→8)** fait déboucher chaque jour sur ce qui manque. Jour 1 :
+un seul objet, barème à deux entrées, et un zéro qui doit s'écrire en toutes lettres — *quand un zéro est une
+décision et non un calcul qui a échoué, un chiffre nu ne dit pas lequel des deux il est.* Jour 2 : une matinée
+entière en boucle, et la découverte que le maximum a besoin de deux variables tenues dans le même test —
+séparées, le montant serait juste et le libellé faux, les deux restant plausibles. Jour 3 : les tableaux, et
+le premier renseignement **strictement impossible** sans mémoire (combien de bons dépassent le bon moyen) —
+la réflexion démonte l'alternative, ressaisir toute la matinée deux fois, sur trois arguments. Jour 4 :
+refactorisation en méthodes, **sortie prouvée identique** au jour 3 par comparaison de fichiers, pas à l'œil.
+
+**La réflexion du jour 8 laisse une question ouverte, et c'est voulu.** Deux `switch` sur la même catégorie —
+l'un pour le tarif, l'autre pour le nom — sont-ils la répétition qu'on cherche à éviter ? Le corrigé défend
+les deux positions et conclut que ce qui manque n'est pas de la discipline mais un *outil* : un moyen de dire
+qu'une catégorie est une chose portant à la fois un tarif et un nom. Rendez-vous est pris avec la classe
+(leçon 12) et surtout l'énumération (leçon 24).
+
+**Vingt-trois fuites d'indice attrapées par le vérificateur sur ce lot** (5 en leçon 5, 7 en leçon 6, 11 en
+leçon 7), toutes dans l'indice ⑤ et toutes du même type : le squelette y reprenait à l'identique une ligne de
+déclaration ou d'en-tête de boucle du corrigé. Corrigées par masquage du nom de variable ou de la borne. La
+leçon 8, écrite après ce constat, est passée verte du premier coup — le masquage y a été systématique dès
+l'écriture. Aucune paraphrase sur les soixante indices du lot.
+
+**Un incident de cache, sans dégât.** Le fichier `cours-java/index.html` rapatrié dans le conteneur est revenu
+dans une version périmée (7 351 caractères au lieu de 8 201, mention « 🏋️ Nouveau » absente) alors que la date
+et la taille annoncées étaient bonnes — exactement le mode de panne qui avait détruit une section du CHANGELOG
+au lot `cours-algorithmes`. Détecté par l'assertion posée avant modification, qui a échoué au lieu d'écraser.
+Le sommaire a donc été modifié **directement sur la machine**, comme le CHANGELOG l'est depuis cet incident.
+*La règle reste : ne jamais juger de la fraîcheur d'un fichier sur sa taille et sa date.*
+
+**Vérifications.** `_verify_entrainement.js` sur le dépôt complet : 60 leçons équipées, 180 exercices, dix-sept
+mini-séries, 24 corrigés Java compilés et exécutés, 63 corrigés Python — vert. `_coherence`, `_check_qcm`,
+`_verify_placement`, `_verify_mermaid`, `_verify_vocab` : verts. Sommaire de `cours-java` : mention mise à
+jour à « leçons 1 à 8 », liste des domaines complétée.
+
+**☐ Reste à faire.** `cours-java` leçons 9 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
+**519 exercices**.
