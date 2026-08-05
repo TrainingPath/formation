@@ -2269,3 +2269,45 @@ en-têtes de boucle recopiés à l'identique dans l'indice ⑤. Corrigées par m
 
 **Vérifications.** `_verify_entrainement.js` : 61 leçons équipées, 183 exercices, 27 corrigés Java compilés et
 exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 9 ».
+
+---
+
+## Entraînement du jour — cours-java, leçon 10 (3 exercices)
+
+**ArrayList, et le seul piège qui vaut une leçon entière : le retrait en cours de parcours.** L'exercice 10.2
+est construit autour de lui et impose d'écrire d'abord la version fautive, de la lancer, et de noter ce qui
+reste. Résultat certifié par exécution : sur six éléments dont quatre à retirer, la boucle du début vers la
+fin en laisse quatre — `[close, ouverte, close, ouverte]`. Deux interventions closes survivent à la purge, et
+rien ne le signale.
+
+**Ce qui rend cette faute redoutable est écrit noir sur blanc dans la remarque** : son résultat dépend des
+données. Sur une liste où deux éléments à retirer ne se suivent jamais, le programme fautif donne le bon
+résultat — et l'on croit qu'il est correct jusqu'au jour où deux se suivent. La question c fait dérouler trois
+tours de boucle à la main ; la règle qui en sort tient en une phrase : *chaque retrait fait sauter exactement
+un élément.*
+
+**La réflexion pousse la correction dans ses retranchements.** Parcourir à rebours immunise parce qu'un retrait
+en position *i* ne déplace que ce qui est après *i*, déjà examiné. Mais la question demande ce qui se passerait
+en parcourant à rebours tout en retirant chaque fois le **premier** élément — et la réponse renverse
+l'explication naïve : ce n'est pas le sens du parcours qui protège, c'est le fait de retirer précisément là où
+l'on se trouve.
+
+- **10.1 — les cuves de la brasserie** oppose la boucle indexée à la boucle abrégée sur un critère concret :
+  la seconde ne peut pas se tromper d'indice, puisqu'elle n'en manipule aucun. Le corrigé signale au passage
+  le piège `remove(int)` contre `remove(Object)` sur une liste d'entiers — l'un des rares endroits où la
+  bibliothèque standard de Java est franchement traître.
+- **10.3 — La grainothèque 2/4** distingue deux refus, code mal formé et doublon, parce qu'ils appellent des
+  gestes opposés : corriger sa saisie dans un cas, aller poser une question dans l'autre. La réflexion va plus
+  loin et met en cause le refus des doublons lui-même : le code identifie une *variété*, pas un *sachet*, et
+  deux dons de la même variété sont légitimes. Ce qui manque n'est pas une ligne de code mais un modèle de
+  données — rendez-vous leçons 12 et 18.
+
+**Une note de bas d'exercice anticipe une confusion classique** (10.2) : une liste passée en paramètre est bien
+copiée, mais ce qui est copié est la *référence*. Ce n'est pas une exception au passage par valeur de la leçon
+8, c'en est la conséquence exacte sur les objets.
+
+**Six fuites d'indice attrapées**, dont trois d'un type nouveau : les en-têtes de boucle abrégée
+(`for (String nom : cuves)`) reprises telles quelles. Corrigées par masquage du nom de la collection.
+
+**Vérifications.** `_verify_entrainement.js` : 62 leçons équipées, 186 exercices, 30 corrigés Java compilés et
+exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 10 ».
