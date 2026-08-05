@@ -1991,3 +1991,67 @@ aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire 
 **☐ Reste à faire.** `cours-algorithmes` jours 28 à 31 — 12 exercices : complexité, piles et files, résolution
 de A à Z, examen final. Puis les sept cours de langages restants : java, csharp, php (31 leçons chacun), c,
 cpp-bas, cpp-moderne, asm (21 chacun) — soit 543 exercices.
+
+### `cours-algorithmes` jours 28 à 31 — le cours est complet
+**156 exercices** au total (63 python + 93 algorithmes), 780 indices. `cours-algorithmes` : **31 jours sur 31**.
+Deuxième cours du chantier entièrement équipé, après `cours-python`.
+
+La dernière mini-série, **La file du guichet**, suit les quatre dernières leçons : on mesure trois façons
+d'organiser la file (28), on la réalise avec deux files à priorité (29), on répond à une demande neuve de la
+direction par la méthode en six étapes (30), et l'on assemble tout à la fermeture (31).
+
+**Le fil des quatre jours est celui d'un indicateur qui ment sans se tromper.**
+- **Servir les dossiers courts d'abord** (28.3) réduit l'attente moyenne — mathématiquement certain. Le corrigé
+  demande *qui paie* : l'usager au dossier le plus lourd, c'est-à-dire le plus souvent la situation la plus
+  embrouillée, la personne qui parle mal la langue, le cas hors des cases. Et sous flux continu, ce dossier
+  n'est jamais appelé. La réponse pratique — une garantie d'ancienneté — n'est pas un raffinement technique
+  mais une contrainte d'équité qui coûte de la performance.
+- **La famine des non-prioritaires** (29.3) est le défaut symétrique, découvert par la question de réflexion et
+  corrigé au jour 31 : au plus trois prioritaires consécutifs, après quoi un usager ordinaire passe. Avec une
+  échappatoire — si la file ordinaire est vide, le prioritaire passe quand même, sinon la garantie protégerait
+  des usagers absents contre des usagers présents.
+- **Un taux d'occupation de 60 % avec une file qui n'a jamais désempli** (31.3) est parfaitement possible : le
+  taux mesure ce que les guichets ont *fait*, pas ce que les usagers ont *attendu*. C'est le même défaut que la
+  séance la mieux suivie du jour 18 et le meilleur plat du jour 22, et la règle qui en sort est explicite :
+  **ne jamais publier un indicateur sans celui qui pourrait le contredire.**
+
+**Ce que le jour 30 fait de la méthode en six étapes.** Les trois exercices demandent de *rédiger* chaque étape
+avant tout code, et l'étape 2 — résoudre un exemple à la main — y produit systématiquement une découverte que
+l'énoncé ne contenait pas : deux bornes de col à la même altitude (30.1), trois questions non tranchées dans le
+cahier des charges de l'épicier (30.2), et pour le dimensionnement du guichet (30.3) le constat que la boîte à
+outils du mois reste presque fermée — une division, une comparaison, un arrondi vers le haut. « Quand la boîte
+à outils reste presque fermée, c'est que l'effort était ailleurs. »
+
+**Le jour 30 pose aussi la distinction entre ce qu'on décide et ce qu'on demande.** Sur les trois questions
+non tranchées de l'épicier, une seule pouvait être décidée seul — « ne plus vendre » = vente strictement nulle,
+parce que toute autre lecture exige d'inventer un seuil, c'est-à-dire de prendre une décision commerciale sans
+mandat. Les deux autres sont posées en constantes nommées et signalées comme des décisions du commerçant : *un
+nombre arbitraire enfoui dans le code est une décision prise en cachette.*
+
+**Le dernier corrigé du cours** (31.3) demande quel réflexe, s'il ne devait en rester qu'un, sauverait le plus
+d'erreurs. Réponse : **dérouler à la main sur un cas limite** — pas sur un cas normal, celui-là marche toujours.
+C'est ce qui a fait apparaître, tout au long du mois, la moyenne du pêcheur bredouille, la borne de 19 h qui
+refuse une entrée par jour, le maximum resté à zéro sur des relevés tous négatifs, le décalage de tableau qui
+recopie la même valeur partout, et le plancher tarifaire qui passe sous son propre plancher. Aucune de ces
+fautes ne provoque d'erreur ; toutes se voient en deux minutes de papier.
+
+**Six fuites d'indice attrapées, aucune paraphrase.** Trois d'entre elles proviennent du même faux positif que
+le lot précédent — les commentaires `/* */` du pseudocode comptés comme des lignes de code — et ont de nouveau
+été corrigées par reformulation plutôt que par une exception au vérificateur. Une coquille rattrapée à la
+relecture du corrigé 31.2, que le vérificateur ne pouvait pas voir.
+
+**Vérifications finales du cours.** `_verify_entrainement.js` : 52 leçons équipées, 156 exercices, quinze
+mini-séries closes, aucune fuite, aucune paraphrase — vert. `_coherence`, `_check_qcm`, `_verify_placement`,
+`_verify_mermaid`, `_verify_vocab` : verts. Aucun artefact d'exécution. Sommaire de `cours-algorithmes` : la
+mention passe à « déployé sur les 31 jours du cours ».
+
+**Bilan des sept mini-séries d'algorithmes.** Le protocole du refuge (1→3), la borne de péage (4→7), la borne
+d'arrosage (8→11), le carnet du gardien de phare (12→15), le fichier des adhérents (16→19), la billetterie du
+théâtre (20→23), le classement du tournoi (24→27), la file du guichet (28→31). Chacune fait grandir une
+application sur trois ou quatre jours et bute volontairement sur ce qui manque encore, pour que la leçon du
+lendemain y réponde.
+
+**☐ Reste à faire.** Les sept cours de langages : java, csharp, php (31 leçons chacun), c, cpp-bas,
+cpp-moderne, asm (21 chacun) — soit **543 exercices**. Java, C et C++ disposent de compilateurs dans la chaîne
+de vérification et devront donc porter des sorties attendues certifiées par exécution réelle ; C# et PHP
+relèveront de la mention d'honnêteté standard ; l'assembleur demandera NASM.
