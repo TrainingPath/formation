@@ -1626,84 +1626,76 @@ L'exercice 16.3 illustre aussi qu'on n'a pas à tout prévoir : le champ vide de
 nombre de champs et échoue à la conversion, ce qui est le comportement voulu — vérifier d'avance qu'un texte
 « ressemble à un nombre » finirait par refuser des valeurs valides que `float` accepte.
 
-### `cours-python` leçons 17 à 21 — le cours est complet
-**84 exercices** au total (63 python + 21 algorithmes), 420 indices, 353 tests rejoués, tous verts.
-`cours-python` : **21 leçons sur 21**. Premier cours du chantier entièrement équipé.
+### `cours-algorithmes` jours 8 à 15 — deux mini-séries complètes
+**108 exercices** au total (63 python + 45 algorithmes), 540 indices. `cours-algorithmes` : **15 jours sur 31**.
+Toujours sans champ `tests` — le cours est en pseudocode, rien n'y est exécutable — donc toujours avec
+checklists renforcées à cinq critères et vérification préalable de tous les nombres avec `python3`.
 
-Les deux mini-séries qui restaient s'achèvent. **Le journal d'observation** finit ses quatre jours : après
-les modules (15) et les exceptions (16), il apprend le disque (17) puis l'indexation (18) — il passe d'un
-calcul jetable à une application qui lit un catalogue abîmé, écarte ce qui ne tient pas debout, sauvegarde
-son état et retrouve un objet par son nom. **Le budget d'un festival** ouvre et se referme en trois jours :
-planning et cachets (19), les couples deviennent des objets et l'état se persiste (20), puis le bilan de
-l'édition avec seuil de rentabilité (21). Six mini-séries au total sur le cours, toutes closes.
+**La borne d'arrosage (jours 8 → 11)** suit le programme des quatre leçons : la décision d'arroser en logique
+booléenne, la session qui surveille en boucle à condition, la tournée des huit massifs en boucle à compteur,
+le pupitre et la tournée interruptible. Le jour 10 se termine volontairement sur un **mur** — la boucle à
+compteur s'engage à faire ses huit tours et rien dans son corps ne peut revenir sur cet engagement — et la
+question de réflexion demande de nommer ce qui manque. Le jour 11 y répond, et fait constater que le
+changement n'est pas une retouche mais une reprise des trois responsabilités que le compteur automatique
+assurait : initialiser, tester, faire progresser.
 
-**Cinq questions de réflexion tirent le même fil, celui de la dernière semaine : la faute qui ne provoque
-aucune erreur.**
-- **Le mode d'ouverture inversé.** Le carnet de pêche est un *historique* et se complète ; le journal
-  d'observation est un *état* et se réécrit. Échanger les deux modes ne lève aucune exception : l'un ne
-  garde plus qu'une ligne, l'autre double son contenu à chaque soirée. On ne s'en aperçoit que le lendemain.
-- **Le rechargement qui étend au lieu de remplacer.** Même famille, un cran plus haut : dans un budget
-  neuf l'anomalie est *invisible*, les totaux coïncident et le test passe. Elle ne se révèle qu'au second
-  chargement d'un budget déjà rempli — c'est-à-dire le jour où l'on ajoute un bouton « recharger ».
-- **Le tirage non reproductible.** L'affiche imprimée le lundi ne correspond plus au fichier régénéré le
-  mercredi. La faute est indétectable à la relecture parce que chaque exécution prise isolément est
-  irréprochable : le défaut n'existe qu'*entre* deux exécutions, et une relecture n'en regarde qu'une.
-- **Le seuil arrondi au plus proche.** 1 888,9 entrées nécessaires, 1 888 vendues : le tableau de bord
-  affiche « seuil atteint » et le festival est en déficit. Personne ne relit un chiffre qui dit ce qu'on
-  espérait.
-- **La charge de bus qui ne revient pas à zéro.** Seule des cinq à laisser une trace visible — et l'exercice
-  enseigne à lire cette trace du bon côté : une charge finale non nulle accuse presque toujours une ligne
-  *écartée à la lecture*, pas le calcul.
+**Le carnet du gardien de phare (jours 12 → 15)** raconte la même progression du côté des données : un relevé
+quotidien traité au vol, puis quatre créneaux par jour en boucles imbriquées, puis un tableau qui conserve,
+puis le bilan complet par parcours. La réflexion du jour 15 demande, question par question, à quel jour de la
+série chacune serait devenue possible — et le corrigé montre que la plus longue série consécutive de mauvaise
+mer aurait été calculable **dès le premier jour**, parce qu'elle ne demande jamais de revenir en arrière,
+seulement de se souvenir de ce qui vient de se passer. Contre-exemple utile à l'idée que « conserver » et
+« traiter dans l'ordre » seraient la même chose.
 
-**Le test préalable contre le rattrapage d'exception (17.2).** La question posée à l'élève — « dans quelle
-situation le test d'existence devient-il faux ? » — a pour réponse la fenêtre entre la question et
-l'ouverture. Demander l'autorisation puis agir n'équivaut jamais à agir puis assumer l'échec, dès que le
-monde peut changer entre les deux. C'est le premier endroit du cours où cette distinction est nommée.
+**Le fil des huit jours est le même que celui de la fin de `cours-python` : la faute qui ne se signale pas.**
+- **Le mode d'ouverture, l'ordre des tests, la borne d'un intervalle** — au jour 8, une condition d'accès
+  correcte sauf sur la borne de 19 h refuse l'entrée à une personne par jour, et personne ne comprend pourquoi.
+- **Le compteur qui ne progresse pas** (jour 11) : c'est la seule des trois responsabilités dont l'oubli soit
+  *silencieux*. Sans initialisation, l'environnement proteste ; sans test, on déborde bruyamment ; sans
+  progression, l'algorithme arrose le massif n° 1 indéfiniment sans qu'aucune erreur ne survienne.
+- **Le produit initialisé à zéro** (jour 12) : il ne plante pas, il rend zéro. La remise cumulée devient 100 %
+  et l'algorithme annonce que le client ne paie rien.
+- **La remise à zéro au mauvais étage** (jour 13) : remontée au-dessus des deux boucles, elle fait croître les
+  moyennes journalières de jour en jour — ce qui *ressemble à une tempête qui se lève*. L'erreur qui donne un
+  résultat de la bonne taille est plus dangereuse que celle qui donne un résultat absurde.
+- **L'indice pris pour la valeur** (jour 14) : l'énoncé du rayon des conserves a été construit avec un stock
+  minimal de 3 précisément pour que la confusion `minRef ← stock[i]` désigne la référence n° 3, qui existe et
+  porte 45 boîtes. Sur des données où le minimum vaudrait 47, l'exercice n'apprendrait rien.
+- **La série qui ne se rompt jamais** (jour 15) : sans la remise à zéro, le compteur de série devient un
+  doublon exact du compteur de mauvaises journées. C'est le seul indice qui trahit la faute à la relecture —
+  deux quantités censées mesurer des choses différentes qui donnent toujours le même nombre.
 
-**Une contrainte de plateforme, traitée comme un sujet plutôt que contournée (20.2).** Le menu du projet
-guidé est une boucle alimentée par `input()`. Sous le vérificateur comme dans le navigateur, l'entrée
-finit par se tarir et `input()` rend une chaîne vide : une boucle qui ne prévoit que « 4 » pour sortir
-tourne alors indéfiniment et fige la page. Plutôt que de retirer la boucle ou de truquer le jeu de saisies,
-la sortie sur entrée épuisée est devenue une **exigence écrite de la question d), justifiée par son usage
-réel** — une application console finit toujours par être alimentée par un fichier de commandes. Le corrigé
-la traite en une ligne commentée.
+**Sept défauts attrapés par le vérificateur sur ce lot, tous les miens.** Cinq fuites d'indice : l'en-tête
+`POUR t DE 5 A 1 PAS -1 FAIRE` et sa jumelle au jour 10, deux en-têtes de boucle au jour 11, la comparaison
+`SI houle > recordHoule ALORS` au jour 12, deux déclarations de tableau et `SI stock[i] < minStock ALORS` au
+jour 14, `SI absolu > recordEcart ALORS` et `SI serie > recordSerie ALORS` au jour 15.
 
-**Trois fuites d'indice attrapées par le vérificateur, toutes dans l'indice 5.** `conformes = presentes &
-AGREMENT` et `trouves = index.get(demande, [])` en 18.2, la ligne de déballage du catalogue en 18.3, et la
-ligne d'import `datetime` en 19.2 et 19.3. Les deux premières étaient de vraies fuites — l'indice donnait
-l'opération d'ensembles que l'exercice demande de trouver. La dernière est plus discutable : un import
-n'est pas une réponse. Elle a malgré tout été masquée plutôt que de créer une exception au contrôle : une
-exception ouverte pour un cas anodin finit toujours par servir à un cas qui ne l'est pas.
+**Et surtout deux vraies paraphrases** — jour 14 exercice 2 à **77 %** de recouvrement, jour 15 exercice 2 à
+**73 %**, pour un seuil de refus à 72 %. C'est exactement le défaut que le contrôle a été écrit pour attraper,
+et je l'ai produit deux fois de la même façon : mon indice ③ « pseudocode » et mon indice ⑤ « quasi-squelette »
+disaient la même chose sous deux notations, l'un en français structuré, l'autre en fragments de code. Aucun des
+deux ne franchissait de marche que l'autre n'avait pas franchie. Réécrits pour que ③ décrive la démarche et ⑤
+la seule forme du fichier, ils redescendent sous 55 %. À noter : **aucune de ces deux paraphrases ne m'a paru
+suspecte à la relecture** — elles se lisaient bien, elles étaient différentes à l'œil. C'est la mesure
+mécanique qui les a vues.
 
-**Chaîne des exercices filés vérifiée, pas seulement affirmée.** Les deux séries ont été rejouées jour après
-jour dans un même dossier temporaire : le jour 3 du festival, exécuté *après* le jour 2, recharge bien les
-quatre groupes laissés par celui-ci depuis `festival.json` et annonce 34 000 € de dépenses pour 7 220 € de
-résultat. Exécuté seul — cas de l'élève qui a sauté un jour —, il tombe sur le repli codé en dur et donne
-**exactement les mêmes chiffres**. Le jour 4 du journal s'exécute sans dommage après le jour 3. La rupture
-est donc volontaire et sans conséquence, et le lien « pars de la solution d'hier » couvre le reste.
+**Une coquille rattrapée au passage** : `Ecrire("  Jour ", j : mauvaise mer")` au jour 12, une virgule
+transformée en deux-points. Le vérificateur ne l'a pas signalée — il ne parse pas le pseudocode — c'est la
+relecture du corrigé qui l'a trouvée. Rappel que le filet a des trous, et lesquels.
 
-**Aucun artefact d'exécution.** Cinq des quinze corrigés écrivent sur le disque — `carnet-peche.txt`,
-`classe.txt`, `bulletin.json`, `journal.txt`, `journal.json`, `armoire.json`, `festival.json`, `course.txt`,
-`bilan.json`. Le lanceur bascule dans un dossier temporaire hors du dépôt avant toute exécution (garde-fou
-posé au lot précédent, précisément en prévision de la leçon 17). Contrôle fait après coup : aucun `.txt`
-ni `.json` nouveau à la racine ni dans `cours-python`. L'erreur `locations.txt` / `taches.json`, commise
-deux fois sur ce site, ne s'est pas reproduite une troisième.
+**Vérifications.** `_verify_entrainement.js` : 36 leçons équipées, 108 exercices, dix mini-séries closes,
+aucune fuite, aucune paraphrase — vert. `_verify.js` sur les huit jours : conforme. Aucun artefact
+d'exécution. Sommaire de `cours-algorithmes` mis à jour : la mention passe de « leçons 1 à 7 » à
+« jours 1 à 15 ».
 
-**Relecture contradictoire de deux leçons tirées au sort — 18 et 21.** Énoncés de 490 à 590 caractères de
-prose, décrivant entrée, traitement et sortie ; aucun squelette de code, aucun `def` ni `print` dans un
-énoncé (contrôlé par expression régulière, pas à l'œil). Les six exercices portent une remarque de bonne
-pratique ou un principe ; les quatre exercices de niveau 2 et 3 portent des sous-questions et une question
-de réflexion avec son corrigé rédigé. **Recouvrement de vocabulaire maximal entre deux indices d'un même
-exercice : 55 %**, pour un seuil de refus à 72 % — les cinq marches sont réelles, et la vérification de la
-gradation elle-même (reformuler · plan · pseudocode · point dur · quasi-squelette) a été faite à la lecture,
-indice par indice, car aucune mesure ne peut la prouver.
+**Commit intermédiaire assumé.** La règle du chantier est qu'un cours ne se commite que complet. Elle est ici
+levée explicitement par l'élève : garder seize jours de travail hors de git en attendant les seize leçons
+restantes fait courir plus de risque que d'en accepter un état partiel mais vert. Le cours reste **incomplet**
+et le sommaire le dit.
 
-**Résultat des vérifications.** `_verify_entrainement.js` : 28 leçons équipées, 84 exercices, 63 solutions
-exécutées, 353 tests rejoués, aucune fuite, aucune paraphrase — vert. `_verify.js` sur les cinq leçons
-nouvelles : 4/4 chacune. Sommaire de `cours-python` mis à jour : la mention passe de « déployé sur les
-leçons 1 à 16 » à « déployé sur les 21 leçons du cours ».
-
-**☐ Reste à faire.** Les huit autres cours, soit **206 leçons et 618 exercices** : algorithmes (24 jours),
-java, csharp et php (31 chacun), c, cpp-bas, cpp-moderne et asm (21 chacun). Et toujours la même réserve
-d'honnêteté : le rendu réel de la section dans un navigateur n'a jamais été vu, l'extension ne pouvant pas
-ouvrir d'URL `file://`. Tout est contrôlé en Node et en Python.
+**☐ Reste à faire.** `cours-algorithmes` jours 16 à 31 — 48 exercices : recherche séquentielle, min/max/moyenne,
+tableaux à deux dimensions, chaînes, fonctions et procédures, paramètres, décomposition, dichotomie, tri à
+bulles, tris par sélection et insertion, récursivité en deux jours, complexité, piles et files, résolution de
+A à Z, examen. Les jours 26 et 27 tombent exactement sur le chapitre 5 du PDF de l'école — factorielle, carré
+par la méthode des impairs, puissance, tours de Hanoï, PGCD avec sa relation de récurrence fournie — et devront
+imposer la démarche en trois étapes du contrat C7. Puis les sept autres cours.
