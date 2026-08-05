@@ -1516,3 +1516,20 @@ d'écart » comparait les numéros de jour **sans distinguer les cours** : le jo
 jour 2 de python. La monotonie se juge à l'intérieur d'un parcours, pas entre deux. Corrigé et contre-testé —
 onzième contre-test.
 
+### `cours-algorithmes` leçons 1 à 3 — mini-série « Le protocole du refuge » achevée
+**36 exercices au total sur les deux cours** (27 python + 9 algorithmes), 180 indices. Le refuge de montagne
+traverse les trois premières leçons : marche à suivre en actions élémentaires (jour 1), variables typées et
+constantes tarifaires (jour 2), indicateurs de saison (jour 3).
+
+Trois questions de réflexion tirent le même fil, celui qui manque le plus aux débutants — **savoir qu'un
+résultat peut être faux sans que rien ne le signale** : la machine à café ne proteste pas si le réservoir est
+vide ; l'hypothèse « le randonneur repartira » échoue en silence là où « il peut payer » échoue au comptoir ; et
+un taux d'occupation de 2,67 % n'annonce pas une faillite, il annonce un dénominateur mal choisi.
+
+**Compensation de l'absence de tests.** Aucun corrigé n'étant exécutable ici, tous les nombres avancés ont été
+vérifiés au coup par coup avec `python3` avant d'être écrits — capacité de saison, taux, prix moyen, reste de
+division, part de randonneurs ayant pris le petit-déjeuner. C'est manuel, donc faillible, et cela ne remplace
+pas la vérification à chaque build : le risque reste consigné dans `_veille.md`.
+
+Domaines servis : banque, cuisine, randonnée, musique, transports, astronomie, commerce de quartier.
+
