@@ -1301,3 +1301,176 @@ réel du lien sur un sommaire et sur une page de vocabulaire n'a pas été vu. L
 (les trois états : non configuré, configuré simple, configuré avec pré-remplissage), ce qui n'est pas la même chose
 que l'avoir regardé.
 
+---
+
+## Entraînement du jour — 3 exercices d'application par leçon
+
+### Phase 0 — Contrat de style, extrait des deux PDF de l'école
+Deux chapitres du cours de l'élève servent de modèle : *Chapitre 5 — Les fonctions récursives* (8 pages,
+théorie + 6 exercices) et *Chapitre 7 — Les principes du concept objet, TP1* (2 pages, exercices seuls).
+Lecture faite avant toute rédaction. Sept traits en ressortent ; ils forment le contrat auquel chaque
+exercice produit doit se conformer, et que `_verify_entrainement.js` contrôle mécaniquement là où c'est
+possible.
+
+**C1 — L'énoncé décrit un programme complet, en prose.** Le PDF écrit : « On demande à l'utilisateur de
+saisir un entier. La valeur sera ensuite transmise à une procédure récursive qui affichera la même valeur
+traduite en binaire. » Entrée, traitement, sortie : les trois sont dits. Jamais de squelette de code
+pré-rempli, jamais de `# TODO`. L'élève part de la page blanche.
+
+**C2 — Le principe est donné quand il est mathématique, jamais l'algorithme.** Pour le PGCD, le PDF fournit
+la relation de récurrence — `PGCD(a,0) = a` et `PGCD(a,b) = PGCD(b, a mod b)` — puis laisse l'implémentation
+entière à faire. L'exercice teste la traduction en code, pas la redécouverte d'un théorème.
+
+**C3 — Une application filée évolue d'exercice en exercice.** Le TP objet ouvre sur « Reprendre l'application
+Bibliothèque et la classe Livre développées au cours de l'exercice 2 du chapitre précédent ». L'élève ne
+résout pas des énigmes indépendantes : il fait grandir un programme.
+
+**C4 — Les sous-questions s'enchaînent en a/b/c/d et se répondent l'une l'autre.** Le TP déroule : rendre les
+propriétés privées → *que se passe-t-il à la compilation ? pourquoi ?* → écrire `setTitre()` → en déduire les
+autres accesseurs → adapter l'application → *est-il nécessaire de créer `setCode()` ? pourquoi ?* La question
+2.d ne trouve sa réponse qu'à la question 4.
+
+**C5 — Des questions de prédiction et de réflexion, sans code.** « Exécutez l'application. Que se passe-t-il ?
+Pourquoi ? » Ces questions ne sont pas de la décoration : elles vérifient que l'élève a compris le mécanisme,
+pas seulement recopié une forme. Leur corrigé est une explication rédigée.
+
+**C6 — Des remarques de bonne pratique dans l'énoncé.** « L'utilisation des méthodes d'accès en écriture au
+sein du constructeur n'est pas réellement obligatoire. Mais plus généralement, cela peut être utile pour
+s'assurer de la validité des données. » Le PDF enseigne le métier en marge de l'exercice.
+
+**C7 — Une méthode nommée et imposée quand le sujet en a une.** Le chapitre 5 impose pour toute récursivité :
+*Étape 1* trouver l'expression commune à tous les appels ; *Étape 2* trouver le point d'arrêt ; *Étape 3*
+vérifier qu'à chaque appel on s'en rapproche. La démarche fait partie de ce qui est évalué.
+
+### Ce que le contrat implique pour les 5 indices
+Le risque de l'indiçage généré est d'écrire cinq fois la même phrase. La gradation est donc imposée et
+contrôlée : ① reformuler et découper le problème · ② le plan, en français, sans nommer d'outil du langage ·
+③ le pseudocode partiel ou la signature · ④ le morceau de code du point dur, seul · ⑤ le quasi-squelette
+commenté. L'indice 5 aide encore ; il ne donne pas la solution. Le vérificateur refuse deux indices trop
+proches et refuse toute ligne de solution qui réapparaîtrait dans un indice, dans l'énoncé ou dans la
+checklist — c'est le défaut « l'encadré donne la réponse » déjà corrigé sur ce site, il ne doit pas revenir
+par une autre porte.
+
+### Moteur, vérificateur et pilote — leçons 1 et 2 de `cours-python`
+
+**`cours-python/entrainement.js`** — moteur unique, aucun code dupliqué dans les leçons : elles ne portent que
+l'objet `ENTRAINEMENT`. Trois garanties tenues par le code, pas par la consigne :
+les **indices se révèlent un par un** (impossible de tomber sur le cinquième en cherchant le premier) ; la
+**solution n'est pas dans le DOM avant d'être demandée** — elle est construite au clic, une inspection de la page
+ne la révèle pas ; la **checklist s'affiche avant** le bouton de solution. Le chargeur Pyodide est partagé avec
+`exo-ecriture.js` (ajout d'une seule ligne d'export, rien de modifié) : sans ce partage, une leçon téléchargerait
+deux fois 6 Mo d'interpréteur.
+
+**`_verify_entrainement.js`**, branché dans la CI. Sept contrôles, dont trois méritent d'être nommés :
+
+- **Anti-paraphrase.** Deux indices dont le vocabulaire se recouvre à 72 % ou plus sont refusés. C'est le défaut
+  attendu de l'indiçage généré : cinq phrases qui disent la même chose et ne font franchir aucune marche.
+- **Anti-fuite.** Aucune ligne de code de la solution (26 caractères ou plus, commentaires exclus) ne peut
+  apparaître dans l'énoncé, le principe, un indice ou la checklist. **Ce contrôle a immédiatement servi** : il a
+  refusé mon propre indice 5 de l'exercice 2.2, qui reprenait `print(reference, type(reference))` mot pour mot.
+  Le défaut « l'encadré donne la réponse » avait déjà été corrigé une fois sur ce site ; il revenait par une
+  autre porte.
+- **Solutions rejouées.** Les solutions de référence ne sont pas déclarées justes, elles sont **exécutées** par
+  `python3` contre leurs propres tests, avec la même sémantique que le navigateur (stdout capturé et exposé sous
+  `__output__`, `input()` alimenté par `stdin`). 6 solutions, 32 tests, tous verts.
+
+**Contre-tests — six fautes injectées, six refus.** Deux indices rendus quasi identiques → refusés à 94 % de
+recouvrement. Une ligne de solution glissée dans un indice → fuite détectée. Quatre indices au lieu de cinq →
+refusé. Une solution rendue fausse (`Colfontaine` → `Mons`) → le test correspondant échoue à l'exécution. Un
+énoncé réduit à 21 caractères → refusé. Toutes les questions de réflexion retirées → contrat C5 signalé.
+
+*Une précision honnête sur ce dernier cas :* ma première tentative n'a **pas** déclenché l'alerte, parce que je
+n'avais retiré qu'une des deux questions de réflexion de la leçon — or le contrôle s'applique **par leçon**, pas
+par exercice. Le contre-test était faux, pas le contrôle. Corrigé, il déclenche.
+
+**Pilote — leçons 1 et 2.** 6 exercices, 30 indices, 32 tests. Le fil rouge Ludothèque démarre : l'enseigne
+écrite en dur au jour 1, puis sortie du code vers des variables au jour 2, l'exercice 2.3 partant explicitement
+du programme de la veille avec un lien de rattrapage pour qui a sauté un jour. La question de réflexion du jour 1
+(« quelle version sera la plus pénible à modifier demain ? ») trouve sa réponse dans l'exercice du jour 2 : c'est
+le mécanisme du TP objet de l'école, où la question 2.d ne se résout qu'à la question 4.
+
+**Adaptation nécessaire au contrat C1.** Le PDF de l'école écrit systématiquement « on demande à l'utilisateur de
+saisir… ». Impossible aux leçons 1 à 3 de ce cours : `input()` n'est enseigné qu'en leçon 4. Les énoncés
+décrivent donc un programme complet **sans saisie** jusque-là, puis reprennent la formulation de l'école ensuite.
+C'est un écart assumé au modèle, pas un oubli.
+
+**☐ Reste à faire.** Les 19 autres leçons de `cours-python`, puis les 8 cours suivants. Et la vérification
+navigateur : l'extension Chrome ne peut pas ouvrir d'URL `file://`, donc le rendu réel de la section — révélation
+des indices, bouton d'exécution, affichage de la solution — n'a pas été vu. Tout a été contrôlé en Node.
+
+### Correctif de cadrage — sortie du fil rouge Ludothèque
+Première version du pilote : les trois exercices se déroulaient dans l'univers Ludothèque du site, par cohérence
+avec le fil rouge existant. **Refusé, et à juste titre** : 63 exercices sur les jeux de société pour le seul
+`cours-python`, c'est une monotonie garantie. Nouvelle règle, arbitrée avec l'élève :
+
+- **Exercices 1 et 2 : un domaine différent à chaque fois**, tiré d'un réservoir de trente sujets
+  (`_outils/entrainement/plan-domaines.md`). Le jour 1 se joue en météo et au théâtre, le jour 2 en cuisine et
+  en course à pied.
+- **Exercice 3 : une mini-série de 3 à 4 jours**, puis changement complet de sujet. On garde le bénéfice du
+  « reprends ton programme d'hier » — c'est le mécanisme du TP objet de l'école — sans imposer un thème unique
+  pendant 21 leçons. Six séries planifiées pour `cours-python` : panneau de cinéma, carnet de recettes, carnet
+  d'entraînement, station météo, journal d'observation, budget de festival.
+
+Le plan n'est pas qu'une intention : chaque exercice porte un champ `domaine`, et **le vérificateur refuse**
+deux domaines identiques dans une même leçon, un domaine déjà servi à moins de quatre leçons d'écart, et toute
+série déclarée sur plus de quatre jours — « au-delà, ce n'est plus une mini-série mais un fil rouge déguisé ».
+Trois contre-tests supplémentaires le confirment (domaines identiques, domaine trop récent, série de 6 jours) :
+neuf contre-tests au total, neuf refus.
+
+Il contrôle aussi la continuité des séries : jours numérotés sans trou ni doublon, sur des leçons consécutives.
+
+**Bug rencontré et corrigé pendant cette réécriture.** `re.sub` interprète les séquences d'échappement du texte
+de **remplacement** : les `\n` des solutions Python sont devenus de vrais retours à la ligne, et les deux leçons
+ont cessé de parser. Le vérificateur l'a signalé immédiatement (« ENTRAINEMENT ne parse pas »). Corrigé en
+passant par un `lambda`. C'est la deuxième fois que ce piège se referme sur ce dépôt — la première remontait au
+chantier UML, où il avait corrompu du JSON injecté.
+
+### État réel du déploiement — 4 leçons sur 229
+`cours-python` leçons 1 à 4 : **12 exercices, 60 indices, 61 tests rejoués, tous verts.** Deux mini-séries
+engagées — le panneau de cinéma (3/3, terminée) et le carnet de recettes (1/4). Douze domaines distincts déjà
+servis : météo, théâtre, cinéma, cuisine, sport, banque, astronomie, transports, jardinage.
+
+**Le volume réel de la mission demandée.** Les neuf cours de langages totalisent **229 leçons, soit 687
+exercices** : 93 pour algorithmes, java, csharp et php ; 63 pour python, c, cpp-bas, cpp-moderne et asm. À la
+densité du pilote — énoncé en prose, principe, sous-questions, réflexion, 5 indices gradués, solution commentée,
+corrigé des questions de réflexion, tests exécutés, checklist — un exercice représente une quarantaine de lignes
+écrites à la main. L'ensemble dépasse les 27 000 lignes.
+
+Ce n'est pas un travail qui se termine en une séance, et le dire maintenant vaut mieux que livrer un quart du
+chantier en laissant croire qu'il est presque fini. Le rythme réalisable est d'environ **quatre à six leçons par
+séance** en gardant ce niveau ; au-delà, les énoncés deviennent interchangeables et les indices se paraphrasent —
+ce que le vérificateur attrape parfois, mais qui reste surtout une question de soin.
+
+**Deux erreurs de calcul attrapées par le vérificateur pendant ce lot.** L'exercice 3.3 annonçait une recette de
+1 009,90 € là où 9,50 × 84 + 5,70 × 37 donne 1 008,90 € ; le test correspondant a échoué à l'exécution et la
+valeur a été corrigée. Sans exécution réelle des corrigés, cette faute serait partie en production et l'élève
+aurait cherché son erreur là où il n'y en avait pas.
+
+**Garde-fou ajouté par anticipation.** La leçon 17 portera sur les fichiers : les corrigés écriront sur le
+disque. Le lanceur Python du vérificateur bascule désormais dans un dossier temporaire hors du dépôt avant toute
+exécution. L'erreur `locations.txt` / `taches.json` a déjà été commise deux fois sur ce site ; cette fois elle
+est prévenue avant d'arriver.
+
+### Lot suivant — `cours-python` leçons 5 à 7
+**21 exercices au total, 105 indices, 104 tests rejoués, tous verts.** Deux mini-séries achevées : le panneau de
+cinéma (3 jours) et le carnet de recettes (4 jours). Le carnet suit une progression qui suit celle du cours :
+il enregistre une recette (jour 4), refuse les saisies absurdes (jour 5), lit les ingrédients à la chaîne
+(jour 6), puis les garde en mémoire pour produire une liste de courses (jour 7). Chaque jour répond à un défaut
+que la question de réflexion de la veille avait fait constater — c'est le mécanisme du TP objet de l'école.
+
+Domaines servis : météo, théâtre, cinéma, cuisine, sport, banque, astronomie, transports, jardinage, santé,
+musique, géographie, photographie, bibliothèque, brasserie. Quinze sujets sur sept leçons, aucun réemploi à moins
+de quatre leçons d'écart.
+
+**Trois fautes attrapées par le vérificateur sur ce lot, toutes les miennes.**
+1. Exercice 3.3 : recette annoncée à 1 009,90 € au lieu de 1 008,90 €.
+2. Exercice 6.1 : `range(0, 551, 50)` produit **douze** lignes et non onze — 550 tombe encore dans l'intervalle.
+   La borne correcte est `dernière valeur + 1`, et le paragraphe « pourquoi » qui défendait l'écriture `551` a été
+   réécrit, puisqu'il défendait une erreur.
+3. Exercice 7.3 : l'indice 5 reprenait `for i in range(len(noms)):` mot pour mot — deuxième fuite détectée depuis
+   la mise en place du contrôle.
+
+Aucune de ces trois n'aurait été visible à la relecture : deux erreurs de calcul dans des corrigés d'apparence
+correcte, et une fuite dans un indice qui semblait générique. C'est l'exécution réelle des solutions et la
+comparaison mécanique indice/solution qui les ont trouvées, pas l'attention.
+

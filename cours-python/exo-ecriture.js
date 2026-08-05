@@ -331,4 +331,9 @@
 
     sec.appendChild(exo); wrap.appendChild(sec);
   });
+
+  /* Partage du chargeur Pyodide avec entrainement.js. AJOUT PUR : rien de
+     ci-dessus n'est modifié. Sans ce partage, les deux modules téléchargeraient
+     chacun leur interpréteur — 6 Mo deux fois, sur la même page. */
+  window.ExoRuntime = { pyodide: getPyodide, cleanTraceback: cleanTraceback };
 })();
