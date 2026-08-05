@@ -2373,3 +2373,64 @@ corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : ment
 
 **☐ Reste à faire.** `cours-java` leçons 13 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
 **513 exercices**.
+
+---
+
+## Entraînement du jour — cours-java, leçons 13 à 15 (9 exercices)
+
+**Nouvelle mini-série, « Le parc à vélos partagés » (13→16)**, construite pour que chaque jour bute sur ce que
+l'outil du jour ne sait pas faire. Jour 1 : une classe dont l'état ne peut changer que par deux méthodes
+gardées. Jour 2 : les vélos électriques, qui *sont* des vélos. Jour 3 : les trottinettes, qui n'en sont pas.
+Jour 4 : ce qui échoue vraiment.
+
+**Le fil conducteur des trois leçons est une même question posée trois fois : que garantit ce code ?**
+
+- **13.3** demande de formuler la garantie en une phrase commençant par « il est impossible que… ». Réponse :
+  *il est impossible que le compteur de courses d'un vélo diffère du nombre de fois où la méthode de location
+  a réussi sur ce vélo.* Ce n'est pas une promesse de bonne conduite mais une propriété vérifiable en lisant
+  les quelques lignes de la classe.
+- **14.3** revient dessus et la fragilise : la garantie n'est vraie *que tant qu'il n'existe qu'un seul endroit
+  où une location réussit*. Chaque copie de la logique l'affaiblit sans jamais l'annoncer — d'où l'appel à la
+  méthode de la mère plutôt que sa recopie.
+- **15.3** demande de nommer trois affirmations **fausses** que produirait une trottinette héritant des vélos,
+  et surtout à quel moment concret cela coûterait quelque chose : le jour où l'on ajoute aux vélos un
+  comportement dépourvu de sens pour les trottinettes, il faudra soit l'écrire pour tout le monde, soit tester
+  dans la mère la nature réelle de l'objet — *l'aveu que la hiérarchie était fausse depuis le début*.
+
+**Les points de conception traités frontalement, sans les esquiver.**
+
+- **13.1** ne fournit aucune méthode d'écriture pour le poids ni le lait, et le corrigé le justifie : « la
+  question à se poser n'est pas comment donne-t-on accès, c'est qui a besoin de quoi ». Le prix n'est pas
+  stocké mais recalculé — stocker une valeur dérivée oblige à penser à la mettre à jour.
+- **13.2** définit l'invariant et exige que **tous** les chemins qui modifient l'état le vérifient. La
+  réflexion refuse la réponse molle (« on pourrait oublier ») : avec des champs publics, la garantie n'existe
+  pas du tout, et la prouver exigerait de relire tout le code, y compris celui que d'autres écriront demain.
+  *On ne rend pas les fautes moins probables, on rend la vérification possible.* Et : un setter qui accepte
+  tout est un champ public avec des parenthèses en plus.
+- **14.2** fait descendre le solde à −280 € sur un compte à découvert et le refuse sur un compte ordinaire, à
+  travers le **même appel**. La réflexion porte sur le refus du compilateur quand on demande le découvert
+  depuis un tableau du type de la mère — refus présenté comme une bonne nouvelle : il oblige à écrire du code
+  qui vaut pour tout ce que le tableau peut contenir, y compris ce qui n'existe pas encore.
+- **15.2** oppose deux contrats qui se recoupent partiellement (quatre instruments relevables, trois
+  entretenables) et explique pourquoi l'héritage multiple est interdit : deux mères fournissant un corps pour
+  la même méthode poseraient une question sans réponse. La réflexion sur l'obligation de rendre publiques les
+  méthodes d'interface conclut : *une interface ne peut pas contenir de méthode discrète.*
+
+**Trois constructions retirées après vérification.** `getClass().getSimpleName()` (14.1) remplacé par une
+méthode redéfinie — plus explicite et dans le vocabulaire du cours ; `instanceof` (15.2) écarté, il n'arrive
+qu'avec le filtrage par motif de la leçon 24. S'y ajoutent `Math.PI` et `Integer.parseInt` du lot précédent.
+
+**Une nuance pédagogique sur `@Override`** (14.1) : l'annotation est facultative et indispensable. Sans elle,
+une faute de frappe dans le nom produit une méthode neuve qui ne sera jamais appelée, et le programme affiche
+tranquillement le comportement de la mère. La checklist fait faire l'expérience dans les deux sens.
+
+**Cinq fuites d'indice attrapées** sur les neuf exercices, toutes des signatures de méthode reprises telles
+quelles dans l'indice ⑤.
+
+**Un incident d'infrastructure, sans perte.** Le pont vers la machine s'est coupé entre le dépôt des fichiers
+des leçons 13 et 14 et leur commit. Les deux fichiers étaient déjà écrits sur le disque ; la leçon 15 a été
+rédigée et vérifiée en local pendant l'attente, et les trois leçons ont été commitées ensemble au retour du
+pont. Aucun travail perdu — mais la leçon reste la même qu'au lot 2 : ce qui n'est pas commité peut disparaître.
+
+**Vérifications.** `_verify_entrainement.js` : 67 leçons équipées, 201 exercices, vingt mini-séries, 45
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 15 ».
