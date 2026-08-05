@@ -2055,3 +2055,103 @@ lendemain y réponde.
 cpp-moderne, asm (21 chacun) — soit **543 exercices**. Java, C et C++ disposent de compilateurs dans la chaîne
 de vérification et devront donc porter des sorties attendues certifiées par exécution réelle ; C# et PHP
 relèveront de la mention d'honnêteté standard ; l'assembleur demandera NASM.
+
+---
+
+## Entraînement du jour — cours-java, leçons 1 à 4 (12 exercices)
+
+**Ce lot inaugure le premier cours de langage compilé, et il a fallu commencer par outiller la vérification.**
+Jusqu'ici, le contrôle n° 6 du vérificateur — « tests honnêtes » — reposait sur une liste d'un seul élément :
+`EXECUTABLES = ["python"]`. Tout autre langage devait se passer du champ `tests`, au motif qu'un test qui ne
+tourne jamais est un mensonge affiché. Le motif reste juste ; c'est la liste qui était trop courte. Java se
+compile et s'exécute en une commande (`java Fichier.java`, compilation en mémoire, aucun `.class` écrit), et
+rien ne justifiait de publier 93 corrigés Java sans jamais les avoir lancés.
+
+**Ce qui a changé dans `_verify_entrainement.js`** (le fichier fait désormais 460 lignes) :
+
+- `EXECUTABLES` devient un registre `{ langage → outil, sonde }`. Le contrôle n° 6 garde exactement sa règle :
+  `tests` présent **si et seulement si** le langage y figure.
+- Un lanceur Java rejoue chaque corrigé dans un dossier temporaire, huit en parallèle, l'entrée standard
+  alimentée par le champ `stdin`, la sortie capturée et exposée aux assertions sous le nom `__output__` — le
+  même contrat que pour Python, avec des assertions écrites en Python pour que les deux langages se vérifient
+  de la même façon.
+- L'encodage est **fixé** (`-Dfile.encoding`, `-Dstdout.encoding`, `-Dstderr.encoding` à UTF-8). Sans cela la
+  sortie dépend de la locale de la machine et les accents deviennent des « ? » : un test qui passe chez l'un et
+  échoue chez l'autre ne prouve rien.
+- **Si l'outil manque sur la machine, on ne fait pas semblant.** La sonde échoue, les corrigés du langage ne
+  sont pas rejoués, et le rapport imprime en toutes lettres, sous le vert : « Le vert ci-dessus NE COUVRE PAS
+  les corrigés suivants, faute d'outil ici ». Un vert partiel qui se tait vaudrait moins qu'un rouge.
+
+**Une correction de définition, pas une exception de confort.** L'extraction des lignes de code (`lignesCode`)
+coupait au premier `#` — donc mutilait toute ligne affichant un dièse — et ignorait `//`. En Java, chaque
+phrase de commentaire comptait donc comme du code, et un indice qui explique la même idée avec les mêmes mots
+aurait été dénoncé comme une fuite. Le repérage des commentaires est désormais **conscient des guillemets**
+(`sansCommentaire`), les commentaires de bloc sur leur propre ligne sont écartés, et l'exclusion des
+déclarations — qui ne couvrait que `def` et `class` — couvre les modificateurs de Java, C, C++ et C#. Sans
+cela, l'en-tête obligatoire de tout programme Java aurait été une « fuite » dans chacune des 31 leçons.
+Le corpus déjà vert (python, algorithmes) reste vert après ce changement.
+
+**Une chaîne d'écriture nouvelle.** Les corrigés ne sont plus tapés dans une chaîne JavaScript échappée à la
+main — c'est là que les coquilles se glissaient. Chaque corrigé est un vrai fichier `.java`, **compilé et
+exécuté avant d'être intégré** ; un assembleur (`mkblock.py`) produit le bloc `ENTRAINEMENT` avec
+`json.dumps`, donc sans plus aucun échappement manuel. Toutes les valeurs annoncées dans les énoncés et les
+corrigés de ce lot ont été obtenues par exécution réelle, y compris les messages d'erreur du compilateur.
+
+**Contrainte de progression respectée à la lettre.** Aucun exercice n'utilise une notion non encore enseignée.
+Concrètement : pas de variable en leçon 1, pas d'opérateur arithmétique en leçon 2, **pas de `if` en leçon 3**
+(l'arrondi supérieur du conditionnement se fait par `(n + p - 1) / p`, sans test), et pas de `printf` avant la
+leçon 19 — vérifié dans le cours : `printf` n'y apparaît qu'à partir de cette leçon-là. Les promesses faites en
+note de bas d'exercice pointent donc vers la bonne leçon, pas vers la leçon suivante par facilité.
+
+**Les pièges retenus, tous certifiés par exécution.**
+
+- **1.2 — le chemin Windows.** `"C:\tournoi\notes.txt"` écrit sans précaution **compile sans le moindre
+  avertissement** : `\t` et `\n` sont des séquences valides. Le programme affiche un chemin coupé en deux, avec
+  une tabulation et un retour à la ligne au milieu, et le `t` de tournoi comme le `n` de notes ont disparu.
+  Aucun message : seulement un résultat faux. C'est la faute la plus dangereuse du lot.
+- **2.1 — `integer number too large`.** Le compilateur examine la *valeur écrite* avant de regarder la variable
+  de destination : agrandir le type ne suffit pas, il faut le suffixe `L`.
+- **2.2 — les deux refus du compilateur**, relevés mot pour mot : `cannot assign a value to final variable` et
+  `incompatible types: possible lossy conversion from double to int`. Le mot important est *possible* — le
+  compilateur ne dit pas que tu vas perdre quelque chose, il dit qu'il ne peut pas garantir le contraire.
+- **3.1 — `0.7000000000000001`.** 8,40 divisé par 12 ne tombe pas juste en binaire. La règle qui en sort :
+  arrondir pour **afficher**, jamais pour stocker ; et ne jamais comparer deux `double` par un signe égal.
+- **3.2 — `minutes / 60` vaut 0.** Le programme compile, tourne, et annonce 7,75 nœuds au lieu de 6,89. Une
+  erreur qui **reste dans le domaine du vraisemblable** est plus dangereuse qu'une erreur absurde : rien ne
+  déclenche le soupçon.
+- **4.2 — le `nextLine` qui saute.** Certifié dans les deux sens : la version fautive enchaîne sans attendre,
+  la version corrigée lit bien le nom de l'apiculteur.
+- **4.2 — le séparateur décimal.** `nextDouble()` suit la **langue de la machine** : sur le poste belge de
+  l'élève il faut taper `17,5`, sur le serveur de vérification `17.5`, sinon `InputMismatchException`. Le même
+  fichier, deux comportements. C'est pour cela que les exercices de la leçon 4 ne lisent que des entiers et des
+  lignes : mettre un `nextDouble` dans un corrigé vérifié en CI aurait produit un test vrai ici et faux chez
+  elle.
+
+**La mini-série « Le refuge de montagne » (1→4)** fait le trajet complet du mois en quatre jours : texte figé
+(1/4), données extraites en variables (2/4), calculs de nuitées et taux d'occupation (3/4), saisie au clavier
+(4/4). Deux moments valent d'être notés. Au jour 2, la sortie **cesse d'être identique** à celle du jour 1 sans
+qu'on l'ait demandé — l'altitude perd son espace fine (un entier ne contient que des chiffres) et les tarifs
+perdent leurs zéros de fin (un `double` mémorise une valeur, pas une écriture) : la réflexion du jour consiste
+à trouver ces deux différences en comparant ligne à ligne. Au jour 3, la réflexion sur le taux d'occupation
+tombe sur une **coïncidence arithmétique** : comparer 4 personnes à 34 couchages donne le même 11,8 % que 12
+nuitées sur 102, parce que les deux termes ont été multipliés par le même nombre de nuits — et la coïncidence
+s'évanouit dès qu'un membre du groupe ne reste pas toutes les nuits. *Un résultat juste ne prouve pas un
+raisonnement juste.* Au jour 4, la saisie de 6 membres pour 4 personnes produit −126,00 € de nuitées visiteurs
+et un total de 112,20 € : le programme ne proteste pas, parce qu'il n'a pas encore de quoi le faire.
+
+**Cinq fuites d'indice attrapées par le vérificateur**, toutes dans l'indice ⑤ de la leçon 4 : les lignes de
+création du `Scanner` et des trois premières lectures y figuraient à l'identique. Corrigées par masquage du
+nom de variable. Aucune paraphrase — la règle établie sur `cours-algorithmes` (l'indice ③ ne contient aucune
+notation, seulement la démarche en français) tient aussi pour un langage réel.
+
+**Vérifications.** `_verify_entrainement.js` sur le dépôt complet : 56 leçons équipées, 168 exercices, seize
+mini-séries, **12 corrigés Java compilés et exécutés, 60 tests rejoués**, et 63 corrigés Python, 353 tests —
+vert, sans mention de langage non rejoué (les deux outils sont présents sur la machine). Aucun artefact
+d'exécution : les corrigés Java tournent dans un dossier temporaire hors du dépôt. Sommaire de `cours-java` :
+mention « 🏋️ Nouveau » posée, avec l'état honnête du déploiement (leçons 1 à 4) et la mention que les corrigés
+Java sont compilés et exécutés avant publication.
+
+**☐ Reste à faire.** `cours-java` leçons 5 à 31, puis csharp, php (31 leçons chacun), c, cpp-bas, cpp-moderne,
+asm (21 chacun) — soit **531 exercices**. Pour C et C++, la même extension du vérificateur qu'aujourd'hui
+(`gcc`, `g++` sont présents). C# et PHP relèveront de la mention d'honnêteté standard, `dotnet` étant absent ;
+l'assembleur demandera NASM.

@@ -21,9 +21,12 @@
  *   5. Contrat de style— au moins un exercice avec sous-questions, au moins un
  *                        avec question de réflexion, énoncés d'une longueur
  *                        décente (C1, C4, C5 du contrat consigné au CHANGELOG).
- *   6. Tests honnêtes  — champ `tests` présent SI ET SEULEMENT SI le langage est
- *                        réellement exécuté ici ; et pour ceux-là, la solution
+ *   6. Tests honnêtes  — champ `tests` présent SI ET SEULEMENT SI le langage
+ *                        figure dans EXECUTABLES ; et pour ceux-là, la solution
  *                        de référence est EXÉCUTÉE et doit passer ses tests.
+ *                        Si l'outil du langage manque sur cette machine, les
+ *                        corrigés concernés ne sont pas rejoués — et le rapport
+ *                        le dit, plutôt que de laisser croire à un vert complet.
  *   7. Unicité         — numéros et clés localStorage uniques dans tout le site.
  */
 "use strict";
@@ -35,7 +38,18 @@ const { execFileSync } = require("child_process");
 const ROOT = __dirname;
 // Langages réellement exécutables par ce vérificateur. Tout le reste doit se
 // passer de `tests` : un test qui ne tourne jamais est un mensonge affiché.
-const EXECUTABLES = ["python"];
+// Chaque entrée dit avec quelle commande on constate que l'outil est là. Si
+// l'outil manque sur cette machine, on ne fait PAS semblant : les exercices du
+// langage ne sont pas rejoués et le rapport final le dit en toutes lettres.
+const EXECUTABLES = {
+  python: { outil: "python3", sonde: ["python3", ["-c", "pass"]] },
+  java:   { outil: "javac",   sonde: ["java", ["-version"]] },
+};
+function outilPresent(lang) {
+  const s = EXECUTABLES[lang].sonde;
+  try { execFileSync(s[0], s[1], { stdio: "ignore", timeout: 30000 }); return true; }
+  catch (e) { return false; }
+}
 const SEUIL_PARAPHRASE = 0.72;   // recouvrement de vocabulaire toléré entre 2 indices
 const MIN_ENONCE = 120;          // en dessous, c'est un télégramme
 const MIN_LIGNE_FUITE = 26;      // longueur à partir de laquelle une ligne compte
@@ -66,18 +80,48 @@ function recouvrement(a, b) {
   for (const w of A) if (B.has(w)) communs++;
   return communs / Math.min(A.size, B.size);
 }
+/* Retire le commentaire de fin de ligne SANS toucher à ce qui est entre
+   guillemets. La version précédente coupait bêtement au premier « # », ce qui
+   mutilait toute ligne affichant un dièse. Et elle ignorait « // », de sorte
+   qu'en Java chaque phrase de commentaire comptait comme du code : un indice
+   qui explique la même idée avec les mêmes mots était alors dénoncé comme une
+   fuite, alors qu'un commentaire n'est justement PAS la réponse. */
+function sansCommentaire(l) {
+  let out = "", q = null;
+  for (let i = 0; i < l.length; i++) {
+    const c = l[i];
+    if (q) {
+      out += c;
+      if (c === "\\") { if (i + 1 < l.length) { out += l[i + 1]; i++; } continue; }
+      if (c === q) q = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { q = c; out += c; continue; }
+    if (c === "#") break;
+    if (c === "/" && l[i + 1] === "/") break;
+    out += c;
+  }
+  return out;
+}
 /* Lignes de CODE d'une solution : commentaires et lignes vides écartés, car un
    commentaire repris dans un indice ne révèle pas la réponse. */
 function lignesCode(solution) {
   const vues = new Set();
   return String(solution).split("\n")
-    .map(l => l.replace(/#.*$/, "").trim())
+    .map(l => sansCommentaire(l).trim())
+    // Commentaires de bloc occupant leur propre ligne (/* … */, * … de Javadoc,
+    // et les /* … */ du pseudocode) : même raisonnement que ci-dessus.
+    .filter(l => !/^(\/\*|\*\/|\*\s)/.test(l))
     // Les lignes de DÉCLARATION sont exclues : une signature n'est pas la
     // réponse, c'est l'interface — et l'énoncé la donne déjà lui-même quand il
     // écrit « écris allure(distance, duree) ». Les signaler comme fuite pousse
     // à écrire des indices volontairement flous, ce qui dessert l'élève sans
     // rien protéger. Ce qui doit rester caché, c'est la LOGIQUE du corps.
+    // Java, C, C++, C# déclarent avec des modificateurs plutôt qu'avec `def` :
+    // la même exclusion doit les couvrir, sans quoi l'en-tête obligatoire de
+    // tout programme Java serait une « fuite » dans chaque leçon.
     .filter(l => !/^(def |class )/.test(l))
+    .filter(l => !/^(public|private|protected|static|final|abstract|synchronized|class|interface|enum|record|@\w+)\b/.test(l))
     .filter(l => {
       // Dédoublonnage : une ligne répétée dans la solution ne doit pas produire
       // deux fois le même reproche.
@@ -139,17 +183,66 @@ for x in lot:
 print(json.dumps(echecs))
 `;
 
-function executerLot(lot) {
+/* Java : rien ne s'exécute dans le navigateur, mais la CI, elle, compile et
+   lance réellement chaque corrigé (`java Fichier.java`, compilation en mémoire,
+   aucun .class écrit). Le contrat est le même que pour Python : la sortie
+   standard du programme est exposée aux tests sous le nom __output__, les
+   assertions restent écrites en Python pour que les deux langages se vérifient
+   de la même façon. Tout se passe dans un dossier temporaire : un corrigé qui
+   écrirait un fichier ne salit pas le dépôt. */
+const RUNNER_JAVA = `
+import json, sys, os, subprocess, tempfile, concurrent.futures
+lot = json.load(open(sys.argv[1], encoding="utf-8"))
+
+def joue(x):
+    d = tempfile.mkdtemp(prefix="entr-java-")
+    src = os.path.join(d, "Prog.java")
+    open(src, "w", encoding="utf-8").write(x["solution"])
+    entree = "".join(l + "\\n" for l in (x.get("stdin") or []))
+    try:
+        # -D...encoding=UTF-8 : sans cela, la sortie depend de la locale de la
+        # machine et les accents deviennent des « ? ». Un test qui passe chez
+        # l'un et echoue chez l'autre ne prouve rien : on fixe l'encodage.
+        r = subprocess.run(["java", "-Dfile.encoding=UTF-8",
+                            "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", src],
+                           input=entree, capture_output=True,
+                           text=True, encoding="utf-8", timeout=90, cwd=d)
+    except subprocess.TimeoutExpired:
+        return [[x["ref"], "la solution de reference ne termine pas (90 s)"]]
+    if r.returncode != 0:
+        lignes = [l for l in (r.stderr or "").strip().splitlines() if l.strip()]
+        detail = lignes[0] if lignes else ("code de retour %d" % r.returncode)
+        return [[x["ref"], "la solution de reference ne compile pas ou plante : " + detail]]
+    ns = {"__output__": r.stdout}
+    mauvais = []
+    for t in x["tests"]:
+        try:
+            exec(t["code"], ns)
+        except Exception as e:
+            mauvais.append([x["ref"], "test refuse par la solution de reference : %s (%s)"
+                                      % (t["label"], type(e).__name__)])
+    return mauvais
+
+echecs = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+    for bloc in ex.map(joue, lot):
+        echecs.extend(bloc)
+print(json.dumps(echecs))
+`;
+
+const RUNNERS = { python: RUNNER, java: RUNNER_JAVA };
+
+function executerLot(lang, lot) {
   if (!lot.length) return [];
-  const f = path.join(require("os").tmpdir(), "entr-" + process.pid + ".json");
-  const r = path.join(require("os").tmpdir(), "entr-runner-" + process.pid + ".py");
+  const f = path.join(require("os").tmpdir(), "entr-" + lang + "-" + process.pid + ".json");
+  const r = path.join(require("os").tmpdir(), "entr-runner-" + lang + "-" + process.pid + ".py");
   fs.writeFileSync(f, JSON.stringify(lot), "utf8");
-  fs.writeFileSync(r, RUNNER, "utf8");
+  fs.writeFileSync(r, RUNNERS[lang], "utf8");
   try {
     const out = execFileSync("python3", [r, f], { encoding: "utf8", timeout: 120000 });
     return JSON.parse(out);
   } catch (e) {
-    ko("Exécution des solutions impossible : " + (e.message || e));
+    ko("Exécution des solutions (" + lang + ") impossible : " + (e.message || e));
     return [];
   } finally {
     try { fs.unlinkSync(f); fs.unlinkSync(r); } catch (e) {}
@@ -161,7 +254,7 @@ const numsVus = new Map();
 const domainesRecents = [];   // { domaine, jour, cours } — pour la règle des 4 leçons
 const series = new Map();     // cours/nom -> occurrences, pour vérifier la continuité
 const clesVues = new Set();
-const aExecuter = [];
+const aExecuter = new Map();   // langage -> exercices à rejouer
 let leconsVues = 0, exercicesVus = 0;
 
 function verifierLecon(fichier, E) {
@@ -170,7 +263,7 @@ function verifierLecon(fichier, E) {
 
   if (!E.cours || E.jour === undefined) ko(L + " : `cours` ou `jour` manquant");
   const lang = E.lang || "python";
-  const executable = EXECUTABLES.indexOf(lang) !== -1;
+  const executable = Object.prototype.hasOwnProperty.call(EXECUTABLES, lang);
 
   if (!Array.isArray(E.items) || E.items.length !== 3) {
     ko(L + " : " + ((E.items || []).length) + " exercice(s) au lieu de 3");
@@ -315,7 +408,8 @@ function verifierLecon(fichier, E) {
          "est présent — un test qui ne tourne jamais est un mensonge affiché");
     }
     if (executable && aDesTests) {
-      aExecuter.push({ ref: id, solution: x.solution, tests: x.tests, stdin: x.stdin || [] });
+      if (!aExecuter.has(lang)) aExecuter.set(lang, []);
+      aExecuter.get(lang).push({ ref: id, solution: x.solution, tests: x.tests, stdin: x.stdin || [] });
     }
   });
 
@@ -347,12 +441,19 @@ for (const dossier of fs.readdirSync(ROOT)) {
   }
 }
 
-/* Exécution réelle des solutions, en un seul appel Python. */
-if (aExecuter.length) {
-  const echecs = executerLot(aExecuter);
+/* Exécution réelle des solutions, un appel par langage. */
+const nonRejoues = [];
+for (const [lang, lot] of aExecuter) {
+  const nTests = lot.reduce((n, x) => n + x.tests.length, 0);
+  if (!outilPresent(lang)) {
+    nonRejoues.push(lang + " (" + EXECUTABLES[lang].outil + " absent de cette machine) : " +
+      lot.length + " corrigé(s), " + nTests + " test(s)");
+    continue;
+  }
+  const echecs = executerLot(lang, lot);
   echecs.forEach(([ref, msg]) => ko(ref + " : " + msg));
-  notes.push(aExecuter.length + " solution(s) de référence exécutées, " +
-    aExecuter.reduce((n, x) => n + x.tests.length, 0) + " test(s) rejoués");
+  notes.push(lang + " : " + lot.length + " solution(s) de référence exécutées, " +
+    nTests + " test(s) rejoués");
 }
 
 // Continuité des mini-séries : les jours doivent se suivre sans trou ni doublon.
@@ -387,6 +488,12 @@ console.log("");
 if (!problemes.length) {
   console.log("✅ Entraînements conformes : structure, indices gradués, aucune fuite de solution, " +
               "tests honnêtes et rejoués.");
+  if (nonRejoues.length) {
+    console.log("");
+    console.log("⚠  Le vert ci-dessus NE COUVRE PAS les corrigés suivants, faute d'outil ici :");
+    for (const n of nonRejoues) console.log("   - " + n);
+    console.log("   Installe l'outil manquant puis relance pour obtenir un vert complet.");
+  }
   process.exit(0);
 }
 console.log("❌ " + problemes.length + " problème(s) :");
