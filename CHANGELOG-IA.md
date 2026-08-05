@@ -1857,3 +1857,65 @@ aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire 
 retour, décomposition, dichotomie, tri à bulles, tris par sélection et insertion, récursivité en deux jours,
 complexité, piles et files, résolution de A à Z, examen. Les jours 26 et 27 reprendront les exercices du
 chapitre 5 du PDF de l'école avec la démarche en trois étapes du contrat C7.
+
+### `cours-algorithmes` jours 20 à 23 — la mini-série « La billetterie du théâtre »
+**132 exercices** au total (63 python + 69 algorithmes), 660 indices. `cours-algorithmes` : **23 jours sur 31**.
+
+Quatre jours qui construisent la même application dans un ordre que le dernier corrigé critique lui-même :
+affichage par procédures (20), calcul par fonctions (21), décomposition depuis l'énoncé (22), optimisation par
+dichotomie (23). La réflexion du jour 23 demande lequel de ces quatre jours aurait dû venir en premier, et la
+réponse est **le troisième** : j'ai écrit des sous-programmes parce que l'énoncé les demandait, alors que sur un
+vrai projet personne ne fournit cette liste — on part de la phrase du commanditaire, et coder avant de l'avoir
+découpée produit des sous-programmes qui correspondent aux idées qu'on a eues plutôt qu'aux besoins qu'il y a.
+Le jour 4, en revanche, est bien à sa place : on n'optimise que ce qui existe et qu'on a mesuré.
+
+**Le fil de ces quatre jours est la frontière entre calculer et dialoguer.**
+- **Le sous-programme qui affiche est inutilisable ailleurs** (20.1) : un calculateur d'unités d'alcool qui
+  écrirait son résultat ne rendrait rien à additionner. La question qui tranche : *ai-je besoin du résultat
+  pour continuer un calcul ?*
+- **La fonction constate, l'appelant décide** (20.2). Un vérificateur de plafond qui afficherait l'alerte
+  lui-même interdirait de *compter* les dépassements et de *changer* la réaction — bloquer, prévenir le
+  médecin, journaliser. La même répartition des rôles que celle des exceptions, formulée ici sans exceptions.
+- **Une procédure ne peut rien rendre** (22.2). Le traitement d'un ticket de caisse doit donc être une
+  fonction ; l'alternative — une variable globale modifiée dans le dos de l'appelant — obligerait à ouvrir le
+  sous-programme pour comprendre d'où vient le chiffre d'affaires, et rendrait le ticket intestable seul.
+- **Une fonction dont le résultat ne dépend que de ses arguments est testable** (21.3). Le prix d'un billet se
+  vérifie à la main sans guichet, sans spectacle et sans boucle ; c'est la raison de fond de la séparation.
+
+**Deux bornes mal placées, deux règles générales.**
+- **Le limiteur qui ne limite rien** (21.2). Régler puis limiter, ou limiter puis régler : partant de −6 dB
+  avec un gain de 12 et un plafond de 0, la première donne 0, la seconde 6 — six décibels au-dessus du plafond
+  de sécurité. Le limiteur doit être le dernier maillon, comme les vrais limiteurs de studio.
+- **Le plancher tarifaire déplacé** (21.3). Sur un tarif à 7 € avec 30 % puis 10 % de réduction, appliquer le
+  plancher de 5 € entre les deux remises donne un prix final de **4,50 €** — sous le plancher qu'on prétendait
+  garantir. Une *borne* et une *transformation* ne commutent pas.
+
+**Le décalage de tableau à l'envers, déroulé sur trois cases** (23.3). Décaler 10 · 20 · 30 vers la droite en
+partant du début donne 10 · 10 · 10 · 10 : chaque case écrase sa voisine avant de l'avoir déplacée, la première
+valeur se propage, les autres disparaissent — et rien n'est signalé. C'est l'échange à deux affectations du
+jour 14, propagé le long d'un tableau.
+
+**Le calcul qui fait toute la leçon du jour 23.** Doubler le catalogue *double* le travail de la recherche
+séquentielle et ajoute *une seule* comparaison à la dichotomique. Sur 1 024 étoiles : 1 024 comparaisons contre
+11. Sur un million : un million contre 20. Le seuil de rentabilité du tri est calculé et non estimé — sur mille
+objets, avec un tri à dix mille comparaisons et un gain de 490 par recherche, il faut **21 recherches** pour
+amortir. Et le corrigé nomme les trois cas où la séquentielle reste le seul choix même en payant le tri : ordre
+sans rapport avec le critère cherché, données non comparables, accès non direct.
+
+**Sept fuites d'indice attrapées** sur ce lot, toutes dans les indices ③ ou ⑤ : deux en-têtes de fonction, la
+condition de boucle dichotomique, la boucle de décalage à pas négatif. Aucune paraphrase — le procédé adopté
+après les deux refus du lot 8-15 tient : l'indice ③ décrit la démarche en français, l'indice ⑤ ne montre que la
+forme du fichier, et les deux ne peuvent plus se recouvrir.
+
+**Le CHANGELOG est désormais édité directement sur le poste** et non par aller-retour de fichier : le cache du
+conteneur servait une version périmée du document à taille et date correctes, ce qui avait déjà coûté 81 lignes
+au lot précédent. La leçon générale reste valable au-delà de cet outil : *taille et date ne prouvent pas la
+fraîcheur d'un contenu.*
+
+**Vérifications.** `_verify_entrainement.js` : 44 leçons équipées, 132 exercices, douze mini-séries closes,
+aucune fuite, aucune paraphrase — vert. Aucun artefact d'exécution. Sommaire : jours 1 à 23.
+
+**☐ Reste à faire.** `cours-algorithmes` jours 24 à 31 — 24 exercices : tri à bulles, tris par sélection et
+insertion, récursivité en deux jours, complexité, piles et files, résolution de A à Z, examen. Les jours 26 et
+27 reprendront les exercices du chapitre 5 du PDF de l'école — factorielle, carré par la méthode des impairs,
+puissance, tours de Hanoï, PGCD avec sa relation de récurrence — avec la démarche en trois étapes du contrat C7.
