@@ -2311,3 +2311,65 @@ copiée, mais ce qui est copié est la *référence*. Ce n'est pas une exception
 
 **Vérifications.** `_verify_entrainement.js` : 62 leçons équipées, 186 exercices, 30 corrigés Java compilés et
 exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 10 ».
+
+---
+
+## Entraînement du jour — cours-java, leçons 11 et 12 (6 exercices)
+
+**La mini-série « La grainothèque » se clôt (9→12)** sur exactement la trajectoire annoncée : valider un code
+(String), tenir un catalogue de taille inconnue (ArrayList), le trier et le fouiller (algorithmes), puis
+remplacer les listes parallèles par une classe. Le dernier jour supprime un défaut qui traînait depuis la
+leçon 7.
+
+**Ce que la leçon 11 mesure au lieu de l'affirmer.** Les trois exercices comptent leurs comparaisons dans le
+programme lui-même — « c'est ainsi qu'on mesure un algorithme sans se fier à sa vitesse d'exécution, laquelle
+dépend de la machine, de sa charge et de mille choses qui n'ont rien à voir avec l'algorithme ». Sur le
+catalogue de douze sachets, chiffres certifiés par exécution : séquentielle avant tri, 8 comparaisons ;
+séquentielle après tri, 12 ; dichotomie, **4**.
+
+**Le piège central du jour 11, certifié dans les trois cas.** Dichotomie appliquée à un tableau NON trié :
+chercher 38 rend −1, chercher 45 rend −1 — deux valeurs pourtant présentes — et chercher 52 rend 0, la bonne
+position, **par pure coïncidence**. C'est ce troisième cas que la réflexion désigne comme le dangereux : les
+deux échecs se remarquent, la réussite accidentelle non. *Un algorithme employé hors de ses conditions ne
+signale pas son abus, il rend une réponse arbitraire.*
+
+**La réflexion du 11.3 refuse la conclusion facile.** La dichotomie coûte trois fois moins que la séquentielle
+— mais le tri préalable coûte 66 comparaisons, soit plus que les deux recherches réunies. Sur une seule
+recherche, c'est une mauvaise affaire, et le corrigé le calcule au lieu de l'esquiver : il faut six ou sept
+recherches pour rentabiliser ce tri. La vraie réponse n'est pas « trier plus vite » mais « garder le catalogue
+toujours trié », ce qui déplace le problème vers les structures ordonnées (leçon 18).
+
+**La leçon 12 fait tenir ensemble deux affirmations qui se contredisent en apparence.** La leçon 8 avait
+certifié qu'une méthode ne peut pas modifier le montant qu'on lui passe ; le 12.2 certifie qu'une méthode
+modifie bel et bien la pièce qu'on lui passe. La réflexion lève la contradiction : Java copie toujours la
+valeur de l'argument, mais la valeur d'une variable d'objet est la *référence*, et une copie d'adresse mène au
+même endroit. La formule retenue : **une méthode peut changer l'objet, jamais la variable.** Certifié aussi :
+deux variables désignant le même objet (`==` rend `true`, la cuisson par l'un se voit par l'autre), et le
+message moderne de la `NullPointerException`, qui nomme le champ demandé.
+
+**La réflexion du 12.3 s'oblige à donner raison à l'adversaire.** Trois erreurs que les listes parallèles
+rendaient possibles et que la liste d'objets rend impossibles à écrire (trier l'une sans l'autre, retirer d'un
+seul côté, décaler d'un cran) — puis, honnêtement, ce que les listes parallèles font mieux : pas d'en-tête
+d'objet, et un net avantage de vitesse sur de très gros volumes traités colonne par colonne. « C'est un vrai
+argument, employé dans le calcul scientifique ; il ne concerne simplement pas une grainothèque de quartier. »
+
+**Deux constructions retirées après vérification dans le cours.** `Math.PI` n'apparaît **nulle part** dans
+`cours-java` : le volume du potier se calcule avec une constante nommée déclarée dans la classe.
+`Integer.parseInt` n'arrive qu'à la leçon 16 : l'année du sachet est donc fournie à part plutôt qu'extraite du
+code, et le corrigé le dit en commentaire avec le renvoi à la bonne leçon. Le contrôle `grep` avant écriture
+est maintenant systématique — il a déjà rattrapé `printf`, `charAt`, le `switch` sur String, `Math.PI` et
+`parseInt`.
+
+**Un détail technique du lanceur mono-fichier**, découvert en exécutant : `java Fichier.java` cherche le point
+d'entrée dans la **première** classe déclarée du fichier. Les corrigés à deux classes placent donc la classe
+porteuse du programme principal en tête, et l'indice ④ du 12.1 prévient l'élève de ce piège plutôt que de le
+laisser buter dessus.
+
+**Trois fuites d'indice attrapées** sur les six exercices — le meilleur ratio des lots Java, l'écriture
+masquant désormais les identifiants dès le premier jet.
+
+**Vérifications.** `_verify_entrainement.js` : 64 leçons équipées, 192 exercices, dix-neuf mini-séries, 36
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 12 ».
+
+**☐ Reste à faire.** `cours-java` leçons 13 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
+**513 exercices**.
