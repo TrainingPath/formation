@@ -2840,3 +2840,21 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **État du cours.** cours-java : 25 leçons sur 31 équipées, 75 exercices. Série « La bourse aux vélos » : 1/4.
 
 **Plan de la série.** Jour 1 (leçon 25) : mettre de l'ordre dans le hangar. Jour 2 (leçon 26, expressions régulières) : vérifier les codes d'inscription et les courriels reçus. Jour 3 (leçon 27, immuabilité et `StringBuilder`) : composer l'affiche de la bourse. Jour 4 (leçon 28, tests unitaires) : le banc d'essai — c'est là que la graine fixe de 25.2 trouvera son emploi.
+
+---
+
+## cours-java — leçon 26 : les expressions régulières (lot du 6 août 2026)
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés.
+
+- **26.1 « Le contrôle technique »** (niveau 1, domaine *contrôle technique*) — trois motifs nommés (plaque belge `[0-9]-[A-Z]{3}-[0-9]{3}`, date, châssis 17 caractères), les quantificateurs illustrés sur des cas minuscules, puis le passage de la **validation** à la **recherche** avec `Pattern`/`Matcher`. Deux constats certifiés servent de leçon : `99/99/9999` est **accepté** (la forme n'est pas le sens — la remarque de fin en fait une règle) et l'extraction des nombres de la phrase rend `14 30 2 1 123 87500`, la plaque ayant été **coupée en deux** par un motif qui ne sait rien des plaques. Le point dur de l'indice ④ est l'antislash doublé.
+- **26.2 « Le relevé de la station-service »** (niveau 2, domaine *station-service*, sous-questions a/b/c/d) — un motif de ligne complète, une normalisation des virgules décimales **avant** le contrôle (une saisie belge parfaitement lisible serait sinon rejetée), trois passes strictement séparées — trier, transformer, calculer — et l'affichage de la ligne **brute** en cas de refus, pour que le gérant reconnaisse ce qu'il a tapé. Le total est calculé sur les valeurs exactes et arrondi seulement à l'affichage ; la remarque explique pourquoi additionner des arrondis est la signature d'un logiciel de comptabilité mal écrit. Valeurs certifiées : 4 retenues sur 6, `Total : 143.46 L pour 250.27 €`, passage le plus cher le 2026-08-02.
+- **26.3 « La bourse aux vélos — 2/4 »** (niveau 3, application filée) — la fiche `Velo` et les **quatre juges nommés** du jour 1 sont repris **sans une retouche** ; l'information nouvelle (l'adresse de courriel) voyage dans un `record Inscription` qui **enveloppe** le vélo au lieu d'ajouter un champ — la question de réflexion demande de défendre ce choix. Le cœur pédagogique est un diagnostic **champ par champ** qui rend la raison du refus au lieu d'un oui/non : `code d'inscription mal formé`, `état inconnu`, `adresse de courriel invalide`, `il manque des champs (6 au lieu de 7)`. L'indice ④ insiste sur l'ordre des contrôles — le comptage des champs d'abord, sans quoi la demande incomplète provoque un débordement de tableau au lieu d'un message. Le « pourquoi » conclut honnêtement : aucun motif ne décrit exactement les adresses valides, seul l'envoi d'un message le fait.
+
+**Constructions volontairement évitées** (vérifié par relecture du HTML du cours avant écriture) : `StringBuilder` (leçon 27 — l'accumulation des résultats de recherche passe donc par une concaténation, ce que la note de 26.3 annonce comme le sujet de demain), `Comparator.comparingDouble` et `Etat.valueOf` (non enseignés — remplacés par `Comparator.comparing` et une petite fonction de conversion à trois comparaisons), et `Matcher.group(int)`, la théorie ne montrant que `group()`.
+
+**Anti-fuite.** 5 violations dans les indices ⑤, toutes corrigées par masquage.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 66 leçons équipées, 198 exercices, 0 problème.
+
+**État du cours.** cours-java : 26 leçons sur 31 équipées, 78 exercices. Série « La bourse aux vélos » : 2/4.
