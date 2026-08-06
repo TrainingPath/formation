@@ -3154,3 +3154,89 @@ ne tourneraient jamais.
 (31 leçons, pas d'interpréteur → règle d'honnêteté), cours-c, cours-cpp-bas,
 cours-cpp-moderne (gcc et g++ présents → le registre `EXECUTABLES` peut être
 étendu comme pour Java) et cours-asm (NASM absent).
+
+## Entraînement du jour — cours-csharp, lot 5 (leçons 17 à 20)
+
+**Contenu.** 12 exercices, 60 indices, 12 corrigés C#. Leçon 17 *Lire et écrire
+des fichiers* — le relevé du compteur d'eau, le registre des dons du sang ;
+leçon 18 *Dictionary et découverte de LINQ* — le comptoir de la friterie, les
+votes du conseil communal ; leçon 19 *enum, DateTime et Random* — le calendrier
+du potager, la tombola de l'école ; leçon 20 *Les génériques* — le casier
+consigné de la piscine, l'inventaire du magasin de location. Mini-série
+**« Le repair café »**, 1/4 → 4/4, sur les quatre leçons.
+
+**Le fil du lot : une même séance, quatre fois relue.** Les 465 minutes de la
+séance du repair café sont identiques du lundi au vendredi, et c'est délibéré :
+elles servent de témoin. Lundi, elles survivent à la fermeture du programme, mais
+connaître le temps de trois bénévoles coûte quatre traversées de l'atelier —
+l'exercice impose d'écrire cette lourdeur au lieu de l'éviter. Mardi, une seule
+traversée remplit quatre ventilations. Mercredi, l'état cesse d'être un mot et la
+date cesse d'être un texte. Vendredi, la classe de registre est écrite une fois et
+sert deux fois, sur des réparations puis sur des bénévoles. Aucune étape ne change
+un chiffre : c'est ce qui prouve qu'aucune n'a rien cassé.
+
+**Le problème du hasard, traité de front.** La leçon 19 introduit `Random`, donc
+une sortie non reproductible — et aucun compilateur C# ici pour l'observer. Plutôt
+que de tricher avec un germe fixe et d'annoncer des valeurs que je ne peux pas
+vérifier, les trois corrigés séparent explicitement ce qui se calcule de ce qui se
+tire. 19.2 pousse le principe jusqu'au bout : la tombola affiche six garanties qui
+restent vraies quel que soit le tirage, et la réponse (d) demande à l'élève
+laquelle de ces six ne vérifie en réalité rien — le nombre de lots attribués, qui
+vaudrait quatre même si chaque tirage rendait le même indice. Les checklists ne
+portent que sur des valeurs déterministes ; les lignes aléatoires sont annoncées
+comme invérifiables dans les remarques.
+
+**Décisions pédagogiques.**
+- 17.3 impose la version lente (liste de noms distincts, puis un parcours complet
+  par nom). L'indice ④ le dit franchement : « la lourdeur de ce passage est
+  voulue ». Sans elle, la leçon 18 n'aurait rien à résoudre.
+- 18.2 mesure le coût réel de LINQ au lieu de le vanter : la ventilation écrite en
+  une expression par croisement traverse l'urne 135 fois là où la version en
+  boucles la traverse 45 fois. La remarque le dit : « la forme déclarative ne rend
+  pas le programme plus rapide ; elle rend l'intention plus lisible, ce qui n'est
+  pas la même promesse ».
+- 19.3 affiche **deux fois** le tableau des séances : une fois avec le texte de la
+  date pour clé — le 4 avril passe alors avant le 7 février — et une fois avec la
+  date elle-même. Le défaut est montré avant d'être corrigé.
+- 20.3 garde un contrat volontairement pauvre (deux méthodes : une clé, une
+  ligne). La réflexion demande ce qui serait arrivé en y mettant aussi la durée,
+  l'état ou la date — trois choses qu'une réparation possède et qu'un bénévole
+  n'a pas.
+- Tous les fichiers de clôture sont **distincts** des fichiers source, et la
+  réponse (b) de 17.2 explique pourquoi : réécrire la source rendrait le programme
+  non rejouable, et trois lancements suffiraient à tripler les données sans qu'un
+  seul message ne s'affiche.
+
+**Pièges certifiés (valeurs recalculées en Python).**
+17.1 : 57 m³, moyenne 11, facture 196,65 € — et deux mois à 9 m³, ce qui fait du
+« mois le plus faible » un piège à comparaison stricte. 17.2 : 7 lignes lues, 4
+retenues, 1 illisible, 2 invalides, 2 350 mL et 470 mL de moyenne. 17.3/18.3/19.3/
+20.3 : 465 minutes, moyenne 51,67, Ilse 80, Bruno 190, Nadia 195. 18.1 : 34,90 €,
+moyenne 6,98 € par ligne. 18.2 : 7 pour, 5 contre, 3 abstentions, 80 % de
+participation, 45 bulletins examinés. 19.1 : récolte des radis le 07/04/2026 soit
+−8 jours, ail le 16/09/2026 dans 154 jours, étalement 76 jours. 19.2 : recette
+100,00 €, lots 77,00 €, bénéfice 23,00 €, 22 jours pour réclamer. 19.3 : 4
+réparées / 2 irréparables / 2 en cours / 1 reçue, taux 66 %, une seule fiche en
+retard (R-04, 14 jours). 20.2 : 1 100,00 € de caution, moyenne 157,14 €, 30
+sorties, tranches 2-3-2.
+
+**Vocabulaire vérifié avant écriture.** `StartsWith` est bien enseigné (leçon 9),
+`PadLeft` non — écarté. `Distinct()` et le constructeur de copie de `List<T>` ne
+figurent pas dans les leçons : remplacés par un `Contains` et un `foreach`
+explicites, ce qui a l'avantage de rappeler l'alias de la leçon 12 (le chapeau de
+la tombola contient les mêmes objets que la souche, et c'est ce qui permet de
+vérifier le tirage depuis la souche). `Environment.NewLine` remplacé par `"\n"`,
+la théorie de la leçon 17 n'utilisant que celui-là.
+
+**Anti-fuite.** 47 violations de l'indice ⑤ prises pendant l'écriture, toutes
+masquées par `…`. `checkindice5.py` les a toutes vues avant le vérificateur.
+
+**Vérification.** `node _verify_entrainement.js` sur les fichiers réellement
+injectés : **91 leçons équipées, 273 exercices, 0 problème**. Aucun champ `tests`
+sur les 12 items — C# n'est toujours pas exécuté ici, et le site continue de le
+dire.
+
+**Reste à faire.** cours-csharp : lots 21-24, 25-28, 29-31. Puis cours-php
+(31 leçons, pas d'interpréteur → règle d'honnêteté), cours-c, cours-cpp-bas,
+cours-cpp-moderne (gcc et g++ présents → le registre `EXECUTABLES` peut être
+étendu comme pour Java) et cours-asm (NASM absent).
