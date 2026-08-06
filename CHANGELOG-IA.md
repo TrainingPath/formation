@@ -2487,3 +2487,57 @@ corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : ment
 
 **☐ Reste à faire.** `cours-java` leçons 17 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
 **498 exercices**.
+
+---
+
+## Entraînement du jour — cours-java, leçon 17 (3 exercices)
+
+**Le vérificateur a dû apprendre à regarder les fichiers, pas seulement la sortie.** Un exercice sur les
+fichiers dont on ne vérifierait que l'affichage ne vérifierait rien de ce qui compte : un corrigé pourrait
+imprimer le bon bilan sans avoir jamais rien écrit sur le disque. Or les assertions Python tournaient jusqu'ici
+dans le dossier du vérificateur, pas dans celui du programme — `open('brocante.csv')` échouait.
+
+**La correction, dans `RUNNER_JAVA`, sépare l'exécution du contrôle en deux phases.** Les programmes tournent
+toujours en parallèle, chacun dans son dossier temporaire — c'est le temps long. Les assertions, elles, se
+jouent ensuite **une par une**, chacune depuis le dossier de son exercice. La sérialisation est nécessaire :
+le dossier courant est global au processus, on ne peut pas en changer depuis huit fils simultanés. Le coût est
+nul (les assertions sont instantanées) et le gain est décisif — un test a désormais le droit d'ouvrir le
+fichier que le corrigé vient d'écrire. Le namespace expose aussi `__dossier__` pour les cas où un chemin
+absolu serait préférable. Vérifié sur la machine : **aucun artefact d'exécution** dans le dépôt, ni `.csv` ni
+`.class` — tout reste dans le temporaire.
+
+**Les trois exercices.**
+
+- **17.1 — le carnet de la brocante** impose de recalculer les quatre totaux **en relisant le fichier**, pas
+  en réutilisant le tableau de départ. Ce n'est pas une contrainte gratuite : c'est ce qui prouve que
+  l'écriture a fonctionné. La remarque le dit : au troisième lancement, le tableau et le fichier n'auront plus
+  le même contenu, et seul le fichier dira la vérité. Le corrigé fait apparaître 285 € de valeur affichée
+  contre 205 € de recette réelle — deux chiffres justes qui racontent deux choses différentes, et la règle du
+  mois d'algorithmique revient : *ne jamais afficher un indicateur sans celui qui pourrait le contredire.*
+- **17.2 — le journal de la station de ski** emboîte trois niveaux de contrôle : le fichier s'ouvre-t-il, la
+  ligne a-t-elle la bonne forme, le champ a-t-il le bon contenu. Deux zones surveillées de portées
+  différentes — l'une autour du fichier, l'autre autour de la seule conversion, **à l'intérieur** de la
+  boucle. Les placer au même niveau ferait qu'une ligne fautive condamnerait tout le fichier, la faute
+  exactement analysée à la leçon 16.
+- **La réflexion du 17.2 porte sur le mode d'ouverture**, et c'est la plus insidieuse du lot. Le mode qui
+  écrase au lieu d'ajouter ne produit **rien d'anormal au premier lancement** (le fichier n'existe pas encore)
+  ni au deuxième (le programme y remet les mêmes données). L'exploitant ne verra rien. Il s'en apercevra le
+  jour où les données différeront d'une exécution à l'autre — et la donnée détruite ne se reconstitue pas.
+  *Invisible tant qu'on teste avec les mêmes données.*
+- **La note de fin du 17.2** signale un trou que même le compteur de lignes illisibles ne voit pas : un
+  passage sur une remontée absente du tableau de noms n'est compté nulle part **et** n'est pas signalé comme
+  illisible. Il disparaît. On ne le trouve qu'en vérifiant que la somme des compteurs égale le total.
+
+**La mini-série « Le club de course à pied » (17→20)** s'ouvre sur un journal en mode ajout et un bilan.
+L'allure — minutes par kilomètre — est une échelle inversée de plus : la meilleure allure se cherche comme un
+**minimum**, alors que l'intuition pousse au maximum. La réflexion refuse ensuite de valider son propre
+indicateur : comparer les 4,76 min/km de Rachid sur 8,2 km aux 5,47 de Salomé sur 15 km revient à demander qui
+court le plus vite en autorisant l'un à courir deux fois moins longtemps. Ce que la mesure dit réellement,
+c'est « la sortie la plus rapide du journal » — légitime, à condition de l'annoncer ainsi. Comparer deux
+coureurs demanderait de regrouper les sorties par coureur, ce que le programme ne sait pas faire : c'est le
+sujet de la leçon 18.
+
+**Six fuites d'indice attrapées.** Aucune paraphrase.
+
+**Vérifications.** `_verify_entrainement.js` : 69 leçons équipées, 207 exercices, vingt-deux mini-séries, 51
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 17 ».

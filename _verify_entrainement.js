@@ -195,6 +195,7 @@ import json, sys, os, subprocess, tempfile, concurrent.futures
 lot = json.load(open(sys.argv[1], encoding="utf-8"))
 
 def joue(x):
+    """Compile et execute UN corrige. Rendu : (ref, dossier, sortie, echec)."""
     d = tempfile.mkdtemp(prefix="entr-java-")
     src = os.path.join(d, "Prog.java")
     open(src, "w", encoding="utf-8").write(x["solution"])
@@ -208,25 +209,40 @@ def joue(x):
                            input=entree, capture_output=True,
                            text=True, encoding="utf-8", timeout=90, cwd=d)
     except subprocess.TimeoutExpired:
-        return [[x["ref"], "la solution de reference ne termine pas (90 s)"]]
+        return (x, d, None, "la solution de reference ne termine pas (90 s)")
     if r.returncode != 0:
         lignes = [l for l in (r.stderr or "").strip().splitlines() if l.strip()]
         detail = lignes[0] if lignes else ("code de retour %d" % r.returncode)
-        return [[x["ref"], "la solution de reference ne compile pas ou plante : " + detail]]
-    ns = {"__output__": r.stdout}
-    mauvais = []
-    for t in x["tests"]:
-        try:
-            exec(t["code"], ns)
-        except Exception as e:
-            mauvais.append([x["ref"], "test refuse par la solution de reference : %s (%s)"
-                                      % (t["label"], type(e).__name__)])
-    return mauvais
+        return (x, d, None, "la solution de reference ne compile pas ou plante : " + detail)
+    return (x, d, r.stdout, None)
+
+# Deux phases. Les PROGRAMMES tournent en parallele - c'est le temps long.
+# Les ASSERTIONS, elles, se jouent ensuite une par une, chacune depuis le
+# dossier temporaire de son exercice : un test a donc le droit d'ouvrir un
+# fichier que le corrige vient d'ecrire (lecon 17 et suivantes). Le faire en
+# parallele serait impossible, le dossier courant etant global au processus.
+resultats = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+    for res in ex.map(joue, lot):
+        resultats.append(res)
 
 echecs = []
-with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
-    for bloc in ex.map(joue, lot):
-        echecs.extend(bloc)
+depart = os.getcwd()
+for x, d, sortie, echec in resultats:
+    if echec is not None:
+        echecs.append([x["ref"], echec])
+        continue
+    ns = {"__output__": sortie, "__dossier__": d}
+    os.chdir(d)
+    try:
+        for t in x["tests"]:
+            try:
+                exec(t["code"], ns)
+            except Exception as e:
+                echecs.append([x["ref"], "test refuse par la solution de reference : %s (%s)"
+                                          % (t["label"], type(e).__name__)])
+    finally:
+        os.chdir(depart)
 print(json.dumps(echecs))
 `;
 
