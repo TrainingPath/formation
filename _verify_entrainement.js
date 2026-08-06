@@ -50,6 +50,44 @@ function outilPresent(lang) {
   try { execFileSync(s[0], s[1], { stdio: "ignore", timeout: 30000 }); return true; }
   catch (e) { return false; }
 }
+/* Empreinte de l'outil : sa version exacte. Elle entre dans la clé du cache,
+   pour qu'une mise à jour du JDK ou de Python fasse tout rejouer plutôt que de
+   laisser croire qu'on a vérifié sur la version actuelle. */
+const empreintes = {};
+function empreinteOutil(lang) {
+  if (empreintes[lang] === undefined) {
+    const s = EXECUTABLES[lang].sonde;
+    try {
+      const r = require("child_process").execFileSync(s[0], s[1],
+        { encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"] });
+      empreintes[lang] = String(r).trim().split("\n")[0];
+    } catch (e) {
+      empreintes[lang] = (e && e.stderr ? String(e.stderr) : "").trim().split("\n")[0] || "inconnue";
+    }
+  }
+  return empreintes[lang];
+}
+
+/* ------------------------------------------------------- cache d'exécution */
+/* Le cache vit dans le dossier temporaire du système, JAMAIS dans le dépôt :
+   un fichier d'état commité par mégarde serait exactement l'artefact que ce
+   projet s'interdit. Le prix est qu'il repart froid après un redémarrage —
+   c'est-à-dire que tout est rejoué, ce qui est le sens sûr de l'erreur. */
+const CACHE = path.join(require("os").tmpdir(), "entr-corriges-verifies.json");
+let cacheModifie = false;
+const cache = (function () {
+  try { return new Set(JSON.parse(fs.readFileSync(CACHE, "utf8"))); }
+  catch (e) { return new Set(); }
+})();
+function cleCorrige(lang, empreinte, x) {
+  const brut = JSON.stringify([lang, empreinte, x.solution, x.tests, x.stdin || []]);
+  return require("crypto").createHash("sha256").update(brut).digest("hex");
+}
+function ecrireCache() {
+  if (!cacheModifie) return;
+  try { fs.writeFileSync(CACHE, JSON.stringify([...cache]), "utf8"); }
+  catch (e) { /* un cache non écrit n'est pas une faute : tout sera rejoué */ }
+}
 const SEUIL_PARAPHRASE = 0.72;   // recouvrement de vocabulaire toléré entre 2 indices
 const MIN_ENONCE = 120;          // en dessous, c'est un télégramme
 const MIN_LIGNE_FUITE = 26;      // longueur à partir de laquelle une ligne compte
@@ -466,11 +504,42 @@ for (const [lang, lot] of aExecuter) {
       lot.length + " corrigé(s), " + nTests + " test(s)");
     continue;
   }
-  const echecs = executerLot(lang, lot);
-  echecs.forEach(([ref, msg]) => ko(ref + " : " + msg));
-  notes.push(lang + " : " + lot.length + " solution(s) de référence exécutées, " +
-    nTests + " test(s) rejoués");
+
+  // Un corrigé dont NI la solution, NI les tests, NI l'entrée, NI la version
+  // de l'outil n'ont bougé depuis une exécution réussie donnera exactement le
+  // même résultat. Le rejouer coûte une seconde et n'apprend rien ; sur cent
+  // corrigés, c'est la différence entre une vérification qu'on lance et une
+  // qu'on saute. On mémorise donc les empreintes déjà validées.
+  const empreinte = empreinteOutil(lang);
+  const aRejouer = lot.filter(x => !cache.has(cleCorrige(lang, empreinte, x)));
+  const sautes = lot.length - aRejouer.length;
+
+  // On avance par paquets, et l'on enregistre après chacun. Sur une machine
+  // lente, une vérification interrompue avant la fin garde ainsi ce qu'elle a
+  // déjà validé : la relancer reprend où elle en était au lieu de tout
+  // recommencer. C'est ce qui rend l'outil utilisable là où il est lent.
+  const PAQUET = 6;
+  for (let d = 0; d < aRejouer.length; d += PAQUET) {
+    const paquet = aRejouer.slice(d, d + PAQUET);
+    const echecs = executerLot(lang, paquet);
+    echecs.forEach(([ref, msg]) => ko(ref + " : " + msg));
+    // Seuls les corrigés SANS échec entrent au cache. Un corrigé fautif doit
+    // être rejoué tant qu'il n'a pas été corrigé.
+    const fautifs = new Set(echecs.map(([ref]) => ref));
+    paquet.forEach(x => {
+      if (!fautifs.has(x.ref)) cache.add(cleCorrige(lang, empreinte, x));
+    });
+    cacheModifie = true;
+    ecrireCache();
+  }
+
+  let note = lang + " : " + aRejouer.length + " solution(s) de référence exécutées";
+  if (sautes) {
+    note += ", " + sautes + " inchangée(s) depuis une vérification réussie";
+  }
+  notes.push(note + " · " + nTests + " test(s) couverts");
 }
+ecrireCache();
 
 // Continuité des mini-séries : les jours doivent se suivre sans trou ni doublon.
 for (const [k, occ] of series) {

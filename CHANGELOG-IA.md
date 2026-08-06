@@ -2691,3 +2691,72 @@ corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : ment
 
 **☐ Reste à faire.** `cours-java` leçons 21 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
 **465 exercices**.
+
+---
+
+## Entraînement du jour — cours-java, leçon 21 (3 exercices) + cache d'exécution du vérificateur
+
+**Le vérificateur était devenu trop lent pour être lancé.** Avec 63 corrigés Java, chaque vérification
+relançait 63 machines virtuelles : **46 secondes** dans l'environnement de rédaction, davantage sur une machine
+à deux cœurs. À 93 corrigés Java, puis avec le C et le C++, on allait vers plusieurs minutes — et un outil
+qu'on n'a pas envie de lancer est un outil qui ne vérifie plus rien.
+
+**La correction est un cache d'exécution, keyé sur ce qui peut changer le résultat.** Pour chaque corrigé, on
+retient une empreinte SHA-256 de `[langage, version exacte de l'outil, solution, tests, entrée standard]`. Si
+cette empreinte a déjà été validée, le corrigé n'est pas rejoué. Résultat mesuré : **46 s → 0,8 s** sur un
+dépôt inchangé, et **1,9 s** quand un seul corrigé a bougé.
+
+**Trois précautions, parce qu'un cache mal fait produit un vert mensonger.**
+
+1. **La version de l'outil entre dans la clé.** Une mise à jour du JDK ou de Python fait tout rejouer, au lieu
+   de laisser croire qu'on a vérifié sur la version actuelle.
+2. **Seuls les corrigés sans échec entrent au cache.** Un corrigé fautif est rejoué tant qu'il n'est pas
+   corrigé — jamais déclaré « déjà vu ».
+3. **Le cache vit dans le dossier temporaire du système, jamais dans le dépôt.** Un fichier d'état commité par
+   mégarde serait exactement l'artefact que ce projet s'interdit. Le prix est qu'il repart froid après un
+   redémarrage : tout est rejoué, ce qui est le **sens sûr** de l'erreur.
+
+Le rapport distingue désormais ce qui a été exécuté de ce qui a été sauté : « 0 solution(s) exécutées, 63
+inchangée(s) depuis une vérification réussie ». *Un vert obtenu par cache ne doit pas se lire comme un vert
+obtenu par exécution.*
+
+**Vérifié par un test négatif, pas seulement par un test vert :** un test volontairement faussé dans la leçon
+21 a bien été rejoué (1 exécuté, 62 sautés) et l'erreur attrapée. Un cache qui ne détecte pas les
+modifications serait pire que pas de cache.
+
+**La vérification avance par paquets de six, en enregistrant après chacun.** Sur une machine lente, une
+vérification interrompue garde ce qu'elle a validé et la relance reprend où elle en était. Le surcoût sur une
+machine rapide est de l'ordre de la seconde.
+
+**Une limite constatée et non masquée.** La machine de l'élève met plus de six secondes par corrigé Java (JDK
+11 dans la VM, deux cœurs partagés) : je ne peux pas y faire tourner la vérification complète depuis cette
+session, chaque commande y étant plafonnée à 45 secondes. La vérification de ce lot a donc tourné dans
+l'environnement de rédaction (JDK 21) sur **61 leçons et 183 exercices** — l'intégralité de `cours-java` et de
+`cours-python`, et `cours-algorithmes` à partir du jour 8. Les cinq autres scripts de CI ont tourné sur la
+machine. La première vérification complète côté élève prendra une minute ou deux ; les suivantes seront
+instantanées.
+
+**La leçon 21 elle-même** ouvre la mini-série « La médiathèque » (21→24) et fait tenir tout l'enseignement sur
+une idée : *ce qui varie n'est pas le traitement mais le critère.*
+
+- **21.1 — la cordonnerie** justifie l'interface fonctionnelle par un tarif qui ne rentre pas dans le moule :
+  deux tarifs proportionnels, un troisième forfaitaire puis dégressif. Une méthode de devis qui aurait reçu un
+  prix unitaire aurait couvert deux cas sur trois. Les quatre comptages se font avec deux critères seulement,
+  composés — et « ni l'un ni l'autre » est la négation de « l'un ou l'autre », pas autre chose.
+- **21.2 — la station d'épuration** interdit d'écrire trois critères de seuil et impose de les *fabriquer* :
+  une transformation qui prend un seuil et rend un critère. La réflexion porte sur la capture — le seuil est
+  **emporté**, pas consulté, et c'est pourquoi Java interdit qu'une variable capturée change : *si l'original
+  pouvait changer après la capture, le programme se comporterait d'une façon impossible à déduire de sa
+  lecture.*
+- **21.3 — La médiathèque 1/4** cache un piège dans le critère « format court » : la durée d'un livre vaut
+  zéro, et zéro est bien inférieur à soixante. Sans précaution, les deux livres apparaissent parmi les formats
+  courts — *un résultat parfaitement plausible pour qui ne connaît pas le fonds.* La réflexion va plus loin
+  que le correctif : le zéro joue deux rôles, valeur et marqueur d'absence, et la convention n'est écrite
+  nulle part dans le type. Les deux vraies réponses sont annoncées — un type qui sait représenter l'absence
+  (leçon 23), ou des supports distingués par leur type (leçon 24).
+
+**Deux fuites d'indice attrapées.**
+
+**Vérifications.** `_verify_entrainement.js` : vert, 63 corrigés Java et 48 corrigés Python couverts (voir la
+limite ci-dessus). `_coherence`, `_check_qcm`, `_verify_placement`, `_verify_mermaid`, `_verify_vocab` sur la
+machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
