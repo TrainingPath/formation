@@ -2638,3 +2638,56 @@ son contenu.*
 
 **Vérifications.** `_verify_entrainement.js` : 71 leçons équipées, 213 exercices, vingt-quatre mini-séries, 57
 corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 19 ».
+
+---
+
+## Entraînement du jour — cours-java, leçon 20 (3 exercices)
+
+**La mini-série « Le club de course à pied » se clôt (17→20)**, et elle a été construite pour que chaque jour
+laisse un défaut nommé que le lendemain répare : un journal qui cumule depuis toujours (17) → une date et un
+filtre (19) ; des sorties qu'on ne peut pas regrouper (17) → le regroupement par clé (18) ; trois associations
+parallèles (18) → un objet unique par coureur (20). Le seul défaut resté ouvert l'est **volontairement** : il
+manque un identifiant par ligne, signalé à la leçon 19 et rappelé à la note finale — *c'est là que commence,
+vraiment, la persistance des données.*
+
+**La réflexion du 20.3 s'oblige à répondre à l'objection contre elle-même.** Le palmarès générique remplace
+deux boucles de cinq lignes par une classe de trente : en quoi est-ce un progrès ? Le corrigé refuse de compter
+en lignes et nomme les trois apports — un nom pour ce qu'on fait, un endroit unique où le premier tour est
+traité correctement, et l'impossibilité de se tromper de sens de comparaison dans l'une des deux copies. Puis
+il concède le cas contraire : *ce ne serait pas un progrès si le palmarès n'était utilisé qu'une seule fois —
+une abstraction employée une fois coûte sa lecture et ne rembourse rien.* La règle des trois usages est citée,
+et l'exception justifiée : ici le second suffisait parce que les deux usages diffèrent par le sens de
+comparaison, c'est-à-dire par l'endroit exact où l'on se trompe.
+
+**Deux palmarès du même type sur des types sans rapport** — `Palmares<Bilan>` pour la meilleure allure (plus
+petit score), `Palmares<String>` pour le parcours le plus couru (plus grand score) — c'est ce qui justifie le
+générique plutôt que de l'illustrer. Une classe générique employée sur un seul type n'aurait rien démontré.
+
+**Le piège du 20.3 est un objet créé et non déposé.** Récupérer le bilan d'un coureur peut rendre une
+référence vide au premier passage ; créer un objet local sans le déposer dans l'association le fait disparaître
+au tour suivant, et *chaque coureur finirait avec une seule sortie à son actif — le programme afficherait des
+chiffres plausibles et faux.* La checklist en fait son premier point.
+
+**La borne, expliquée par ce qu'elle autorise et non par ce qu'elle interdit** (20.2) : `T extends Number` ne
+sert pas d'abord à refuser les textes, mais à permettre d'appeler `doubleValue()` à l'intérieur de la classe.
+*La généralité totale ne permet aucun calcul.* La question d fait constater ce que la borne n'accorde pas : le
+signe `+` reste refusé, parce que les opérateurs arithmétiques ne s'appliquent qu'aux primitifs — la borne
+garantit qu'on peut **obtenir** un nombre de chaque élément, pas que l'élément **est** un nombre.
+
+**Une réflexion qui ne se contente pas de défendre le corrigé** (20.2) : la classe calcule tout en nombres à
+virgule, et affiche donc « de 89,00 à 203,00 » pour des comptes de colonies qui sont des entiers. Le corrigé
+admet la perte — précision suggérée qui n'existe pas, exactitude perdue sur les très grands entiers, ce qui
+« poserait un vrai problème sur des montants en centimes » — et tranche sur l'affichage plutôt que sur les
+calculs, au nom de la règle de la leçon 3 : *on arrondit pour montrer, jamais pour calculer.*
+
+**Le cas de la série vide traité comme une décision, pas comme un détail** : rendre zéro pour une moyenne de
+rien est « un mensonge poli », le rapport dit donc « aucune mesure » plutôt que d'afficher une ligne de zéros.
+*La valeur de repli est là pour éviter le plantage, pas pour être montrée.*
+
+**Trois fuites d'indice attrapées.** Aucune paraphrase.
+
+**Vérifications.** `_verify_entrainement.js` : 72 leçons équipées, 216 exercices, vingt-cinq mini-séries, 60
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 20 ».
+
+**☐ Reste à faire.** `cours-java` leçons 21 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
+**465 exercices**.
