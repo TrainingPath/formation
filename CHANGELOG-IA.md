@@ -3074,3 +3074,83 @@ d'installer Java 21 pour confirmer localement que les quinze corrigés compilent
 sont toutes cohérentes avec un JDK 11 — `switch` à flèches (Java 14), `instanceof` avec liaison (16), `record`
 (16), collections séquencées (21). **C'est le prochain passage de la CI qui fera foi.**
 
+
+## Entraînement du jour — cours-csharp, lot 4 (leçons 13 à 16)
+
+**Contenu.** 12 exercices, 60 indices, 12 corrigés C#. Leçon 13 *Constructeurs et
+propriétés* — le four à pain, le rucher municipal ; leçon 14 *Héritage et
+polymorphisme* — l'harmonie municipale, le garage municipal ; leçon 15
+*Interfaces et classes abstraites* — la serre horticole, le parking souterrain ;
+leçon 16 *Les exceptions* — le point relais colis, le convertisseur de recettes.
+Mini-série **« Le camping des Quatre Vents »**, 1/4 → 4/4, sur les quatre leçons.
+
+**Le fil du lot : le refus silencieux qui apprend à parler.** Les quatre leçons
+racontent une seule chose, énoncée à l'élève jour après jour. Lundi, un `set` qui
+refuse protège l'objet et ment à l'appelant : un emplacement à 2 500 € est refusé,
+donc créé à zéro, donc vendu à zéro, et il entre dans la recette sans y ajouter un
+centime. Mardi, le tarif cesse d'être une donnée saisie pour devenir une
+conséquence du type — la faute disparaît faute d'endroit où l'écrire. Mercredi, le
+compilateur reçoit le droit d'exiger : une sorte d'emplacement sans barème ne
+compile plus. Jeudi, le refus prend enfin la parole. La note de 16.3 demande à
+l'élève d'écrire les quatre états successifs du même refus et de dire lequel des
+quatre programmes était le plus dangereux — ce n'est pas celui qui plantait.
+
+**Décisions pédagogiques.**
+- 14.1 laisse volontairement la classe mère instanciable (un « piano de
+  répétition » sans famille) et 14.2 laisse une remorque non classée. Les deux
+  sont des questions déguisées, posées en sous-question et en note, dont la
+  réponse est donnée le lendemain par `abstract`. Rien n'est présenté comme
+  propre alors que ce ne l'est pas.
+- 15.3 fait se recouper deux contrats sans se confondre : la caravane est
+  électrifiée mais se réserve par téléphone, la tente se réserve en ligne sans
+  borne, le chalet signe les deux. L'ampérage à provisionner passe de 26 A (jour
+  2, deviné à partir des classes) à 58 A (jour 3, déclaré par les objets) — la
+  réflexion demande lequel des deux chiffres l'électricien aurait dû recevoir.
+- 16.1 conserve une saisie « −1 » qui passe la conversion, passe la division et
+  affiche « −120 casiers par rangée » sans qu'aucune exception n'existe pour
+  cela. La remarque le dit franchement : les exceptions attrapent ce qui casse,
+  pas ce qui n'a pas de sens.
+- 16.2 refuse d'appeler « défaut » la conversion de 3 œufs pour 6 personnes qui
+  donne 4. La réponse écrite explique que lancer ici refuserait une recette
+  réalisable, et que ce qui manque est une décision de cuisine, pas une
+  protection.
+
+**Pièges certifiés (valeurs recalculées en Python, pas estimées).**
+13.1 : 86 pièces, 156,30 €. 13.2 : 157 000 abeilles, moyenne 31 400, récolte
+45,9 kg + 4,7 kg laissés = 50,6 kg produits. 14.1 : 51 minutes d'échauffement.
+14.2 : campagne à 810,79 €, dont 246,40 € pour le seul autocar ; 5 contrôles
+techniques sur 6 en 2026 ; 567 900 km cumulés. 15.1 : 3 alertes, moyenne 26 °C
+sur deux thermomètres seulement, 4 étalonnables sur 6. 15.2 : 286,50 €, 4 badges,
+2 places. Série : 141,00 € (jour 1) → 153,00 € (jours 2 à 4) à guichet plein,
+103,00 € de recette, 55 % d'occupation, 58 A, 6 réservables en ligne, 4,47 € par
+campeur.
+
+**Renommage assumé.** La série de ce lot devait s'appeler « La billetterie du
+théâtre ». Ce nom est déjà celui d'une mini-série de **cours-algorithmes**
+(jours 20 à 23), sur un sujet voisin. Le vérificateur ne l'interdit pas — il
+scope les séries par cours — mais un élève suivant les deux cours aurait
+rencontré deux fois « La billetterie du théâtre — 1/4 » avec des contenus sans
+rapport. Le troisième exercice de la leçon 13 a donc été entièrement réécrit
+autour du camping des Quatre Vents, en conservant les mêmes montants pour que la
+comparaison jour 1 / jour 2 reste exacte.
+
+**Outillage.** `cslint.py` a reçu une exception de plus : une ligne dont la
+suivante ouvre un bloc (`public int Quantite`, `get`, `set`, `private set`) est
+légitime. Sans cela, chaque propriété en forme longue produisait deux faux
+positifs. Les corrigés des lots précédents ont été relintés après ce changement :
+aucune régression.
+
+**Anti-fuite.** 22 violations de l'indice ⑤ prises pendant l'écriture, toutes
+masquées par `…` (`foreach (Instrument i in …)`, `catch (ArgumentException …)`,
+`if (e is … el)`). `checkindice5.py` les a toutes vues avant le vérificateur.
+
+**Vérification.** `node _verify_entrainement.js` sur les fichiers réellement
+injectés — pas sur un gabarit : **87 leçons équipées, 261 exercices, 0 problème**.
+Aucun champ `tests` sur les 12 items, conformément au contrôle 6 : C# n'est pas
+exécuté ici, et le site continue de le dire plutôt que d'afficher des tests qui
+ne tourneraient jamais.
+
+**Reste à faire.** cours-csharp : lots 17-20, 21-24, 25-28, 29-31. Puis cours-php
+(31 leçons, pas d'interpréteur → règle d'honnêteté), cours-c, cours-cpp-bas,
+cours-cpp-moderne (gcc et g++ présents → le registre `EXECUTABLES` peut être
+étendu comme pour Java) et cours-asm (NASM absent).
