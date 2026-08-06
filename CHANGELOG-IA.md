@@ -2541,3 +2541,50 @@ sujet de la leçon 18.
 
 **Vérifications.** `_verify_entrainement.js` : 69 leçons équipées, 207 exercices, vingt-deux mini-séries, 51
 corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 17 ».
+
+---
+
+## Entraînement du jour — cours-java, leçon 18 (3 exercices)
+
+**La leçon 18 répond à la question que la 17 avait laissée ouverte** : comparer deux coureurs, et non deux
+sorties. Le regroupement par clé le permet, et l'exercice 18.3 le fait — puis, aussitôt, met en doute sa
+propre méthode de calcul.
+
+**La réflexion du 18.3 porte sur la moyenne des rapports**, et c'est la plus mathématique du cours Java. Une
+allure moyenne se calcule-t-elle en divisant les cumuls, ou en faisant la moyenne des allures de chaque
+sortie ? Les deux valeurs sont calculées pour Rachid : **5,15 min/km** par les cumuls (184 min pour 35,7 km),
+**5,12** par la moyenne de ses trois allures (5,68 · 4,76 · 4,93). L'écart est petit ici et peut être énorme
+ailleurs. La bonne méthode est celle des cumuls, et la raison tient en une phrase : *la moyenne de plusieurs
+rapports n'est pas le rapport des sommes, sauf si tous les dénominateurs sont égaux.* Faire la moyenne des
+allures revient à donner le même poids à une sortie de 3 km qu'à une de 30 km. Analogie retenue dans le
+corrigé : la consommation moyenne d'une voiture ne se calcule pas en moyennant les consommations de chaque
+plein.
+
+**Un ex æquo exploité plutôt que masqué.** En 18.2, alto et soprano comptent cinq places chacun. Le programme
+annonce alto — parce que le parcours alphabétique le rencontre en premier et que la comparaison est stricte.
+Le corrigé refuse de dire que c'est faux : c'est **incomplet**, la question n'a pas de réponse unique et un
+programme honnête devrait signaler l'égalité. La seconde moitié de la réflexion enchaîne sur la
+reproductibilité : le tri préalable des clés fixe l'ordre de rencontre, donc le vainqueur de l'ex æquo. Sans
+lui, l'ordre serait celui de la `HashMap`, qui n'en promet aucun — *le même programme pourrait annoncer alto
+aujourd'hui et soprano après une mise à jour de Java, sans qu'une ligne ait changé.* Un résultat qui dépend
+d'un ordre non spécifié est un résultat qu'on ne peut pas défendre.
+
+**Les trois structures distinguées explicitement en 18.2 :** une association de nombres pour « combien de
+fois », un ensemble pour « combien de valeurs distinctes » (huit choristes sur quinze présences, sans rien
+compter), et une association d'ensembles pour « lesquels » — la forme la plus courante des vrais programmes.
+Le piège de mécanique est signalé : un ensemble obtenu par la valeur de repli n'est associé à personne et doit
+être redéposé après modification.
+
+**18.1 distingue deux questions qu'on croit identiques** : « combien de commandes pour le couscous » et « le
+couscous est-il à la carte ». Zéro et absent ne sont pas la même chose — un plat peut être à la carte avec
+zéro commande. La note de fin rappelle le prix de la rapidité d'une `HashMap` : l'absence totale d'ordre, et
+l'existence de variantes triées.
+
+**Le tri à bulles écrit pour la troisième fois**, et l'indice ④ le dit franchement à l'élève : « remarque que
+tu l'écris pour la troisième fois : la leçon 25 t'apprendra à ne plus jamais l'écrire ». Assumer la répétition
+en annonçant sa fin vaut mieux que de la laisser passer pour normale.
+
+**Trois fuites d'indice attrapées**, toutes des en-têtes de boucle abrégée.
+
+**Vérifications.** `_verify_entrainement.js` : 70 leçons équipées, 210 exercices, vingt-trois mini-séries, 54
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 18 ».
