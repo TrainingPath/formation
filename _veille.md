@@ -38,6 +38,11 @@ But : cartographier ce qui **était vrai à la rédaction mais peut cesser de l'
   exécution. Il faut donc s'attendre à ce que ces corrigés en contiennent, et **ils sont en ligne sans filet**.
   Remède prévu et reporté : transcrire chaque corrigé pseudocode en Python, faire exécuter la transcription par
   `_verify_entrainement.js`, n'afficher que le pseudocode. **À faire une fois tous les langages écrits.**
+- **JDK de la CI ↔ version enseignée par `cours-java`.** Le cours enseigne **Java 21** et ses corrigés
+  emploient les collections séquencées (`getFirst`, `getLast`, `reversed`). Le workflow doit installer un JDK
+  **≥ 21** ; `_verify_entrainement.js` refuse désormais de compiler avec une version inférieure et le dit
+  explicitement. Si le cours adopte un jour des constructions plus récentes, monter les deux ensemble : la
+  version du workflow ET le champ `versionMin` du vérificateur.
 - **Dates « Dernière révision : Août 2026 »** sur les 81 sommaires : à faire glisser à chaque vraie révision.
 - **Watchlist d'outils dépréciés** (scan automatique passé) : aucun autre que `bleach` détecté (les occurrences de « nose » dans les cours d'anglais sont le mot anglais, pas l'outil de test Python).
 

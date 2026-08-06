@@ -41,14 +41,45 @@ const ROOT = __dirname;
 // Chaque entrée dit avec quelle commande on constate que l'outil est là. Si
 // l'outil manque sur cette machine, on ne fait PAS semblant : les exercices du
 // langage ne sont pas rejoués et le rapport final le dit en toutes lettres.
+// `versionMin` : version majeure minimale exigee. Le cours Java enseigne Java 21
+// et ses corriges emploient les collections sequencees (getFirst, getLast,
+// reversed) apparues dans cette version. Compiles sur un JDK 17, ils echouent
+// par quinze « cannot find symbol » successifs — un message qui envoie chercher
+// l'erreur dans le code alors qu'elle est dans l'environnement. On verifie donc
+// la version AVANT de compiler quoi que ce soit, et on le dit clairement.
 const EXECUTABLES = {
   python: { outil: "python3", sonde: ["python3", ["-c", "pass"]] },
-  java:   { outil: "javac",   sonde: ["java", ["-version"]] },
+  java:   { outil: "javac",   sonde: ["java", ["-version"]], versionMin: 21 },
 };
+
+/* Version majeure de l'outil, ou null si on ne sait pas la lire.
+   ATTENTION : `java -version` ecrit sur stderr, pas sur stdout. Une premiere
+   version de cette fonction lisait stdout et renvoyait donc toujours null,
+   ce qui desactivait silencieusement le controle — exactement le genre de
+   garde-fou qui rassure sans rien garder. On lit les DEUX flux. */
+function versionMajeure(lang) {
+  const s = EXECUTABLES[lang].sonde;
+  const r = require("child_process").spawnSync(s[0], s[1], { encoding: "utf8", timeout: 30000 });
+  const brut = String((r.stdout || "") + "\n" + (r.stderr || ""));
+  const m = brut.match(/version "?(\d+)/) || brut.match(/\b(\d+)\.\d+\.\d+/);
+  return m ? parseInt(m[1], 10) : null;
+}
 function outilPresent(lang) {
   const s = EXECUTABLES[lang].sonde;
-  try { execFileSync(s[0], s[1], { stdio: "ignore", timeout: 30000 }); return true; }
+  try { execFileSync(s[0], s[1], { stdio: "ignore", timeout: 30000 }); }
   catch (e) { return false; }
+  const min = EXECUTABLES[lang].versionMin;
+  if (min) {
+    const v = versionMajeure(lang);
+    if (v !== null && v < min) {
+      ko("[" + lang + "] version " + v + " detectee, " + min + " exigee par le cours. " +
+         "Les corriges emploient des constructions absentes de cette version : ils ne " +
+         "compileront pas, et les erreurs signaleront le code alors que le probleme est " +
+         "l'environnement. Mets a jour le JDK (workflow : java-version \"" + min + "\").");
+      return false;
+    }
+  }
+  return true;
 }
 /* Empreinte de l'outil : sa version exacte. Elle entre dans la clé du cache,
    pour qu'une mise à jour du JDK ou de Python fasse tout rejouer plutôt que de

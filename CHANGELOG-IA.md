@@ -3041,3 +3041,36 @@ Conformément à la demande, les lots suivent désormais les mini-séries : **un
 **Vérification.** `node _verify_entrainement.js` : ✅ 83 leçons équipées, 249 exercices, 0 problème.
 
 **État du cours.** cours-csharp : 12 leçons sur 31 équipées, 36 exercices, 3 mini-séries terminées. Prochain lot : leçons 13 à 16 (constructeurs et propriétés, héritage et polymorphisme, interfaces et classes abstraites, exceptions).
+
+### Correctif CI — le JDK du workflow ne correspondait pas au cours enseigné
+**Symptôme.** Le workflow « Vérification qualité » échoue au push : quinze corrigés de `cours-java` ne compilent
+pas, avec des messages `cannot find symbol` répartis sur les leçons 25 à 31.
+
+**Cause.** Le cours annonce **Java 21 (LTS)** et ses corrigés emploient les collections séquencées —
+`getFirst()`, `getLast()`, `reversed()` — apparues dans cette version. Le workflow installait **Java 17**. Aucun
+des quinze corrigés n'est fautif : c'est l'environnement de vérification qui était en retard sur ce que le site
+enseigne.
+
+**Correctif.** `java-version` passé de `"17"` à `"21"` dans `.github/workflows/verify.yml`.
+
+**Correctif de fond — le message d'erreur, pas seulement l'erreur.** Quinze `cannot find symbol` envoient
+chercher la faute dans le code alors qu'elle est dans la machine. `_verify_entrainement.js` contrôle désormais la
+**version majeure** de l'outil avant de compiler quoi que ce soit (champ `versionMin`, fixé à 21 pour Java), et
+refuse d'un seul message explicite qui nomme la version détectée, la version exigée, et la ligne de workflow à
+corriger.
+
+*Un piège rencontré en l'écrivant :* `java -version` écrit sur **stderr**, pas sur stdout. La première version de
+la fonction lisait stdout, ne trouvait rien, renvoyait `null` — et le contrôle se désactivait sans rien dire.
+C'est exactement le genre de garde-fou qui rassure sans rien garder. Corrigé en lisant les deux flux, et vérifié :
+le JDK 11 du bac à sable est bien détecté.
+
+**Choix assumé : version trop ancienne = échec, pas avertissement.** Un outil *absent* fait sauter les corrigés
+du langage avec une note au rapport — l'environnement n'a jamais prétendu le supporter. Un outil *trop vieux*
+fait échouer le build : là, l'environnement est configuré à contresens de ce que le dépôt déclare, et le laisser
+passer reviendrait à publier des corrigés que rien n'a vérifiés.
+
+**☐ Non vérifiable ici.** Le bac à sable de génération n'a que le JDK 11 et `apt` y est sans droits : impossible
+d'installer Java 21 pour confirmer localement que les quinze corrigés compilent. Les erreurs observées en local
+sont toutes cohérentes avec un JDK 11 — `switch` à flèches (Java 14), `instanceof` avec liaison (16), `record`
+(16), collections séquencées (21). **C'est le prochain passage de la CI qui fera foi.**
+
