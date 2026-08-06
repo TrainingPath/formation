@@ -2878,3 +2878,23 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **Vérification.** `node _verify_entrainement.js` : ✅ 67 leçons équipées, 201 exercices, 0 problème.
 
 **État du cours.** cours-java : 27 leçons sur 31 équipées, 81 exercices. Série « La bourse aux vélos » : 3/4. Le jour 4 (leçon 28, tests unitaires) n'ajoutera rien à la bourse : il écrira le banc d'essai qui vérifie les trois jours précédents — d'où l'insistance, dès 27.2, sur des fonctions qui **rendent** un texte au lieu de l'afficher.
+
+---
+
+## cours-java — leçon 28 : les tests unitaires (lot du 6 août 2026)
+
+**Décision d'atelier assumée et affichée à l'élève.** JUnit n'est pas installable dans l'environnement de vérification, et les corrigés doivent rester exécutables par `java Fichier.java` sans classpath ni gestionnaire de dépendances. Plutôt que de publier des corrigés dont les tests ne tourneraient jamais — ce qui violerait le contrôle n° 6 du vérificateur (« un test qui ne tourne jamais est un mensonge affiché ») — les trois exercices **écrivent le banc d'essai à la main**, en Java pur, avec le vocabulaire exact de la leçon : vérifier une égalité (attendu d'abord), vérifier une condition, vérifier qu'une erreur est levée, comparer des décimaux à une marge près, repartir d'un décor neuf. Un encadré « Note d'atelier » ouvre **chacun** des trois énoncés et l'explique à l'élève, en tirant le bénéfice pédagogique de la contrainte : une trentaine de lignes suffisent à reproduire le cœur de JUnit, il n'y a donc aucune magie à y chercher.
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés.
+
+- **28.1 « La caisse du marché »** (niveau 1, domaine *caisse enregistreuse*) — construction du banc, puis épreuve d'un `Panier`. Deux temps forts : le programme vérifie **les deux faces** du problème des décimaux (0,10 + 0,20 vaut 0,30 à un millième près **et** ne les vaut pas exactement — les deux tests sont verts), et il se termine par un **test volontairement faux** (`✗ … attendu 19.0 ± 0.001, obtenu 18.0`). La remarque en donne la raison : un banc qui n'a jamais affiché de rouge n'a jamais prouvé qu'il savait le faire. Bilan certifié : `8 réussi(s), 1 échoué(s)`.
+- **28.2 « Le distributeur de boissons »** (niveau 2, domaine *distributeur de boissons*, sous-questions a/b/c/d) — une `interface Rendeur`, **deux** implémentations dont une fausse à dessein (le rouleau de pièces de 20 est vide), et **la même batterie** passée sur les deux. L'enseignement central est certifié par exécution : l'**invariant** (« ce qui est rendu vaut ce qui est dû ») reste **vert sur les deux**, seule la **règle métier** (le nombre de pièces) distingue le rendeur fautif — `[50, 20]` contre `[50, 10, 10]`. Le programme se demande explicitement à la fin si sa batterie a su faire la différence. Introduit aussi une `interface Action` maison pour la vérification d'exception, avec l'explication de pourquoi il faut passer **un moyen d'exécuter plus tard** et non un résultat déjà calculé (même mécanisme que le repli paresseux de la leçon 23). Bilan certifié : `14 réussi(s), 2 échoué(s)`.
+- **28.3 « La bourse aux vélos — 4/4 »** (niveau 3, **fin de série**) — aucun ajout à la bourse : le code des jours 1 à 3 est repris **sans une retouche** et éprouvé par 25 vérifications réparties en quatre séries (les juges, le diagnostic, la composition, la non-régression). Le décor — le hangar des sept vélos — est reconstruit avant chaque série. Deux points de méthode explicites : on éprouve une ligne composée **par propriétés** (commence par le code, finit par le prix, bonne longueur) et non au caractère près, sans quoi le moindre choix de mise en page vire au rouge sans défaut ; et le comptage attendu s'écrit `2L`, faute de quoi le test échoue avec le message absurde « attendu 2, obtenu 2 » — piège documenté dans le « pourquoi ». Bilan certifié : `25 réussi(s), 0 échoué(s)`.
+
+**Incident instructif, conservé dans la leçon.** En écrivant 28.2 j'avais calculé de tête qu'on rend 285 centimes en 4 pièces : c'est 5 (200+50+20+10+5). Le banc d'essai a donc signalé une erreur **de ma valeur attendue**, pas du code. La correction a été faite et le fait est mentionné à l'élève dans l'esprit de l'exercice : une valeur attendue calculée de tête est une hypothèse, elle aussi.
+
+**Anti-fuite.** 4 violations dans les indices ⑤, corrigées par masquage.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 68 leçons équipées, 204 exercices, 0 problème.
+
+**État du cours.** cours-java : 28 leçons sur 31 équipées, 84 exercices. Série « La bourse aux vélos » : **4/4, terminée**. Restent les leçons 29 (fils d'exécution), 30 (projet guidé) et 31 (examen).
