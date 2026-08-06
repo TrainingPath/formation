@@ -2858,3 +2858,23 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **Vérification.** `node _verify_entrainement.js` : ✅ 66 leçons équipées, 198 exercices, 0 problème.
 
 **État du cours.** cours-java : 26 leçons sur 31 équipées, 78 exercices. Série « La bourse aux vélos » : 2/4.
+
+---
+
+## cours-java — leçon 27 : immuabilité et StringBuilder (lot du 6 août 2026)
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés.
+
+- **27.1 « L'imprimerie du village »** (niveau 1, domaine *imprimerie*) — le piège de l'appel sans affectation (`titre.toUpperCase();` puis `titre = titre.toUpperCase();`), le tableau blanc et ses opérations, le contraste entre ce qui travaille **sur place** (`reverse`, `deleteCharAt`) et ce qui **rend un résultat** (les méthodes de `String`), et le test de palindrome qui doit passer par trois étapes sans jamais toucher à l'original. Le sommaire est assemblé **deux fois**, au tampon et par concaténation, et le programme **prouve** l'égalité — puis recommence sur mille tours (`4893 caractères` des deux côtés). La remarque refuse la morale simpliste : sur trois morceaux la concaténation est plus lisible et il faut la préférer ; le basculement se produit dans les boucles longues, nulle part ailleurs.
+- **27.2 « La tombola du comité des fêtes »** (niveau 2, domaine *tombola*, sous-questions a/b/c/d) — fabrication de numéros à zéros de tête, souches en colonnes, carnet composé en une passe. Le cœur est la **démonstration du partage** : une méthode qui reçoit un `StringBuilder` le modifie pour de bon (`brouillon — relu`), une méthode qui reçoit un `String` et réaffecte son paramètre **compile parfaitement et ne fait rien** (`brouillon`). Le « pourquoi » insiste : un compilateur qui refuse enseigne tout de suite, un programme qui accepte et n'agit pas fait chercher ailleurs pendant une heure. Les prix sont stockés **en centimes entiers** et convertis seulement à l'affichage — la question de réflexion demande d'en trouver deux raisons puis une limite.
+- **27.3 « La bourse aux vélos — 3/4 »** (niveau 3, application filée) — l'affiche imprimable composée sur **un seul tampon**, de haut en bas : filet, titre centré, trois sections par état triées du plus cher au moins cher, pied de page. Fiche, liste fermée, motifs et **quatre juges nommés** des jours 1 et 2 repris sans une retouche — troisième jour consécutif. Le figeage en `String` est présenté comme le moment où le document part chez l'imprimeur et cesse d'être modifiable : le programme le prouve par un remplacement non affecté qui ne change rien. Tout dépend d'une seule constante `LARGEUR`, et la checklist demande de la passer de 60 à 70 pour débusquer les nombres écrits en dur. Valeurs certifiées : affiche de 878 caractères, 19 lignes, `7 vélos · 2545 € au total`.
+
+**Honnêteté.** La remarque de 27.3 critique le code qu'elle propose : la fonction de colonne **tronque silencieusement** les textes trop longs, ce qui est le choix habituel des mises en page à largeur fixe et reste mauvais — le lecteur de l'affiche ne saura jamais qu'il manque quelque chose. La checklist fait essayer un modèle à rallonge pour le constater.
+
+**Constructions volontairement évitées** : les gabarits d'alignement de `String.format` (`%-12s`) — la théorie de la leçon 19 ne montre que `%.2f` et `%05d`. L'alignement passe donc par `" ".repeat(...)`, enseigné en leçon 9, ce qui rend le calcul de colonne visible au lieu de le cacher dans un gabarit.
+
+**Anti-fuite.** 7 violations dans les indices ⑤, corrigées par masquage. Un test de 27.2 comportait une virgule parasite en fin d'expression : le vérificateur l'a refusé comme `SyntaxError` **avant** publication — c'est exactement le rôle du contrôle n° 6, et la preuve qu'un test non exécuté ne serait pas un test.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 67 leçons équipées, 201 exercices, 0 problème.
+
+**État du cours.** cours-java : 27 leçons sur 31 équipées, 81 exercices. Série « La bourse aux vélos » : 3/4. Le jour 4 (leçon 28, tests unitaires) n'ajoutera rien à la bourse : il écrira le banc d'essai qui vérifie les trois jours précédents — d'où l'insistance, dès 27.2, sur des fonctions qui **rendent** un texte au lieu de l'afficher.
