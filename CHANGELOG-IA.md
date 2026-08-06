@@ -2434,3 +2434,56 @@ pont. Aucun travail perdu — mais la leçon reste la même qu'au lot 2 : ce qui
 
 **Vérifications.** `_verify_entrainement.js` : 67 leçons équipées, 201 exercices, vingt mini-séries, 45
 corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 15 ».
+
+---
+
+## Entraînement du jour — cours-java, leçon 16 (3 exercices)
+
+**La mini-série « Le parc à vélos partagés » se clôt (13→16)** en posant, au dernier jour, la question que les
+trois précédents préparaient : depuis la leçon 13, la location d'un engin rend un booléen ; aujourd'hui, la
+méthode de station lève des exceptions. Les deux façons de faire coexistent dans le programme final, **et ce
+n'est pas une incohérence**. Ce qui les distingue, énoncé par la réflexion du 16.3 : la distance entre
+l'endroit où le problème est constaté et celui où il peut être traité. La méthode de location est appelée par
+la station, juste à côté, qui sait quoi faire d'un refus et dont la ligne suivante en dépend — un booléen ne
+peut pas y être oublié. La méthode de station, elle, est appelée par du code qui pourrait être n'importe où et
+qui ne saura peut-être pas quoi faire. *Un booléen quand l'échec est une issue normale que l'appelant immédiat
+sait traiter ; une exception quand l'échec est anormal ou doit remonter.*
+
+**Le point le plus important du jour, formulé dans la remarque du 16.3 :** toute valeur de retour qui exige
+une vérification préalable est une exception déguisée, avec en moins la garantie qu'on ne l'oubliera pas.
+
+**Les trois exercices, tous certifiés par exécution.**
+
+- **16.1 — la pharmacie de garde** sépare deux incidents à deux moments distincts : `NumberFormatException`
+  sur la conversion, `ArithmeticException` sur la division. Deux zones surveillées, pas une. Le bloc
+  `finally` est justifié précisément : écrit après la zone surveillée plutôt que dedans, il serait sauté par
+  une exception non attrapée — *et c'est précisément dans ce cas-là qu'on a le plus besoin de refermer ce
+  qu'on a ouvert*. La remarque défend le choix de conception de `parseInt` : un zéro silencieux se serait
+  glissé dans les calculs sans que personne le remarque.
+- **16.2 — le comptoir d'enregistrement** oppose l'exception à la valeur conventionnelle. La question d
+  demande deux raisons, dont une propre au domaine : il y a **trois** issues à distinguer (accepté sans
+  supplément, accepté avec supplément, refusé) et deux motifs de refus — un seul nombre ne peut pas porter
+  tout cela sans devenir « un langage secret entre la méthode et son appelant ».
+- **La réflexion du 16.2** démonte le `catch (Exception)` global posé « pour ne rien laisser passer ». Deux
+  pertes : la première visible — le programme s'arrête au troisième bagage sur cinq, et les totaux portent sur
+  deux bagages au lieu de cinq ; la seconde invisible — un indice hors bornes ou une référence nulle
+  s'afficherait comme un refus de bagage, *un bug deviendrait un cas métier traité et personne ne le
+  corrigerait jamais*. Règle retenue : on attrape ce qu'on sait traiter, et rien d'autre.
+
+**Huit fuites d'indice attrapées**, toutes des lignes `catch` reprises à l'identique. Corrigées en masquant le
+nom de la variable d'exception plutôt que son type — le type reste visible, il est l'information pédagogique ;
+c'est le squelette exact qui ne devait pas l'être.
+
+**Une coupure du pont d'une trentaine de minutes**, entre la vérification de la leçon 16 et son déploiement.
+Cette fois les outils de fichiers ont disparu de la session, pas seulement échoué. Quatre tentatives espacées,
+puis un choix explicite : **ne pas écrire la leçon 17 à l'aveugle**. Depuis le lot 2, aucune construction
+n'est employée sans avoir été cherchée dans le fichier de la leçon qui l'enseigne, et ce contrôle exige le
+dépôt. Écrire sans lui aurait produit du contenu vraisemblable et invérifiable — exactement ce que ce
+CHANGELOG documente comme le risque principal du chantier. Le bloc vérifié a été livré à l'élève en pièce
+jointe comme assurance, et le déploiement a repris au retour du pont.
+
+**Vérifications.** `_verify_entrainement.js` : 68 leçons équipées, 204 exercices, vingt-et-une mini-séries, 48
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 16 ».
+
+**☐ Reste à faire.** `cours-java` leçons 17 à 31, puis csharp, php, c, cpp-bas, cpp-moderne, asm — soit
+**498 exercices**.
