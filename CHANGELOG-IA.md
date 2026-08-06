@@ -2936,3 +2936,33 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **Vérification.** `node _verify_entrainement.js` : ✅ 70 leçons équipées, 210 exercices, 0 problème.
 
 **État du cours.** cours-java : 30 leçons sur 31 équipées, 90 exercices. Série « L'observatoire ornithologique » : 2/3. Reste la leçon 31, l'examen final.
+
+---
+
+## cours-java — leçon 31 : examen final (lot du 6 août 2026) — **COURS TERMINÉ**
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés. Chaque partie d'exercice porte le repère de sa leçon d'origine — `[L3]`, `[L18]`, `[L25]`… — dans l'énoncé, dans les commentaires du corrigé et dans les libellés de tests, exactement comme les questions de l'examen de la leçon. Une erreur indique ainsi elle-même la page à relire.
+
+- **31.1 « La salle de concert »** (niveau 1, domaine *salle de concert*) — épreuve de réflexes : les huit pièges du cours montrés **deux fois chacun**, la version qu'on écrit spontanément et la version juste, l'une sous l'autre. Division entière et division plafonnée en entiers, `==` contre `equals` (avec un texte **assemblé à l'exécution**, sans quoi la démonstration s'effondrerait — c'est le point dur de l'indice ④), dernier indice d'un tableau, réaffectation obligatoire sur un texte, `getOrDefault`, message d'une `NumberFormatException`, encapsulation éprouvée par trois ventes successives (300 refusée, 200 acceptée, 100 refusée — l'ordre prouve que l'objet tient son état), recherche séquentielle rendant −1. La remarque explique pourquoi le piège du `==` est si tenace : **il fonctionne parfois**, quand les deux textes sont des littéraux.
+- **31.2 « Le refuge pour hérissons »** (niveau 2, domaine *refuge pour animaux sauvages*, sous-questions a/b/c/d) — synthèse de la semaine 3 : interface, classe mère abstraite, deux filles, exception métier, `HashMap`, `LocalDate`, `Optional`, fichier. Le fait marquant, énoncé dans le « pourquoi » : la fiche est écrite **une seule fois** dans la mère et affiche pourtant l'espèce de chaque fille — aucun test de type n'apparaît nulle part, et c'est à cette absence qu'on reconnaît une hiérarchie bien découpée. Un écureuil de 310 g est relâchable là où un hérisson de 380 g ne l'est pas : le seuil appartient à l'espèce. La note de fin explique un écart de chiffres volontaire (1735 g affichés au début, 1760 g relus) qui est une **chronologie** et non un défaut — « il faut pouvoir l'expliquer en une phrase, faute de quoi on passe une heure à chercher un bug qui n'existe pas ».
+- **31.3 « L'observatoire ornithologique — 3/3 »** (niveau 3, **fin de série et fin de cours**) — le noyau du jour 2 repris sans une ligne modifiée, plus trois greffes exerçant trois leçons distinctes : total par poste par dictionnaire `[L18]`, poste le plus actif par juge composé `[L25]`, ligne d'alerte composée sur un tampon et rendue `[L27]`. Banc d'essai de 13 vérifications, toutes vertes. Le « pourquoi » distingue deux usages du même outil qu'il ne faut pas confondre : éprouver un comportement sur un registre neuf, constater une non-régression sur les données réelles. La remarque signale une lacune que le banc **ne comble pas** : aucun ex aequo ne se présentant, le second étage du juge n'est jamais exécuté, donc jamais vérifié.
+
+**Deux erreurs de ma part attrapées par les corrigés eux-mêmes**, dans l'esprit de la leçon 28 : une valeur attendue calculée de tête (285 c en 4 pièces au lieu de 5, leçon 28) et une hypothèse fausse sur l'alerte à seuil 1 (les trois espèces à zéro sont sous tout seuil, pas aucune). Les deux ont été corrigées après exécution. Une valeur attendue est une hypothèse comme une autre.
+
+**Anti-fuite.** 12 violations dans les indices ⑤, corrigées par masquage.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ **71 leçons équipées, 213 exercices, 0 problème.**
+
+---
+
+## Bilan de cours-java
+
+**31 leçons sur 31 équipées, 93 exercices, 465 indices, 93 corrigés Java compilés et exécutés à chaque vérification.** La mention de l'accueil du cours est passée de « déployé sur les leçons 1 à N » à « déployé sur les **31 leçons** du cours ».
+
+**Sept mini-séries** de 3 ou 4 jours ont structuré la progression : Le refuge de montagne, La ressourcerie du quartier, La grainothèque, Le parc à vélos partagés, Le club de course à pied, La médiathèque (4 jours, leçons 21–24), La bourse aux vélos (4 jours, leçons 25–28), L'observatoire ornithologique (3 jours, leçons 29–31).
+
+**Trois habitudes** ont été installées par répétition plutôt que par exhortation, et sont explicitement nommées à plusieurs reprises : *nommer une règle* (critères et juges nommés, réutilisés d'un jour à l'autre sans retouche), *rendre au lieu d'afficher* (ce qui rend un programme testable), *prouver au lieu d'affirmer* (deux écritures comparées par programme — les deux classements de la leçon 25, les deux assemblages de la 27, les deux dépouillements de la 29, la base rechargée à neuf de la 30).
+
+**Contraintes techniques assumées et documentées** plutôt que contournées en silence : JUnit absent (banc d'essai écrit à la main, leçon 28), sorties de threads non reproductibles (corrigés conçus déterministes, valeurs aléatoires affichées mais jamais testées, leçon 29), `_coherence.js` au-delà du plafond de 45 s des commandes lancées sur la machine depuis cette session (non rejoué, impact analysé à la main et nul).
+
+**Prochaine étape.** cours-csharp (31 leçons), puis cours-php (31), cours-c, cours-cpp-bas, cours-cpp-moderne, cours-asm (21 chacun). Rappel d'exploitation : `dotnet`, `php` et NASM ne sont pas installés dans l'environnement de vérification — ces cours tomberont sous la mention d'honnêteté du contrôle n° 6 (corrigés non rejoués, donc **pas** de bloc `tests` affiché), tandis que `gcc` et `g++` sont présents et permettront d'étendre le registre `EXECUTABLES` du vérificateur comme cela a été fait pour Java.
