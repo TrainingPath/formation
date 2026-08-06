@@ -2760,3 +2760,23 @@ une idée : *ce qui varie n'est pas le traitement mais le critère.*
 **Vérifications.** `_verify_entrainement.js` : vert, 63 corrigés Java et 48 corrigés Python couverts (voir la
 limite ci-dessus). `_coherence`, `_check_qcm`, `_verify_placement`, `_verify_mermaid`, `_verify_vocab` sur la
 machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
+
+---
+
+## cours-java — leçon 22 : l'API Stream (lot du 6 août 2026)
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés.
+
+- **22.1 « Les origines du torréfacteur »** (niveau 1, domaine *torréfaction*) — filtrage, transformation, comptage, somme entière, moyenne calculée à la main, `anyMatch` / `allMatch`. Le total des sacs est calculé **deux fois**, par une boucle et par une chaîne, et les deux résultats sont affichés côte à côte : c'est la manière la moins coûteuse d'apprendre à faire confiance à un outil neuf. Valeurs certifiées par exécution : 625 kg au total, 104,2 kg de lot moyen, 3 noms courts, `[Guatemala, Éthiopie]` pour les noms longs.
+- **22.2 « L'atelier de reliure »** (niveau 2, domaine *atelier de reliure*, sous-questions a/b/c/d) — combine les objets (leçon 12), les collections (leçon 20) et les lambdas (leçon 21). Piège pédagogique central : un flux est **consommé** par son opération terminale ; compter puis additionner exige **deux chaînes distinctes**, chacune repartant de la source. Second piège certifié : `mapToInt` au lieu de `mapToDouble` tronque silencieusement tous les centimes. Valeurs certifiées : boucle et flux donnent l'un comme l'autre `3 pour 1170.0 €`, devis cumulé 1425,0, 2106 pages, 2 ouvrages en toile.
+- **22.3 « La médiathèque — 2/4 »** (niveau 3, application filée) — repart de la solution de la leçon 21 et **réutilise mot pour mot les quatre critères nommés** qui y avaient été construits, ce qui rend tangible l'intérêt d'avoir donné un nom à un comportement la veille. Valeurs certifiées : 5 disponibles, films disponibles `[Le Guépard, La Jetée]`, sortis `[Les Misérables]`, 3 formats courts, 3 supports distincts, 311 minutes en rayon.
+
+**Constructions volontairement évitées** (non enseignées à ce stade du cours, vérifié par relecture du HTML de chaque leçon avant écriture) : `Optional` et `.average().orElse(...)` — la moyenne est donc obtenue par division manuelle, avec un renvoi explicite à la leçon 23 ; `.distinct()` sur un flux d'objets là où `new HashSet<>(...)` suffit et reste dans le vocabulaire de la leçon 20.
+
+**Anti-fuite.** 8 violations détectées par `_verify_entrainement.js` dans l'indice ⑤ des exercices 22.1 et 22.2, toutes corrigées par masquage des identifiants et des appels (`int … = lots.stream().mapToInt(kg -> …).sum();`, `long compteFlux = ….stream()`, `.collect(Collectors.…);`, …). L'indice ⑤ reste un squelette qui oriente ; il ne rend plus aucune ligne de solution recopiable.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 62 leçons équipées, 186 exercices, 0 problème. 66 corrigés Java et 48 corrigés Python couverts par 579 tests, tous rejoués ou servis par le cache d'exécution (empreinte SHA-256 sur `[langage, version de l'outil, corrigé, tests, stdin]`).
+
+**État du cours.** cours-java : 22 leçons sur 31 équipées, 66 exercices. Mini-série « La médiathèque » : 2/4 jours écrits.
+
+**Reste à faire.** Leçons 23 à 31 : `Optional` (23), records / enums / filtrage par motif (24), `Comparator` et tri (25), expressions régulières (26), immuabilité et `StringBuilder` (27), tests unitaires (28), fils d'exécution (29), projet guidé (30), examen (31). La leçon 28 demandera un harnais de test écrit à la main en Java pur : JUnit n'est pas installé dans l'environnement de vérification, et publier des corrigés dont les tests ne tournent jamais violerait le contrôle n° 6 (« un test qui ne tourne jamais est un mensonge affiché »).
