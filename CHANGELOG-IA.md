@@ -2588,3 +2588,53 @@ en annonçant sa fin vaut mieux que de la laisser passer pour normale.
 
 **Vérifications.** `_verify_entrainement.js` : 70 leçons équipées, 210 exercices, vingt-trois mini-séries, 54
 corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 18 ».
+
+---
+
+## Entraînement du jour — cours-java, leçon 19 (3 exercices)
+
+**Une leçon sur le hasard pose un problème de vérification avant de poser un problème de programmation.** Un
+corrigé dont la sortie change à chaque exécution ne peut pas être rejoué par la CI — et, plus grave, ne peut
+pas être vérifié par l'élève. La contrainte est donc écrite dans l'énoncé lui-même : *« deux exécutions
+successives doivent donner exactement le même tournoi, sans quoi tu ne pourras jamais vérifier que ton
+programme est juste »*. La graine fixée n'est pas un artifice pédagogique glissé dans le corrigé, c'est une
+exigence de l'exercice.
+
+**Et la réflexion du 19.2 retourne aussitôt cette qualité en défaut.** La même propriété qui rend le tournoi
+vérifiable rendrait un mot de passe provisoire devinable. Le corrigé détaille le scénario : la graine est
+souvent dérivée de l'heure de démarrage, ce qui laisse quelques milliers de valeurs à essayer ; un attaquant
+qui obtient un seul mot de passe peut retrouver la graine, puis calculer tous ceux déjà distribués et tous
+ceux à venir. Règle retenue : *le générateur ordinaire pour les jeux, les simulations et les tests ; jamais
+pour ce qui protège quelque chose.*
+
+**Deux pièges de bornes, tous deux certifiés.** Le tirage d'un score prend une borne **exclue** : `nextInt(181)`
+pour un score de 0 à 180 — *« un tournoi où personne ne peut faire 180 passerait totalement inaperçu »*. Et
+le mélange de Fisher-Yates doit pouvoir laisser un élément à sa place : exclure la case courante donnerait un
+mélange qui n'est pas équitable. La remarque signale que le mélange « naïf » — échanger avec une case tirée
+n'importe où — produit des permutations de probabilités inégales, *indétectable sur un tirage, flagrant sur un
+million*.
+
+**Le même souci de reproductibilité gouverne les dates.** Aucun exercice n'emploie la date du jour : *« un
+programme qui partirait de la date du jour donnerait un résultat différent chaque matin, et personne — toi
+comprise — ne pourrait vérifier qu'il est juste »*. Le seul semis qui franchit une fin de mois (courgette, 31
+mars → 5 avril) est placé exprès dans le jeu de données : c'est là qu'un calcul à la main se serait trompé.
+
+**Une non-déterminisme assumé et documenté plutôt que masqué.** `printf("%.2f")` suit la **langue de la
+machine** : le corrigé affiche `2.40` sur le serveur de vérification et `2,40` sur le poste belge de l'élève.
+Plutôt que de contourner le problème, le champ `pourquoi` du 19.1 en fait le sujet et le raccroche
+explicitement au piège de `nextDouble` de la leçon 4 — le même phénomène, vu cette fois du côté de l'écriture.
+Les tests de ce lot portent donc sur des valeurs indépendantes du séparateur.
+
+**La mini-série (19.3) referme le défaut signalé à la leçon 18** — un bilan qui portait sur tout le journal
+depuis toujours — en ajoutant une date et un filtre de période, bornes incluses **annoncées à l'affichage**
+parce que « du 1er au 31 mai » se lit de deux façons qui diffèrent de deux jours de données. Puis la réflexion
+montre que **la date n'a pas suffi** : relancé trois fois, le programme compte six sorties pour Salomé au lieu
+de deux. Une date ne dit pas qu'une ligne est *la même* qu'une autre — et trois lignes identiques peuvent être
+un doublon comme trois sorties réelles. Ce qui manque est un identifiant attribué à l'enregistrement,
+c'est-à-dire une clé primaire : *l'idée qu'une donnée doive porter de quoi être reconnue, indépendamment de
+son contenu.*
+
+**Huit fuites d'indice attrapées**, dont deux d'un type nouveau — des lignes `import` reprises telles quelles.
+
+**Vérifications.** `_verify_entrainement.js` : 71 leçons équipées, 213 exercices, vingt-quatre mini-séries, 57
+corrigés Java compilés et exécutés — vert. Sommaire de `cours-java` : mention à « leçons 1 à 19 ».
