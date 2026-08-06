@@ -2820,3 +2820,23 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **État du cours.** cours-java : 24 leçons sur 31 équipées, 72 exercices. La série « La médiathèque » est **terminée** (4/4) — quatre mécaniques successives (méthodes, flux, boîtes, fiches figées) pour le même résultat numérique.
 
 **Reste à faire.** Leçons 25 à 31 : `Comparator` et tri (25), expressions régulières (26), immuabilité et `StringBuilder` (27), tests unitaires (28), fils d'exécution (29), projet guidé (30), examen (31). Une nouvelle mini-série démarrera à la leçon 25.
+
+---
+
+## cours-java — leçon 25 : Comparator et le tri (lot du 6 août 2026)
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés. **Nouvelle mini-série** : « La bourse aux vélos », jours 25 à 28.
+
+- **25.1 « La criée aux poissons »** (niveau 1, domaine *criée aux poissons*) — ordre naturel, `compareTo` lu **par son signe et jamais par sa valeur** (une petite fonction `lecture(int)` rend « avant / après / à égalité »), `Comparator.comparing`, `comparingInt`, `reversed`, `thenComparing`, `Collections.max/min/reverse/frequency`, et la démonstration finale : tri par flux (original intact) contre tri sur place (ordre d'arrivée écrasé). Deux lots à 24,00 € servent de terrain au départage. Valeurs certifiées par exécution.
+- **25.2 « Le tournoi d'escrime »** (niveau 2, domaine *tournoi d'escrime*, sous-questions a/b/c/d) — le règlement écrit **deux fois** : dans un `record ... implements Comparable<Tireur>` et sous forme de `Comparator` composé — et le programme **prouve** leur concordance en comparant deux listes de noms plutôt qu'en laissant le lecteur comparer deux affichages à l'œil. Trois enseignements certifiés : (1) sans le départage alphabétique, les deux ex aequo restent dans l'ordre d'inscription — le tri de Java est **stable**, donc déterministe et arbitraire à la fois (`Sans départage : [Ceulemans, Bary, …]` contre `Avec départage : [Bary, Ceulemans, …]`) ; (2) `Collections.shuffle(pioche, new Random(2026))` donne un tirage **aléatoire et rejouable**, rappel de la leçon 19 et préparation directe de la leçon 28 (« un test qui dépend du hasard n'est pas un test ») ; (3) le tri sur place de la feuille par club détruit l'ordre d'arrivée. La remarque de fin relève un biais réel du règlement : un départage alphabétique avantage systématiquement le début de l'alphabet sur un classement annuel cumulé.
+- **25.3 « La bourse aux vélos — 1/4 »** (niveau 3, ouverture de série, domaine *bourse aux vélos*) — `record Velo` à six champs, `enum Etat`, et surtout **quatre juges nommés** (`parPrix`, `parTaille`, `parProprietaire`, `parEtat`) déclarés en bloc, sur le modèle des quatre critères nommés de la série précédente : ce sont eux que les leçons 26, 27 et 28 rouvriront. Trois classements par copie, un tri sur place assumé pour la feuille d'émargement, et une demande en taille 62 qui ne donne rien sans une ligne de code particulière — les boîtes de la leçon 23 sont désormais un acquis. La remarque signale la fragilité du juge par état : il repose sur `ordinal()`, donc sur l'ordre d'écriture des constantes.
+
+**Constructions volontairement évitées** (vérifié par relecture du HTML de la leçon avant écriture) : `thenComparingInt` et `stream().sorted()` sans argument, aucun des deux n'étant enseigné. Le classement naturel passe donc par `Collections.sort` sur une copie — ce qui a l'avantage de démontrer au passage que `Comparable` fonctionne sur un `record`.
+
+**Anti-fuite.** 6 violations dans les indices ⑤ des trois exercices, toutes corrigées par masquage.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 65 leçons équipées, 195 exercices, 0 problème.
+
+**État du cours.** cours-java : 25 leçons sur 31 équipées, 75 exercices. Série « La bourse aux vélos » : 1/4.
+
+**Plan de la série.** Jour 1 (leçon 25) : mettre de l'ordre dans le hangar. Jour 2 (leçon 26, expressions régulières) : vérifier les codes d'inscription et les courriels reçus. Jour 3 (leçon 27, immuabilité et `StringBuilder`) : composer l'affiche de la bourse. Jour 4 (leçon 28, tests unitaires) : le banc d'essai — c'est là que la graine fixe de 25.2 trouvera son emploi.
