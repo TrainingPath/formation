@@ -2966,3 +2966,36 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **Contraintes techniques assumées et documentées** plutôt que contournées en silence : JUnit absent (banc d'essai écrit à la main, leçon 28), sorties de threads non reproductibles (corrigés conçus déterministes, valeurs aléatoires affichées mais jamais testées, leçon 29), `_coherence.js` au-delà du plafond de 45 s des commandes lancées sur la machine depuis cette session (non rejoué, impact analysé à la main et nul).
 
 **Prochaine étape.** cours-csharp (31 leçons), puis cours-php (31), cours-c, cours-cpp-bas, cours-cpp-moderne, cours-asm (21 chacun). Rappel d'exploitation : `dotnet`, `php` et NASM ne sont pas installés dans l'environnement de vérification — ces cours tomberont sous la mention d'honnêteté du contrôle n° 6 (corrigés non rejoués, donc **pas** de bloc `tests` affiché), tandis que `gcc` et `g++` sont présents et permettront d'étendre le registre `EXECUTABLES` du vérificateur comme cela a été fait pour Java.
+
+---
+
+# cours-csharp — ouverture du cours
+
+## Décision préalable : les corrigés C# ne sont pas exécutés, et le site le dit
+
+Aucun compilateur C# n'est atteignable. `dotnet` est absent de la machine comme du conteneur de travail, et les paquets `dotnet-sdk-8.0` puis `mono-mcs` sont refusés à l'installation (HTTP 403 sur le miroir Ubuntu — le dépôt n'est pas dans la liste blanche réseau). Le contrôle n° 6 du vérificateur impose alors le champ `tests` **absent** : « un test qui ne tourne jamais est un mensonge affiché ». Les douze exercices de ce lot n'en portent donc aucun, et la mention de l'accueil du cours l'annonce à l'élève en toutes lettres plutôt que de laisser croire à une vérification qui n'existe pas.
+
+**Compensations mises en place**, faute d'exécution :
+
+1. **`cslint.py`** (nouvel outil) — contrôle mécanique de chaque `.cs` : équilibrage des parenthèses, accolades et crochets ; chaînes, chaînes verbatim et littéraux de caractère correctement fermés ; commentaires de bloc fermés ; terminaison de chaque ligne de code, avec reconnaissance des lignes de continuation. Il n'attrape pas une faute de type, mais il attrape toutes les fautes de frappe structurelles, qui sont les plus fréquentes.
+2. **Arithmétique certifiée par calcul externe** — chaque valeur annoncée dans un énoncé, une réponse ou un commentaire a été recalculée en Python avant d'être écrite : totaux, restes, divisions plafonnées, décompositions en pièces et en billets.
+3. **Prudence sur tout ce qui dépend de la culture de la machine** — la conversion d'un texte à virgule (`double.Parse("12.5")`) échoue ou change de sens selon la langue configurée. Les exercices ne convertissent donc que des **entiers**, et la remarque de 3.2 explique ce choix à l'élève au lieu de le contourner en silence.
+4. **`checkindice5.py`** (nouvel outil) — pré-contrôle local de l'anti-fuite qui reproduit exactement la règle du vérificateur : aucune ligne de corrigé de 26 caractères ou plus ne doit apparaître dans l'indice ⑤, l'énoncé, le principe, la remarque ou la checklist. Il évite désormais l'aller-retour systématique avec le vérificateur.
+
+## Lot 1 — leçons 1 à 4 · mini-série « Le stand de crêpes » (4/4)
+
+Conformément à la demande, les lots suivent désormais les mini-séries : **une série complète par lot, un seul commit**. 3 exercices par leçon, 12 exercices, 60 indices, 12 corrigés.
+
+- **Leçon 1 — premier programme.** 1.1 *La fiche du phare de Nieuport* (domaine signalisation maritime) : style classique complet, `Write` contre `WriteLine`, la ligne vide obtenue par des parenthèses vides, commentaires de bloc. 1.2 *La borne d'accueil du musée* (domaine musée, sous-questions a/b/c/d) : le même texte affiché de trois façons — l'écran ne renseigne pas sur le programme qui l'a rempli —, puis l'échappement du guillemet, de la tabulation, du saut de ligne interne et de la barre oblique inverse doublée.
+- **Leçon 2 — variables et types.** 2.1 *La fiche article de la quincaillerie* (quincaillerie) : six informations, six types, `var`, conversion implicite sans perte, `const` avec sa ligne interdite laissée en commentaire. 2.2 *Les honoraires du cabinet dentaire* (cabinet dentaire, a/b/c/d) : le même montant représenté en `double`, en `decimal` et en centimes entiers, puis la démonstration de 0,1 + 0,2 dans les deux premiers types. Point de doctrine énoncé : « aucun des deux n'est exact en toutes circonstances ; chacun est exact sur ce pour quoi il est fait ».
+- **Leçon 3 — opérateurs, conversions et Math.** 3.1 *Le partage de la pizzeria* (pizzeria) : division entière, modulo, cast qui tronque contre `Math.Round` qui arrondit, et le calcul du nombre de pizzas fait **deux fois**, dont une fois faux — trois et quatre sont tous deux plausibles, et rien dans un affichage ne signale qu'un résultat plausible est faux. 3.2 *La station de lavage* (station de lavage, a/b/c/d) : `Parse` contre `TryParse`, pré- et post-incrément, et les lois de De Morgan vérifiées en affichant les deux écritures du refus côte à côte.
+- **Leçon 4 — console.** 4.1 *La fiche de candidat de l'auto-école* (auto-école) : les quatre temps invite → lecture → traitement → affichage, l'interpolation, les formats `F1` et `D5`, et une dernière ligne **sans** le `$` qui affiche `{nom}` — l'erreur qui ne provoque aucun message. 4.2 *Le distributeur de billets* (distributeur de billets, a/b/c/d) : `TryParse` dont le verdict est **gardé dans une variable** pour entrer trente lignes plus bas dans la décision finale — « la protection n'est pas dans le calcul, elle est dans la décision ».
+- **Série « Le stand de crêpes », 1/4 à 4/4** : jour 1, l'ardoise n'est que de l'affichage ; jour 2, les prix deviennent des `const decimal` et l'ardoise affichée reste **rigoureusement identique** — première refonte du cours, dont la seule preuve de réussite est que rien n'a bougé à l'écran ; jour 3, la caisse calcule, bascule en centimes entiers et rend la monnaie par divisions et restes successifs ; jour 4, elle lit ses quantités au clavier avec `TryParse` et sépare le cas « pas assez donné » du cas normal.
+
+**Honnêteté sur un défaut assumé.** La caisse du jour 4 imprime un ticket d'apparence normale même quand elle vient d'annoncer que la commande n'est pas lisible. Le « pourquoi » de l'exercice le dit sans détour : « détecter une erreur et la traiter sont deux choses distinctes, et la première sans la seconde ne protège personne » — avec rendez-vous pris à la leçon 5 pour corriger cette caisse.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 76 leçons équipées, 228 exercices, 0 problème. `cslint.py` : 12 corrigés sur 12 sans anomalie structurelle. Contrôle sur la machine après déploiement : 4 leçons, 12 exercices, 5 indices chacun, aucun champ `tests`, moteur lié.
+
+**Ajouté aussi.** `cours-csharp/entrainement.js` — copie conforme du moteur partagé (16 082 octets, identique à celui de cours-java, cours-python et cours-algorithmes). Le moteur n'affiche de bouton « Exécuter » que pour Python ; pour C# il présente énoncé, indices, corrigé et checklist, ce qui est exactement le comportement voulu ici.
+
+**Prochains lots** (une mini-série chacun) : leçons 5 à 8, 9 à 12, 13 à 16, 17 à 20, 21 à 24, 25 à 28, 29 à 31.
