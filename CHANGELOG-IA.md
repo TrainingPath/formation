@@ -2916,3 +2916,23 @@ machine : verts. Sommaire de `cours-java` : mention à « leçons 1 à 21 ».
 **Vérification.** `node _verify_entrainement.js` : ✅ 69 leçons équipées, 207 exercices, 0 problème. Les trois corrigés ont été exécutés deux fois chacun pour confirmer que leur sortie est stable.
 
 **État du cours.** cours-java : 29 leçons sur 31 équipées, 87 exercices. Série « L'observatoire ornithologique » : 1/3. Restent les leçons 30 (projet guidé : la bibliothèque) et 31 (examen final).
+
+---
+
+## cours-java — leçon 30 : projet guidé (lot du 6 août 2026)
+
+**Nouveauté technique du lot.** Les trois corrigés sont des **programmes console interactifs**, pilotés par le champ `stdin` du vérificateur : la saisie clavier est fournie d'avance, l'exécution est donc parfaitement reproductible. La note de fin de 30.1 explique ce dispositif à l'élève et le rattache à sa pratique réelle : « une campagne d'essais automatisée sur un programme interactif ne clique pas, elle rejoue une saisie enregistrée ». Deux des trois corrigés écrivent et relisent un fichier — l'isolation du vérificateur (un dossier temporaire par corrigé, `cwd` positionné) rend cela sûr, comme depuis la leçon 17.
+
+**Contenu ajouté.** 3 exercices, 15 indices, 3 corrigés exécutés et certifiés.
+
+- **30.1 « Le vestiaire de la piscine »** (niveau 1, domaine *vestiaire de piscine*) — trois classes, trois responsabilités : la donnée, la collection, le dialogue. Les méthodes du vestiaire **rendent** leur message au lieu de l'afficher — l'habitude installée par la bourse aux vélos. La reprise d'un casier enchaîne quatre refus dans un ordre imposé (pas un nombre → casier inexistant → déjà libre → cas normal), même discipline que le diagnostic champ par champ de la leçon 26. Le « pourquoi » relève ce qui a changé depuis la leçon 23 : `Optional` en frontière de classe n'est plus le sujet du jour, c'est devenu un détail qu'on n'explique plus. La remarque note une conséquence physique que personne n'a voulue : le casier 1 servira dix fois plus que le casier 4 et s'usera d'autant.
+- **30.2 « La location de canoës »** (niveau 2, domaine *location de canoës*, sous-questions a/b/c/d) — la persistance. Le programme charge au démarrage, sauvegarde à la fermeture, puis **fabrique une base entièrement neuve** et la recharge : le « pourquoi » explique que recharger dans la base existante n'aurait rien prouvé, les données étant déjà en mémoire — une vérification n'a de valeur que si elle peut échouer. Le rechargement compte les lignes rejetées au lieu de s'arrêter à la première fautive, et l'indice ④ prévient du défaut classique (oublier de vider la liste avant de recharger, donc doubler tout au second chargement). La remarque assume le compromis du motif de validation des noms : il accepte accents, apostrophes et tirets, et exclut quand même des noms parfaitement réels — « un contrôle de saisie est toujours un compromis entre bloquer des erreurs et bloquer des gens ». La note de fin donne la parade professionnelle à l'écrasement de fichier : écrire dans un temporaire puis renommer.
+- **30.3 « L'observatoire ornithologique — 2/3 »** (niveau 3, application filée) — le programme complet : saisie contrôlée à trois refus nommés, dépouillement classé, **rapport composé sur un tampon et rendu, jamais affiché**, persistance avec comptage des rejets, et un **banc d'essai intégré au menu** qui monte un registre neuf, lui soumet cinq saisies dont quatre fautives, et vérifie les cinq messages exacts plus deux propriétés. Le banc passe 7/7. La question de réflexion interroge le choix discutable d'embarquer les tests dans le programme livré. La remarque signale une limite arbitraire assumée (effectif à trois chiffres) : « ce qui n'est pas inévitable, c'est de la laisser sans commentaire dans le code, où le prochain lecteur la prendra pour une règle métier ».
+
+**Anti-fuite.** 17 violations dans les indices ⑤ — record du projet, conséquence directe de corrigés trois fois plus longs que d'habitude. Toutes corrigées par masquage.
+
+**Incident attrapé avant publication.** Un test de 30.2 comptait deux occurrences d'une ligne d'état là où le scénario en produit trois. Le vérificateur l'a refusé (`AssertionError`) en rejouant le corrigé — deuxième fois dans le projet qu'un test faux est arrêté par l'exécution réelle plutôt que publié.
+
+**Vérification.** `node _verify_entrainement.js` : ✅ 70 leçons équipées, 210 exercices, 0 problème.
+
+**État du cours.** cours-java : 30 leçons sur 31 équipées, 90 exercices. Série « L'observatoire ornithologique » : 2/3. Reste la leçon 31, l'examen final.
